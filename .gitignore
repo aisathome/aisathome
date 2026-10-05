@@ -1,0 +1,4 @@
+/aihome-gateway
+/aihome-node
+*.jsonl
+/dist/

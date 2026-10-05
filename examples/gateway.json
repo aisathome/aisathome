@@ -1,0 +1,6 @@
+{
+  "gateway_id": "local-dev",
+  "api_keys": {"dev-user-key-change-me": "dev"},
+  "node_tokens": {"dev-node-token-change-me": "dev-operator"},
+  "usage_log": "usage.jsonl"
+}

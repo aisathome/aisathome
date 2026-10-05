@@ -1,0 +1,7 @@
+{
+  "node_id": "my-4090",
+  "gateway_url": "ws://localhost:8080/v1/node/connect",
+  "token": "dev-node-token-change-me",
+  "upstream": "http://127.0.0.1:8000",
+  "models": [{"name": "qwen3.8-27b-q4", "roles": ["deep"], "slots": 1, "ctx": 32768}]
+}
