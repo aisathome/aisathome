@@ -27,10 +27,11 @@ import (
 // Config holds gateway settings. In M1 keys and tokens come from a config file; accounts and
 // payments come later.
 type Config struct {
-	GatewayID  string            `json:"gateway_id"`
-	APIKeys    map[string]string `json:"api_keys"`    // API key → user id
-	NodeTokens map[string]string `json:"node_tokens"` // node token → operator id
-	UsageLog   string            `json:"usage_log"`   // JSONL file, one line per request
+	GatewayID  string             `json:"gateway_id"`
+	APIKeys    map[string]string  `json:"api_keys"`    // API key → user id (no limits)
+	Keys       map[string]KeyInfo `json:"keys"`        // API key → user and limits
+	NodeTokens map[string]string  `json:"node_tokens"` // node token → operator id
+	UsageLog   string             `json:"usage_log"`   // JSONL file, one line per request
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
 }
@@ -43,6 +44,8 @@ type Gateway struct {
 	node map[string]*nodeConn // by node id
 	rr   int                  // round-robin cursor
 	use  *usageWriter
+	keys KeyStore
+	lim  *limiter
 }
 
 // New creates a gateway.
@@ -54,8 +57,18 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, use: uw}, nil
+	keys := StaticKeys{}
+	for k, u := range cfg.APIKeys {
+		keys[k] = KeyInfo{User: u}
+	}
+	for k, info := range cfg.Keys {
+		keys[k] = info
+	}
+	return &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, use: uw, keys: keys, lim: newLimiter()}, nil
 }
+
+// SetKeyStore replaces the key store (e.g. with an operator's accounts service).
+func (g *Gateway) SetKeyStore(ks KeyStore) { g.keys = ks }
 
 // NodeCount returns the number of connected nodes.
 func (g *Gateway) NodeCount() int {
@@ -224,9 +237,12 @@ func (g *Gateway) pick(want string, exclude map[string]bool) (*nodeConn, string)
 // ---------------------------------------------------------------- user API
 
 func (g *Gateway) user(r *http.Request) (string, bool) {
-	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	u, ok := g.cfg.APIKeys[key]
-	return u, ok
+	k, ok := g.keys.Lookup(r.Context(), bearer(r))
+	return k.User, ok
+}
+
+func bearer(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 }
 
 func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -252,11 +268,19 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
-	user, ok := g.user(r)
+	key := bearer(r)
+	info, ok := g.keys.Lookup(r.Context(), key)
 	if !ok {
 		apiError(w, http.StatusUnauthorized, "invalid API key")
 		return
 	}
+	user := info.User
+	release, reason := g.lim.acquire(key, info, time.Now())
+	if release == nil {
+		apiError(w, http.StatusTooManyRequests, reason)
+		return
+	}
+	defer release()
 	var body map[string]any
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&body); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON body")

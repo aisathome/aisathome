@@ -68,6 +68,7 @@ func newRig(t *testing.T, engines ...*httptest.Server) *rig {
 	g, err := gateway.New(gateway.Config{
 		GatewayID:  "test-gw",
 		APIKeys:    map[string]string{"user-key": "alice"},
+		Keys:       map[string]gateway.KeyInfo{"limited-key": {User: "bob", RPM: 2}},
 		NodeTokens: map[string]string{"node-token": "op1"},
 		UsageLog:   usage,
 	}, log)
@@ -231,4 +232,19 @@ func waitUsage(t *testing.T, r *rig, n int) []map[string]any {
 	}
 	t.Fatalf("expected %d usage records, got %d", n, len(r.usage(t)))
 	return nil
+}
+
+func TestRateLimit(t *testing.T) {
+	r := newRig(t, mockEngine(t, false))
+	codes := []int{}
+	for i := 0; i < 3; i++ {
+		resp := r.do(t, "POST", "/v1/chat/completions", "limited-key",
+			`{"model":"deep","messages":[{"role":"user","content":"hi"}]}`)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		codes = append(codes, resp.StatusCode)
+	}
+	if codes[0] != 200 || codes[1] != 200 || codes[2] != 429 {
+		t.Fatalf("expected 200,200,429 with rpm=2, got %v", codes)
+	}
 }
