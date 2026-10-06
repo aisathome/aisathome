@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 	if cfg.Token == "" {
-		cfg.Token = os.Getenv("AIHOME_NODE_TOKEN") // keep secrets out of config files if preferred
+		cfg.Token = os.Getenv("AISATHOME_NODE_TOKEN") // keep secrets out of config files if preferred
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

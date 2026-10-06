@@ -1,4 +1,4 @@
-// Package protocol defines the messages exchanged between an ai@home gateway (project
+// Package protocol defines the messages exchanged between an AIs@home gateway (project
 // server) and a node agent over a WebSocket that the node opens outward to the gateway.
 //
 // Every frame is one JSON object (a Msg). See docs/protocol.md for the full specification.

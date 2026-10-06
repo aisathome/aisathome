@@ -1,9 +1,9 @@
-# ai@home gateway ↔ node protocol, v0.1
+# AIs@home gateway ↔ node protocol, v0.1
 
 SPDX-License-Identifier: Apache-2.0
 
 A **node** runs next to a local OpenAI-compatible inference engine (llama-server) and
-opens **one outbound WebSocket** to a **gateway** (an ai@home project server). Nodes never
+opens **one outbound WebSocket** to a **gateway** (an AIs@home project server). Nodes never
 accept inbound connections, so they work behind NAT and home routers. A node may connect
 to several gateways (one connection each, chosen by the volunteer). Gateways never share
 users, keys or billing.
