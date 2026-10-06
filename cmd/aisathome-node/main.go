@@ -1,4 +1,4 @@
-// Command aihome-node runs an ai@home node agent next to a local llama-server.
+// Command aisathome-node runs an AIs@home node agent next to a local llama-server.
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"aihome/internal/node"
+	"aisathome/internal/node"
 )
 
 func main() {

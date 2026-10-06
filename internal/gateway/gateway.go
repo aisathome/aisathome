@@ -1,4 +1,4 @@
-// Package gateway is the ai@home project server: an OpenAI-compatible API for users, a
+// Package gateway is the AIs@home project server: an OpenAI-compatible API for users, a
 // registry of nodes connected outward over WebSocket, routing with failover, and metering.
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -21,7 +21,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"aihome/internal/protocol"
+	"aisathome/internal/protocol"
 )
 
 // Config holds gateway settings. In M1 keys and tokens come from a config file; accounts and
@@ -258,7 +258,7 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 			for _, id := range append([]string{m.Name}, m.Roles...) {
 				if !seen[id] {
 					seen[id] = true
-					data = append(data, map[string]any{"id": id, "object": "model", "owned_by": "ai@home"})
+					data = append(data, map[string]any{"id": id, "object": "model", "owned_by": "AIs@home"})
 				}
 			}
 		}

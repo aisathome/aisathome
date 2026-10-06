@@ -1,4 +1,4 @@
-module aihome
+module aisathome
 
 go 1.27.1
 

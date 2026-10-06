@@ -1,4 +1,4 @@
-// Command aihome-gateway runs an ai@home project gateway.
+// Command aisathome-gateway runs an AIs@home project gateway.
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package main
@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"aihome/internal/gateway"
+	"aisathome/internal/gateway"
 )
 
 func main() {

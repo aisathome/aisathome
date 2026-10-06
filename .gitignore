@@ -1,4 +1,4 @@
-/aihome-gateway
-/aihome-node
+/aisathome-gateway
+/aisathome-node
 *.jsonl
 /dist/

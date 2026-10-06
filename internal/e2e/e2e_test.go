@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"aihome/internal/gateway"
-	"aihome/internal/node"
-	"aihome/internal/protocol"
+	"aisathome/internal/gateway"
+	"aisathome/internal/node"
+	"aisathome/internal/protocol"
 )
 
 // hits counts requests that reached the failing mock engine.

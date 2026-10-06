@@ -1,4 +1,4 @@
-// Package node is the ai@home node agent: it connects outward to a gateway, receives
+// Package node is the AIs@home node agent: it connects outward to a gateway, receives
 // requests, runs them on a local OpenAI-compatible engine (llama-server) and streams the
 // results back with metered usage.
 //
@@ -19,11 +19,11 @@ import (
 
 	"github.com/coder/websocket"
 
-	"aihome/internal/protocol"
+	"aisathome/internal/protocol"
 )
 
 // AgentVersion is reported to the gateway in hello.
-const AgentVersion = "aihome-node/0.1.0"
+const AgentVersion = "aisathome-node/0.1.0"
 
 // Config holds node settings.
 type Config struct {
