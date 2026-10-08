@@ -31,7 +31,13 @@ sudo ./install.sh --llama-build llama.cpp/build --model Qwen3.8-27B-UD-Q4_K_M.gg
 
 - The token is read from stdin (hidden), never from the command line.
 - The model file is **moved** to `/var/lib/aisathome-node/models/`.
-- Defaults: 2 slots, 32k context in total. Override with `SLOTS=4 CTX=65536 sudo -E ...`.
+- Defaults:
+  - 2 slots with **32k context each** (`--kv-unified-per-slot`, so one long request cannot
+    starve another);
+  - a thinking budget of 8,192 tokens;
+  - reasoning from earlier turns is not kept in the prompt.
+
+  Override with `SLOTS=1 CTX_PER_SLOT=65536 REASONING_BUDGET=-1 sudo -E ...`.
 - The node does not start at boot unless you pass `--enable-at-boot`.
 
 ## Day to day

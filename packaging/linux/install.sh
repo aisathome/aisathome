@@ -20,7 +20,12 @@ set -euo pipefail
 
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 llama_build="" model="" node_bin="" node_config="" at_boot=0
-ctx="${CTX:-32768}" slots="${SLOTS:-2}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
+# Per-slot context: each request gets at most this much, and one long request cannot starve
+# the others (a single shared pool can: "Context size has been exceeded" on 2026-10-08).
+ctx_per_slot="${CTX_PER_SLOT:-32768}" slots="${SLOTS:-2}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
+# Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
+# the context; after the budget the model is told to answer.
+reasoning_budget="${REASONING_BUDGET:-8192}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
@@ -107,7 +112,9 @@ DeviceAllow=char-nvidia-frontend rw
 DeviceAllow=char-nvidia-uvm rw
 DeviceAllow=char-nvidia-caps r
 ExecStart=/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
-  --host 127.0.0.1 --port 8000 -ngl all -fa on -c $ctx -np $slots --kv-unified \\
+  --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
+  --reasoning-budget $reasoning_budget \\
+  --reasoning-budget-message "(Thinking budget reached; answering now.)" --no-reasoning-preserve \\
   -ctk q8_0 -ctv q8_0 --cache-prompt --metrics
 Restart=on-failure
 RestartSec=5
