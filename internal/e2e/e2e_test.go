@@ -53,7 +53,34 @@ func mockEngine(t *testing.T, fail bool) *httptest.Server {
 	}))
 }
 
+// slowEngine streams n text chunks, one every delay, then usage. Used to hold slots busy
+// and to cancel mid-stream.
+// engineCur and engineMax track concurrent requests across slowEngines (tests run serially).
+var engineCur, engineMax atomic.Int32
+
+func slowEngine(t *testing.T, n int, delay time.Duration) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c := engineCur.Add(1); c > engineMax.Load() {
+			engineMax.Store(c)
+		}
+		defer engineCur.Add(-1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < n; i++ {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(delay):
+			}
+			fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"t%d \"},\"finish_reason\":null}]}\n\n", i)
+			w.(http.Flusher).Flush()
+		}
+		fmt.Fprintf(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":%d}}\n\n", n)
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+}
+
 type rig struct {
+	g        *gateway.Gateway
 	gw       *httptest.Server
 	usageLog string
 	cancel   context.CancelFunc
@@ -61,41 +88,61 @@ type rig struct {
 
 // newRig starts a gateway and one node agent per engine, and waits until all are registered.
 func newRig(t *testing.T, engines ...*httptest.Server) *rig {
+	return newRigCfg(t, nil, engines...)
+}
+
+// newRigCfg is newRig with a hook to adjust the gateway config.
+func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Server) *rig {
 	t.Helper()
 	dir := t.TempDir()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	usage := filepath.Join(dir, "usage.jsonl")
-	g, err := gateway.New(gateway.Config{
+	cfg := gateway.Config{
 		GatewayID:  "test-gw",
 		APIKeys:    map[string]string{"user-key": "alice"},
 		Keys:       map[string]gateway.KeyInfo{"limited-key": {User: "bob", RPM: 2}},
-		NodeTokens: map[string]string{"node-token": "op1"},
+		NodeTokens: map[string]gateway.NodeToken{"node-token": {Operator: "op1"}},
 		UsageLog:   usage,
-	}, log)
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	g, err := gateway.New(cfg, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
 	gw := httptest.NewServer(g.Handler())
 	ctx, cancel := context.WithCancel(context.Background())
-	for i, e := range engines {
-		a := node.New(node.Config{
-			NodeID:     fmt.Sprintf("node-%d", i),
-			GatewayURL: "ws" + strings.TrimPrefix(gw.URL, "http") + "/v1/node/connect",
-			Token:      "node-token",
-			Upstream:   e.URL,
-			Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}},
-		}, log)
-		go a.Run(ctx)
-	}
-	r := &rig{gw: gw, usageLog: usage, cancel: cancel}
+	r := &rig{g: g, gw: gw, usageLog: usage, cancel: cancel}
 	t.Cleanup(func() { cancel(); gw.Close() })
+	for i, e := range engines {
+		r.startNode(ctx, fmt.Sprintf("node-%d", i), "node-token", e, 2)
+	}
+	r.waitNodes(t, len(engines))
+	return r
+}
+
+func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// startNode runs a node agent until ctx is cancelled.
+func (r *rig) startNode(ctx context.Context, id, token string, engine *httptest.Server, slots int) {
+	a := node.New(node.Config{
+		NodeID:     id,
+		GatewayURL: "ws" + strings.TrimPrefix(r.gw.URL, "http") + "/v1/node/connect",
+		Token:      token,
+		Upstream:   engine.URL,
+		Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: slots}},
+	}, quiet())
+	go a.Run(ctx)
+}
+
+func (r *rig) waitNodes(t *testing.T, n int) {
+	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		if g.NodeCount() == len(engines) {
-			return r
+		if r.g.NodeCount() == n {
+			return
 		}
 	}
-	t.Fatalf("only %d of %d nodes registered", g.NodeCount(), len(engines))
-	return nil
+	t.Fatalf("expected %d connected nodes, have %d", n, r.g.NodeCount())
 }
 
 func (r *rig) do(t *testing.T, method, path, key, body string) *http.Response {
@@ -217,8 +264,13 @@ func TestErrors(t *testing.T) {
 	if resp := r.do(t, "POST", "/v1/chat/completions", "wrong-key", `{"model":"deep"}`); resp.StatusCode != 401 {
 		t.Fatalf("bad key: got %d", resp.StatusCode)
 	}
-	if resp := r.do(t, "POST", "/v1/chat/completions", "user-key", `{"model":"no-such-model"}`); resp.StatusCode != 503 {
+	// Unknown models fail at once (404) instead of waiting for capacity.
+	start := time.Now()
+	if resp := r.do(t, "POST", "/v1/chat/completions", "user-key", `{"model":"no-such-model"}`); resp.StatusCode != 404 {
 		t.Fatalf("unknown model: got %d", resp.StatusCode)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("unknown model must not wait, took %v", time.Since(start))
 	}
 }
 
