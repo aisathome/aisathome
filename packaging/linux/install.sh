@@ -36,7 +36,7 @@ done
 [[ -f "$model" && -x "$node_bin" && -f "$node_config" ]] || usage
 python3 -m json.tool "$node_config" >/dev/null || { echo "invalid JSON: $node_config" >&2; exit 1; }
 
-echo "Paste the node token (input hidden), then Enter:" >&2
+[[ -t 0 ]] && echo "Paste the node token (input hidden), then Enter:" >&2
 IFS= read -rs token || true
 [[ -n "$token" ]] || { echo "no token on stdin" >&2; exit 1; }
 
@@ -76,18 +76,36 @@ LockPersonality=yes
 CapabilityBoundingSet=
 ReadWritePaths=/var/lib/aisathome-node'
 
+# Creates /dev/nvidia-uvm (normally done by a setuid helper on first CUDA use, which the
+# sandbox blocks). Runs once, as root, outside the sandbox.
+cat > /etc/systemd/system/aisathome-gpu-init.service <<UNIT
+[Unit]
+Description=AIs@home node: create NVIDIA device nodes for CUDA
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-modprobe -u -c=0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 cat > /etc/systemd/system/aisathome-llama.service <<UNIT
 [Unit]
 Description=AIs@home node: local llama-server (127.0.0.1 only)
-After=network.target
+After=network.target aisathome-gpu-init.service
+Requires=aisathome-gpu-init.service
 
 [Service]
 User=aisathome
 Group=aisathome
 Environment=LD_LIBRARY_PATH=/opt/aisathome-node/lib
-# Create /dev/nvidia-uvm as root first: the sandbox (NoNewPrivileges) blocks the setuid helper
-# that CUDA would otherwise use, e.g. right after boot.
-ExecStartPre=+-/usr/bin/nvidia-modprobe -u -c=0
+# GPU access. The sandbox's device allowlist (implied by ProtectClock=) would otherwise
+# block the GPU, and CUDA would silently fall back to the CPU.
+DeviceAllow=char-nvidia-frontend rw
+DeviceAllow=char-nvidia-uvm rw
+DeviceAllow=char-nvidia-caps r
 ExecStart=/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --host 127.0.0.1 --port 8000 -ngl all -fa on -c $ctx -np $slots --kv-unified \\
   -ctk q8_0 -ctv q8_0 --cache-prompt --metrics
@@ -122,10 +140,13 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-if [[ $at_boot = 1 ]]; then systemctl enable aisathome-llama aisathome-node; fi
+if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
 systemctl restart aisathome-llama
 for i in $(seq 1 90); do curl -fs http://127.0.0.1:8000/health >/dev/null && break; sleep 2; done
 curl -fs http://127.0.0.1:8000/health >/dev/null || { echo "llama-server did not become healthy; see: journalctl -u aisathome-llama" >&2; exit 1; }
+if journalctl -u aisathome-llama --since "-3min" -o cat | grep -q "no usable GPU found"; then
+  echo "llama-server is running on the CPU, not the GPU; see: journalctl -u aisathome-llama" >&2; exit 1
+fi
 systemctl restart aisathome-node
 sleep 3
 systemctl --no-pager --lines=3 status aisathome-node | tail -3
