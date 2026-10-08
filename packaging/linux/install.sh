@@ -141,10 +141,11 @@ UNIT
 
 systemctl daemon-reload
 if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
+started="$(date '+%Y-%m-%d %H:%M:%S')"
 systemctl restart aisathome-llama
 for i in $(seq 1 90); do curl -fs http://127.0.0.1:8000/health >/dev/null && break; sleep 2; done
 curl -fs http://127.0.0.1:8000/health >/dev/null || { echo "llama-server did not become healthy; see: journalctl -u aisathome-llama" >&2; exit 1; }
-if journalctl -u aisathome-llama --since "-3min" -o cat | grep -q "no usable GPU found"; then
+if journalctl -u aisathome-llama --since "$started" -o cat | grep -q "no usable GPU found"; then
   echo "llama-server is running on the CPU, not the GPU; see: journalctl -u aisathome-llama" >&2; exit 1
 fi
 systemctl restart aisathome-node
