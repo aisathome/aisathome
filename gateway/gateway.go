@@ -22,7 +22,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"aisathome/internal/protocol"
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // Config holds gateway settings. In M1 keys and tokens come from a config file; accounts and

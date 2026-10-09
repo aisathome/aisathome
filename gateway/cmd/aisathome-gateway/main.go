@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"aisathome/internal/gateway"
+	"github.com/aisathome/aisathome/gateway"
 )
 
 func main() {

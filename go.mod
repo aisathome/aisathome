@@ -1,4 +1,4 @@
-module aisathome
+module github.com/aisathome/aisathome
 
 go 1.27.1
 

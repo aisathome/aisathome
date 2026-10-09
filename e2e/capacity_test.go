@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"aisathome/internal/gateway"
+	"github.com/aisathome/aisathome/gateway"
 )
 
 const chatBody = `{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}`

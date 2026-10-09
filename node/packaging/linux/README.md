@@ -19,7 +19,7 @@ serves.
   cmake --build build --target llama-server
   ```
 - A GGUF model, e.g. `unsloth/Qwen3.8-27B-GGUF` / `Qwen3.8-27B-UD-Q4_K_M.gguf` (16.5 GB).
-- `aisathome-node` (`go build ./cmd/aisathome-node`), a `node.json` (see
+- `aisathome-node` (`go build ./node/cmd/aisathome-node`), a `node.json` (see
   `examples/node.json`) and a node token from the gateway operator.
 
 ## Install

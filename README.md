@@ -3,22 +3,22 @@
 **Experimental.** Volunteer-run LLM inference in the spirit of BOINC: people contribute
 GPUs, and anyone can run a project server.
 
-- `aisathome-node`: runs next to a local llama-server on a volunteer's machine and connects
-  **outward** to one or more gateways. Apache-2.0.
-- `aisathome-gateway`: an AIs@home project server with an OpenAI-compatible API, routing with
-  failover and metering. AGPL-3.0-or-later.
-- `docs/protocol.md`: the gateway ↔ node protocol. Apache-2.0.
+| Directory | What | Licence |
+|---|---|---|
+| `node/` | `aisathome-node`: runs next to a local llama-server on a volunteer's machine and connects **outward** to one or more gateways. Linux install in `node/packaging/linux/` | Apache-2.0 |
+| `gateway/` | `aisathome-gateway`: a project server with an OpenAI-compatible API, routing with queueing and failover, metering | AGPL-3.0-or-later |
+| `protocol/` | The gateway ↔ node protocol (`PROTOCOL.md`) and its Go types, importable by other implementations | Apache-2.0 |
+| `e2e/` | End-to-end tests (user → gateway → node → mock engine) | Apache-2.0 |
 
 ## Status
 
-Milestone 1: one gateway and nodes relaying chat completions with metering. Not
-production-ready. **Hosts may be able to see prompts; this network does not offer
-confidentiality.**
+Not production-ready. **Hardened, not confidential:** whoever runs a node can see the
+prompts it serves. The gateway does not store prompts.
 
 ## Quick start (local)
 
 ```bash
-go build ./cmd/...
+go build ./node/cmd/aisathome-node ./gateway/cmd/aisathome-gateway
 ./aisathome-gateway -config gateway.json   # see examples/
 ./aisathome-node -config node.json         # next to llama-server on :8000
 curl -H "Authorization: Bearer <api key>" http://localhost:8080/v1/chat/completions \
@@ -27,6 +27,5 @@ curl -H "Authorization: Bearer <api key>" http://localhost:8080/v1/chat/completi
 
 ## Licences
 
-Each source file carries an SPDX header. Gateway code (`internal/gateway`,
-`cmd/aisathome-gateway`) is AGPL-3.0-or-later. Everything else is Apache-2.0. Full texts are
-in `LICENSES/`.
+Each directory carries its own `LICENSE`, and each source file an SPDX header. Full texts
+are also in `LICENSES/`.

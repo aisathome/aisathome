@@ -21,7 +21,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"aisathome/internal/protocol"
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // AgentVersion is reported to the gateway in hello.

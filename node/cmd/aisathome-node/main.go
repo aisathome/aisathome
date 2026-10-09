@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"aisathome/internal/node"
+	"github.com/aisathome/aisathome/node"
 )
 
 func main() {
