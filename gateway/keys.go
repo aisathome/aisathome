@@ -24,6 +24,11 @@ type KeyInfo struct {
 	// identifies the end user, who then gets UserLimits. Ignored for all other keys.
 	ForwardUsers bool        `json:"forward_users,omitempty"`
 	UserLimits   *UserLimits `json:"user_limits,omitempty"`
+	// RestoreSecrets puts redacted secrets back into answer text (never into tool arguments).
+	// Off by default: a malicious node can place a placeholder where the client fetches or
+	// runs it (an image URL, a command written as text), and no context check catches every
+	// form. Enable only for clients that render no remote content and execute nothing.
+	RestoreSecrets bool `json:"restore_secrets,omitempty"`
 }
 
 // UserLimits apply to each end user behind a ForwardUsers key.
@@ -36,7 +41,8 @@ type UserLimits struct {
 // forUser is the account of one end user behind a ForwardUsers key. The user id is the
 // front end's pseudonymous id; names and email addresses are never used.
 func (k KeyInfo) forUser(uid string) KeyInfo {
-	u := KeyInfo{User: k.User + "/" + uid, MinTrust: k.MinTrust, OnlyOperator: k.OnlyOperator}
+	u := KeyInfo{User: k.User + "/" + uid, MinTrust: k.MinTrust, OnlyOperator: k.OnlyOperator,
+		RestoreSecrets: k.RestoreSecrets}
 	if k.UserLimits != nil {
 		u.RPM, u.MaxConcurrent, u.TokensPerDay = k.UserLimits.RPM, k.UserLimits.MaxConcurrent, k.UserLimits.TokensPerDay
 	}

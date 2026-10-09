@@ -83,7 +83,7 @@ func TestSecretsNeverReachNodeOrLogs(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"model": "deep", "stream": stream, "user": "alice@example.com",
 			"metadata": map[string]any{"chat_id": "c-123"},
 			"messages": []any{map[string]any{"role": "user", "content": prompt, "name": "Alice"}}})
-		resp := r.do(t, "POST", "/v1/chat/completions", "user-key", string(body))
+		resp := r.do(t, "POST", "/v1/chat/completions", "restore-key", string(body))
 		var text, args strings.Builder
 		if stream {
 			sc := bufio.NewScanner(resp.Body)

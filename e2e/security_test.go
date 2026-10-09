@@ -117,9 +117,10 @@ func TestNoSecretRestoreIntoLinks(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		body, _ := json.Marshal(map[string]any{"model": "deep", "stream": stream,
 			"messages": []any{map[string]any{"role": "user", "content": "my key is " + secret}}})
-		text, args := readAnswer(t, r.do(t, "POST", "/v1/chat/completions", "user-key", string(body)), stream)
-		if strings.Count(text, secret) != 1 || !strings.Contains(text, "plain: "+secret) {
-			t.Fatalf("stream=%v: the secret must be restored exactly once, in plain text:\n%s", stream, text)
+		// even with restore enabled: the field has links, so nothing in it is restored
+		text, args := readAnswer(t, r.do(t, "POST", "/v1/chat/completions", "restore-key", string(body)), stream)
+		if strings.Contains(text, secret) {
+			t.Fatalf("stream=%v: secret restored into a field with links:\n%s", stream, text)
 		}
 		if strings.Contains(args, secret) {
 			t.Fatalf("stream=%v: secrets are never restored into tool arguments:\n%s", stream, args)

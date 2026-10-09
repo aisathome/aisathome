@@ -90,20 +90,21 @@ const startupGrace = 2 * time.Minute
 
 // Gateway routes user requests to connected nodes.
 type Gateway struct {
-	cfg    Config
-	log    *slog.Logger
-	mu     sync.Mutex
-	node   map[string]*nodeConn // by node id
-	rr     int                  // round-robin cursor
-	tokens map[string]NodeToken // guarded by mu; replaced by Reload
-	known  map[string]time.Time // model or role → last time a node offered it; guarded by mu
-	wake   chan struct{}        // closed and replaced whenever capacity may have changed
-	queued atomic.Int32
-	start  time.Time
-	use    *usageWriter
-	budget *budgets
-	keys   atomic.Pointer[keyStoreBox]
-	lim    *limiter
+	cfg      Config
+	log      *slog.Logger
+	mu       sync.Mutex
+	node     map[string]*nodeConn // by node id
+	rr       int                  // round-robin cursor
+	tokens   map[string]NodeToken // guarded by mu; replaced by Reload
+	known    map[string]time.Time // model or role → last time a node offered it; guarded by mu
+	wake     chan struct{}        // closed and replaced whenever capacity may have changed
+	queued   atomic.Int32
+	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
+	start    time.Time
+	use      *usageWriter
+	budget   *budgets
+	keys     atomic.Pointer[keyStoreBox]
+	lim      *limiter
 }
 
 // keyStoreBox lets the key store be swapped atomically (Reload, SetKeyStore).
@@ -180,6 +181,13 @@ func (g *Gateway) Reload(cfg Config) {
 	for _, n := range g.node {
 		if t, ok := g.tokens[n.token]; !ok || (t.NodeID != "" && t.NodeID != n.id) || (t.Trust == "trusted") != n.trusted {
 			revoked = append(revoked, n)
+			continue
+		}
+		for tok, other := range g.tokens { // the id is now bound to another token
+			if tok != n.token && other.NodeID == n.id {
+				revoked = append(revoked, n)
+				break
+			}
 		}
 	}
 	g.mu.Unlock()
@@ -385,13 +393,14 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var m protocol.Msg
-		if json.Unmarshal(b, &m) != nil { // skip a bad frame; only a stream of them ends the node
+		if json.Unmarshal(b, &m) != nil { // skip a bad frame; only a run of them ends the node
 			if badFrames++; badFrames > 10 {
 				c.Close(websocket.StatusPolicyViolation, "malformed frames")
 				return
 			}
 			continue
 		}
+		badFrames = 0
 		if m.Type == protocol.TypeChunk && len(m.Data) > maxChunkBytes {
 			c.Close(websocket.StatusPolicyViolation, "chunk too large")
 			return
@@ -422,6 +431,9 @@ type route struct {
 func (rt *route) allows(n *nodeConn) bool {
 	return !rt.exclude[n] && (!rt.trusted || n.trusted) && (rt.operator == "" || n.operator == rt.operator)
 }
+
+// maxBufferedTotal bounds all non-streaming answers held at once.
+const maxBufferedTotal = 64 << 20
 
 // maxChunkBytes bounds one streamed chunk (a token or a few, plus JSON framing). Larger
 // frames are a malicious or broken node; they would let one request pin gigabytes.
@@ -722,9 +734,13 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		rt.trusted = true
 	}
 	red := newRedactor()
-	if rt.operator == "" { // on the user's own nodes, the operator is the user: nothing to hide
+	// Nothing to hide only when the key itself belongs to the operator whose nodes serve it
+	// (not for end users behind a shared front-end key).
+	ownNodes := !info.ForwardUsers && info.OnlyOperator != "" && info.OnlyOperator == info.User
+	if !ownNodes {
 		red.redactBody(body)
 	}
+	red.restoreOn = acct.RestoreSecrets
 	if red.overflow {
 		apiError(w, http.StatusBadRequest, "too many secrets in one request; remove credentials and try again")
 		return
@@ -779,9 +795,9 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
 	// collected) and work. About one token per chunk, with room for role and usage chunks.
 	maxChunks := 2*maxTokens + 256
-	const maxCollected = 16 << 20
+	const maxCollected = 2 << 20 // per non-streaming request; all of them share g.buffered
 	var rest *restorer
-	if red.active() {
+	if red.restoring() {
 		rest = newRestorer(red)
 	}
 
@@ -810,7 +826,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	// relayed counts chunks carrying generated text, as seen by the gateway itself. It meters
 	// requests that end early (the node sends no usage then) and cross-checks node-reported
 	// completion tokens (llama.cpp streams about one token per chunk).
-	relayed := 0
+	relayed, relayedChars := 0, 0
 	record := func(outcome string, u protocol.Usage, estimated bool) {
 		u, clamped := clampUsage(u, len(raw), maxTokens, relayed)
 		u.DurationMs = time.Since(t0).Milliseconds()
@@ -821,7 +837,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		bu := u
 		bu.PromptTokens = min(bu.PromptTokens, len(raw)/3+256)
 		bu.CachedTokens = min(bu.CachedTokens, bu.PromptTokens)
-		bu.CompletionTokens = min(bu.CompletionTokens, 2*relayed+16)
+		bu.CompletionTokens = min(bu.CompletionTokens, relayedChars/2+16) // by characters, not chunks
 		for _, k := range charge {
 			g.budget.add(k, weighted(bu), time.Now())
 		}
@@ -851,6 +867,8 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		return rc.Flush()
 	}
 	chunks, collectedBytes := 0, 0
+	var held int64 // this request's share of g.buffered
+	defer func() { g.buffered.Add(-held) }()
 	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
 	defer stall.Stop()
 	for {
@@ -883,7 +901,13 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 				}
 				chunks++
 				collectedBytes += len(m.Data)
-				if chunks > maxChunks || (!clientStream && collectedBytes > maxCollected) {
+				relayedChars += textLen(m.Data)
+				overGlobal := false
+				if !clientStream {
+					held += int64(len(m.Data))
+					overGlobal = g.buffered.Add(int64(len(m.Data))) > maxBufferedTotal
+				}
+				if chunks > maxChunks || (!clientStream && collectedBytes > maxCollected) || overGlobal {
 					cancelOnNode(n, reqID)
 					partial("failed")
 					g.log.Warn("node sent more output than requested", "node", n.id, "chunks", chunks)
@@ -968,7 +992,7 @@ func weighted(u protocol.Usage) int64 {
 // restoreAnswer puts redacted secrets back into the text of a non-streaming answer (never
 // into tool arguments; see the restore policy in privacy.go).
 func restoreAnswer(a map[string]any, red *redactor) map[string]any {
-	if !red.active() {
+	if !red.restoring() {
 		return a
 	}
 	choices, _ := a["choices"].([]any)
@@ -1084,6 +1108,26 @@ type usageRecord struct {
 	Estimated bool           `json:"estimated,omitempty"`
 	Clamped   bool           `json:"clamped,omitempty"` // node reported implausible usage
 	Usage     protocol.Usage `json:"usage"`             // node-reported, or estimated from relayed chunks
+}
+
+// textLen is the number of generated characters in a streamed chunk (for budget bounds).
+func textLen(chunk []byte) int {
+	var c struct {
+		Choices []struct {
+			Delta struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(chunk, &c) != nil {
+		return 0
+	}
+	n := 0
+	for _, ch := range c.Choices {
+		n += len(ch.Delta.Content) + len(ch.Delta.ReasoningContent)
+	}
+	return n
 }
 
 // hasText reports whether a streamed chunk carries generated text (answer or reasoning).

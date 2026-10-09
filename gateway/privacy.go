@@ -87,12 +87,13 @@ var secretPatterns = []*regexp.Regexp{
 // a model handles them like any other key. Obviously marked placeholders ("[[SECRET_1]]")
 // made the model refuse to repeat or write them (measured 2026-10-09).
 type redactor struct {
-	nonce    string
-	byValue  map[string]string // secret → placeholder
-	byPH     map[string]string // placeholder → secret
-	maxLen   int
-	overflow bool           // more secrets than maxRedactions: the request must not be forwarded
-	re       *regexp.Regexp // matches any placeholder of this request (built lazily)
+	nonce     string
+	byValue   map[string]string // secret → placeholder
+	byPH      map[string]string // placeholder → secret
+	maxLen    int
+	overflow  bool           // more secrets than maxRedactions: the request must not be forwarded
+	restoreOn bool           // KeyInfo.RestoreSecrets: put secrets back into answer text
+	re        *regexp.Regexp // matches any placeholder of this request (built lazily)
 }
 
 // maxRedactions bounds the work per request (a request stuffed with fake keys would otherwise
@@ -106,6 +107,9 @@ func newRedactor() *redactor {
 }
 
 func (r *redactor) active() bool { return len(r.byPH) > 0 }
+
+// restoring reports whether answers need rewriting at all.
+func (r *redactor) restoring() bool { return r.restoreOn && r.active() }
 
 // typePrefixRe matches the fixed marker that names a secret's kind. The placeholder keeps
 // only this marker, never any of the random part.
@@ -150,36 +154,22 @@ func (r *redactor) redactText(s string) string {
 }
 
 // Restore policy. A malicious node can place a placeholder where the client will send it
-// somewhere: a link or image the chat UI loads, or a tool call (curl, an HTTP header). No
-// context check can make tool arguments safe, so placeholders are never restored there. In
-// text, they are restored only while the field has shown nothing URL-like: once a field
-// contains "//", "www.", an HTML entity or a domain with a path, its later placeholders stay.
-// This fails closed: in doubt the user sees the placeholder, never a leaked secret.
-var urlish = regexp.MustCompile(`(?i)//|\\/\\/|www\.|&#|%2f%2f|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/|\?|:\d)`)
+// somewhere: a link or image the chat UI loads, a tool call, or a command written as text.
+// So by default nothing is restored (KeyInfo.RestoreSecrets). For keys that opt in,
+// placeholders are never restored into tool arguments, and in a text field only if the
+// whole field, before and after the placeholder, shows nothing URL-, path-, command- or
+// markup-like. This is a second line of defence, not a guarantee; it fails closed.
+var urlish = regexp.MustCompile(`(?i)[/\\?:%<>{}\[\]` + "`" + `@]|&#|www\.|[a-z0-9-]\.[a-z]{2,}|\d\.\d|[\x{FF0E}\x{3002}\x{FF61}]`)
 
-// restore puts secrets back into a complete text field.
-func (r *redactor) restore(s string) string {
-	out, _, _ := r.restoreText(false, "", s)
-	return out
-}
+// maxHeld bounds the text held back per field while waiting to decide; beyond it the
+// placeholders simply stay.
+const maxHeld = 64 << 10
 
-// tailLen is how much earlier field text is kept to detect URL markers that span chunks.
+// tailLen is how much emitted field text is kept to detect markers that span chunks.
 const tailLen = 300
 
-// restoreText restores placeholders in s, the next part of a text field. seen reports
-// whether URL-like text already appeared earlier in the field, and tail holds the end of
-// the field's earlier text (markers like "//" or a domain can span stream chunks). It returns
-// the restored text and the updated seen and tail.
-func (r *redactor) restoreText(seen bool, tail, s string) (string, bool, string) {
-	keepTail := func(x string) string {
-		if len(x) > tailLen {
-			return x[len(x)-tailLen:]
-		}
-		return x
-	}
-	if !r.active() || !strings.Contains(s, "AISX"+r.nonce) {
-		return s, seen || urlish.MatchString(tail+s), keepTail(tail + s)
-	}
+// matcher returns a regexp that matches this request's placeholders.
+func (r *redactor) matcher() *regexp.Regexp {
 	if r.re == nil {
 		alts := make([]string, 0, len(r.byPH))
 		for ph := range r.byPH {
@@ -187,21 +177,20 @@ func (r *redactor) restoreText(seen bool, tail, s string) (string, bool, string)
 		}
 		r.re = regexp.MustCompile(strings.Join(alts, "|"))
 	}
-	var out strings.Builder
-	last := 0
-	for _, m := range r.re.FindAllStringIndex(s, -1) {
-		seen = seen || urlish.MatchString(keepTail(tail+out.String())+s[last:m[0]])
-		out.WriteString(s[last:m[0]])
-		if seen {
-			out.WriteString(s[m[0]:m[1]])
-		} else {
-			out.WriteString(r.byPH[s[m[0]:m[1]]])
-		}
-		last = m[1]
+	return r.re
+}
+
+// restore puts secrets back into a complete text field, if the field allows it.
+func (r *redactor) restore(s string) string { return r.restoreField(false, "", s) }
+
+// restoreField restores the placeholders in s, the rest of a text field, unless the field
+// (seen: its earlier text already had a marker; tail: the end of its earlier text) has
+// anything URL-like.
+func (r *redactor) restoreField(seen bool, tail, s string) string {
+	if !r.active() || seen || !strings.Contains(s, "AISX"+r.nonce) || urlish.MatchString(tail+s) {
+		return s
 	}
-	seen = seen || urlish.MatchString(keepTail(tail+out.String())+s[last:])
-	out.WriteString(s[last:])
-	return out.String(), seen, keepTail(tail + out.String())
+	return r.matcher().ReplaceAllStringFunc(s, func(ph string) string { return r.byPH[ph] })
 }
 
 // bodyTextFields are the request fields whose strings a node sees.
@@ -300,20 +289,30 @@ func (s *restorer) chunk(raw []byte) []byte {
 	return out
 }
 
-// take appends text to the field's held-back text, restores complete placeholders and
-// returns what can be released now (everything when final).
+// take appends text to the field's held-back text and returns what can be released now.
+// Once a placeholder appears, the rest of the field is held until it ends (or exceeds
+// maxHeld): whether it may be restored depends on what follows it too.
 func (s *restorer) take(key, text string, final bool) string {
 	raw := s.pending[key] + text
-	cut := len(raw)
-	if !final {
-		cut = s.r.partialStart(raw) // hold back a possible placeholder start
-	}
-	s.pending[key] = raw[cut:]
 	if final {
 		delete(s.pending, key)
+		return s.r.restoreField(s.seen[key], s.tail[key], raw)
 	}
-	out, seen, tail := s.r.restoreText(s.seen[key], s.tail[key], raw[:cut])
-	s.seen[key], s.tail[key] = seen, tail
+	cut := s.r.partialStart(raw) // hold back a possible placeholder start
+	if m := s.r.matcher().FindStringIndex(raw); m != nil && m[0] < cut {
+		cut = m[0]
+	}
+	if len(raw)-cut > maxHeld { // give up: release it all with the placeholders
+		s.seen[key], cut = true, len(raw)
+	}
+	s.pending[key] = raw[cut:]
+	out := raw[:cut]
+	s.seen[key] = s.seen[key] || urlish.MatchString(s.tail[key]+out)
+	if tail := s.tail[key] + out; len(tail) > tailLen {
+		s.tail[key] = tail[len(tail)-tailLen:]
+	} else {
+		s.tail[key] = tail
+	}
 	return out
 }
 
@@ -331,8 +330,7 @@ func (s *restorer) flush() []byte {
 			d = map[string]any{}
 			deltas[parts[0]] = d
 		}
-		out, _, _ := s.r.restoreText(s.seen[key], s.tail[key], rest)
-		d[parts[1]] = out
+		d[parts[1]] = s.r.restoreField(s.seen[key], s.tail[key], rest)
 	}
 	s.pending = map[string]string{}
 	var choices []any

@@ -103,9 +103,10 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.jsonl")
 	cfg := gateway.Config{
-		GatewayID:  "test-gw",
-		APIKeys:    map[string]string{"user-key": "alice"},
-		Keys:       map[string]gateway.KeyInfo{"limited-key": {User: "bob", RPM: 2}},
+		GatewayID: "test-gw",
+		APIKeys:   map[string]string{"user-key": "alice"},
+		Keys: map[string]gateway.KeyInfo{"limited-key": {User: "bob", RPM: 2},
+			"restore-key": {User: "carol", RestoreSecrets: true}},
 		NodeTokens: map[string]gateway.NodeToken{"node-token": {Operator: "op1"}},
 		UsageLog:   usage,
 	}
