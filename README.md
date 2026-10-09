@@ -3,12 +3,12 @@
 **Experimental.** Volunteer-run LLM inference in the spirit of BOINC: people contribute
 GPUs, and anyone can run a project server.
 
-| Directory | What | Licence |
-|---|---|---|
-| `node/` | `aisathome-node`: runs next to a local llama-server on a volunteer's machine and connects **outward** to one or more gateways. Linux install in `node/packaging/linux/` | Apache-2.0 |
-| `gateway/` | `aisathome-gateway`: a project server with an OpenAI-compatible API, routing with queueing and failover, metering | AGPL-3.0-or-later |
-| `protocol/` | The gateway ↔ node protocol (`PROTOCOL.md`) and its Go types, importable by other implementations | Apache-2.0 |
-| `e2e/` | End-to-end tests (user → gateway → node → mock engine) | Apache-2.0 |
+| Directory | What |
+|---|---|
+| `node/` | `aisathome-node`: runs next to a local llama-server on a volunteer's machine and connects **outward** to one or more gateways. Linux install in `node/packaging/linux/` |
+| `gateway/` | `aisathome-gateway`: a project server with an OpenAI-compatible API, routing with queueing and failover, metering |
+| `protocol/` | The gateway ↔ node protocol (`PROTOCOL.md`) and its Go types, importable by other implementations |
+| `e2e/` | End-to-end tests (user → gateway → node → mock engine) |
 
 ## Status
 
@@ -25,7 +25,7 @@ curl -H "Authorization: Bearer <api key>" http://localhost:8080/v1/chat/completi
   -d '{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
-## Licences
+## Licence
 
-Each directory carries its own `LICENSE`, and each source file an SPDX header. Full texts
-are also in `LICENSES/`.
+Apache-2.0 (see `LICENSE`). Each source file carries an SPDX header. The name "AIs@home" is
+not licensed with the code.

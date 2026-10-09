@@ -1,7 +1,7 @@
 // Package gateway is the AIs@home project server: an OpenAI-compatible API for users, a
 // registry of nodes connected outward over WebSocket, routing with failover, and metering.
 //
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 package gateway
 
 import (
