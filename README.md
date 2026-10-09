@@ -18,7 +18,8 @@ prompts it serves. The gateway does not store prompts.
 ## Quick start (local)
 
 ```bash
-go build ./node/cmd/aisathome-node ./gateway/cmd/aisathome-gateway
+go build -o aisathome-node ./node/cmd/aisathome-node
+go build -o aisathome-gateway ./gateway/cmd/aisathome-gateway
 ./aisathome-gateway -config gateway.json   # see examples/
 ./aisathome-node -config node.json         # next to llama-server on :8000
 curl -H "Authorization: Bearer <api key>" http://localhost:8080/v1/chat/completions \

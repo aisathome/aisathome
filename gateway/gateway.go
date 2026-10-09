@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -229,14 +230,20 @@ type nodeConn struct {
 // pendingReq is one request in flight on a node. The reader delivers messages on ch; the
 // request handler closes done when it stops listening, so delivery never blocks forever.
 type pendingReq struct {
-	ch   chan protocol.Msg
-	done chan struct{}
+	ch       chan protocol.Msg
+	done     chan struct{}
+	slow     chan struct{} // closed when the client cannot keep up
+	slowOnce sync.Once
 }
 
+// deliver never blocks the node's shared reader: if this request's client is not keeping up,
+// the request is dropped rather than stalling the node's other requests and heartbeats.
 func (p *pendingReq) deliver(m protocol.Msg) {
 	select {
 	case p.ch <- m:
 	case <-p.done:
+	default:
+		p.slowOnce.Do(func() { close(p.slow) })
 	}
 }
 
@@ -660,6 +667,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	if msgs, ok := body["messages"].([]any); body == nil || !ok || len(msgs) == 0 {
+		apiError(w, http.StatusBadRequest, "the body must be a JSON object with a non-empty messages array")
+		return
+	}
 	want, _ := body["model"].(string)
 	clientStream, _ := body["stream"].(bool)
 	if body["max_tokens"] == nil && body["max_completion_tokens"] == nil && g.cfg.DefaultMaxTokens > 0 {
@@ -699,7 +710,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			contextError(w, err.Error())
 			return
 		}
-		g.log.Warn("node failed before output, retrying", "node", n.id, "err", err)
+		g.log.Warn("node failed before output, retrying", "node", n.id, "err", errCategory(err.Error()))
 	}
 	apiError(w, http.StatusBadGateway, "request failed on all available nodes")
 }
@@ -734,7 +745,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		rest = newRestorer(red)
 	}
 
-	p := &pendingReq{ch: make(chan protocol.Msg, 64), done: make(chan struct{})}
+	p := &pendingReq{ch: make(chan protocol.Msg, 256), done: make(chan struct{}), slow: make(chan struct{})}
 	ch := p.ch
 	n.mu.Lock()
 	n.pending[reqID] = p
@@ -777,8 +788,23 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	}
 
 	var sse *bufio.Writer
-	var flusher http.Flusher
 	var collected []json.RawMessage
+	rc := http.NewResponseController(w)
+	// writeSSE sends one event; a client that does not take it within 30 s is treated as gone.
+	writeSSE := func(data []byte) error {
+		if sse == nil {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			sse = bufio.NewWriter(w)
+		}
+		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		fmt.Fprintf(sse, "data: %s\n\n", data)
+		if err := sse.Flush(); err != nil {
+			return err
+		}
+		return rc.Flush()
+	}
 	chunks, collectedBytes := 0, 0
 	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
 	defer stall.Stop()
@@ -793,6 +819,10 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 				sse.Flush()
 			}
 			return started, errors.New("node stalled")
+		case <-p.slow: // the client is not reading; free the node for others
+			cancelOnNode(n, reqID)
+			partial("cancelled")
+			return started, errors.New("client too slow")
 		case <-r.Context().Done(): // client went away: tell the node to stop
 			cancelOnNode(n, reqID)
 			partial("cancelled")
@@ -823,24 +853,18 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 					collected = append(collected, m.Data)
 					continue
 				}
-				if sse == nil {
-					w.Header().Set("Content-Type", "text/event-stream")
-					w.Header().Set("Cache-Control", "no-cache")
-					w.WriteHeader(http.StatusOK)
-					sse = bufio.NewWriter(w)
-					flusher, _ = w.(http.Flusher)
-				}
 				started = true
 				data := []byte(m.Data)
 				if rest != nil {
 					data = rest.chunk(data)
 				}
-				fmt.Fprintf(sse, "data: %s\n\n", data)
-				sse.Flush()
-				if flusher != nil {
-					flusher.Flush()
+				if err := writeSSE(data); err != nil {
+					cancelOnNode(n, reqID)
+					partial("cancelled")
+					return started, err
 				}
 			case protocol.TypeError:
+				m.Error = errCategory(m.Error) // never pass on (or log) free text from a node
 				if started {
 					e := map[string]any{"message": m.Error}
 					if isContextOverflow(m.Error) {
@@ -1083,26 +1107,44 @@ func (u *usageWriter) record(r usageRecord) {
 
 // ---------------------------------------------------------------- helpers
 
+var engineStatusRe = regexp.MustCompile(`engine returned \d{3}`)
+
+// errCategory reduces an error from a node to a fixed category. Node text is untrusted and
+// may quote the prompt (older nodes forward engine response bodies), so it is never logged
+// or passed on as is.
+func errCategory(msg string) string {
+	switch {
+	case isContextOverflow(msg):
+		return "context_length_exceeded"
+	case engineStatusRe.MatchString(msg):
+		return engineStatusRe.FindString(msg)
+	case strings.Contains(msg, "engine unreachable"):
+		return "engine unreachable"
+	case strings.Contains(msg, "engine stalled"):
+		return "engine stalled"
+	case strings.Contains(msg, "ended before the answer was complete"):
+		return "engine stream ended early"
+	case msg == "node disconnected", msg == "node stalled", msg == "client too slow",
+		msg == "node sent more output than requested", msg == "context canceled":
+		return msg
+	}
+	return "node error"
+}
+
 // isContextOverflow recognises llama-server's context errors: before generation (HTTP 400,
 // "exceed_context_size_error") and during it ("Context size has been exceeded").
 func isContextOverflow(msg string) bool {
 	m := strings.ToLower(msg)
-	return strings.Contains(m, "exceed_context_size_error") || strings.Contains(m, "exceeds the available context") ||
+	return strings.Contains(m, "context_length_exceeded") || strings.Contains(m, "exceed_context_size_error") ||
+		strings.Contains(m, "exceeds the available context") ||
 		strings.Contains(m, "context size has been exceeded")
 }
 
 // contextError answers as OpenAI does, so clients can compact and retry.
 func contextError(w http.ResponseWriter, detail string) {
 	writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
-		"message": "the conversation is longer than this node's context; shorten or compact it (" + truncate(detail, 200) + ")",
+		"message": "the conversation is longer than this node's context; shorten or compact it",
 		"type":    "invalid_request_error", "code": "context_length_exceeded"}})
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }
 
 func readMsg(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {

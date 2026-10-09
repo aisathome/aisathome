@@ -290,7 +290,7 @@ func TestErrors(t *testing.T) {
 	}
 	// Unknown models fail at once (404) instead of waiting for capacity.
 	start := time.Now()
-	if resp := r.do(t, "POST", "/v1/chat/completions", "user-key", `{"model":"no-such-model"}`); resp.StatusCode != 404 {
+	if resp := r.do(t, "POST", "/v1/chat/completions", "user-key", `{"model":"no-such-model","messages":[{"role":"user","content":"hi"}]}`); resp.StatusCode != 404 {
 		t.Fatalf("unknown model: got %d", resp.StatusCode)
 	}
 	if time.Since(start) > time.Second {

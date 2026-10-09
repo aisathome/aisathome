@@ -30,8 +30,10 @@ func main() {
 		log.Error("parsing config", "err", err)
 		os.Exit(1)
 	}
-	if cfg.Token == "" {
-		cfg.Token = os.Getenv("AISATHOME_NODE_TOKEN") // keep secrets out of config files if preferred
+	// The environment wins over the config file, so an installer-provided token is never
+	// silently replaced by a token left in an example config.
+	if tok := os.Getenv("AISATHOME_NODE_TOKEN"); tok != "" {
+		cfg.Token = tok
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

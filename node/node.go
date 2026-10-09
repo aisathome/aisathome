@@ -298,11 +298,18 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 	if resp.StatusCode != http.StatusOK {
 		var b bytes.Buffer
 		b.ReadFrom(resp.Body)
-		fail(fmt.Errorf("engine returned %d: %s", resp.StatusCode, truncate(b.String(), 300)))
+		// Only a category goes back: the engine's response body can quote the prompt, and the
+		// gateway must never receive (or log) prompt text in errors.
+		if strings.Contains(b.String(), "exceed_context_size_error") || strings.Contains(b.String(), "exceeds the available context") {
+			fail(errors.New("context_length_exceeded: the request exceeds this node's context"))
+		} else {
+			fail(fmt.Errorf("engine returned %d", resp.StatusCode))
+		}
 		return
 	}
 
 	var u protocol.Usage
+	finished := false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 8<<20)
 	for sc.Scan() {
@@ -316,7 +323,11 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			finished = true
 			break
+		}
+		if strings.Contains(data, `"finish_reason":"`) {
+			finished = true // a completion marker: the stream did not just stop
 		}
 		meterChunk([]byte(data), &u)
 		if err := send(protocol.Msg{Type: protocol.TypeChunk, ReqID: m.ReqID, Data: json.RawMessage(data)}); err != nil {
@@ -332,6 +343,10 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 		return
 	}
 	u.DurationMs = time.Since(t0).Milliseconds()
+	if !finished { // a clean EOF without [DONE] or finish_reason is a truncated answer, not a success
+		fail(errors.New("engine stream ended before the answer was complete"))
+		return
+	}
 	_ = send(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &u})
 }
 
@@ -371,11 +386,4 @@ func read(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {
 		return err
 	}
 	return json.Unmarshal(b, m)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

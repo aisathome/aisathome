@@ -69,7 +69,11 @@ chown aisathome:aisathome "$target"; chmod 0640 "$target"
 
 # 4. Config and token.
 install -d -o root -g aisathome -m 0750 /etc/aisathome-node
-install -o root -g aisathome -m 0640 "$node_config" /etc/aisathome-node/node.json
+# The token lives only in token.env; drop any token from the copied config.
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c.pop("token",None); json.dump(c,sys.stdout,indent=2)' \
+  "$node_config" > /etc/aisathome-node/node.json.new
+install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json
+rm -f /etc/aisathome-node/node.json.new
 umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/token.env; umask 022
 chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env
 
