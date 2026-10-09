@@ -42,6 +42,11 @@ type Config struct {
 	// so one request cannot generate (or think) until a volunteer's context is full.
 	// Default 16384; -1 disables it.
 	DefaultMaxTokens int `json:"default_max_tokens"`
+	// FirstChunkTimeoutSec and IdleTimeoutSec end a request whose node stalls (before the
+	// first chunk, and between chunks); before any output it is retried on another node.
+	// Slightly longer than the node agent's own engine timeouts. Defaults 330 and 150.
+	FirstChunkTimeoutSec int `json:"first_chunk_timeout_seconds"`
+	IdleTimeoutSec       int `json:"idle_timeout_seconds"`
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
 }
@@ -100,6 +105,12 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	if cfg.DefaultMaxTokens == 0 {
 		cfg.DefaultMaxTokens = 16384
+	}
+	if cfg.FirstChunkTimeoutSec == 0 {
+		cfg.FirstChunkTimeoutSec = 330
+	}
+	if cfg.IdleTimeoutSec == 0 {
+		cfg.IdleTimeoutSec = 150
 	}
 	uw, err := newUsageWriter(cfg.UsageLog)
 	if err != nil {
@@ -389,6 +400,11 @@ func (g *Gateway) pickWait(ctx context.Context, want string, exclude map[*nodeCo
 				return nil, "", unknownModel
 			}
 		}
+		// A retry waits only if another connected node serves the model (it is just busy);
+		// otherwise there is nothing to wait for.
+		if len(exclude) > 0 && g.servesNowExcluding(want, exclude) == 0 {
+			return nil, "", timedOut
+		}
 		if !waiting {
 			if int(g.queued.Add(1)) > g.cfg.MaxQueued {
 				g.queued.Add(-1)
@@ -414,11 +430,17 @@ func (g *Gateway) pickWait(ctx context.Context, want string, exclude map[*nodeCo
 }
 
 // servesNow counts connected nodes offering the model or role.
-func (g *Gateway) servesNow(want string) int {
+func (g *Gateway) servesNow(want string) int { return g.servesNowExcluding(want, nil) }
+
+// servesNowExcluding is servesNow without the given connections.
+func (g *Gateway) servesNowExcluding(want string, exclude map[*nodeConn]bool) int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	c := 0
 	for _, n := range g.node {
+		if exclude[n] {
+			continue
+		}
 		for _, m := range n.models {
 			if m.Name == want || contains(m.Roles, want) {
 				c++
@@ -593,8 +615,19 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, n *no
 	var sse *bufio.Writer
 	var flusher http.Flusher
 	var collected []json.RawMessage
+	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
+	defer stall.Stop()
 	for {
 		select {
+		case <-stall.C: // the node went silent (e.g. a hung engine): give up on it
+			_ = n.send(context.Background(), protocol.Msg{Type: protocol.TypeCancel, ReqID: reqID})
+			partial("failed")
+			g.log.Warn("node stalled", "node", n.id, "req", reqID, "started", started)
+			if started {
+				fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": map[string]any{"message": "the node stopped responding"}}))
+				sse.Flush()
+			}
+			return started, errors.New("node stalled")
 		case <-r.Context().Done(): // client went away: tell the node to stop
 			_ = n.send(context.Background(), protocol.Msg{Type: protocol.TypeCancel, ReqID: reqID})
 			partial("cancelled")
@@ -603,6 +636,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, n *no
 			partial("failed")
 			return started, errors.New("node disconnected")
 		case m := <-ch:
+			stall.Reset(time.Duration(g.cfg.IdleTimeoutSec) * time.Second)
 			switch m.Type {
 			case protocol.TypeChunk:
 				if hasText(m.Data) {

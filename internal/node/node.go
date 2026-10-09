@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -35,6 +36,14 @@ type Config struct {
 	Models     []protocol.ModelInfo `json:"models"`
 	// Heartbeat interval; defaults to 10 s.
 	Heartbeat time.Duration `json:"-"`
+	// HealthInterval is how often the engine's /health is checked; after 3 failures in a
+	// row the node leaves the gateway until the engine is healthy again. Default 5 s.
+	HealthInterval time.Duration `json:"-"`
+	// FirstChunkTimeout and IdleTimeout end a request whose engine stalls: before the first
+	// streamed chunk (prefill of a long prompt can take a minute) and between chunks.
+	// Defaults 300 s and 120 s.
+	FirstChunkTimeout time.Duration `json:"-"`
+	IdleTimeout       time.Duration `json:"-"`
 }
 
 // Agent is a running node agent.
@@ -52,6 +61,15 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.Heartbeat == 0 {
 		cfg.Heartbeat = 10 * time.Second
 	}
+	if cfg.HealthInterval == 0 {
+		cfg.HealthInterval = 5 * time.Second
+	}
+	if cfg.FirstChunkTimeout == 0 {
+		cfg.FirstChunkTimeout = 300 * time.Second
+	}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = 120 * time.Second
+	}
 	return &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelFunc{}}
 }
 
@@ -59,6 +77,11 @@ func New(cfg Config, log *slog.Logger) *Agent {
 func (a *Agent) Run(ctx context.Context) error {
 	backoff := time.Second
 	for {
+		// Only offer capacity while the engine answers: a hung engine (e.g. after a CUDA
+		// fault, 2026-10-09) must not keep receiving requests through the gateway.
+		if err := a.waitHealthy(ctx); err != nil {
+			return err
+		}
 		start := time.Now()
 		err := a.session(ctx)
 		if ctx.Err() != nil {
@@ -81,6 +104,42 @@ func (a *Agent) Run(ctx context.Context) error {
 			backoff = min(backoff*2, 15*time.Second)
 		}
 	}
+}
+
+// healthy reports whether the engine answers /health with 200 within 3 s.
+func (a *Agent) healthy(ctx context.Context) bool {
+	hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(hctx, http.MethodGet, strings.TrimRight(a.cfg.Upstream, "/")+"/health", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// waitHealthy blocks until the engine is healthy.
+func (a *Agent) waitHealthy(ctx context.Context) error {
+	logged := false
+	for !a.healthy(ctx) {
+		if !logged {
+			a.log.Warn("engine not healthy; staying away from the gateway until it is", "upstream", a.cfg.Upstream)
+			logged = true
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(a.cfg.HealthInterval):
+		}
+	}
+	if logged {
+		a.log.Info("engine healthy again")
+	}
+	return nil
 }
 
 func (a *Agent) session(ctx context.Context) error {
@@ -115,6 +174,26 @@ func (a *Agent) session(ctx context.Context) error {
 
 	sctx, stop := context.WithCancel(ctx)
 	defer stop()
+	go func() { // engine health: leave the gateway after 3 failed checks in a row
+		fails := 0
+		for {
+			select {
+			case <-sctx.Done():
+				return
+			case <-time.After(a.cfg.HealthInterval):
+			}
+			if a.healthy(sctx) {
+				fails = 0
+				continue
+			}
+			if fails++; fails >= 3 && sctx.Err() == nil {
+				a.log.Error("engine unhealthy, leaving the gateway", "upstream", a.cfg.Upstream)
+				c.Close(websocket.StatusGoingAway, "engine unhealthy")
+				stop()
+				return
+			}
+		}
+	}()
 	go func() { // heartbeats
 		t := time.NewTicker(a.cfg.Heartbeat)
 		defer t.Stop()
@@ -169,6 +248,35 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 	fail := func(err error) {
 		_ = send(protocol.Msg{Type: protocol.TypeError, ReqID: m.ReqID, Error: err.Error()})
 	}
+	// Stall watchdog, running from the start: cancels the request if the engine sends
+	// nothing for too long, before the headers or between chunks.
+	ctx, cancelReq := context.WithCancel(ctx)
+	defer cancelReq()
+	stalled := make(chan struct{})
+	alive := make(chan struct{}, 1)
+	go func() {
+		limit := a.cfg.FirstChunkTimeout
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-alive:
+				limit = a.cfg.IdleTimeout
+			case <-time.After(limit):
+				close(stalled)
+				cancelReq()
+				return
+			}
+		}
+	}()
+	isStalled := func() bool {
+		select {
+		case <-stalled:
+			return true
+		default:
+			return false
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(a.cfg.Upstream, "/")+"/v1/chat/completions", bytes.NewReader(m.Body))
 	if err != nil {
@@ -179,7 +287,11 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 	t0 := time.Now()
 	resp, err := a.client.Do(req)
 	if err != nil {
-		fail(fmt.Errorf("engine unreachable: %w", err))
+		if isStalled() {
+			fail(errors.New("engine stalled: no response within the timeout"))
+		} else {
+			fail(fmt.Errorf("engine unreachable: %w", err))
+		}
 		return
 	}
 	defer resp.Body.Close()
@@ -194,6 +306,10 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 8<<20)
 	for sc.Scan() {
+		select {
+		case alive <- struct{}{}:
+		default:
+		}
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -206,6 +322,10 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 		if err := send(protocol.Msg{Type: protocol.TypeChunk, ReqID: m.ReqID, Data: json.RawMessage(data)}); err != nil {
 			return // gateway gone; the session will reconnect
 		}
+	}
+	if isStalled() {
+		fail(errors.New("engine stalled: no output within the timeout"))
+		return
 	}
 	if err := sc.Err(); err != nil {
 		fail(fmt.Errorf("reading engine stream: %w", err))

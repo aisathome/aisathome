@@ -31,6 +31,9 @@ var failHits atomic.Int32
 // usage chunk and llama.cpp timings. fail makes it return HTTP 500.
 func mockEngine(t *testing.T, fail bool) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if health(w, r) {
+			return
+		}
 		if fail {
 			failHits.Add(1)
 			http.Error(w, "engine broken", http.StatusInternalServerError)
@@ -60,6 +63,9 @@ var engineCur, engineMax atomic.Int32
 
 func slowEngine(t *testing.T, n int, delay time.Duration) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if health(w, r) {
+			return
+		}
 		if c := engineCur.Add(1); c > engineMax.Load() {
 			engineMax.Store(c)
 		}
@@ -123,16 +129,28 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// health answers the engine's /health endpoint; mocks call it first.
+func health(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/health" {
+		return false
+	}
+	w.WriteHeader(http.StatusOK)
+	return true
+}
+
 // startNode runs a node agent until ctx is cancelled.
 func (r *rig) startNode(ctx context.Context, id, token string, engine *httptest.Server, slots int) {
-	a := node.New(node.Config{
-		NodeID:     id,
-		GatewayURL: "ws" + strings.TrimPrefix(r.gw.URL, "http") + "/v1/node/connect",
-		Token:      token,
-		Upstream:   engine.URL,
-		Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: slots, Ctx: 32768}},
-	}, quiet())
-	go a.Run(ctx)
+	r.startNodeCfg(ctx, node.Config{NodeID: id, Token: token, Upstream: engine.URL,
+		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: slots, Ctx: 32768}}})
+}
+
+// startNodeCfg runs a node agent with a custom config (gateway URL filled in).
+func (r *rig) startNodeCfg(ctx context.Context, cfg node.Config) {
+	cfg.GatewayURL = "ws" + strings.TrimPrefix(r.gw.URL, "http") + "/v1/node/connect"
+	if cfg.HealthInterval == 0 {
+		cfg.HealthInterval = 50 * time.Millisecond
+	}
+	go node.New(cfg, quiet()).Run(ctx)
 }
 
 func (r *rig) waitNodes(t *testing.T, n int) {

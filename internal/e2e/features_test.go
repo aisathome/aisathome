@@ -18,6 +18,9 @@ import (
 // captureEngine answers like mockEngine and remembers the last request body.
 func captureEngine(t *testing.T, last *atomic.Value) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if health(w, r) {
+			return
+		}
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
 		last.Store(body)
@@ -51,6 +54,9 @@ func TestDefaultMaxTokens(t *testing.T) {
 // toolEngine streams a tool call whose arguments arrive in pieces, like llama-server.
 func toolEngine(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if health(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, d := range []string{
 			`{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{"}}]}`,
@@ -99,6 +105,9 @@ var overflowHits atomic.Int32
 
 func overflowEngine(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if health(w, r) {
+			return
+		}
 		overflowHits.Add(1)
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprint(w, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":70000,"n_ctx":65536}}`)
