@@ -142,3 +142,18 @@ func TestPIIDetection(t *testing.T) {
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// The placeholder must not reveal any of the secret's random part.
+func TestPlaceholderKeepsOnlyTypeMarker(t *testing.T) {
+	r := newRedactor()
+	for _, s := range []string{"sk-proj-Ab_cdefghijklmnopqrstuvwxyz0123", "ghp_" + strings.Repeat("Q", 36), "AKIAZZZZZZZZZZZZZZZZ"} {
+		ph := r.placeholder(s)
+		rnd := strings.TrimPrefix(s, typePrefix(s))
+		if strings.Contains(ph, rnd[:2]) && !strings.HasPrefix(rnd[:2], "X") {
+			t.Fatalf("placeholder %q reveals part of %q", ph, s)
+		}
+		if !strings.HasPrefix(ph, typePrefix(s)) {
+			t.Fatalf("placeholder %q lost the type marker of %q", ph, s)
+		}
+	}
+}

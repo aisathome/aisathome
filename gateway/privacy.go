@@ -107,14 +107,12 @@ func newRedactor() *redactor {
 
 func (r *redactor) active() bool { return len(r.byPH) > 0 }
 
+// typePrefixRe matches the fixed marker that names a secret's kind. The placeholder keeps
+// only this marker, never any of the random part.
+var typePrefixRe = regexp.MustCompile(`^(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA|ASIA|xox[abprs]-|[sr]k_live_|AIza|hf_|eyJ|ak-|nt-)`)
+
 // typePrefix is the part of a secret that names its kind ("sk-proj-", "ghp_", "AKIA").
-func typePrefix(s string) string {
-	end := min(len(s), 12)
-	if i := strings.LastIndexAny(s[:end], "-_"); i >= 0 {
-		return s[:i+1]
-	}
-	return s[:min(len(s), 4)]
-}
+func typePrefix(s string) string { return typePrefixRe.FindString(s) }
 
 func (r *redactor) placeholder(secret string) string {
 	n := len(r.byPH) + 1
