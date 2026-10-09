@@ -157,3 +157,16 @@ func TestPlaceholderKeepsOnlyTypeMarker(t *testing.T) {
 		}
 	}
 }
+
+// A URL marker split across chunks ("ww" | "w.e") must still block restoring.
+func TestRestoreSeesMarkersAcrossChunks(t *testing.T) {
+	r := newRedactor()
+	r.redactText(fakeKey)
+	ph := r.byValue[fakeKey]
+	if out, _, _ := r.restoreText(false, "go to ww", "w.e "+ph); strings.Contains(out, fakeKey) {
+		t.Fatalf("restored inside a URL split across chunks: %q", out)
+	}
+	if out, _, _ := r.restoreText(false, "the key is", " "+ph); !strings.Contains(out, fakeKey) {
+		t.Fatalf("plain text not restored: %q", out)
+	}
+}
