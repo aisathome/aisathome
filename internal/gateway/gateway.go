@@ -73,6 +73,11 @@ func (t *NodeToken) UnmarshalJSON(b []byte) error {
 // wait for a node instead of failing as unknown.
 const knownFor = 24 * time.Hour
 
+// startupGrace: right after a (re)start the gateway knows no models yet while its nodes
+// reconnect, so while no node is connected, requests for any model wait instead of
+// failing as unknown.
+const startupGrace = 2 * time.Minute
+
 // Gateway routes user requests to connected nodes.
 type Gateway struct {
 	cfg    Config
@@ -84,6 +89,7 @@ type Gateway struct {
 	known  map[string]time.Time // model or role → last time a node offered it; guarded by mu
 	wake   chan struct{}        // closed and replaced whenever capacity may have changed
 	queued atomic.Int32
+	start  time.Time
 	use    *usageWriter
 	keys   atomic.Pointer[keyStoreBox]
 	lim    *limiter
@@ -117,7 +123,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, wake: make(chan struct{}), use: uw, lim: newLimiter()}
+		known: map[string]time.Time{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now()}
 	g.keys.Store(&keyStoreBox{staticKeys(cfg)})
 	return g, nil
 }
@@ -395,7 +401,9 @@ func (g *Gateway) pickWait(ctx context.Context, want string, exclude map[*nodeCo
 		if n, model := g.pick(want, exclude); n != nil {
 			return n, model, ""
 		}
-		if !seen || time.Since(last) > knownFor {
+		// Unknown models fail at once, except just after a restart while no node is back yet.
+		restarting := time.Since(g.start) < startupGrace && g.NodeCount() == 0
+		if (!seen || time.Since(last) > knownFor) && !restarting {
 			if g.servesNow(want) == 0 {
 				return nil, "", unknownModel
 			}

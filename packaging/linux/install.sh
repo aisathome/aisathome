@@ -145,7 +145,7 @@ if curl -fs -m 10 -o /dev/null http://127.0.0.1:8000/health; then rm -f "$state"
 n=$(( $(cat "$state" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state"
 if [ "$n" -ge 3 ]; then
   echo "llama-server unhealthy for $n checks; restarting" | systemd-cat -t aisathome-node-watchdog -p warning
-  rm -f "$state"; systemctl restart aisathome-llama aisathome-node
+  rm -f "$state"; systemctl restart aisathome-llama  # PartOf restarts the agent too
 fi
 WD
 chmod 0755 /usr/local/libexec/aisathome-node-watchdog
@@ -171,7 +171,11 @@ cat > /etc/systemd/system/aisathome-node.service <<UNIT
 Description=AIs@home node agent (outbound connection to the gateway)
 After=network-online.target aisathome-llama.service
 Wants=network-online.target
-BindsTo=aisathome-llama.service
+# PartOf: restarting llama-server restarts the agent too. (BindsTo stopped the agent on a
+# llama restart and never started it again, 2026-10-09.) The agent's own health check
+# handles an engine that is up but hung.
+Requires=aisathome-llama.service
+PartOf=aisathome-llama.service
 
 [Service]
 User=aisathome

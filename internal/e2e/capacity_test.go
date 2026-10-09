@@ -164,3 +164,21 @@ func TestReloadRevokesTokenAndAddsKeys(t *testing.T) {
 		t.Fatalf("new key rejected after reload: %d", resp.StatusCode)
 	}
 }
+
+// Right after a gateway (re)start no node is connected and no model is known yet; a request
+// must wait for the nodes to reconnect instead of failing as "not served".
+func TestFreshGatewayWaitsForFirstNode(t *testing.T) {
+	r := newRigCfg(t, nil)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		ctx, stop := context.WithCancel(context.Background())
+		t.Cleanup(stop)
+		r.startNode(ctx, "late", "node-token", mockEngine(t, false), 2)
+	}()
+	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "Hello") {
+		t.Fatalf("got %d %s, want the request to wait for the first node", resp.StatusCode, b)
+	}
+}
