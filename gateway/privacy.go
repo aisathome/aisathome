@@ -87,11 +87,17 @@ var secretPatterns = []*regexp.Regexp{
 // a model handles them like any other key. Obviously marked placeholders ("[[SECRET_1]]")
 // made the model refuse to repeat or write them (measured 2026-10-09).
 type redactor struct {
-	nonce   string
-	byValue map[string]string // secret → placeholder
-	byPH    map[string]string // placeholder → secret
-	maxLen  int
+	nonce    string
+	byValue  map[string]string // secret → placeholder
+	byPH     map[string]string // placeholder → secret
+	maxLen   int
+	overflow bool           // more secrets than maxRedactions: the request must not be forwarded
+	re       *regexp.Regexp // matches any placeholder of this request (built lazily)
 }
+
+// maxRedactions bounds the work per request (a request stuffed with fake keys would otherwise
+// make every streamed chunk expensive).
+const maxRedactions = 256
 
 func newRedactor() *redactor {
 	b := make([]byte, 2)
@@ -132,6 +138,10 @@ func (r *redactor) redactText(s string) string {
 			if _, isPH := r.byPH[secret]; isPH || strings.Contains(secret, "AISX"+r.nonce) {
 				return secret // already a placeholder (matched again by a later pattern)
 			}
+			if len(r.byPH) >= maxRedactions {
+				r.overflow = true
+				return secret
+			}
 			ph := r.placeholder(secret)
 			r.byValue[secret], r.byPH[ph] = ph, secret
 			r.maxLen = max(r.maxLen, len(ph))
@@ -141,47 +151,85 @@ func (r *redactor) redactText(s string) string {
 	return s
 }
 
-func (r *redactor) restore(s string) string {
+// restore puts secrets back into s, except where a placeholder sits inside a URL, a markdown
+// link target or an HTML tag. There, a malicious node could make the client send the secret
+// to the node operator (an image URL that the chat UI loads, or a curl in a tool call), so
+// the placeholder stays. before is the text already emitted ahead of s (for context).
+func (r *redactor) restore(s string) string { return r.restoreAfter("", s) }
+
+func (r *redactor) restoreAfter(before, s string) string {
 	if !r.active() || !strings.Contains(s, "AISX"+r.nonce) {
 		return s
 	}
-	for ph, v := range r.byPH {
-		s = strings.ReplaceAll(s, ph, v)
+	if r.re == nil {
+		alts := make([]string, 0, len(r.byPH))
+		for ph := range r.byPH {
+			alts = append(alts, regexp.QuoteMeta(ph))
+		}
+		r.re = regexp.MustCompile(strings.Join(alts, "|"))
 	}
-	return s
+	var out strings.Builder
+	last := 0
+	for _, m := range r.re.FindAllStringIndex(s, -1) {
+		out.WriteString(s[last:m[0]])
+		ph := s[m[0]:m[1]]
+		if inLinkContext(before + out.String()) {
+			out.WriteString(ph)
+		} else {
+			out.WriteString(r.byPH[ph])
+		}
+		last = m[1]
+	}
+	out.WriteString(s[last:])
+	return out.String()
 }
 
-// redactBody replaces secrets in every message's text and in earlier tool-call arguments
-// (which may hold restored secrets from previous turns). It modifies body in place.
+// inLinkContext reports whether text ending with ctx is inside a URL, a markdown link target
+// or an HTML tag, i.e. where a client might fetch or send what comes next.
+func inLinkContext(ctx string) bool {
+	if len(ctx) > 512 {
+		ctx = ctx[len(ctx)-512:]
+	}
+	// The current "word": URLs contain no spaces, quotes or brackets, and JSON or code puts
+	// quotes and commas between values ({"url":"https://...","env":"KEY=..."}).
+	tok := ctx[strings.LastIndexAny(ctx, " \t\n\r\"'`<>(){}[],")+1:]
+	if strings.Contains(tok, "://") || strings.HasPrefix(strings.ToLower(strings.TrimLeft(tok, "\"'(<[")), "www.") {
+		return true
+	}
+	if i := strings.LastIndex(ctx, "]("); i >= 0 && !strings.Contains(ctx[i:], ")") {
+		return true
+	}
+	if i := strings.LastIndex(ctx, "<"); i >= 0 && !strings.Contains(ctx[i:], ">") {
+		return true
+	}
+	return false
+}
+
+// redactBody replaces secrets in every string a node will see: all message fields
+// (content, earlier reasoning, tool calls and results), tool definitions, stop sequences and
+// response formats. It modifies body in place.
 func (r *redactor) redactBody(body map[string]any) {
-	msgs, _ := body["messages"].([]any)
-	for _, m := range msgs {
-		mm, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		switch c := mm["content"].(type) {
-		case string:
-			mm["content"] = r.redactText(c)
-		case []any: // content parts: [{"type":"text","text":"..."}, ...]
-			for _, part := range c {
-				if pm, ok := part.(map[string]any); ok {
-					if t, ok := pm["text"].(string); ok {
-						pm["text"] = r.redactText(t)
-					}
-				}
-			}
-		}
-		if calls, ok := mm["tool_calls"].([]any); ok {
-			for _, tc := range calls {
-				if fn, ok := tc.(map[string]any)["function"].(map[string]any); ok {
-					if args, ok := fn["arguments"].(string); ok {
-						fn["arguments"] = r.redactText(args)
-					}
-				}
-			}
+	for _, k := range []string{"messages", "tools", "stop", "response_format"} {
+		if v, ok := body[k]; ok {
+			body[k] = r.redactValue(v)
 		}
 	}
+}
+
+func (r *redactor) redactValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		return r.redactText(x)
+	case []any:
+		for i := range x {
+			x[i] = r.redactValue(x[i])
+		}
+	case map[string]any:
+		for k := range x {
+			x[k] = r.redactValue(x[k])
+		}
+	}
+	return v
 }
 
 // partialStart returns the index from which s ends in what could still become one of this
@@ -204,9 +252,12 @@ func (r *redactor) partialStart(s string) int {
 type restorer struct {
 	r       *redactor
 	pending map[string]string // "choice/field[/tool]" → held-back text
+	tail    map[string]string // the last emitted text per field, for link context
 }
 
-func newRestorer(r *redactor) *restorer { return &restorer{r: r, pending: map[string]string{}} }
+func newRestorer(r *redactor) *restorer {
+	return &restorer{r: r, pending: map[string]string{}, tail: map[string]string{}}
+}
 
 // chunk rewrites one streamed chunk. Unparseable chunks pass through unchanged.
 func (s *restorer) chunk(raw []byte) []byte {
@@ -256,7 +307,7 @@ func (s *restorer) chunk(raw []byte) []byte {
 					ti, _ := strconv.Atoi(strings.TrimPrefix(key, idx+"/tool/"))
 					calls, _ := delta["tool_calls"].([]any)
 					delta["tool_calls"] = append(calls, map[string]any{"index": ti,
-						"function": map[string]any{"arguments": s.r.restore(rest)}})
+						"function": map[string]any{"arguments": s.r.restoreAfter(s.tail[key], rest)}})
 					delete(s.pending, key)
 				}
 			}
@@ -272,14 +323,22 @@ func (s *restorer) chunk(raw []byte) []byte {
 // take appends text to the field's held-back text, restores complete placeholders and
 // returns what can be released now (everything when final).
 func (s *restorer) take(key, text string, final bool) string {
-	t := s.r.restore(s.pending[key] + text)
+	raw := s.pending[key] + text
+	cut := len(raw)
+	if !final {
+		cut = s.r.partialStart(raw) // hold back a possible placeholder start
+	}
+	s.pending[key] = raw[cut:]
 	if final {
 		delete(s.pending, key)
-		return t
 	}
-	cut := s.r.partialStart(t)
-	s.pending[key] = t[cut:]
-	return t[:cut]
+	out := s.r.restoreAfter(s.tail[key], raw[:cut])
+	t := s.tail[key] + out
+	if len(t) > 512 {
+		t = t[len(t)-512:]
+	}
+	s.tail[key] = t
+	return out
 }
 
 // flush returns a chunk carrying all held-back text, or nil (for the end of a stream
@@ -297,11 +356,11 @@ func (s *restorer) flush() []byte {
 			deltas[parts[0]] = d
 		}
 		if len(parts) == 2 {
-			d[parts[1]] = s.r.restore(rest)
+			d[parts[1]] = s.r.restoreAfter(s.tail[key], rest)
 		} else {
 			ti, _ := strconv.Atoi(parts[2])
 			calls, _ := d["tool_calls"].([]any)
-			d["tool_calls"] = append(calls, map[string]any{"index": ti, "function": map[string]any{"arguments": s.r.restore(rest)}})
+			d["tool_calls"] = append(calls, map[string]any{"index": ti, "function": map[string]any{"arguments": s.r.restoreAfter(s.tail[key], rest)}})
 		}
 	}
 	s.pending = map[string]string{}
@@ -355,21 +414,23 @@ func hasPII(body map[string]any) bool {
 }
 
 func eachText(body map[string]any, f func(string)) {
-	msgs, _ := body["messages"].([]any)
-	for _, m := range msgs {
-		mm, _ := m.(map[string]any)
-		switch c := mm["content"].(type) {
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
 		case string:
-			f(c)
+			f(x)
 		case []any:
-			for _, part := range c {
-				if pm, ok := part.(map[string]any); ok {
-					if t, ok := pm["text"].(string); ok {
-						f(t)
-					}
-				}
+			for _, e := range x {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range x {
+				walk(e)
 			}
 		}
+	}
+	for _, k := range []string{"messages", "tools", "stop", "response_format"} {
+		walk(body[k])
 	}
 }
 

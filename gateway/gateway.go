@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,8 @@ type Config struct {
 	QueueTimeoutSec int `json:"queue_timeout_seconds"`
 	// MaxQueued caps the requests waiting at once; more fail at once with 503. Default 64.
 	MaxQueued int `json:"max_queued"`
+	// MaxNodesPerToken caps simultaneous node connections per node token. Default 8.
+	MaxNodesPerToken int `json:"max_nodes_per_token"`
 	// DefaultMaxTokens is applied when a request sets no max_tokens/max_completion_tokens,
 	// so one request cannot generate (or think) until a volunteer's context is full.
 	// Default 16384; -1 disables it.
@@ -113,6 +116,9 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	if cfg.MaxQueued == 0 {
 		cfg.MaxQueued = 64
+	}
+	if cfg.MaxNodesPerToken == 0 {
+		cfg.MaxNodesPerToken = 8
 	}
 	if cfg.DefaultMaxTokens == 0 {
 		cfg.DefaultMaxTokens = 16384
@@ -271,8 +277,15 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var hello protocol.Msg
-	if err := readMsg(ctx, c, &hello); err != nil || hello.Type != protocol.TypeHello || hello.NodeID == "" {
+	hctx, hcancel := context.WithTimeout(ctx, 10*time.Second) // a silent connection must not linger
+	err = readMsg(hctx, c, &hello)
+	hcancel()
+	if err != nil || hello.Type != protocol.TypeHello {
 		c.Close(websocket.StatusPolicyViolation, "expected hello")
+		return
+	}
+	if reason := validHello(hello); reason != "" {
+		c.Close(websocket.StatusPolicyViolation, reason)
 		return
 	}
 	if major(hello.Protocol) != major(protocol.Version) {
@@ -289,11 +302,27 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	if old := g.node[n.id]; old != nil { // reconnect replaces the stale connection
+	old := g.node[n.id]
+	if old != nil && old.token != token { // only the node's own token may replace it
+		g.mu.Unlock()
+		c.Close(websocket.StatusPolicyViolation, "node id is in use")
+		return
+	}
+	if old == nil && g.connectionsLocked(token) >= g.cfg.MaxNodesPerToken {
+		g.mu.Unlock()
+		c.Close(websocket.StatusPolicyViolation, "too many nodes for this token")
+		return
+	}
+	if old != nil { // reconnect replaces the stale connection
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}
 	g.node[n.id] = n
 	now := time.Now()
+	for name, last := range g.known { // forget models nobody has offered for a long time
+		if now.Sub(last) > knownFor {
+			delete(g.known, name)
+		}
+	}
 	for _, m := range n.models {
 		g.known[m.Name] = now
 		for _, role := range m.Roles {
@@ -358,6 +387,38 @@ func (rt *route) allows(n *nodeConn) bool {
 	return !rt.exclude[n] && (!rt.trusted || n.trusted) && (rt.operator == "" || n.operator == rt.operator)
 }
 
+// connectionsLocked counts connected nodes using token. Caller holds g.mu.
+func (g *Gateway) connectionsLocked(token string) int {
+	c := 0
+	for _, n := range g.node {
+		if n.token == token {
+			c++
+		}
+	}
+	return c
+}
+
+// validHello bounds what a node may announce, so one node cannot bloat routing state.
+func validHello(h protocol.Msg) string {
+	if h.NodeID == "" || len(h.NodeID) > 64 {
+		return "node id must be 1-64 characters"
+	}
+	if len(h.Models) == 0 || len(h.Models) > 16 {
+		return "a node announces 1-16 models"
+	}
+	for _, m := range h.Models {
+		if m.Name == "" || len(m.Name) > 128 || len(m.Roles) > 8 || m.Slots < 1 || m.Slots > 64 || m.Ctx < 0 {
+			return "invalid model announcement"
+		}
+		for _, r := range m.Roles {
+			if r == "" || len(r) > 32 {
+				return "invalid role"
+			}
+		}
+	}
+	return ""
+}
+
 // pick chooses an allowed node serving the requested model or role that has a free slot,
 // round-robin. It returns the node and the local model name to request.
 func (g *Gateway) pick(rt *route) (*nodeConn, string) {
@@ -367,7 +428,7 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 	for id := range g.node {
 		ids = append(ids, id)
 	}
-	sortStrings(ids)
+	sort.Strings(ids)
 	for i := 0; i < len(ids); i++ {
 		n := g.node[ids[(g.rr+i)%len(ids)]]
 		if !rt.allows(n) {
@@ -613,6 +674,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	red := newRedactor()
 	red.redactBody(body)
+	if red.overflow {
+		apiError(w, http.StatusBadRequest, "too many secrets in one request; remove credentials and try again")
+		return
+	}
 
 	deadline := time.Now().Add(time.Duration(g.cfg.QueueTimeoutSec) * time.Second)
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
@@ -649,6 +714,21 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	nb["stream"] = true
 	nb["stream_options"] = map[string]any{"include_usage": true}
 	raw, _ := json.Marshal(nb)
+	maxTokens := g.cfg.DefaultMaxTokens
+	for _, k := range []string{"max_tokens", "max_completion_tokens"} {
+		if v, ok := nb[k].(float64); ok && v > 0 {
+			maxTokens = int(v)
+		} else if v, ok := nb[k].(int); ok && v > 0 {
+			maxTokens = v
+		}
+	}
+	if maxTokens <= 0 {
+		maxTokens = 16384
+	}
+	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
+	// collected) and work. About one token per chunk, with room for role and usage chunks.
+	maxChunks := 2*maxTokens + 256
+	const maxCollected = 16 << 20
 	var rest *restorer
 	if red.active() {
 		rest = newRestorer(red)
@@ -669,7 +749,10 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	}()
 
 	t0 := time.Now()
-	if err := n.send(r.Context(), protocol.Msg{Type: protocol.TypeRequest, ReqID: reqID, Body: raw}); err != nil {
+	sctx, scancel := context.WithTimeout(r.Context(), 15*time.Second)
+	err = n.send(sctx, protocol.Msg{Type: protocol.TypeRequest, ReqID: reqID, Body: raw})
+	scancel()
+	if err != nil {
 		return false, err
 	}
 
@@ -678,10 +761,11 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	// completion tokens (llama.cpp streams about one token per chunk).
 	relayed := 0
 	record := func(outcome string, u protocol.Usage, estimated bool) {
+		u, clamped := clampUsage(u, len(raw), maxTokens, relayed)
 		u.DurationMs = time.Since(t0).Milliseconds()
 		g.use.record(usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
 			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
-			Estimated: estimated})
+			Estimated: estimated, Clamped: clamped})
 		for _, k := range charge {
 			g.budget.add(k, weighted(u), time.Now())
 		}
@@ -695,12 +779,13 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	var sse *bufio.Writer
 	var flusher http.Flusher
 	var collected []json.RawMessage
+	chunks, collectedBytes := 0, 0
 	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
 	defer stall.Stop()
 	for {
 		select {
 		case <-stall.C: // the node went silent (e.g. a hung engine): give up on it
-			_ = n.send(context.Background(), protocol.Msg{Type: protocol.TypeCancel, ReqID: reqID})
+			cancelOnNode(n, reqID)
 			partial("failed")
 			g.log.Warn("node stalled", "node", n.id, "req", reqID, "started", started)
 			if started {
@@ -709,7 +794,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 			}
 			return started, errors.New("node stalled")
 		case <-r.Context().Done(): // client went away: tell the node to stop
-			_ = n.send(context.Background(), protocol.Msg{Type: protocol.TypeCancel, ReqID: reqID})
+			cancelOnNode(n, reqID)
 			partial("cancelled")
 			return started, r.Context().Err()
 		case <-n.closed:
@@ -721,6 +806,18 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 			case protocol.TypeChunk:
 				if hasText(m.Data) {
 					relayed++
+				}
+				chunks++
+				collectedBytes += len(m.Data)
+				if chunks > maxChunks || (!clientStream && collectedBytes > maxCollected) {
+					cancelOnNode(n, reqID)
+					partial("failed")
+					g.log.Warn("node sent more output than requested", "node", n.id, "chunks", chunks)
+					if started {
+						fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": map[string]any{"message": "the node sent more output than requested"}}))
+						sse.Flush()
+					}
+					return started, errors.New("node sent more output than requested")
 				}
 				if !clientStream {
 					collected = append(collected, m.Data)
@@ -783,6 +880,24 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	}
 }
 
+// cancelOnNode tells a node to stop a request, without waiting long on a stuck connection.
+func cancelOnNode(n *nodeConn, reqID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = n.send(ctx, protocol.Msg{Type: protocol.TypeCancel, ReqID: reqID})
+}
+
+// clampUsage bounds node-reported usage to what is plausible for the request: nodes are
+// untrusted, and inflated numbers would exhaust shared budgets (or inflate credit).
+// promptBytes is the size of the request sent to the node; tokens are never more than bytes.
+func clampUsage(u protocol.Usage, promptBytes, maxTokens, relayed int) (protocol.Usage, bool) {
+	orig := u
+	u.PromptTokens = min(max(u.PromptTokens, 0), promptBytes+4096)
+	u.CachedTokens = min(max(u.CachedTokens, 0), u.PromptTokens)
+	u.CompletionTokens = min(max(u.CompletionTokens, 0), maxTokens, 8*relayed+64)
+	return u, u != orig
+}
+
 // weighted is the cost of a request for budgets and credit: new prompt tokens count fully,
 // cached prompt tokens a tenth (they cost the node little), generated tokens fully.
 func weighted(u protocol.Usage) int64 {
@@ -790,22 +905,30 @@ func weighted(u protocol.Usage) int64 {
 	return int64(u.PromptTokens-cached) + int64(cached/10) + int64(u.CompletionTokens)
 }
 
-// restoreAnswer puts redacted secrets back into a non-streaming answer.
+// restoreAnswer puts redacted secrets back into a non-streaming answer (not inside links).
 func restoreAnswer(a map[string]any, red *redactor) map[string]any {
 	if !red.active() {
 		return a
 	}
-	for _, c := range a["choices"].([]any) {
-		msg := c.(map[string]any)["message"].(map[string]any)
+	choices, _ := a["choices"].([]any)
+	for _, c := range choices {
+		cm, _ := c.(map[string]any)
+		msg, _ := cm["message"].(map[string]any)
+		if msg == nil {
+			continue
+		}
 		for _, f := range []string{"content", "reasoning_content"} {
 			if s, ok := msg[f].(string); ok {
 				msg[f] = red.restore(s)
 			}
 		}
-		if calls, ok := msg["tool_calls"].([]any); ok {
-			for _, tc := range calls {
-				fn := tc.(map[string]any)["function"].(map[string]any)
-				fn["arguments"] = red.restore(fn["arguments"].(string))
+		calls, _ := msg["tool_calls"].([]any)
+		for _, tc := range calls {
+			tm, _ := tc.(map[string]any)
+			if fn, ok := tm["function"].(map[string]any); ok {
+				if args, ok := fn["arguments"].(string); ok {
+					fn["arguments"] = red.restore(args)
+				}
 			}
 		}
 	}
@@ -907,7 +1030,8 @@ type usageRecord struct {
 	Outcome   string         `json:"outcome"`        // ok, cancelled (client left) or failed
 	Relayed   int            `json:"relayed_chunks"` // text chunks the gateway relayed itself
 	Estimated bool           `json:"estimated,omitempty"`
-	Usage     protocol.Usage `json:"usage"` // node-reported, or estimated from relayed chunks
+	Clamped   bool           `json:"clamped,omitempty"` // node reported implausible usage
+	Usage     protocol.Usage `json:"usage"`             // node-reported, or estimated from relayed chunks
 }
 
 // hasText reports whether a streamed chunk carries generated text (answer or reasoning).
@@ -1016,12 +1140,4 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func sortStrings(xs []string) {
-	for i := 1; i < len(xs); i++ {
-		for j := i; j > 0 && xs[j] < xs[j-1]; j-- {
-			xs[j], xs[j-1] = xs[j-1], xs[j]
-		}
-	}
 }
