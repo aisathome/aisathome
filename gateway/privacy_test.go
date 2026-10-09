@@ -41,7 +41,8 @@ func TestRedactAndRestore(t *testing.T) {
 	}}
 	r.redactBody(body)
 	b, _ := json.Marshal(body)
-	if strings.Contains(string(b), fakeKey) || strings.Contains(string(b), "BEGIN OPENSSH") {
+	// the armour lines stay (the model should recognise the format), the key material goes
+	if strings.Contains(string(b), fakeKey) || strings.Contains(string(b), `\nabc\n`) {
 		t.Fatalf("secret left in node body: %s", b)
 	}
 	if len(r.byPH) != 2 {

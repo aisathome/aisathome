@@ -82,23 +82,46 @@ var secretPatterns = []*regexp.Regexp{
 
 // redactor replaces secrets with per-request placeholders and restores them. Its mapping
 // lives only in memory for one request and is never logged or sent to a node.
+//
+// Placeholders keep the secret's format ("sk-proj-AISX7f3a01XXXX..." for "sk-proj-AbCd..."):
+// a model handles them like any other key. Obviously marked placeholders ("[[SECRET_1]]")
+// made the model refuse to repeat or write them (measured 2026-10-09).
 type redactor struct {
 	nonce   string
 	byValue map[string]string // secret → placeholder
 	byPH    map[string]string // placeholder → secret
-	re      *regexp.Regexp    // matches this request's placeholders
-	prefix  string            // "[[SECRET_<nonce>_"
+	maxLen  int
 }
 
 func newRedactor() *redactor {
-	b := make([]byte, 3)
+	b := make([]byte, 2)
 	rand.Read(b)
-	nonce := hex.EncodeToString(b)
-	return &redactor{nonce: nonce, byValue: map[string]string{}, byPH: map[string]string{},
-		re: regexp.MustCompile(`\[\[SECRET_` + nonce + `_\d+\]\]`), prefix: "[[SECRET_" + nonce + "_"}
+	return &redactor{nonce: hex.EncodeToString(b), byValue: map[string]string{}, byPH: map[string]string{}}
 }
 
 func (r *redactor) active() bool { return len(r.byPH) > 0 }
+
+// typePrefix is the part of a secret that names its kind ("sk-proj-", "ghp_", "AKIA").
+func typePrefix(s string) string {
+	end := min(len(s), 12)
+	if i := strings.LastIndexAny(s[:end], "-_"); i >= 0 {
+		return s[:i+1]
+	}
+	return s[:min(len(s), 4)]
+}
+
+func (r *redactor) placeholder(secret string) string {
+	n := len(r.byPH) + 1
+	if strings.HasPrefix(secret, "-----BEGIN") { // private key block: keep the armour lines
+		lines := strings.Split(secret, "\n")
+		return lines[0] + "\n" + fmt.Sprintf("AISX%s%02dREDACTEDKEY", r.nonce, n) + "\n" + lines[len(lines)-1]
+	}
+	ph := typePrefix(secret) + fmt.Sprintf("AISX%s%02d", r.nonce, n)
+	if pad := len(secret) - len(ph); pad > 0 {
+		ph += strings.Repeat("X", pad)
+	}
+	return ph
+}
 
 func (r *redactor) redactText(s string) string {
 	for _, p := range secretPatterns {
@@ -106,8 +129,12 @@ func (r *redactor) redactText(s string) string {
 			if ph, ok := r.byValue[secret]; ok {
 				return ph
 			}
-			ph := fmt.Sprintf("%s%d]]", r.prefix, len(r.byValue)+1)
+			if _, isPH := r.byPH[secret]; isPH || strings.Contains(secret, "AISX"+r.nonce) {
+				return secret // already a placeholder (matched again by a later pattern)
+			}
+			ph := r.placeholder(secret)
 			r.byValue[secret], r.byPH[ph] = ph, secret
+			r.maxLen = max(r.maxLen, len(ph))
 			return ph
 		})
 	}
@@ -115,15 +142,13 @@ func (r *redactor) redactText(s string) string {
 }
 
 func (r *redactor) restore(s string) string {
-	if !r.active() || !strings.Contains(s, "[[SECRET_") {
+	if !r.active() || !strings.Contains(s, "AISX"+r.nonce) {
 		return s
 	}
-	return r.re.ReplaceAllStringFunc(s, func(ph string) string {
-		if v, ok := r.byPH[ph]; ok {
-			return v
-		}
-		return ph
-	})
+	for ph, v := range r.byPH {
+		s = strings.ReplaceAll(s, ph, v)
+	}
+	return s
 }
 
 // redactBody replaces secrets in every message's text and in earlier tool-call arguments
@@ -162,37 +187,15 @@ func (r *redactor) redactBody(body map[string]any) {
 // partialStart returns the index from which s ends in what could still become one of this
 // request's placeholders (so it must be held back until the next chunk), or len(s).
 func (r *redactor) partialStart(s string) int {
-	maxLen := len(r.prefix) + 12
-	start := len(s) - maxLen
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i < len(s); i++ {
-		if s[i] == '[' && r.couldBePlaceholder(s[i:]) {
-			return i
+	for i := max(0, len(s)-r.maxLen+1); i < len(s); i++ {
+		t := s[i:]
+		for ph := range r.byPH {
+			if len(t) < len(ph) && strings.HasPrefix(ph, t) {
+				return i
+			}
 		}
 	}
 	return len(s)
-}
-
-// couldBePlaceholder reports whether t is a proper prefix of some placeholder.
-func (r *redactor) couldBePlaceholder(t string) bool {
-	if len(t) <= len(r.prefix) {
-		return strings.HasPrefix(r.prefix, t)
-	}
-	if !strings.HasPrefix(t, r.prefix) {
-		return false
-	}
-	rest := t[len(r.prefix):]
-	if strings.HasSuffix(rest, "]]") {
-		return false // complete: restore() handles it
-	}
-	for _, c := range strings.TrimSuffix(rest, "]") {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // restorer restores placeholders in a stream of chat.completion.chunk objects. A
