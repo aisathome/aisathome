@@ -100,7 +100,7 @@ func TestRestorerSplitPlaceholders(t *testing.T) {
 		if gotText.String() != want {
 			t.Fatalf("size %d: text\n got %q\nwant %q", size, gotText.String(), want)
 		}
-		if gotArgs.String() != strings.ReplaceAll(args, ph, fakeKey) {
+		if gotArgs.String() != args { // tool arguments pass through with the placeholder
 			t.Fatalf("size %d: args %q", size, gotArgs.String())
 		}
 	}

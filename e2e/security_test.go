@@ -121,8 +121,8 @@ func TestNoSecretRestoreIntoLinks(t *testing.T) {
 		if strings.Count(text, secret) != 1 || !strings.Contains(text, "plain: "+secret) {
 			t.Fatalf("stream=%v: the secret must be restored exactly once, in plain text:\n%s", stream, text)
 		}
-		if strings.Count(args, secret) != 1 || !strings.Contains(args, "OPENAI_API_KEY="+secret) {
-			t.Fatalf("stream=%v: the secret must be restored only in the .env value, not in the curl URL:\n%s", stream, args)
+		if strings.Contains(args, secret) {
+			t.Fatalf("stream=%v: secrets are never restored into tool arguments:\n%s", stream, args)
 		}
 	}
 }

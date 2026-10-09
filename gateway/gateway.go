@@ -47,6 +47,8 @@ type Config struct {
 	// so one request cannot generate (or think) until a volunteer's context is full.
 	// Default 16384; -1 disables it.
 	DefaultMaxTokens int `json:"default_max_tokens"`
+	// MaxMaxTokens caps what a client may request. Default 32768.
+	MaxMaxTokens int `json:"max_max_tokens"`
 	// FirstChunkTimeoutSec and IdleTimeoutSec end a request whose node stalls (before the
 	// first chunk, and between chunks); before any output it is retried on another node.
 	// Slightly longer than the node agent's own engine timeouts. Defaults 330 and 150.
@@ -123,6 +125,9 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	if cfg.DefaultMaxTokens == 0 {
 		cfg.DefaultMaxTokens = 16384
+	}
+	if cfg.MaxMaxTokens == 0 {
+		cfg.MaxMaxTokens = 32768
 	}
 	if cfg.FirstChunkTimeoutSec == 0 {
 		cfg.FirstChunkTimeoutSec = 330
@@ -303,6 +308,18 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "this node token belongs to another node id")
 		return
 	}
+	g.mu.Lock()
+	reserved := false
+	for t, other := range g.tokens { // an id bound to another token cannot be squatted
+		if t != token && other.NodeID == hello.NodeID {
+			reserved = true
+		}
+	}
+	g.mu.Unlock()
+	if reserved {
+		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
+		return
+	}
 	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", models: hello.Models, conn: c,
 		pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
 	if err := n.send(ctx, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: g.cfg.GatewayID, Protocol: protocol.Version}); err != nil {
@@ -359,12 +376,24 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		g.log.Info("node disconnected", "node", n.id)
 	}()
 
+	badFrames := 0
 	for {
 		rctx, cancel := context.WithTimeout(ctx, g.cfg.HeartbeatTimeout)
-		var m protocol.Msg
-		err := readMsg(rctx, c, &m)
+		_, b, err := c.Read(rctx)
 		cancel()
 		if err != nil {
+			return
+		}
+		var m protocol.Msg
+		if json.Unmarshal(b, &m) != nil { // skip a bad frame; only a stream of them ends the node
+			if badFrames++; badFrames > 10 {
+				c.Close(websocket.StatusPolicyViolation, "malformed frames")
+				return
+			}
+			continue
+		}
+		if m.Type == protocol.TypeChunk && len(m.Data) > maxChunkBytes {
+			c.Close(websocket.StatusPolicyViolation, "chunk too large")
 			return
 		}
 		n.mu.Lock()
@@ -393,6 +422,10 @@ type route struct {
 func (rt *route) allows(n *nodeConn) bool {
 	return !rt.exclude[n] && (!rt.trusted || n.trusted) && (rt.operator == "" || n.operator == rt.operator)
 }
+
+// maxChunkBytes bounds one streamed chunk (a token or a few, plus JSON framing). Larger
+// frames are a malicious or broken node; they would let one request pin gigabytes.
+const maxChunkBytes = 64 << 10
 
 // connectionsLocked counts connected nodes using token. Caller holds g.mu.
 func (g *Gateway) connectionsLocked(token string) int {
@@ -676,6 +709,11 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	if body["max_tokens"] == nil && body["max_completion_tokens"] == nil && g.cfg.DefaultMaxTokens > 0 {
 		body["max_tokens"] = g.cfg.DefaultMaxTokens
 	}
+	for _, k := range []string{"max_tokens", "max_completion_tokens"} { // bounds node output and memory
+		if v, ok := body[k].(float64); ok && v > float64(g.cfg.MaxMaxTokens) {
+			body[k] = g.cfg.MaxMaxTokens
+		}
+	}
 	// Privacy: personal data goes only to trusted nodes; secrets never reach a node at all
 	// (replaced by placeholders, restored in the answer).
 	rt := &route{want: want, trusted: acct.MinTrust == "trusted", operator: acct.OnlyOperator,
@@ -684,7 +722,9 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		rt.trusted = true
 	}
 	red := newRedactor()
-	red.redactBody(body)
+	if rt.operator == "" { // on the user's own nodes, the operator is the user: nothing to hide
+		red.redactBody(body)
+	}
 	if red.overflow {
 		apiError(w, http.StatusBadRequest, "too many secrets in one request; remove credentials and try again")
 		return
@@ -745,7 +785,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		rest = newRestorer(red)
 	}
 
-	p := &pendingReq{ch: make(chan protocol.Msg, 256), done: make(chan struct{}), slow: make(chan struct{})}
+	p := &pendingReq{ch: make(chan protocol.Msg, 64), done: make(chan struct{}), slow: make(chan struct{})}
 	ch := p.ch
 	n.mu.Lock()
 	n.pending[reqID] = p
@@ -777,8 +817,13 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		g.use.record(usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
 			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
 			Estimated: estimated, Clamped: clamped})
+		// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
+		bu := u
+		bu.PromptTokens = min(bu.PromptTokens, len(raw)/3+256)
+		bu.CachedTokens = min(bu.CachedTokens, bu.PromptTokens)
+		bu.CompletionTokens = min(bu.CompletionTokens, 2*relayed+16)
 		for _, k := range charge {
-			g.budget.add(k, weighted(u), time.Now())
+			g.budget.add(k, weighted(bu), time.Now())
 		}
 	}
 	partial := func(outcome string) {
@@ -815,8 +860,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 			partial("failed")
 			g.log.Warn("node stalled", "node", n.id, "req", reqID, "started", started)
 			if started {
-				fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": map[string]any{"message": "the node stopped responding"}}))
-				sse.Flush()
+				writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the node stopped responding"}}))
 			}
 			return started, errors.New("node stalled")
 		case <-p.slow: // the client is not reading; free the node for others
@@ -844,8 +888,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 					partial("failed")
 					g.log.Warn("node sent more output than requested", "node", n.id, "chunks", chunks)
 					if started {
-						fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": map[string]any{"message": "the node sent more output than requested"}}))
-						sse.Flush()
+						writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the node sent more output than requested"}}))
 					}
 					return started, errors.New("node sent more output than requested")
 				}
@@ -870,8 +913,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 					if isContextOverflow(m.Error) {
 						e["type"], e["code"] = "invalid_request_error", "context_length_exceeded"
 					}
-					fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": e}))
-					sse.Flush()
+					writeSSE(mustJSON(map[string]any{"error": e}))
 				}
 				partial("failed")
 				return started, errors.New(m.Error)
@@ -882,19 +924,13 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 				}
 				record("ok", u, false)
 				u.DurationMs = time.Since(t0).Milliseconds()
-				if clientStream {
-					if sse == nil { // empty stream: still answer properly
-						w.Header().Set("Content-Type", "text/event-stream")
-						w.WriteHeader(http.StatusOK)
-						sse = bufio.NewWriter(w)
-					}
+				if clientStream { // writeSSE also answers an empty stream properly
 					if rest != nil {
 						if f := rest.flush(); f != nil {
-							fmt.Fprintf(sse, "data: %s\n\n", f)
+							writeSSE(f)
 						}
 					}
-					fmt.Fprint(sse, "data: [DONE]\n\n")
-					sse.Flush()
+					writeSSE([]byte("[DONE]"))
 				} else {
 					writeJSON(w, http.StatusOK, restoreAnswer(assemble(reqID, model, collected, u), red))
 				}
@@ -929,7 +965,8 @@ func weighted(u protocol.Usage) int64 {
 	return int64(u.PromptTokens-cached) + int64(cached/10) + int64(u.CompletionTokens)
 }
 
-// restoreAnswer puts redacted secrets back into a non-streaming answer (not inside links).
+// restoreAnswer puts redacted secrets back into the text of a non-streaming answer (never
+// into tool arguments; see the restore policy in privacy.go).
 func restoreAnswer(a map[string]any, red *redactor) map[string]any {
 	if !red.active() {
 		return a
@@ -944,15 +981,6 @@ func restoreAnswer(a map[string]any, red *redactor) map[string]any {
 		for _, f := range []string{"content", "reasoning_content"} {
 			if s, ok := msg[f].(string); ok {
 				msg[f] = red.restore(s)
-			}
-		}
-		calls, _ := msg["tool_calls"].([]any)
-		for _, tc := range calls {
-			tm, _ := tc.(map[string]any)
-			if fn, ok := tm["function"].(map[string]any); ok {
-				if args, ok := fn["arguments"].(string); ok {
-					fn["arguments"] = red.restore(args)
-				}
 			}
 		}
 	}

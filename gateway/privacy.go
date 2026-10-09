@@ -149,15 +149,36 @@ func (r *redactor) redactText(s string) string {
 	return s
 }
 
-// restore puts secrets back into s, except where a placeholder sits inside a URL, a markdown
-// link target or an HTML tag. There, a malicious node could make the client send the secret
-// to the node operator (an image URL that the chat UI loads, or a curl in a tool call), so
-// the placeholder stays. before is the text already emitted ahead of s (for context).
-func (r *redactor) restore(s string) string { return r.restoreAfter("", s) }
+// Restore policy. A malicious node can place a placeholder where the client will send it
+// somewhere: a link or image the chat UI loads, or a tool call (curl, an HTTP header). No
+// context check can make tool arguments safe, so placeholders are never restored there. In
+// text, they are restored only while the field has shown nothing URL-like: once a field
+// contains "//", "www.", an HTML entity or a domain with a path, its later placeholders stay.
+// This fails closed: in doubt the user sees the placeholder, never a leaked secret.
+var urlish = regexp.MustCompile(`(?i)//|\\/\\/|www\.|&#|%2f%2f|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/|\?|:\d)`)
 
-func (r *redactor) restoreAfter(before, s string) string {
+// restore puts secrets back into a complete text field.
+func (r *redactor) restore(s string) string {
+	out, _, _ := r.restoreText(false, "", s)
+	return out
+}
+
+// tailLen is how much earlier field text is kept to detect URL markers that span chunks.
+const tailLen = 300
+
+// restoreText restores placeholders in s, the next part of a text field. seen reports
+// whether URL-like text already appeared earlier in the field, and tail holds the end of
+// the field's earlier text (markers like "//" or a domain can span stream chunks). It returns
+// the restored text and the updated seen and tail.
+func (r *redactor) restoreText(seen bool, tail, s string) (string, bool, string) {
+	keepTail := func(x string) string {
+		if len(x) > tailLen {
+			return x[len(x)-tailLen:]
+		}
+		return x
+	}
 	if !r.active() || !strings.Contains(s, "AISX"+r.nonce) {
-		return s
+		return s, seen || urlish.MatchString(tail+s), keepTail(tail + s)
 	}
 	if r.re == nil {
 		alts := make([]string, 0, len(r.byPH))
@@ -169,45 +190,28 @@ func (r *redactor) restoreAfter(before, s string) string {
 	var out strings.Builder
 	last := 0
 	for _, m := range r.re.FindAllStringIndex(s, -1) {
+		seen = seen || urlish.MatchString(keepTail(tail+out.String())+s[last:m[0]])
 		out.WriteString(s[last:m[0]])
-		ph := s[m[0]:m[1]]
-		if inLinkContext(before + out.String()) {
-			out.WriteString(ph)
+		if seen {
+			out.WriteString(s[m[0]:m[1]])
 		} else {
-			out.WriteString(r.byPH[ph])
+			out.WriteString(r.byPH[s[m[0]:m[1]]])
 		}
 		last = m[1]
 	}
+	seen = seen || urlish.MatchString(keepTail(tail+out.String())+s[last:])
 	out.WriteString(s[last:])
-	return out.String()
+	return out.String(), seen, keepTail(tail + out.String())
 }
 
-// inLinkContext reports whether text ending with ctx is inside a URL, a markdown link target
-// or an HTML tag, i.e. where a client might fetch or send what comes next.
-func inLinkContext(ctx string) bool {
-	if len(ctx) > 512 {
-		ctx = ctx[len(ctx)-512:]
-	}
-	// The current "word": URLs contain no spaces, quotes or brackets, and JSON or code puts
-	// quotes and commas between values ({"url":"https://...","env":"KEY=..."}).
-	tok := ctx[strings.LastIndexAny(ctx, " \t\n\r\"'`<>(){}[],")+1:]
-	if strings.Contains(tok, "://") || strings.HasPrefix(strings.ToLower(strings.TrimLeft(tok, "\"'(<[")), "www.") {
-		return true
-	}
-	if i := strings.LastIndex(ctx, "]("); i >= 0 && !strings.Contains(ctx[i:], ")") {
-		return true
-	}
-	if i := strings.LastIndex(ctx, "<"); i >= 0 && !strings.Contains(ctx[i:], ">") {
-		return true
-	}
-	return false
-}
+// bodyTextFields are the request fields whose strings a node sees.
+var bodyTextFields = []string{"messages", "tools", "stop", "response_format", "grammar", "json_schema", "chat_template_kwargs"}
 
 // redactBody replaces secrets in every string a node will see: all message fields
 // (content, earlier reasoning, tool calls and results), tool definitions, stop sequences and
 // response formats. It modifies body in place.
 func (r *redactor) redactBody(body map[string]any) {
-	for _, k := range []string{"messages", "tools", "stop", "response_format"} {
+	for _, k := range bodyTextFields {
 		if v, ok := body[k]; ok {
 			body[k] = r.redactValue(v)
 		}
@@ -244,17 +248,18 @@ func (r *redactor) partialStart(s string) int {
 	return len(s)
 }
 
-// restorer restores placeholders in a stream of chat.completion.chunk objects. A
-// placeholder can be split across chunks, so text that may be the start of one is held
-// back per field until it is complete or the stream ends.
+// restorer restores placeholders in a stream of chat.completion.chunk objects (text fields
+// only). A placeholder can be split across chunks, so text that may be the start of one is
+// held back per field until it is complete or the stream ends.
 type restorer struct {
 	r       *redactor
-	pending map[string]string // "choice/field[/tool]" → held-back text
-	tail    map[string]string // the last emitted text per field, for link context
+	pending map[string]string // "choice/field" → held-back text
+	seen    map[string]bool   // URL-like text has appeared in the field
+	tail    map[string]string // end of the field's emitted text
 }
 
 func newRestorer(r *redactor) *restorer {
-	return &restorer{r: r, pending: map[string]string{}, tail: map[string]string{}}
+	return &restorer{r: r, pending: map[string]string{}, seen: map[string]bool{}, tail: map[string]string{}}
 }
 
 // chunk rewrites one streamed chunk. Unparseable chunks pass through unchanged.
@@ -287,29 +292,6 @@ func (s *restorer) chunk(raw []byte) []byte {
 				}
 			}
 		}
-		if calls, ok := delta["tool_calls"].([]any); ok {
-			for _, tc := range calls {
-				tm, _ := tc.(map[string]any)
-				fn, _ := tm["function"].(map[string]any)
-				if fn == nil {
-					continue
-				}
-				if args, ok := fn["arguments"].(string); ok {
-					fn["arguments"] = s.take(idx+"/tool/"+fmt.Sprint(tm["index"]), args, final)
-				}
-			}
-		}
-		if final { // flush tool arguments that are still held back
-			for key, rest := range s.pending {
-				if strings.HasPrefix(key, idx+"/tool/") && rest != "" {
-					ti, _ := strconv.Atoi(strings.TrimPrefix(key, idx+"/tool/"))
-					calls, _ := delta["tool_calls"].([]any)
-					delta["tool_calls"] = append(calls, map[string]any{"index": ti,
-						"function": map[string]any{"arguments": s.r.restoreAfter(s.tail[key], rest)}})
-					delete(s.pending, key)
-				}
-			}
-		}
 	}
 	out, err := json.Marshal(c)
 	if err != nil {
@@ -330,12 +312,8 @@ func (s *restorer) take(key, text string, final bool) string {
 	if final {
 		delete(s.pending, key)
 	}
-	out := s.r.restoreAfter(s.tail[key], raw[:cut])
-	t := s.tail[key] + out
-	if len(t) > 512 {
-		t = t[len(t)-512:]
-	}
-	s.tail[key] = t
+	out, seen, tail := s.r.restoreText(s.seen[key], s.tail[key], raw[:cut])
+	s.seen[key], s.tail[key] = seen, tail
 	return out
 }
 
@@ -347,19 +325,14 @@ func (s *restorer) flush() []byte {
 	}
 	deltas := map[string]map[string]any{}
 	for key, rest := range s.pending {
-		parts := strings.SplitN(key, "/", 3)
+		parts := strings.SplitN(key, "/", 2)
 		d := deltas[parts[0]]
 		if d == nil {
 			d = map[string]any{}
 			deltas[parts[0]] = d
 		}
-		if len(parts) == 2 {
-			d[parts[1]] = s.r.restoreAfter(s.tail[key], rest)
-		} else {
-			ti, _ := strconv.Atoi(parts[2])
-			calls, _ := d["tool_calls"].([]any)
-			d["tool_calls"] = append(calls, map[string]any{"index": ti, "function": map[string]any{"arguments": s.r.restoreAfter(s.tail[key], rest)}})
-		}
+		out, _, _ := s.r.restoreText(s.seen[key], s.tail[key], rest)
+		d[parts[1]] = out
 	}
 	s.pending = map[string]string{}
 	var choices []any
@@ -427,7 +400,7 @@ func eachText(body map[string]any, f func(string)) {
 			}
 		}
 	}
-	for _, k := range []string{"messages", "tools", "stop", "response_format"} {
+	for _, k := range bodyTextFields {
 		walk(body[k])
 	}
 }

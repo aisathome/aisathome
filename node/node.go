@@ -154,7 +154,10 @@ func (a *Agent) session(ctx context.Context) error {
 
 	var wmu sync.Mutex
 	send := func(m protocol.Msg) error {
-		b, _ := json.Marshal(m)
+		b, err := json.Marshal(m)
+		if err != nil { // never put an empty frame on the wire
+			return err
+		}
 		wmu.Lock()
 		defer wmu.Unlock()
 		wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -322,6 +325,9 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 			continue
 		}
 		data := strings.TrimPrefix(line, "data: ")
+		if data != "[DONE]" && !json.Valid([]byte(data)) {
+			continue // e.g. the half line left when a cancel cuts the engine's stream
+		}
 		if data == "[DONE]" {
 			finished = true
 			break

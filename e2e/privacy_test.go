@@ -126,8 +126,12 @@ func TestSecretsNeverReachNodeOrLogs(t *testing.T) {
 			args.WriteString(out.Choices[0].Message.ToolCalls[0].Function.Arguments)
 		}
 		resp.Body.Close()
-		if text.String() != prompt || args.String() != `{"text":"`+prompt+`"}` {
-			t.Fatalf("stream=%v: user must get the real secret back:\n text %q\n args %q", stream, text.String(), args.String())
+		// Text gets the real secret back; tool arguments keep the placeholder (restore policy).
+		if text.String() != prompt {
+			t.Fatalf("stream=%v: user must get the real secret back in text: %q", stream, text.String())
+		}
+		if strings.Contains(args.String(), secret) || !strings.Contains(args.String(), "sk-proj-AISX") {
+			t.Fatalf("stream=%v: tool arguments must keep the placeholder: %q", stream, args.String())
 		}
 	}
 	mu.Lock()
