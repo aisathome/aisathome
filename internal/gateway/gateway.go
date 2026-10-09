@@ -38,6 +38,10 @@ type Config struct {
 	QueueTimeoutSec int `json:"queue_timeout_seconds"`
 	// MaxQueued caps the requests waiting at once; more fail at once with 503. Default 64.
 	MaxQueued int `json:"max_queued"`
+	// DefaultMaxTokens is applied when a request sets no max_tokens/max_completion_tokens,
+	// so one request cannot generate (or think) until a volunteer's context is full.
+	// Default 16384; -1 disables it.
+	DefaultMaxTokens int `json:"default_max_tokens"`
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
 }
@@ -93,6 +97,9 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	if cfg.MaxQueued == 0 {
 		cfg.MaxQueued = 64
+	}
+	if cfg.DefaultMaxTokens == 0 {
+		cfg.DefaultMaxTokens = 16384
 	}
 	uw, err := newUsageWriter(cfg.UsageLog)
 	if err != nil {
@@ -460,20 +467,30 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusUnauthorized, "invalid API key")
 		return
 	}
-	seen := map[string]bool{}
-	var data []map[string]any
+	// One entry per model or role, with the largest context any connected node offers for
+	// it (clients such as opencode size their compaction from context_length).
+	var ids []string
+	ctx := map[string]int{}
 	g.mu.Lock()
 	for _, n := range g.node {
 		for _, m := range n.models {
 			for _, id := range append([]string{m.Name}, m.Roles...) {
-				if !seen[id] {
-					seen[id] = true
-					data = append(data, map[string]any{"id": id, "object": "model", "owned_by": "AIs@home"})
+				if _, ok := ctx[id]; !ok {
+					ids = append(ids, id)
 				}
+				ctx[id] = max(ctx[id], m.Ctx)
 			}
 		}
 	}
 	g.mu.Unlock()
+	data := []map[string]any{}
+	for _, id := range ids {
+		e := map[string]any{"id": id, "object": "model", "owned_by": "AIs@home"}
+		if ctx[id] > 0 {
+			e["context_length"] = ctx[id]
+		}
+		data = append(data, e)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
@@ -498,6 +515,9 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	want, _ := body["model"].(string)
 	clientStream, _ := body["stream"].(bool)
+	if body["max_tokens"] == nil && body["max_completion_tokens"] == nil && g.cfg.DefaultMaxTokens > 0 {
+		body["max_tokens"] = g.cfg.DefaultMaxTokens
+	}
 
 	deadline := time.Now().Add(time.Duration(g.cfg.QueueTimeoutSec) * time.Second)
 	tried := map[*nodeConn]bool{}
@@ -515,6 +535,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		started, err := g.run(w, r, user, n, model, want, body, clientStream)
 		if err == nil || started {
 			return // success, or failure after output began: the client sees the error
+		}
+		if isContextOverflow(err.Error()) { // the request itself is too large: no retry
+			contextError(w, err.Error())
+			return
 		}
 		g.log.Warn("node failed before output, retrying", "node", n.id, "err", err)
 	}
@@ -603,7 +627,11 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, n *no
 				}
 			case protocol.TypeError:
 				if started {
-					fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": map[string]any{"message": m.Error}}))
+					e := map[string]any{"message": m.Error}
+					if isContextOverflow(m.Error) {
+						e["type"], e["code"] = "invalid_request_error", "context_length_exceeded"
+					}
+					fmt.Fprintf(sse, "data: %s\n\n", mustJSON(map[string]any{"error": e}))
 					sse.Flush()
 				}
 				partial("failed")
@@ -636,12 +664,26 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, n *no
 func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage) map[string]any {
 	var content, reasoning strings.Builder
 	finish := "stop"
+	type call struct {
+		id, typ, name string
+		args          strings.Builder
+	}
+	var calls []*call // by stream index; arguments arrive in pieces
 	for _, c := range chunks {
 		var ch struct {
 			Choices []struct {
 				Delta struct {
 					Content          string `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
+					ToolCalls        []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
@@ -652,6 +694,25 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage) map[
 		for _, choice := range ch.Choices {
 			content.WriteString(choice.Delta.Content)
 			reasoning.WriteString(choice.Delta.ReasoningContent)
+			for _, tc := range choice.Delta.ToolCalls {
+				if tc.Index < 0 || tc.Index > 255 {
+					continue
+				}
+				for len(calls) <= tc.Index {
+					calls = append(calls, &call{typ: "function"})
+				}
+				k := calls[tc.Index]
+				if tc.ID != "" {
+					k.id = tc.ID
+				}
+				if tc.Type != "" {
+					k.typ = tc.Type
+				}
+				if tc.Function.Name != "" {
+					k.name = tc.Function.Name
+				}
+				k.args.WriteString(tc.Function.Arguments)
+			}
 			if choice.FinishReason != nil {
 				finish = *choice.FinishReason
 			}
@@ -660,6 +721,17 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage) map[
 	msg := map[string]any{"role": "assistant", "content": content.String()}
 	if reasoning.Len() > 0 {
 		msg["reasoning_content"] = reasoning.String()
+	}
+	if len(calls) > 0 {
+		var tcs []any
+		for _, k := range calls {
+			tcs = append(tcs, map[string]any{"id": k.id, "type": k.typ,
+				"function": map[string]any{"name": k.name, "arguments": k.args.String()}})
+		}
+		msg["tool_calls"] = tcs
+		if content.Len() == 0 {
+			msg["content"] = nil // as OpenAI returns it for pure tool calls
+		}
 	}
 	return map[string]any{
 		"id": "chatcmpl-" + id, "object": "chat.completion", "created": time.Now().Unix(), "model": model,
@@ -734,6 +806,28 @@ func (u *usageWriter) record(r usageRecord) {
 }
 
 // ---------------------------------------------------------------- helpers
+
+// isContextOverflow recognises llama-server's context errors: before generation (HTTP 400,
+// "exceed_context_size_error") and during it ("Context size has been exceeded").
+func isContextOverflow(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "exceed_context_size_error") || strings.Contains(m, "exceeds the available context") ||
+		strings.Contains(m, "context size has been exceeded")
+}
+
+// contextError answers as OpenAI does, so clients can compact and retry.
+func contextError(w http.ResponseWriter, detail string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+		"message": "the conversation is longer than this node's context; shorten or compact it (" + truncate(detail, 200) + ")",
+		"type":    "invalid_request_error", "code": "context_length_exceeded"}})
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
 
 func readMsg(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {
 	_, b, err := c.Read(ctx)

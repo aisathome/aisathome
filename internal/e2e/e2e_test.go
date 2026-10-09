@@ -130,7 +130,7 @@ func (r *rig) startNode(ctx context.Context, id, token string, engine *httptest.
 		GatewayURL: "ws" + strings.TrimPrefix(r.gw.URL, "http") + "/v1/node/connect",
 		Token:      token,
 		Upstream:   engine.URL,
-		Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: slots}},
+		Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: slots, Ctx: 32768}},
 	}, quiet())
 	go a.Run(ctx)
 }

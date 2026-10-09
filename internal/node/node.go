@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -66,14 +67,18 @@ func (a *Agent) Run(ctx context.Context) error {
 		if time.Since(start) > time.Minute {
 			backoff = time.Second // the session was healthy; start over
 		}
-		a.log.Warn("disconnected from gateway, reconnecting", "err", err, "in", backoff)
+		// Jitter (±20%) so many nodes do not reconnect in lockstep after a gateway restart.
+		wait := time.Duration(float64(backoff) * (0.8 + 0.4*rand.Float64()))
+		a.log.Warn("disconnected from gateway, reconnecting", "err", err, "in", wait)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
-		if backoff < time.Minute {
-			backoff *= 2
+		// Capped at 15 s: after an outage a node is back within seconds of the gateway
+		// (a 1-minute cap kept nodes away for up to a minute on 2026-10-08).
+		if backoff < 15*time.Second {
+			backoff = min(backoff*2, 15*time.Second)
 		}
 	}
 }
