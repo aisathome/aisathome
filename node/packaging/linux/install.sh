@@ -26,6 +26,10 @@ ctx_per_slot="${CTX_PER_SLOT:-32768}" slots="${SLOTS:-2}" alias="${MODEL_ALIAS:-
 # Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
 # the context; after the budget the model is told to answer.
 reasoning_budget="${REASONING_BUDGET:-8192}"
+# KV cache type: q8_0 (default) or q4_0 (half the context memory; measured 2026-10-09: no
+# needle-test loss up to 60k, mean KLD 2x q8). See bench/kvquant in the research repo.
+kv_type="${KV_TYPE:-q8_0}"
+case "$kv_type" in q8_0|q4_0|f16) ;; *) echo "KV_TYPE must be q8_0, q4_0 or f16" >&2; exit 2 ;; esac
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
@@ -119,7 +123,7 @@ ExecStart=/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
   --reasoning-budget $reasoning_budget \\
   --reasoning-budget-message "(Thinking budget reached; answering now.)" --no-reasoning-preserve \\
-  -ctk q8_0 -ctv q8_0 --cache-prompt --metrics
+  -ctk $kv_type -ctv $kv_type --cache-prompt --metrics
 Restart=on-failure
 RestartSec=5
 # A hung CUDA process may ignore SIGTERM: kill it quickly instead of waiting 90 s.
