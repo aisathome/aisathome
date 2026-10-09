@@ -106,6 +106,10 @@ Requires=aisathome-gpu-init.service
 User=aisathome
 Group=aisathome
 Environment=LD_LIBRARY_PATH=/opt/aisathome-node/lib
+# On a crash, ggml forks a debugger to print a backtrace; inside this sandbox that can hang
+# the process instead of ending it (CUDA MMU fault, 2026-10-09). Exit at once so systemd
+# restarts it.
+Environment=GGML_NO_BACKTRACE=1
 # GPU access. The sandbox's device allowlist (implied by ProtectClock=) would otherwise
 # block the GPU, and CUDA would silently fall back to the CPU.
 DeviceAllow=char-nvidia-frontend rw
@@ -118,11 +122,48 @@ ExecStart=/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   -ctk q8_0 -ctv q8_0 --cache-prompt --metrics
 Restart=on-failure
 RestartSec=5
+# A hung CUDA process may ignore SIGTERM: kill it quickly instead of waiting 90 s.
+TimeoutStopSec=20
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 $sandbox
 
 [Install]
 WantedBy=multi-user.target
+UNIT
+
+# Watchdog: restart llama-server if /health has failed for 3 checks in a row (one a minute),
+# for hangs that do not end the process. Skips the first 5 minutes after a start (loading).
+install -d -m 0755 /usr/local/libexec
+cat > /usr/local/libexec/aisathome-node-watchdog <<'WD'
+#!/bin/sh
+state=/run/aisathome-node-watchdog.fails
+systemctl is-active -q aisathome-llama || { rm -f "$state"; exit 0; }
+since=$(systemctl show -p ActiveEnterTimestampMonotonic --value aisathome-llama)
+now=$(cut -d' ' -f1 /proc/uptime | cut -d. -f1)
+[ $((now - since / 1000000)) -lt 300 ] && exit 0
+if curl -fs -m 10 -o /dev/null http://127.0.0.1:8000/health; then rm -f "$state"; exit 0; fi
+n=$(( $(cat "$state" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state"
+if [ "$n" -ge 3 ]; then
+  echo "llama-server unhealthy for $n checks; restarting" | systemd-cat -t aisathome-node-watchdog -p warning
+  rm -f "$state"; systemctl restart aisathome-llama aisathome-node
+fi
+WD
+chmod 0755 /usr/local/libexec/aisathome-node-watchdog
+cat > /etc/systemd/system/aisathome-node-watchdog.service <<UNIT
+[Unit]
+Description=AIs@home node: restart a hung llama-server
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/aisathome-node-watchdog
+UNIT
+cat > /etc/systemd/system/aisathome-node-watchdog.timer <<UNIT
+[Unit]
+Description=AIs@home node: check llama-server health every minute
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target
 UNIT
 
 cat > /etc/systemd/system/aisathome-node.service <<UNIT
@@ -147,6 +188,7 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
+systemctl enable --now aisathome-node-watchdog.timer
 if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
 started="$(date '+%Y-%m-%d %H:%M:%S')"
 systemctl restart aisathome-llama
