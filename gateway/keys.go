@@ -12,8 +12,35 @@ import (
 // (accounts, billing, websites) belongs to the operator's own services, outside the gateway.
 type KeyInfo struct {
 	User          string `json:"user"`
-	RPM           int    `json:"rpm,omitempty"`        // requests per minute; 0 = unlimited
-	MaxConcurrent int    `json:"concurrent,omitempty"` // requests in flight; 0 = unlimited
+	RPM           int    `json:"rpm,omitempty"`            // requests per minute; 0 = unlimited
+	MaxConcurrent int    `json:"concurrent,omitempty"`     // requests in flight; 0 = unlimited
+	TokensPerDay  int    `json:"tokens_per_day,omitempty"` // weighted tokens per UTC day; 0 = unlimited
+	// MinTrust "trusted" sends this key's requests only to nodes whose token is trusted
+	// (user chats should not reach unknown volunteers).
+	MinTrust string `json:"min_trust,omitempty"`
+	// OnlyOperator restricts this key to nodes of one operator ("use only my own nodes").
+	OnlyOperator string `json:"only_operator,omitempty"`
+	// ForwardUsers marks a trusted front end (Open WebUI): its X-OpenWebUI-User-Id header
+	// identifies the end user, who then gets UserLimits. Ignored for all other keys.
+	ForwardUsers bool        `json:"forward_users,omitempty"`
+	UserLimits   *UserLimits `json:"user_limits,omitempty"`
+}
+
+// UserLimits apply to each end user behind a ForwardUsers key.
+type UserLimits struct {
+	RPM           int `json:"rpm,omitempty"`
+	MaxConcurrent int `json:"concurrent,omitempty"`
+	TokensPerDay  int `json:"tokens_per_day,omitempty"`
+}
+
+// forUser is the account of one end user behind a ForwardUsers key. The user id is the
+// front end's pseudonymous id; names and email addresses are never used.
+func (k KeyInfo) forUser(uid string) KeyInfo {
+	u := KeyInfo{User: k.User + "/" + uid, MinTrust: k.MinTrust, OnlyOperator: k.OnlyOperator}
+	if k.UserLimits != nil {
+		u.RPM, u.MaxConcurrent, u.TokensPerDay = k.UserLimits.RPM, k.UserLimits.MaxConcurrent, k.UserLimits.TokensPerDay
+	}
+	return u
 }
 
 // KeyStore resolves API keys. Operators plug in their own (static file, HTTP call to an
@@ -77,4 +104,45 @@ func (l *limiter) acquire(key string, k KeyInfo, now time.Time) (release func(),
 		b.inFlight--
 		l.mu.Unlock()
 	}, ""
+}
+
+// budgets track weighted tokens per key and UTC day (in memory; a restart resets the day).
+type budgets struct {
+	mu   sync.Mutex
+	used map[string]*dayUse
+}
+
+type dayUse struct {
+	day string
+	n   int64
+}
+
+func newBudgets() *budgets { return &budgets{used: map[string]*dayUse{}} }
+
+// over reports whether key has used its daily limit, and the seconds until it resets.
+func (b *budgets) over(key string, limit int, now time.Time) (int, bool) {
+	if limit <= 0 {
+		return 0, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	u := b.used[key]
+	day := now.UTC().Format("2006-01-02")
+	if u == nil || u.day != day || u.n < int64(limit) {
+		return 0, false
+	}
+	next := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	return int(next.Sub(now).Seconds()) + 1, true
+}
+
+func (b *budgets) add(key string, n int64, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	day := now.UTC().Format("2006-01-02")
+	u := b.used[key]
+	if u == nil || u.day != day {
+		u = &dayUse{day: day}
+		b.used[key] = u
+	}
+	u.n += n
 }

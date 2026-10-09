@@ -29,6 +29,9 @@ reasoning_budget="${REASONING_BUDGET:-8192}"
 # KV cache type: q8_0 (default) or q4_0 (half the context memory; measured 2026-10-09: no
 # needle-test loss up to 60k, mean KLD 2x q8). See bench/kvquant in the research repo.
 kv_type="${KV_TYPE:-q8_0}"
+# Host-RAM prompt cache in MiB (llama-server --cache-ram; default there 8192, 0 = off). It
+# bounds how much conversation data stays warm in RAM; llama-server has no idle-time limit.
+cache_ram="${CACHE_RAM_MIB:-2048}"
 case "$kv_type" in q8_0|q4_0|f16) ;; *) echo "KV_TYPE must be q8_0, q4_0 or f16" >&2; exit 2 ;; esac
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,7 +74,11 @@ umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/tok
 chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env
 
 # 5. systemd units. Shared sandbox: no access to /home, read-only system, no privileges.
-sandbox='NoNewPrivileges=yes
+# Prompts must not reach disk: no core dumps (a dump holds prompts from RAM) and no swap
+# (MemorySwapMax needs cgroup v2; systemd ignores it on v1).
+sandbox='LimitCORE=0
+MemorySwapMax=0
+NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
@@ -123,7 +130,7 @@ ExecStart=/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
   --reasoning-budget $reasoning_budget \\
   --reasoning-budget-message "(Thinking budget reached; answering now.)" --no-reasoning-preserve \\
-  -ctk $kv_type -ctv $kv_type --cache-prompt --metrics
+  -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics
 Restart=on-failure
 RestartSec=5
 # A hung CUDA process may ignore SIGTERM: kill it quickly instead of waiting 90 s.

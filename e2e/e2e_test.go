@@ -127,7 +127,13 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 	return r
 }
 
-func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+// logSink receives all gateway and node logs (debug level); tests that check for leaks
+// swap in a buffer.
+var logSink io.Writer = io.Discard
+
+func quiet() *slog.Logger {
+	return slog.New(slog.NewTextHandler(logSink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
 
 // health answers the engine's /health endpoint; mocks call it first.
 func health(w http.ResponseWriter, r *http.Request) bool {
