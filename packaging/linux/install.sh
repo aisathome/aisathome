@@ -166,6 +166,35 @@ OnUnitActiveSec=1min
 WantedBy=timers.target
 UNIT
 
+# Suspend: GPU memory is usually not preserved across suspend (NVIDIA default
+# PreserveVideoMemoryAllocations=0), so a llama-server running through a suspend uses lost
+# memory after resume (Xid 31 MMU fault and a broken CUDA state, 2026-10-09). Stop it before
+# sleeping and start it again after resume, but only if it was running.
+cat > /usr/local/libexec/aisathome-node-sleep <<'SL'
+#!/bin/sh
+mark=/run/aisathome-node-was-running
+case "$1" in
+  pre)  if systemctl is-active -q aisathome-llama; then touch "$mark"; systemctl stop aisathome-llama; fi ;;
+  post) if [ -e "$mark" ]; then rm -f "$mark"; systemctl start aisathome-llama aisathome-node; fi ;;
+esac
+SL
+chmod 0755 /usr/local/libexec/aisathome-node-sleep
+cat > /etc/systemd/system/aisathome-node-sleep.service <<UNIT
+[Unit]
+Description=AIs@home node: stop before suspend, restart after resume
+Before=sleep.target
+StopWhenUnneeded=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/aisathome-node-sleep pre
+ExecStop=/usr/local/libexec/aisathome-node-sleep post
+
+[Install]
+WantedBy=sleep.target
+UNIT
+
 cat > /etc/systemd/system/aisathome-node.service <<UNIT
 [Unit]
 Description=AIs@home node agent (outbound connection to the gateway)
@@ -193,6 +222,7 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable --now aisathome-node-watchdog.timer
+systemctl enable aisathome-node-sleep.service
 if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
 started="$(date '+%Y-%m-%d %H:%M:%S')"
 systemctl restart aisathome-llama
