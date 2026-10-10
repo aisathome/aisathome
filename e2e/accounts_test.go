@@ -194,7 +194,7 @@ func TestWaitlistAndCap(t *testing.T) {
 	if _, page := a.get(t, "/account", s3); !strings.Contains(page, "waitlist") || !strings.Contains(page, "<strong>2</strong>") {
 		t.Fatalf("third account should be second in line: %s", page)
 	}
-	if resp, _ := a.get(t, "/account/auth", s2); resp.StatusCode != http.StatusFound {
+	if resp, _ := a.get(t, "/account/auth", s2); resp.StatusCode == http.StatusOK {
 		t.Fatal("a waitlisted account reached the chat")
 	}
 	// The operator raises the limit (CLI edits the file); the oldest waiting account gets in.
@@ -221,8 +221,14 @@ func TestForwardAuthHeaders(t *testing.T) {
 		r2.Header.Get("X-Auth-Email") != "gh-2@users.invalid" || r2.Header.Get("X-Auth-Role") != "user" {
 		t.Fatalf("headers: %v / %v", r1.Header, r2.Header)
 	}
-	if r, _ := a.get(t, "/account/auth", ""); r.StatusCode != http.StatusFound ||
-		!strings.Contains(r.Header.Get("Location"), "/account?next=chat") {
+	req, _ := http.NewRequest("GET", a.gw.URL+"/account/auth", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate") // a page load is sent to sign in
+	r, err := noRedirect.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusFound || !strings.Contains(r.Header.Get("Location"), "/account?next=chat") {
 		t.Fatalf("no session: %d %s", r.StatusCode, r.Header.Get("Location"))
 	}
 }
@@ -468,5 +474,40 @@ func TestSessionNonCanonicalSpellingRejected(t *testing.T) {
 	}
 	if r, _ := a.get(t, "/account/auth", s); r.StatusCode != http.StatusOK {
 		t.Fatal("the real session was refused")
+	}
+}
+
+// Without a session, page loads go to sign-in but the chat app's own calls get 401: a redirect
+// there made Open WebUI reload itself in a loop (staging, 2026-10-10).
+func TestForwardAuthNavigationVersusFetch(t *testing.T) {
+	a := newAcctRig(t, 100, nil)
+	ask := func(mode, accept string) *http.Response {
+		req, _ := http.NewRequest("GET", a.gw.URL+"/account/auth", nil)
+		if mode != "" {
+			req.Header.Set("Sec-Fetch-Mode", mode)
+		}
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	if r := ask("navigate", "text/html"); r.StatusCode != http.StatusFound {
+		t.Fatalf("page load: %d, want a redirect to sign-in", r.StatusCode)
+	}
+	if r := ask("", "text/html,application/xhtml+xml"); r.StatusCode != http.StatusFound {
+		t.Fatalf("page load without Sec-Fetch headers: %d", r.StatusCode)
+	}
+	for _, mode := range []string{"cors", "same-origin", "websocket"} {
+		if r := ask(mode, "application/json"); r.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("fetch (%s): %d, want 401", mode, r.StatusCode)
+		}
+	}
+	if r := ask("", "application/json"); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("fetch without Sec-Fetch headers: %d, want 401", r.StatusCode)
 	}
 }

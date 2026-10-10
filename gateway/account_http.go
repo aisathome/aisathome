@@ -255,7 +255,16 @@ func (g *Gateway) getJSON(req *http.Request, v any) error {
 func (g *Gateway) handleForwardAuth(w http.ResponseWriter, r *http.Request) {
 	id, ok := g.session(r)
 	if !ok || !g.accounts.active(id) {
-		http.Redirect(w, r, g.acfg.PublicURL+"/account?next=chat", http.StatusFound)
+		// Only page loads are sent to sign in. The chat app's own calls (fetch, websocket) get
+		// 401: a redirect to another origin fails there, and the app reloaded itself in a loop
+		// after a sign-out (seen on staging, 2026-10-10). Caddy passes the original headers.
+		if navigation(r) {
+			http.Redirect(w, r, g.acfg.PublicURL+"/account?next=chat", http.StatusFound)
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprintf(w, `{"detail":"Not signed in. Sign in at %s/account"}`, g.acfg.PublicURL)
+		}
 		return
 	}
 	role := "user"
@@ -422,3 +431,12 @@ appears; come back to this page to check.</p></div>
 {{end}}
 {{if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
 </main></body></html>`))
+
+// navigation reports whether a request is a page load in a browser (rather than a script's
+// fetch or a websocket). Browsers send Sec-Fetch-Mode; without it, Accept decides.
+func navigation(r *http.Request) bool {
+	if m := r.Header.Get("Sec-Fetch-Mode"); m != "" {
+		return m == "navigate"
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
