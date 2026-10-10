@@ -3,9 +3,11 @@
 # running as the unprivileged system user "aisathome", sandboxed by systemd.
 #
 #   sudo ./install.sh --llama-build <llama.cpp/build> --model <file.gguf> \
-#        --node-bin <aisathome-node> --node-config <node.json> \
-#        [--preset <name>] [--enable-at-boot] [--dry-run]
+#        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) \
+#        --node-config <node.json> [--preset <name>] [--enable-at-boot] [--dry-run]
 #
+# --node-release downloads aisathome-node for this machine's architecture from a GitHub
+# release of aisathome/aisathome and checks it against that release's SHA256SUMS.
 # Presets: balanced (default), low-vram, long-context, long-context-dual (see README.md).
 # --dry-run prints the llama-server command and exits without installing (no root needed).
 # The node token is read from stdin (never from argv), e.g.
@@ -21,15 +23,16 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
-llama_build="" model="" node_bin="" node_config="" at_boot=0 dry_run=0
+llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
 preset="${PRESET:-balanced}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
     --model) model="$2"; shift 2 ;;
     --node-bin) node_bin="$2"; shift 2 ;;
+    --node-release) node_release="$2"; shift 2 ;;
     --node-config) node_config="$2"; shift 2 ;;
     --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
@@ -67,6 +70,12 @@ case "$kv_type" in q8_0|q4_0|f16) ;; *) die "KV_TYPE must be q8_0, q4_0 or f16" 
 [[ "$ctx_per_slot" =~ ^[1-9][0-9]*$ ]] || die "CTX_PER_SLOT must be a positive integer" 2
 [[ "$reasoning_budget" =~ ^(-1|[0-9]+)$ ]] || die "REASONING_BUDGET must be -1 or a non-negative integer" 2
 [[ "$cache_ram" =~ ^[0-9]+$ ]] || die "CACHE_RAM_MIB must be a non-negative integer" 2
+[[ -z "$node_bin" || -z "$node_release" ]] || die "use --node-bin or --node-release, not both" 2
+[[ -z "$node_release" || "$node_release" = latest || "$node_release" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
+  die "--node-release must be 'latest' or a tag like v1.2.3" 2
+# Releases come from GitHub; AISATHOME_RELEASE_URL points elsewhere (a mirror, or file:// in tests).
+release_base="${AISATHOME_RELEASE_URL:-https://github.com/aisathome/aisathome/releases}"
+[[ "$release_base" =~ ^(https|file):// ]] || die "AISATHOME_RELEASE_URL must start with https:// or file://" 2
 [[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
 
 target=/var/lib/aisathome-node/models/model.gguf
@@ -76,7 +85,36 @@ llama_exec="/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --reasoning-budget-message \"(Thinking budget reached; answering now.)\" --no-reasoning-preserve \\
   -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics"
 
+# Download the node binary for this architecture from a release and verify it against the
+# release's SHA256SUMS. This catches corrupt downloads; it does not protect against a
+# compromised release, since the checksums come from the same place.
+fetch_node_release() {
+  local arch url want got
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die "no release binary for $(uname -m); build aisathome-node and use --node-bin" ;;
+  esac
+  local asset="aisathome-node-linux-$arch"
+  if [[ "$node_release" = latest ]]; then url="$release_base/latest/download"; else url="$release_base/download/$node_release"; fi
+  dl_dir="$(mktemp -d)"
+  trap 'rm -rf "$dl_dir"' EXIT
+  for f in "$asset" SHA256SUMS; do
+    curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 -o "$dl_dir/$f" "$url/$f" ||
+      die "download failed: $url/$f"
+  done
+  want="$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1 }' "$dl_dir/SHA256SUMS")"
+  [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "no checksum for $asset in $url/SHA256SUMS"
+  got="$(sha256sum "$dl_dir/$asset" | cut -d' ' -f1)"
+  [[ "$got" = "$want" ]] || die "checksum mismatch for $asset: got $got, SHA256SUMS says $want"
+  chmod 0755 "$dl_dir/$asset"
+  node_bin="$dl_dir/$asset"
+  echo "aisathome-node: $asset from $url, sha256 $got (verified)" >&2
+}
+
+dl_dir=""
 if [[ $dry_run = 1 ]]; then
+  [[ -z "$node_release" ]] || fetch_node_release
   echo "preset: $preset"
   echo "$llama_exec"
   exit 0
@@ -84,7 +122,9 @@ fi
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
 [[ -x "$llama_build/bin/llama-server" ]] || die "no llama-server in $llama_build/bin"
-[[ -f "$model" && -x "$node_bin" && -f "$node_config" ]] || usage
+[[ -f "$model" && -f "$node_config" ]] || usage
+[[ -z "$node_release" ]] || fetch_node_release
+[[ -x "$node_bin" ]] || usage
 python3 -m json.tool "$node_config" >/dev/null || die "invalid JSON: $node_config"
 
 [[ -t 0 ]] && echo "Paste the node token (input hidden), then Enter:" >&2

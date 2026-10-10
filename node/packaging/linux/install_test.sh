@@ -77,6 +77,48 @@ done
 run -- --dry-run --frobnicate
 usage_err "unknown flag"
 
+# --node-release: download and checksum check against a fake release served over file://.
+case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="" ;; esac
+if [[ -n "$arch" ]]; then
+  rel="$(mktemp -d)"; trap 'rm -rf "$rel"' EXIT
+  asset="aisathome-node-linux-$arch"
+  # make_release <dir>: a fake binary with a matching SHA256SUMS (plus another asset's line).
+  make_release() {
+    mkdir -p "$1"
+    printf '#!/bin/sh\necho fake node\n' > "$1/$asset"
+    (cd "$1" && sha256sum "$asset" > SHA256SUMS && echo "$(printf '0%.0s' {1..64})  aisathome-gateway-linux-$arch" >> SHA256SUMS)
+  }
+  make_release "$rel/latest/download"
+  make_release "$rel/download/v1.2.3"
+  make_release "$rel/download/v1.2.4"; echo tampered >> "$rel/download/v1.2.4/$asset"
+  make_release "$rel/download/v1.2.5"; sed -i "/ $asset\$/d" "$rel/download/v1.2.5/SHA256SUMS"
+  mkdir "$rel/tmp"
+  base="AISATHOME_RELEASE_URL=file://$rel"
+
+  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release latest
+  ok "release latest"; has "release latest" "$asset from file://$rel/latest/download"
+  has "release latest" "(verified)"; has "release latest" "-np 2 --kv-unified-per-slot 32768 "
+  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.3 --preset long-context
+  ok "release tag"; has "release tag" "file://$rel/download/v1.2.3"; has "release tag" "-np 1 "
+  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.4
+  [[ $code -eq 1 ]] || fail "tampered binary: exit $code, want 1"; has "tampered binary" "checksum mismatch"
+  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.5
+  [[ $code -eq 1 ]] || fail "missing checksum: exit $code, want 1"; has "missing checksum" "no checksum for $asset"
+  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v9.9.9
+  [[ $code -eq 1 ]] || fail "missing release: exit $code, want 1"; has "missing release" "download failed"
+  [[ -z "$(ls -A "$rel/tmp")" ]] || fail "download directory left behind: $(ls "$rel/tmp")"
+else
+  echo "skipping --node-release tests: no release binary for $(uname -m)"
+fi
+for bad in 1.2.3 v1.2 "v1.2.3;x" "../v1.2.3"; do
+  run -- --dry-run --node-release "$bad"
+  usage_err "--node-release $bad"
+done
+run -- --dry-run --node-release latest --node-bin /bin/true
+usage_err "--node-bin and --node-release"
+run AISATHOME_RELEASE_URL=http://example.invalid -- --dry-run --node-release latest
+usage_err "plain http release URL"
+
 # Without --dry-run and without root, nothing is installed.
 if [[ $EUID -ne 0 ]]; then
   run -- --preset balanced

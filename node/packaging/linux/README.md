@@ -19,23 +19,32 @@ serves.
   cmake --build build --target llama-server
   ```
 - A GGUF model, e.g. `unsloth/Qwen3.8-27B-GGUF` / `Qwen3.8-27B-UD-Q4_K_M.gguf` (16.5 GB).
-- `aisathome-node` (`go build ./node/cmd/aisathome-node`), a `node.json` (see
-  `examples/node.json`) and a node token from the gateway operator.
+- `aisathome-node`: either a prebuilt release binary (`--node-release`, linux amd64 or
+  arm64) or your own build (`go build ./node/cmd/aisathome-node`, then `--node-bin`).
+- A `node.json` (see `examples/node.json`) and a node token from the gateway operator.
 
 ## Install
 
 ```bash
 sudo ./install.sh --llama-build llama.cpp/build --model Qwen3.8-27B-UD-Q4_K_M.gguf \
-     --node-bin ./aisathome-node --node-config node.json
+     --node-release latest --node-config node.json
 ```
 
+- `--node-release latest` (or a tag such as `v0.1.0`) downloads `aisathome-node` for
+  this machine's architecture from the
+  [GitHub releases](https://github.com/aisathome/aisathome/releases) and checks it against
+  that release's `SHA256SUMS`. This catches corrupt downloads, not a compromised release:
+  the checksums come from the same place. Pin a tag to install a known version; `latest`
+  skips pre-releases. `llama-server` is not part of the release; build it as above.
+- `--node-bin ./aisathome-node` installs your own build instead.
 - The token is read from stdin (hidden), never from the command line.
 - The model file is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the `balanced` preset (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot`.
 - `--dry-run` prints the resulting `llama-server` command and exits without installing
-  (no root needed). `./install_test.sh` tests the presets this way.
+  (no root needed; with `--node-release` it downloads and verifies the binary too).
+  `./install_test.sh` tests presets, overrides and the release download this way.
 
 ## Presets
 

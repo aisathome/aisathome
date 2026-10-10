@@ -33,6 +33,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: the CI checks (`ci.yml`
 (linux amd64/arm64, windows amd64) and `aisathome-gateway` (linux amd64/arm64) with a
 `SHA256SUMS` file, attached to a GitHub Release. The same build runs locally with
 `./scripts/build-release.sh v0.1.0 dist`; `aisathome-node -version` prints the version.
+The Linux node installer can use them (`--node-release latest`).
 
 ## Licence
 
