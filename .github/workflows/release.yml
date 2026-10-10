@@ -1,5 +1,5 @@
 # On a v* tag: run the CI checks, build static binaries plus SHA256SUMS and attach them to a
-# GitHub Release. A manual run (workflow_dispatch) on a branch builds without publishing.
+# draft GitHub Release (the owner publishes it after review). A manual run (workflow_dispatch) on a branch builds without publishing.
 # SPDX-License-Identifier: Apache-2.0
 name: release
 
@@ -48,7 +48,7 @@ jobs:
           pre=""
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes $pre
+            --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes $pre
       - name: Summary (not published)
         if: env.IS_TAG != 'true'
         run: |
