@@ -30,7 +30,7 @@ const { class: cls } = Astro.props;
 				clearTimeout(timer);
 				if (!res.ok) return hide();
 				const d = await res.json();
-				const nodes = d?.nodes?.online, req = d?.total?.requests, tok = d?.total?.tokens; // since the network started
+				const nodes = d?.nodes?.online, req = d?.total?.completed, tok = d?.total?.tokens; // since the network started; completed requests only
 				const at = new Date(d?.updated);
 				if (![nodes, req, tok].every(ok) || Number.isNaN(at.getTime())) return hide();
 				const hhmm = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
