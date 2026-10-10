@@ -6,7 +6,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "check": "node scripts/check-dist.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.6",

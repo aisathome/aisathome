@@ -50,4 +50,4 @@ jobs:
           persist-credentials: false
       - name: build the website (site/)
         working-directory: site
-        run: npm ci --no-audit --no-fund && npm run build
+        run: npm ci --no-audit --no-fund && npm run build && npm run check
