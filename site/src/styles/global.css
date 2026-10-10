@@ -1,0 +1,57 @@
+/* Tailwind 4 + Starlight share one theme (https://starlight.astro.build/guides/css-and-tailwind/).
+   The @theme tokens below feed both Tailwind utilities and Starlight's --sl-* variables.
+   The home page (src/pages/index.astro) and the docs share them. */
+@layer base, starlight, theme, components, utilities;
+
+@import '@astrojs/starlight-tailwind';
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@import '@fontsource-variable/big-shoulders-display';
+@import '@fontsource-variable/public-sans';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* "Volunteer science" (owner's choice, 2026-10-10): warm dark, one orange accent, Big Shoulders
+   Display for headings, Public Sans for text, JetBrains Mono for code. Self-hosted, no CDN. */
+@theme {
+	--font-sans: 'Public Sans Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-display: 'Big Shoulders Display Variable', 'Arial Narrow', sans-serif;
+
+	--color-white: #fff8f0;
+	--color-gray-100: #f3ebe0;
+	--color-gray-200: #ece3d8;
+	--color-gray-300: #d8cdc1;
+	--color-gray-400: #a99d91;
+	--color-gray-500: #6b5e52;
+	--color-gray-600: #4b423a;
+	--color-gray-700: #332c26;
+	--color-gray-800: #1f1a16;
+	--color-gray-900: #15110e;
+}
+
+/* Visible keyboard focus everywhere (Starlight relies on browser defaults). */
+:where(a, button, select, input, summary, [tabindex]):focus-visible {
+	outline: 2px solid var(--sl-color-accent);
+	outline-offset: 3px;
+	border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	::before,
+	::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+
+/* Custom home pages (.home): a wider column, and decorative bleeds never scroll sideways. */
+:root:not([data-has-sidebar]):has(.home) {
+	--sl-content-width: 72rem;
+}
+:root:has(.home) main {
+	overflow-x: clip;
+}

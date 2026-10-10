@@ -1,0 +1,55 @@
+---
+// Site footer shared by the docs and the home page. Colours and fonts come from the theme tokens.
+import { links } from '../data/home';
+const nav = [
+	{ label: 'GitHub', href: links.github },
+	{ label: 'Docs', href: links.docs },
+	{ label: 'Privacy', href: links.privacy },
+	{ label: 'Terms', href: links.terms },
+];
+---
+<div class="site-footer not-content">
+	<div class="site-footer-brand">
+		<p class="site-footer-name">AIs@home</p>
+		<p>Open AI models on volunteers’ GPUs. Non-commercial, open source, run by volunteers.</p>
+	</div>
+	<nav aria-label="Footer">
+		<ul>
+			{nav.map((l) => <li><a href={l.href}>{l.label}</a></li>)}
+			<li><a href={`mailto:${links.contact}`}>{links.contact}</a></li>
+		</ul>
+	</nav>
+</div>
+
+<style>
+	.site-footer {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.25rem 3rem;
+		justify-content: space-between;
+		align-items: flex-start;
+		margin-top: 3rem;
+		padding-block: 2rem 1rem;
+		border-top: 1px solid var(--sl-color-hairline-light);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.site-footer p { margin: 0; max-width: 28rem; }
+	.site-footer-name {
+		font-family: var(--font-display);
+		font-weight: 700;
+		font-size: var(--sl-text-base);
+		color: var(--sl-color-white);
+		margin-bottom: 0.25rem !important;
+	}
+	ul {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 1.5rem;
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	a { color: var(--sl-color-gray-2); text-decoration: none; }
+	a:hover { color: var(--sl-color-accent-high); text-decoration: underline; text-underline-offset: 3px; }
+</style>

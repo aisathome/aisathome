@@ -1,0 +1,65 @@
+---
+// Live network strip: fetches the gateway's public /v1/stats (same origin) and shows nodes
+// online, and requests and tokens processed since the network started. It stays hidden until real numbers arrive and
+// hides again on any failure: never dashes, zeros-by-default or error text.
+interface Props { class?: string }
+const { class: cls } = Astro.props;
+---
+<section class:list={['live-stats not-content', cls]} data-live-stats hidden aria-label="The network right now">
+	<p class="live-head"><span class="live-dot" aria-hidden="true"></span><span>Live</span></p>
+	<dl class="live-list">
+		<div class="live-item"><dt>Nodes online</dt><dd data-stat="nodes"></dd></div>
+		<div class="live-item"><dt>Requests served</dt><dd data-stat="requests"></dd></div>
+		<div class="live-item"><dt>Tokens processed</dt><dd data-stat="tokens"></dd></div>
+	</dl>
+	<p class="live-updated">Updated <time data-stat="updated"></time> UTC</p>
+</section>
+
+<script is:inline>
+	(() => {
+		const boxes = document.querySelectorAll('[data-live-stats]');
+		if (!boxes.length || !window.fetch) return;
+		const num = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+		const ok = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+		const hide = () => boxes.forEach((b) => (b.hidden = true));
+		const load = async () => {
+			try {
+				const ctl = new AbortController();
+				const timer = setTimeout(() => ctl.abort(), 8000);
+				const res = await fetch('/v1/stats', { signal: ctl.signal, headers: { accept: 'application/json' } });
+				clearTimeout(timer);
+				if (!res.ok) return hide();
+				const d = await res.json();
+				const nodes = d?.nodes?.online, req = d?.total?.requests, tok = d?.total?.tokens; // since the network started
+				const at = new Date(d?.updated);
+				if (![nodes, req, tok].every(ok) || Number.isNaN(at.getTime())) return hide();
+				const hhmm = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
+				const vals = { nodes: num.format(nodes), requests: num.format(req), tokens: num.format(tok), updated: hhmm };
+				boxes.forEach((b) => {
+					b.querySelectorAll('[data-stat]').forEach((el) => (el.textContent = vals[el.dataset.stat]));
+					b.querySelector('time').dateTime = at.toISOString();
+					b.hidden = false;
+				});
+			} catch {
+				hide();
+			}
+		};
+		load();
+		setInterval(() => document.visibilityState === 'visible' && load(), 60000);
+	})();
+</script>
+
+<style>
+	.live-stats[hidden] { display: none !important; }
+	.live-list, .live-list dd { margin: 0; }
+	@keyframes live-pulse { 50% { opacity: 0.35; } }
+	.live-dot {
+		display: inline-block;
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+		background: currentColor;
+		animation: live-pulse 2s ease-in-out infinite;
+	}
+	@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+</style>

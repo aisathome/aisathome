@@ -37,3 +37,17 @@ jobs:
           ./scripts/build-release.sh v0.0.0 "$RUNNER_TEMP/rel/download/v0.0.0"
           AISATHOME_RELEASE_URL="file://$RUNNER_TEMP/rel" \
             ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0
+
+  site:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    container: node:22-bookworm-slim
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: build the website (site/)
+        working-directory: site
+        run: npm ci --no-audit --no-fund && npm run build

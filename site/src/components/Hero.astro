@@ -1,0 +1,6 @@
+---
+// Starlight's hero, except on the home page, which renders its own (src/pages/index.astro).
+import Default from '@astrojs/starlight/components/Hero.astro';
+const custom = Astro.url.pathname === '/';
+---
+{!custom && <Default />}

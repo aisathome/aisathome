@@ -1,0 +1,23 @@
+---
+// Top-bar navigation next to Starlight's social icons (Starlight has no top nav of its own).
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+import { accountURL, chatURL } from '../data/site';
+const links = [
+	{ label: 'Chat', href: chatURL },
+	{ label: 'Account', href: accountURL },
+	{ label: 'Use', href: '/use/chat/' },
+	{ label: 'Run a node', href: '/node/' },
+	{ label: 'About', href: '/about/' },
+];
+---
+<nav class="top-links" aria-label="Main">
+	{links.map((l) => <a href={l.href}>{l.label}</a>)}
+</nav>
+<Default />
+
+<style>
+	.top-links { display: none; gap: 1.25rem; margin-inline-end: 0.75rem; }
+	.top-links a { color: var(--sl-color-gray-2); text-decoration: none; font-size: var(--sl-text-sm); }
+	.top-links a:hover { color: var(--sl-color-accent-high); }
+	@media (min-width: 72rem) { .top-links { display: flex; align-items: center; } }
+</style>

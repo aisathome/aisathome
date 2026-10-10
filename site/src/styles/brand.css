@@ -1,0 +1,24 @@
+/* Exact accent shades for Starlight (dark is the main look; light follows the visitor). */
+:root {
+	--sl-color-accent-low: #3a1c06;
+	--sl-color-accent: #ff9842;
+	--sl-color-accent-high: #ffc896;
+	--b-surface: #1f1a16;
+	--b-band: #22180f;
+}
+:root[data-theme='light'] {
+	--color-white: #fdf8f1;
+	--sl-color-accent-low: #fde3c8;
+	--sl-color-accent: #b4460c;
+	--sl-color-accent-high: #8a3407;
+	--b-surface: #f6ede1;
+	--b-band: #f8e6d2;
+}
+.site-title {
+	font-family: var(--font-display);
+	font-weight: 800;
+	font-size: 1.6rem;
+	letter-spacing: 0.01em;
+}
+/* Headings in the docs use the display face too, a little larger than Starlight's default. */
+.sl-markdown-content :is(h1, h2, h3), h1#_top { font-family: var(--font-display); letter-spacing: 0.01em; }
