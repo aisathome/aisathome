@@ -1,8 +1,6 @@
 ---
 title: Terms of use
 description: Terms for using AIs@home and for running a node.
-banner:
-  content: Draft under review. The final text may change.
 ---
 
 AIs@home is a volunteer-run, non-commercial experiment: open-weight AI models (currently
@@ -41,10 +39,10 @@ anything you care about. In short:
 
 - You sign in with GitHub or Google. The number of accounts is limited; new accounts wait
   in line until there is room. We may close sign-up or refuse an account at any time.
-- Your account and API key are personal. Keep the key secret and don't share it. Tell us
-  if it leaks so we can revoke it.
-- Each account has a daily usage limit. Don't try to get around it (several accounts,
-  shared keys, scripts).
+- Your account is personal. On the account page you can create up to 3 API keys and
+  revoke them yourself. Keep keys secret and don't share them; if one leaks, revoke it.
+- Each account has a daily usage limit, shared by the chat and its API keys. Don't try to
+  get around it (several accounts, shared keys, scripts).
 
 ## 4. Acceptable use (everyone)
 

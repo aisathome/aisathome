@@ -111,6 +111,30 @@ const (
 	bodyReadTimeout = 30 * time.Second
 )
 
+// reserveBody admits a request body of size bytes for user: at most maxBody in flight per
+// user (so one user cannot fill the shared budget with stalled uploads), and bodyBudget across
+// everyone. status is 429 when the user is over their share, 503 when the gateway is full.
+func (g *Gateway) reserveBody(user string, size int64) (release func(), status int) {
+	g.bodyMu.Lock()
+	defer g.bodyMu.Unlock()
+	if g.bodyBy[user]+size > maxBody {
+		return nil, http.StatusTooManyRequests
+	}
+	if g.bodies.Load()+size > bodyBudget {
+		return nil, http.StatusServiceUnavailable
+	}
+	g.bodies.Add(size)
+	g.bodyBy[user] += size
+	return func() {
+		g.bodyMu.Lock()
+		defer g.bodyMu.Unlock()
+		g.bodies.Add(-size)
+		if g.bodyBy[user] -= size; g.bodyBy[user] <= 0 {
+			delete(g.bodyBy, user)
+		}
+	}, 0
+}
+
 // maxKnown caps the model and role names remembered for "temporarily unavailable" answers:
 // nodes announce names, and a token reconnecting with fresh ones must not grow memory.
 const maxKnown = 512
@@ -139,7 +163,9 @@ type Gateway struct {
 	queued   atomic.Int32
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
 	bodies   atomic.Int64 // bytes reserved for request bodies, across all requests
-	stats    dayStats     // today's counts for /v1/stats
+	bodyMu   sync.Mutex
+	bodyBy   map[string]int64 // bytes reserved for request bodies, per user; guarded by bodyMu
+	stats    dayStats         // today's counts for /v1/stats
 	acfg     AccountsConfig
 	accounts *AccountStore // nil without accounts
 	gkeys    *jwksCache    // Google's signing keys, for Google sign-in
@@ -192,7 +218,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{})}
 	g.stats.replay(cfg.UsageLog, time.Now())
 	if cfg.Accounts != nil {
@@ -964,13 +990,17 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength >= 0 && r.ContentLength < size {
 		size = r.ContentLength
 	}
-	if g.bodies.Add(size) > bodyBudget {
-		g.bodies.Add(-size)
+	release, status := g.reserveBody(userKey, size)
+	if release == nil {
 		w.Header().Set("Retry-After", "5")
-		apiError(w, http.StatusServiceUnavailable, "the gateway is busy; try again shortly")
+		if status == http.StatusTooManyRequests {
+			apiError(w, status, "too many uploads in progress for this user")
+		} else {
+			apiError(w, status, "the gateway is busy; try again shortly")
+		}
 		return
 	}
-	defer g.bodies.Add(-size)
+	defer release()
 	rc := http.NewResponseController(w)
 	rc.SetReadDeadline(time.Now().Add(bodyReadTimeout))
 	var body map[string]any

@@ -76,6 +76,8 @@ func (e *emailSignIn) send(ctx context.Context, m emailMsg) error {
 		return err
 	}
 	conn.SetDeadline(time.Now().Add(smtpTimeout))
+	stop := context.AfterFunc(ctx, func() { conn.Close() }) // shutdown interrupts a stalled server
+	defer stop()
 	c, err := smtp.NewClient(conn, e.cfg.SMTPHost)
 	if err != nil {
 		conn.Close()

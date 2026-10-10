@@ -145,10 +145,14 @@ func TestSlowUploadHoldsNoSlot(t *testing.T) {
 // Request bodies share a memory budget: uploads in progress reserve their declared size,
 // and once the budget is reserved further requests are turned away until they finish.
 func TestRequestBodyBudget(t *testing.T) {
-	r := newRigCfg(t, nil, mockEngine(t, false))
+	r := newRigCfg(t, func(c *gateway.Config) {
+		for i := 0; i < 8; i++ {
+			c.Keys[fmt.Sprintf("up-%d", i)] = gateway.KeyInfo{User: fmt.Sprintf("up%d", i)}
+		}
+	}, mockEngine(t, false))
 	conns := []net.Conn{}
-	for i := 0; i < 8; i++ { // 8 × 8 MiB fill the 64 MiB budget
-		conns = append(conns, slowUpload(t, r.gw.URL, "user-key", 8<<20))
+	for i := 0; i < 8; i++ { // 8 users × 8 MiB fill the 64 MiB budget
+		conns = append(conns, slowUpload(t, r.gw.URL, fmt.Sprintf("up-%d", i), 8<<20))
 	}
 	time.Sleep(300 * time.Millisecond)
 	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
@@ -220,5 +224,29 @@ func TestRestorerIgnoresInventedChoices(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || strings.Contains(string(raw), "junk") || !strings.Contains(string(raw), `"a"`) {
 		t.Fatalf("status %d; invented choices must be dropped: %.300s", resp.StatusCode, raw)
+	}
+}
+
+// One user's stalled uploads cannot use up the shared budget: each user may have at most one
+// maximum-size body in flight, so other users are still served (fifth review).
+func TestOneUserCannotFillBodyBudget(t *testing.T) {
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.Keys["tight-key"] = gateway.KeyInfo{User: "mallory", RPM: 1, MaxConcurrent: 1}
+	}, mockEngine(t, false))
+	for i := 0; i < 8; i++ {
+		slowUpload(t, r.gw.URL, "tight-key", 8<<20)
+	}
+	time.Sleep(300 * time.Millisecond)
+	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("another user while one user stalls 8 uploads: %d", resp.StatusCode)
+	}
+	resp = r.do(t, "POST", "/v1/chat/completions", "tight-key", chatBody)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("the stalling user's next request: %d, want 429", resp.StatusCode)
 	}
 }

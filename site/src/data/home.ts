@@ -25,11 +25,11 @@ export const hero = {
 export const steps = [
 	{
 		title: 'You ask',
-		text: 'In the chat or through the API. Your message goes encrypted to the gateway in Stockholm, which strips who you are.',
+		text: 'Get help from AI the way you are used to: in the chat, through the API, or as a coding agent in opencode. The difference: open-weight models and open-source software instead of a company’s closed service.',
 	},
 	{
 		title: 'A volunteer’s GPU answers',
-		text: 'The gateway passes the request to a node: a volunteer’s computer running the model, currently Qwen3.8 27B.',
+		text: 'Not a big company’s data centre: volunteers’ own GPUs, at home, run the model (currently Qwen3.8 27B) and write the answer. Anyone with a 24 GB NVIDIA GPU can join; while the network is small, the maintainer adds a few rented ones.',
 	},
 	{
 		title: 'The answer comes back',

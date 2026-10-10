@@ -1,8 +1,6 @@
 ---
 title: Privacy
 description: How AIs@home handles your messages.
-banner:
-  content: Draft under review. The final text may change.
 ---
 
 AIs@home is an experiment: chat with an open AI model that runs on volunteers' GPUs instead
@@ -33,9 +31,8 @@ and sends the answer back the same way.
 chats, and run no analytics or tracking.
 
 **A safety net, not a guarantee.** We automatically hide well-known secret formats (API
-keys, private keys) from nodes, and messages containing things like email addresses, card
-or account numbers or Norwegian ID numbers only go to trusted nodes. Detection is
-incomplete. **Do not paste passwords, secrets or other people's personal data.** You can see the code for this in the [repository](https://github.com/aisathome/aisathome).
+keys, private keys) from nodes, and messages containing things like email addresses or
+card and account numbers only go to trusted nodes. Detection is incomplete. **Do not paste passwords, secrets or other people's personal data.** You can see the code for this in the [repository](https://github.com/aisathome/aisathome).
 
 **This service is not confidential.** It is hardened, not private. If you need
 confidentiality, run a model on your own machine. AIs@home's software is open source, so
