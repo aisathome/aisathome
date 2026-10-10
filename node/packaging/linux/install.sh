@@ -3,8 +3,11 @@
 # running as the unprivileged system user "aisathome", sandboxed by systemd.
 #
 #   sudo ./install.sh --llama-build <llama.cpp/build> --model <file.gguf> \
-#        --node-bin <aisathome-node> --node-config <node.json> [--enable-at-boot]
+#        --node-bin <aisathome-node> --node-config <node.json> \
+#        [--preset <name>] [--enable-at-boot] [--dry-run]
 #
+# Presets: balanced (default), low-vram, long-context, long-context-dual (see README.md).
+# --dry-run prints the llama-server command and exits without installing (no root needed).
 # The node token is read from stdin (never from argv), e.g.
 #   cat token.txt | sudo ./install.sh ...
 #
@@ -18,52 +21,88 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-llama_build="" model="" node_bin="" node_config="" at_boot=0
-# Per-slot context: each request gets at most this much, and one long request cannot starve
-# the others (a single shared pool can: "Context size has been exceeded" on 2026-10-08).
-ctx_per_slot="${CTX_PER_SLOT:-32768}" slots="${SLOTS:-2}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
-# Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
-# the context; after the budget the model is told to answer.
-reasoning_budget="${REASONING_BUDGET:-8192}"
-# KV cache type: q8_0 (default) or q4_0 (half the context memory; measured 2026-10-09: no
-# needle-test loss up to 60k, mean KLD 2x q8). See bench/kvquant in the research repo.
-kv_type="${KV_TYPE:-q8_0}"
-# Host-RAM prompt cache in MiB (llama-server --cache-ram; default there 8192, 0 = off). It
-# bounds how much conversation data stays warm in RAM; llama-server has no idle-time limit.
-cache_ram="${CACHE_RAM_MIB:-2048}"
-case "$kv_type" in q8_0|q4_0|f16) ;; *) echo "KV_TYPE must be q8_0, q4_0 or f16" >&2; exit 2 ;; esac
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+die() { echo "$1" >&2; exit "${2:-1}"; }
+llama_build="" model="" node_bin="" node_config="" at_boot=0 dry_run=0
+preset="${PRESET:-balanced}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
     --model) model="$2"; shift 2 ;;
     --node-bin) node_bin="$2"; shift 2 ;;
     --node-config) node_config="$2"; shift 2 ;;
+    --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
+    --dry-run) dry_run=1; shift ;;
     *) usage ;;
   esac
 done
-[[ $EUID -eq 0 ]] || { echo "run with sudo" >&2; exit 1; }
-[[ -x "$llama_build/bin/llama-server" ]] || { echo "no llama-server in $llama_build/bin" >&2; exit 1; }
+
+# Presets set slots, context per slot and KV cache type; explicit environment variables
+# (SLOTS, CTX_PER_SLOT, KV_TYPE) override them. Numbers: bench/kvquant/RESULTS.md in the
+# research repo (RTX 4090, Qwen3.8 27B UD-Q4_K_M, 2026-10-09). Per-slot context means one
+# long request cannot starve the others (a single shared pool can: "Context size has been
+# exceeded" on 2026-10-08).
+case "$preset" in
+  # q8 KV: mean KLD 0.0020 vs f16, no needle loss to 60k; 1 x 64k q8 used 17,858 MiB.
+  balanced) p_slots=2 p_ctx=32768 p_kv=q8_0 ;;
+  # q4 KV: 1.0 GB less than q8 at 64k (16,834 MiB), no needle loss, mean KLD 2x q8.
+  low-vram) p_slots=2 p_ctx=32768 p_kv=q4_0 ;;
+  # 1 x 128k q4: 18,306 MiB, hard needles at 120k 118/120 (q8: 119/120, 20,354 MiB).
+  long-context) p_slots=1 p_ctx=131072 p_kv=q4_0 ;;
+  # 2 x 128k q4: 21,272 MiB. A ~100k prefill nearly stalls the other slot's decode
+  # (3.9 tok/s for about a minute): head-of-line blocking.
+  long-context-dual) p_slots=2 p_ctx=131072 p_kv=q4_0 ;;
+  *) die "unknown preset '$preset'; choose balanced, low-vram, long-context or long-context-dual" 2 ;;
+esac
+slots="${SLOTS:-$p_slots}" ctx_per_slot="${CTX_PER_SLOT:-$p_ctx}" kv_type="${KV_TYPE:-$p_kv}"
+# Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
+# the context; after the budget the model is told to answer.
+reasoning_budget="${REASONING_BUDGET:-8192}"
+# Host-RAM prompt cache in MiB (llama-server --cache-ram; default there 8192, 0 = off). It
+# bounds how much conversation data stays warm in RAM; llama-server has no idle-time limit.
+cache_ram="${CACHE_RAM_MIB:-2048}"
+case "$kv_type" in q8_0|q4_0|f16) ;; *) die "KV_TYPE must be q8_0, q4_0 or f16" 2 ;; esac
+[[ "$slots" =~ ^[1-9][0-9]*$ ]] || die "SLOTS must be a positive integer" 2
+[[ "$ctx_per_slot" =~ ^[1-9][0-9]*$ ]] || die "CTX_PER_SLOT must be a positive integer" 2
+[[ "$reasoning_budget" =~ ^(-1|[0-9]+)$ ]] || die "REASONING_BUDGET must be -1 or a non-negative integer" 2
+[[ "$cache_ram" =~ ^[0-9]+$ ]] || die "CACHE_RAM_MIB must be a non-negative integer" 2
+[[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
+
+target=/var/lib/aisathome-node/models/model.gguf
+llama_exec="/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
+  --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
+  --reasoning-budget $reasoning_budget \\
+  --reasoning-budget-message \"(Thinking budget reached; answering now.)\" --no-reasoning-preserve \\
+  -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics"
+
+if [[ $dry_run = 1 ]]; then
+  echo "preset: $preset"
+  echo "$llama_exec"
+  exit 0
+fi
+
+[[ $EUID -eq 0 ]] || die "run with sudo"
+[[ -x "$llama_build/bin/llama-server" ]] || die "no llama-server in $llama_build/bin"
 [[ -f "$model" && -x "$node_bin" && -f "$node_config" ]] || usage
-python3 -m json.tool "$node_config" >/dev/null || { echo "invalid JSON: $node_config" >&2; exit 1; }
+python3 -m json.tool "$node_config" >/dev/null || die "invalid JSON: $node_config"
 
 [[ -t 0 ]] && echo "Paste the node token (input hidden), then Enter:" >&2
 IFS= read -rs token || true
-[[ -n "$token" ]] || { echo "no token on stdin" >&2; exit 1; }
+[[ -n "$token" ]] || die "no token on stdin"
 
 # 1. Unprivileged system user without a login shell.
 id aisathome >/dev/null 2>&1 || useradd --system --home-dir /var/lib/aisathome-node --shell /usr/sbin/nologin aisathome
 
 # 2. Binaries and llama.cpp shared libraries.
 install -d -m 0755 /opt/aisathome-node/bin /opt/aisathome-node/lib
-install -m 0755 "$llama_build/bin/llama-server" "$node_bin" /opt/aisathome-node/bin/
+install -m 0755 "$llama_build/bin/llama-server" /opt/aisathome-node/bin/
+install -m 0755 "$node_bin" /opt/aisathome-node/bin/aisathome-node
 find "$llama_build" -name '*.so*' \( -type f -o -type l \) -exec cp -a {} /opt/aisathome-node/lib/ \;
 chown -R root:root /opt/aisathome-node
 
 # 3. Model (moved to save disk space) and state directory.
 install -d -o aisathome -g aisathome -m 0750 /var/lib/aisathome-node /var/lib/aisathome-node/models
-target=/var/lib/aisathome-node/models/model.gguf
 if [[ "$(readlink -f "$model")" != "$target" ]]; then mv "$model" "$target"; fi
 chown aisathome:aisathome "$target"; chmod 0640 "$target"
 
@@ -130,11 +169,7 @@ Environment=GGML_NO_BACKTRACE=1
 DeviceAllow=char-nvidia-frontend rw
 DeviceAllow=char-nvidia-uvm rw
 DeviceAllow=char-nvidia-caps r
-ExecStart=/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
-  --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
-  --reasoning-budget $reasoning_budget \\
-  --reasoning-budget-message "(Thinking budget reached; answering now.)" --no-reasoning-preserve \\
-  -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics
+ExecStart=$llama_exec
 Restart=on-failure
 RestartSec=5
 # A hung CUDA process may ignore SIGTERM: kill it quickly instead of waiting 90 s.
