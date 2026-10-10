@@ -56,6 +56,18 @@ func (k KeyInfo) forUser(uid string) KeyInfo {
 	return u
 }
 
+// within keeps the front-end key's routing restrictions (trusted nodes only, one operator's
+// nodes only) for an end user's own policy: a front end restricted to some nodes stays so.
+func (k KeyInfo) within(front KeyInfo) KeyInfo {
+	if front.MinTrust == "trusted" {
+		k.MinTrust = "trusted"
+	}
+	if front.OnlyOperator != "" {
+		k.OnlyOperator = front.OnlyOperator
+	}
+	return k
+}
+
 // KeyStore resolves API keys. Operators plug in their own (static file, HTTP call to an
 // accounts service, database). It is the only boundary between the open gateway and an
 // operator's private business layer.

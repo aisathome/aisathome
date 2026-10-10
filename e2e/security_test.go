@@ -177,7 +177,7 @@ func TestUsageIsClamped(t *testing.T) {
 			UserLimits: &gateway.UserLimits{TokensPerDay: 100000}}
 	}, liarEngine())
 	ask := func() int {
-		req, _ := http.NewRequest("POST", r.gw.URL+"/v1/chat/completions", strings.NewReader(chatBody))
+		req, _ := http.NewRequest("POST", r.front.URL+"/v1/chat/completions", strings.NewReader(chatBody))
 		req.Header.Set("Authorization", "Bearer owui-key")
 		req.Header.Set("X-OpenWebUI-User-Id", "victim")
 		resp, err := http.DefaultClient.Do(req)

@@ -225,7 +225,7 @@ func TestPerUserLimits(t *testing.T) {
 			UserLimits: &gateway.UserLimits{RPM: 2, TokensPerDay: 10}}
 	}, mockEngine(t, false))
 	ask := func(uid string) *http.Response {
-		req, _ := http.NewRequest("POST", r.gw.URL+"/v1/chat/completions", strings.NewReader(chatBody))
+		req, _ := http.NewRequest("POST", r.front.URL+"/v1/chat/completions", strings.NewReader(chatBody))
 		req.Header.Set("Authorization", "Bearer owui-key")
 		if uid != "" {
 			req.Header.Set("X-OpenWebUI-User-Id", uid)

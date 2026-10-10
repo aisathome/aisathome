@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"slices"
@@ -46,10 +47,29 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	if g.email != nil {
 		g.emailRoutes(mux)
 	}
-	mux.HandleFunc("POST /account/keys", g.handleKeyCreate)
-	mux.HandleFunc("POST /account/keys/revoke", g.handleKeyRevoke)
-	mux.HandleFunc("POST /account/logout", g.handleLogout)
+	mux.HandleFunc("POST /account/keys", smallForm(g.handleKeyCreate))
+	mux.HandleFunc("POST /account/keys/revoke", smallForm(g.handleKeyRevoke))
+	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
+}
+
+// smallForm accepts only short URL-encoded forms. The account pages upload nothing, and
+// multipart parsing could spill parts to disk before the session is even checked.
+func smallForm(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); ct != "" {
+			if mt, _, err := mime.ParseMediaType(ct); err != nil || mt != "application/x-www-form-urlencoded" {
+				http.Error(w, "unsupported form encoding", http.StatusUnsupportedMediaType)
+				return
+			}
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "form too large or malformed", http.StatusRequestEntityTooLarge)
+			return
+		}
+		h(w, r)
+	}
 }
 
 // accountEmail is the chat's address for account id ("gh:123" → "gh-123@users.invalid",

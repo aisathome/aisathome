@@ -64,6 +64,21 @@ Users point any OpenAI-compatible client (opencode, Open WebUI, `curl`) at
 `https://<gateway>/v1` with the key as the bearer token, and use a model or role name from
 `/v1/models`.
 
+### A chat front end (Open WebUI)
+
+A key with `"forward_users": true` lets a trusted front end speak for its users: the gateway
+takes the user from Open WebUI's `X-OpenWebUI-User-Email` / `X-OpenWebUI-User-Id` headers and
+applies that user's limits (and, for signed-in accounts, the account's budget). Such a key is
+accepted **only** on the private listener `frontend_addr` (e.g. `":8081"`), never on the
+public one, so a leaked key can neither pose as other users nor be used as an ordinary key.
+Point Open WebUI at `http://<gateway>:8081/v1` over a private network and never publish that
+port. The front-end key's `min_trust` and `only_operator` also bind the accounts it carries.
+
+With accounts, Open WebUI logs users in from headers set by the gateway's
+`/account/auth` (`X-Auth-Email`, `X-Auth-Role`). That is safe only if the reverse proxy
+removes any client-sent copies of these headers and Open WebUI is reachable only through
+that proxy; the ops repo's Caddyfile does both, and its browser tests check it.
+
 ### Accounts (sign-in, self-service keys)
 
 An `accounts` section turns on sign-in with GitHub, Google and/or email, up to `max_keys` API

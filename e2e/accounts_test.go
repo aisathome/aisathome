@@ -47,6 +47,11 @@ type acctRig struct {
 }
 
 func newAcctRig(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig)) *acctRig {
+	return newAcctRigWith(t, maxActive, mod, nil)
+}
+
+// newAcctRigWith also lets a test adjust the rest of the gateway config.
+func newAcctRigWith(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig), extra func(*gateway.Config)) *acctRig {
 	gh := fakeGitHub(t)
 	t.Cleanup(gh.Close)
 	file := filepath.Join(t.TempDir(), "accounts.json")
@@ -64,6 +69,9 @@ func newAcctRig(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig)) 
 		c.Keys["owui-key"] = gateway.KeyInfo{User: "owui", ForwardUsers: true}
 		if mod != nil {
 			mod(c.Accounts)
+		}
+		if extra != nil {
+			extra(c)
 		}
 	}, mockEngine(t, false))
 	return &acctRig{rig: r, store: store, file: file}
@@ -298,7 +306,11 @@ func oneBudget(t *testing.T, a *acctRig, s, email string) {
 	_, page := a.createKey(t, s)
 	key := keyRe.FindString(page)
 	chat := func(apiKey, email string) int {
-		req, _ := http.NewRequest("POST", a.gw.URL+"/v1/chat/completions", strings.NewReader(chatBody))
+		base := a.gw.URL
+		if apiKey == "owui-key" {
+			base = a.front.URL
+		}
+		req, _ := http.NewRequest("POST", base+"/v1/chat/completions", strings.NewReader(chatBody))
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		if email != "" {
 			req.Header.Set("X-OpenWebUI-User-Email", email)
@@ -380,7 +392,7 @@ func TestBanHoldAndPseudonyms(t *testing.T) {
 	a.signIn(t, 11)
 	a.signIn(t, 12)
 	chat := func(email string) int {
-		req, _ := http.NewRequest("POST", a.gw.URL+"/v1/chat/completions", strings.NewReader(chatBody))
+		req, _ := http.NewRequest("POST", a.front.URL+"/v1/chat/completions", strings.NewReader(chatBody))
 		req.Header.Set("Authorization", "Bearer owui-key")
 		req.Header.Set("X-OpenWebUI-User-Email", email)
 		req.Header.Set("X-OpenWebUI-User-Id", "some-uuid")

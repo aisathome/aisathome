@@ -442,8 +442,8 @@ func clientIP(r *http.Request) string {
 
 func (g *Gateway) emailRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /account/email", g.handleEmailPage)
-	mux.HandleFunc("POST /account/email", g.handleEmailStart)
-	mux.HandleFunc("POST /account/email/verify", g.handleEmailVerify)
+	mux.HandleFunc("POST /account/email", smallForm(g.handleEmailStart))
+	mux.HandleFunc("POST /account/email/verify", smallForm(g.handleEmailVerify))
 }
 
 // handleEmailStart asks for a code. The answer is the same whatever happens next.

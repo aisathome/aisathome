@@ -88,6 +88,7 @@ func slowEngine(t *testing.T, n int, delay time.Duration) *httptest.Server {
 type rig struct {
 	g        *gateway.Gateway
 	gw       *httptest.Server
+	front    *httptest.Server // the private listener for front-end (forward_users) keys
 	usageLog string
 	cancel   context.CancelFunc
 }
@@ -118,9 +119,10 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 		t.Fatal(err)
 	}
 	gw := httptest.NewServer(g.Handler())
+	front := httptest.NewServer(g.FrontendHandler())
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &rig{g: g, gw: gw, usageLog: usage, cancel: cancel}
-	t.Cleanup(func() { cancel(); gw.Close(); g.Close() })
+	r := &rig{g: g, gw: gw, front: front, usageLog: usage, cancel: cancel}
+	t.Cleanup(func() { cancel(); gw.Close(); front.Close(); g.Close() })
 	for i, e := range engines {
 		r.startNode(ctx, fmt.Sprintf("node-%d", i), "node-token", e, 2)
 	}

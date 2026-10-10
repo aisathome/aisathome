@@ -69,6 +69,17 @@ func main() {
 		}
 	}()
 	srv := &http.Server{Addr: *addr, Handler: g.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	var front *http.Server // the private listener for Open WebUI (forward_users keys)
+	if cfg.FrontendAddr != "" {
+		front = &http.Server{Addr: cfg.FrontendAddr, Handler: g.FrontendHandler(), ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			log.Info("front-end listener", "addr", cfg.FrontendAddr)
+			if err := front.ListenAndServe(); err != http.ErrServerClosed {
+				log.Error("front-end listener stopped", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
 
 	// SIGTERM (systemctl stop, podman stop) and Ctrl-C: stop taking requests, give running
 	// ones a moment, then save state (daily budgets) before exiting.
@@ -80,6 +91,9 @@ func main() {
 		log.Info("shutting down")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if front != nil {
+			front.Shutdown(ctx)
+		}
 		srv.Shutdown(ctx)
 		if err := g.Close(); err != nil {
 			log.Error("saving state", "err", err)

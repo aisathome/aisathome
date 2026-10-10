@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -120,7 +121,16 @@ func TestOwnNodesSeeRealValues(t *testing.T) {
 	r.waitNodes(t, 1)
 	for _, key := range []string{"own-key", "front-key"} {
 		body, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "k " + secret}}})
-		resp := r.do(t, "POST", "/v1/chat/completions", key, string(body))
+		base := r.gw.URL
+		if key == "front-key" {
+			base = r.front.URL
+		}
+		req, _ := http.NewRequest("POST", base+"/v1/chat/completions", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}
@@ -235,7 +245,7 @@ func TestFrontEndKeyNotCharged(t *testing.T) {
 			UserLimits: &gateway.UserLimits{TokensPerDay: 100000}}
 	}, liarEngine())
 	for i, uid := range []string{"u1", "u2", "u3"} {
-		req, _ := http.NewRequest("POST", r.gw.URL+"/v1/chat/completions", strings.NewReader(chatBody))
+		req, _ := http.NewRequest("POST", r.front.URL+"/v1/chat/completions", strings.NewReader(chatBody))
 		req.Header.Set("Authorization", "Bearer owui-key")
 		req.Header.Set("X-OpenWebUI-User-Id", uid)
 		resp, err := http.DefaultClient.Do(req)

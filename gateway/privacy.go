@@ -259,12 +259,19 @@ func (s *restorer) chunk(raw []byte) []byte {
 		return raw
 	}
 	choices, _ := c["choices"].([]any)
+	kept := choices[:0]
 	for _, ch := range choices {
 		cm, ok := ch.(map[string]any)
 		if !ok {
 			continue
 		}
-		idx := fmt.Sprint(cm["index"])
+		// Requests ask for one answer (n=1): other indexes come from a misbehaving node, and
+		// each fresh one would get its own held-back text.
+		if i, isNum := cm["index"].(float64); cm["index"] != nil && (!isNum || i != 0) {
+			continue
+		}
+		kept = append(kept, ch)
+		idx := "0"
 		delta, _ := cm["delta"].(map[string]any)
 		final := cm["finish_reason"] != nil
 		if delta == nil && final {
@@ -282,6 +289,9 @@ func (s *restorer) chunk(raw []byte) []byte {
 				}
 			}
 		}
+	}
+	if c["choices"] != nil {
+		c["choices"] = kept
 	}
 	out, err := json.Marshal(c)
 	if err != nil {

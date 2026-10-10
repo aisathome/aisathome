@@ -38,6 +38,10 @@ type Config struct {
 	Keys       map[string]KeyInfo   `json:"keys"`        // API key → user and limits
 	NodeTokens map[string]NodeToken `json:"node_tokens"` // node token → operator (and node id)
 	UsageLog   string               `json:"usage_log"`   // JSONL file, one line per request
+	// FrontendAddr is a private listener (e.g. ":8081") for the trusted front end (Open
+	// WebUI). Keys with forward_users work only there, never on the public listener, so a
+	// leaked front-end key cannot speak for other users. Empty = no front end.
+	FrontendAddr string `json:"frontend_addr"`
 	// KeysFile holds per-user keys (stored hashed) managed with `aisathome-gateway keys`;
 	// changes apply within a few seconds, without a reload. Empty = none.
 	KeysFile string `json:"keys_file"`
@@ -99,6 +103,29 @@ const knownFor = 24 * time.Hour
 // failing as unknown.
 const startupGrace = 2 * time.Minute
 
+// Request bodies: at most maxBody each, bodyBudget reserved across all requests at once
+// (decoded JSON takes a few times more), and read within bodyReadTimeout.
+const (
+	maxBody         = 8 << 20
+	bodyBudget      = 64 << 20
+	bodyReadTimeout = 30 * time.Second
+)
+
+// maxKnown caps the model and role names remembered for "temporarily unavailable" answers:
+// nodes announce names, and a token reconnecting with fresh ones must not grow memory.
+const maxKnown = 512
+
+// rememberLocked records that models (and their roles) were offered at now. Caller holds g.mu.
+func (g *Gateway) rememberLocked(models []protocol.ModelInfo, now time.Time) {
+	for _, m := range models {
+		for _, name := range append([]string{m.Name}, m.Roles...) {
+			if _, ok := g.known[name]; ok || len(g.known) < maxKnown {
+				g.known[name] = now
+			}
+		}
+	}
+}
+
 // Gateway routes user requests to connected nodes.
 type Gateway struct {
 	cfg      Config
@@ -111,6 +138,7 @@ type Gateway struct {
 	wake     chan struct{}        // closed and replaced whenever capacity may have changed
 	queued   atomic.Int32
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
+	bodies   atomic.Int64 // bytes reserved for request bodies, across all requests
 	stats    dayStats     // today's counts for /v1/stats
 	acfg     AccountsConfig
 	accounts *AccountStore // nil without accounts
@@ -379,6 +407,17 @@ func (g *Gateway) Handler() http.Handler {
 	return mux
 }
 
+type frontendCtx struct{}
+
+// FrontendHandler serves the same API on the private listener for the trusted front end
+// (Config.FrontendAddr). Only requests that arrive here may use forward_users keys.
+func (g *Gateway) FrontendHandler() http.Handler {
+	h := g.Handler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), frontendCtx{}, true)))
+	})
+}
+
 // ---------------------------------------------------------------- nodes
 
 type nodeConn struct {
@@ -534,9 +573,6 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "too many nodes for this token")
 		return
 	}
-	if old != nil { // reconnect replaces the stale connection
-		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
-	}
 	g.node[n.id] = n
 	now := time.Now()
 	for name, last := range g.known { // forget models nobody has offered for a long time
@@ -544,13 +580,11 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 			delete(g.known, name)
 		}
 	}
-	for _, m := range n.models {
-		g.known[m.Name] = now
-		for _, role := range m.Roles {
-			g.known[role] = now
-		}
-	}
+	g.rememberLocked(n.models, now)
 	g.mu.Unlock()
+	if old != nil { // reconnect replaces the stale connection; its close handshake may stall
+		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
+	}
 	g.signal() // waiting requests may now find a slot
 	g.log.Info("node connected", "node", n.id, "operator", operator, "models", len(n.models))
 
@@ -559,13 +593,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		if g.node[n.id] == n {
 			delete(g.node, n.id)
 		}
-		now := time.Now() // a model stays "known" for a while after its last node leaves
-		for _, m := range n.models {
-			g.known[m.Name] = now
-			for _, role := range m.Roles {
-				g.known[role] = now
-			}
-		}
+		g.rememberLocked(n.models, time.Now()) // "known" for a while after its last node leaves
 		g.mu.Unlock()
 		close(n.closed)
 		g.signal()
@@ -832,6 +860,9 @@ func (g *Gateway) user(r *http.Request) (string, bool) {
 func (g *Gateway) authenticate(r *http.Request) (info KeyInfo, accountID string, ok bool) {
 	key := bearer(r)
 	if info, ok = g.keys.Load().Lookup(r.Context(), key); ok {
+		if info.ForwardUsers && r.Context().Value(frontendCtx{}) == nil {
+			return KeyInfo{}, "", false // front-end keys work only on the private listener
+		}
 		return info, "", true
 	}
 	if g.accounts != nil {
@@ -898,7 +929,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 				apiError(w, http.StatusForbidden, "this account is not active")
 				return
 			}
-			acct, userKey = g.accountInfo(id), "acct:"+id
+			acct, userKey = g.accountInfo(id).within(info), "acct:"+id
 		} else if uid := r.Header.Get("X-OpenWebUI-User-Id"); uid != "" {
 			acct, userKey = info.forUser(uid), key+"|"+uid
 		}
@@ -926,17 +957,36 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			apiError(w, http.StatusTooManyRequests, "daily token budget used up; it resets at 00:00 UTC")
 			return
 		}
-		release, reason := g.lim.acquire(l.k, l.info, now)
+	}
+	// The body is read before taking a concurrency slot (a slow upload must not hold one),
+	// within a deadline and a memory budget shared by all requests.
+	size := int64(maxBody)
+	if r.ContentLength >= 0 && r.ContentLength < size {
+		size = r.ContentLength
+	}
+	if g.bodies.Add(size) > bodyBudget {
+		g.bodies.Add(-size)
+		w.Header().Set("Retry-After", "5")
+		apiError(w, http.StatusServiceUnavailable, "the gateway is busy; try again shortly")
+		return
+	}
+	defer g.bodies.Add(-size)
+	rc := http.NewResponseController(w)
+	rc.SetReadDeadline(time.Now().Add(bodyReadTimeout))
+	var body map[string]any
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, size)).Decode(&body)
+	rc.SetReadDeadline(time.Time{})
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	for _, l := range limits {
+		release, reason := g.lim.acquire(l.k, l.info, time.Now())
 		if release == nil {
 			apiError(w, http.StatusTooManyRequests, reason)
 			return
 		}
 		defer release()
-	}
-	var body map[string]any
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&body); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid JSON body")
-		return
 	}
 	if msgs, ok := body["messages"].([]any); body == nil || !ok || len(msgs) == 0 {
 		apiError(w, http.StatusBadRequest, "the body must be a JSON object with a non-empty messages array")
