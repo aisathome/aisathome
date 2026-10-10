@@ -332,7 +332,7 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 			finished = true
 			break
 		}
-		if strings.Contains(data, `"finish_reason":"`) {
+		if hasFinishReason(data) {
 			finished = true // a completion marker: the stream did not just stop
 		}
 		meterChunk([]byte(data), &u)
@@ -392,4 +392,23 @@ func read(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {
 		return err
 	}
 	return json.Unmarshal(b, m)
+}
+
+// hasFinishReason reports whether a streamed chunk carries a finish_reason for any choice
+// (parsed, so JSON spacing does not matter).
+func hasFinishReason(data string) bool {
+	var c struct {
+		Choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal([]byte(data), &c) != nil {
+		return false
+	}
+	for _, ch := range c.Choices {
+		if ch.FinishReason != nil && *ch.FinishReason != "" {
+			return true
+		}
+	}
+	return false
 }

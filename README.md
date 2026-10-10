@@ -64,6 +64,28 @@ Users point any OpenAI-compatible client (opencode, Open WebUI, `curl`) at
 `https://<gateway>/v1` with the key as the bearer token, and use a model or role name from
 `/v1/models`.
 
+### Accounts (sign-in, self-service keys)
+
+An `accounts` section turns on sign-in with GitHub and/or Google, up to `max_keys` API keys
+per account and a waitlist beyond the active-account limit. Set `file`, `public_url`,
+`session_secret` (32+ characters) and at least one provider; a provider is on when both its
+client id and secret are set:
+
+| Provider | Fields | Redirect URI to register |
+|---|---|---|
+| GitHub (OAuth app, no scopes) | `github_client_id`, `github_client_secret` | `<public_url>/account/callback` |
+| Google (OpenID Connect, scope `openid` only) | `google_client_id`, `google_client_secret` | `<public_url>/account/callback/google` |
+
+Only the provider's user id is stored: `gh:<numeric id>` or `google:<sub>`. No email, name or
+token. Google's ID token is checked against Google's published keys (RS256, issuer,
+audience, expiry, nonce) and the flow uses state and PKCE. The same person signing in with
+GitHub and with Google gets two separate accounts. Manage accounts with
+`aisathome-gateway accounts list|limit|close|open|add|activate|waitlist|ban`. Run it as the
+gateway's own user (in a container: `podman exec aisathome-gateway aisathome-gateway accounts
+...`), otherwise the file may become unwritable for the gateway. `waitlist` holds an account
+back until you `activate` it. The usage log names accounts by a pseudonym (an HMAC of the id),
+never by their GitHub or Google id.
+
 ## Licence
 
 Apache-2.0 (see `LICENSE`). Each source file carries an SPDX header. The name "AIs@home" is
