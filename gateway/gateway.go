@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -36,6 +37,9 @@ type Config struct {
 	Keys       map[string]KeyInfo   `json:"keys"`        // API key → user and limits
 	NodeTokens map[string]NodeToken `json:"node_tokens"` // node token → operator (and node id)
 	UsageLog   string               `json:"usage_log"`   // JSONL file, one line per request
+	// StateDir keeps state that must survive a restart (daily token budgets), so a restart
+	// does not hand every key a fresh day. Empty = memory only.
+	StateDir string `json:"state_dir"`
 	// QueueTimeoutSec is how long a request waits for a free slot, or for a node serving a
 	// recently seen model to (re)connect, before failing with 503. Default 30.
 	QueueTimeoutSec int `json:"queue_timeout_seconds"`
@@ -106,6 +110,9 @@ type Gateway struct {
 	budget   *budgets
 	keys     atomic.Pointer[keyStoreBox]
 	lim      *limiter
+	stop     chan struct{} // closed by Close: ends background work
+	stopOnce sync.Once
+	bg       sync.WaitGroup
 }
 
 // keyStoreBox lets the key store be swapped atomically (Reload, SetKeyStore).
@@ -142,9 +149,51 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(), budget: newBudgets()}
+		known: map[string]time.Time{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
+		budget: newBudgets(), stop: make(chan struct{})}
 	g.keys.Store(&keyStoreBox{staticKeys(cfg)})
+	if cfg.StateDir != "" {
+		if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+			return nil, fmt.Errorf("state dir: %w", err)
+		}
+		g.budget.path = filepath.Join(cfg.StateDir, "budgets.json")
+		g.budget.load(time.Now(), log)
+		g.every(saveEvery, func() {
+			if err := g.budget.save(); err != nil {
+				log.Warn("saving budgets failed", "err", err)
+			}
+		})
+	}
 	return g, nil
+}
+
+// saveEvery bounds how much budget use a crash can lose, without a write per request.
+const saveEvery = 5 * time.Second
+
+// every runs f periodically until Close.
+func (g *Gateway) every(d time.Duration, f func()) {
+	g.bg.Add(1)
+	go func() {
+		defer g.bg.Done()
+		t := time.NewTicker(d)
+		defer t.Stop()
+		for {
+			select {
+			case <-g.stop:
+				return
+			case <-t.C:
+				f()
+			}
+		}
+	}()
+}
+
+// Close stops background work and saves state. Call it on shutdown, after the HTTP server
+// has stopped taking requests.
+func (g *Gateway) Close() error {
+	g.stopOnce.Do(func() { close(g.stop) })
+	g.bg.Wait()
+	return g.budget.save()
 }
 
 func staticKeys(cfg Config) StaticKeys {

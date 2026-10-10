@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -50,11 +51,31 @@ func main() {
 		}
 	}()
 	srv := &http.Server{Addr: *addr, Handler: g.Handler(), ReadHeaderTimeout: 10 * time.Second}
+
+	// SIGTERM (systemctl stop, podman stop) and Ctrl-C: stop taking requests, give running
+	// ones a moment, then save state (daily budgets) before exiting.
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM, os.Interrupt)
+	done := make(chan struct{})
+	go func() {
+		<-term
+		log.Info("shutting down")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+		if err := g.Close(); err != nil {
+			log.Error("saving state", "err", err)
+		}
+		close(done)
+	}()
+
 	log.Info("gateway listening", "addr", *addr, "id", cfg.GatewayID)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Error("server stopped", "err", err)
+		g.Close()
 		os.Exit(1)
 	}
+	<-done
 }
 
 func loadConfig(path string) (gateway.Config, error) {

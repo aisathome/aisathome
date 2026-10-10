@@ -4,6 +4,13 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -69,6 +76,7 @@ func (s StaticKeys) Lookup(_ context.Context, key string) (KeyInfo, bool) {
 type limiter struct {
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	swept   time.Time
 }
 
 type bucket struct {
@@ -79,10 +87,22 @@ type bucket struct {
 
 func newLimiter() *limiter { return &limiter{buckets: map[string]*bucket{}} }
 
+// idleAfter: a bucket unused this long has refilled completely, so dropping it is the same
+// as keeping it. Without this the map grows by one entry per key or end user, forever.
+const idleAfter = time.Minute
+
 // acquire reports whether the request may start, and returns a release function.
 func (l *limiter) acquire(key string, k KeyInfo, now time.Time) (release func(), reason string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if now.Sub(l.swept) >= idleAfter {
+		for id, b := range l.buckets {
+			if b.inFlight == 0 && now.Sub(b.last) >= idleAfter {
+				delete(l.buckets, id)
+			}
+		}
+		l.swept = now
+	}
 	b := l.buckets[key]
 	if b == nil {
 		b = &bucket{tokens: float64(k.RPM), last: now}
@@ -93,10 +113,10 @@ func (l *limiter) acquire(key string, k KeyInfo, now time.Time) (release func(),
 		if b.tokens > float64(k.RPM) {
 			b.tokens = float64(k.RPM)
 		}
-		b.last = now
-		if b.tokens < 1 {
-			return nil, "rate limit exceeded"
-		}
+	}
+	b.last = now // also marks the bucket as in use for pruning
+	if k.RPM > 0 && b.tokens < 1 {
+		return nil, "rate limit exceeded"
 	}
 	if k.MaxConcurrent > 0 && b.inFlight >= k.MaxConcurrent {
 		return nil, "too many concurrent requests"
@@ -112,18 +132,32 @@ func (l *limiter) acquire(key string, k KeyInfo, now time.Time) (release func(),
 	}, ""
 }
 
-// budgets track weighted tokens per key and UTC day (in memory; a restart resets the day).
+// budgets track weighted tokens per key and UTC day. Entries are keyed by a hash of the API
+// key (plus end user), so the state file on disk never holds keys. With a path they are
+// saved there and survive restarts; otherwise a restart resets the day.
 type budgets struct {
-	mu   sync.Mutex
-	used map[string]*dayUse
+	mu     sync.Mutex
+	used   map[string]*dayUse // key hash → today's use
+	day    string             // the UTC day old entries were last pruned for
+	path   string             // state file; "" = memory only
+	dirty  bool
+	saveMu sync.Mutex // one save at a time (ticker and Close)
 }
 
 type dayUse struct {
-	day string
-	n   int64
+	Day string `json:"day"`
+	N   int64  `json:"n"`
 }
 
 func newBudgets() *budgets { return &budgets{used: map[string]*dayUse{}} }
+
+// keyHash identifies an API key (or key|end user) without storing it.
+func keyHash(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
+}
+
+func utcDay(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
 // over reports whether key has used its daily limit, and the seconds until it resets.
 func (b *budgets) over(key string, limit int, now time.Time) (int, bool) {
@@ -132,9 +166,8 @@ func (b *budgets) over(key string, limit int, now time.Time) (int, bool) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	u := b.used[key]
-	day := now.UTC().Format("2006-01-02")
-	if u == nil || u.day != day || u.n < int64(limit) {
+	u := b.used[keyHash(key)]
+	if u == nil || u.Day != utcDay(now) || u.N < int64(limit) {
 		return 0, false
 	}
 	next := now.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
@@ -144,11 +177,106 @@ func (b *budgets) over(key string, limit int, now time.Time) (int, bool) {
 func (b *budgets) add(key string, n int64, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	day := now.UTC().Format("2006-01-02")
-	u := b.used[key]
-	if u == nil || u.day != day {
-		u = &dayUse{day: day}
-		b.used[key] = u
+	day := utcDay(now)
+	switch {
+	case day < b.day: // a request from before midnight, finished after: no longer counts
+		return
+	case day > b.day: // a new day: yesterday's entries count for nothing any more
+		for id, u := range b.used {
+			if u.Day != day {
+				delete(b.used, id)
+			}
+		}
+		b.day = day
 	}
-	u.n += n
+	id := keyHash(key)
+	u := b.used[id]
+	if u == nil || u.Day != day {
+		u = &dayUse{Day: day}
+		b.used[id] = u
+	}
+	u.N += n
+	b.dirty = true
+}
+
+// budgetState is the state file's format.
+type budgetState struct {
+	Version int               `json:"version"`
+	Used    map[string]dayUse `json:"used"`
+}
+
+// load reads the state file, keeping only today's entries. A missing file is a first start;
+// an unreadable or corrupt one is logged and ignored: budgets then restart from zero, which
+// is what happened on every restart before they were saved, so it must not stop the gateway.
+func (b *budgets) load(now time.Time, log *slog.Logger) {
+	raw, err := os.ReadFile(b.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	var st budgetState
+	if err == nil {
+		err = json.Unmarshal(raw, &st)
+	}
+	if err != nil {
+		log.Warn("budget state unreadable, starting with empty budgets", "file", b.path, "err", err)
+		return
+	}
+	day := utcDay(now)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, u := range st.Used {
+		if u.Day == day && u.N > 0 {
+			b.used[id] = &dayUse{Day: u.Day, N: u.N}
+		}
+	}
+	b.day = day
+}
+
+// save writes the state file if anything changed since the last save.
+func (b *budgets) save() error {
+	b.saveMu.Lock()
+	defer b.saveMu.Unlock()
+	b.mu.Lock()
+	if b.path == "" || !b.dirty {
+		b.mu.Unlock()
+		return nil
+	}
+	st := budgetState{Version: 1, Used: make(map[string]dayUse, len(b.used))}
+	for id, u := range b.used {
+		st.Used[id] = *u
+	}
+	b.dirty = false
+	b.mu.Unlock()
+	raw, _ := json.Marshal(st)
+	if err := writeFileAtomic(b.path, raw); err != nil {
+		b.mu.Lock()
+		b.dirty = true // try again next time
+		b.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// writeFileAtomic replaces path with data so that readers (and a crash) see either the old
+// or the new file, never a partial one: write a temporary file next to it, then rename.
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp") // mode 0600
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }

@@ -120,7 +120,7 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 	gw := httptest.NewServer(g.Handler())
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &rig{g: g, gw: gw, usageLog: usage, cancel: cancel}
-	t.Cleanup(func() { cancel(); gw.Close() })
+	t.Cleanup(func() { cancel(); gw.Close(); g.Close() })
 	for i, e := range engines {
 		r.startNode(ctx, fmt.Sprintf("node-%d", i), "node-token", e, 2)
 	}
