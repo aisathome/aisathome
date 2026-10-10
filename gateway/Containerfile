@@ -5,7 +5,7 @@
 #   podman build -f gateway/Containerfile -t aisathome-gateway .
 #
 # Runtime: config at /etc/aisathome/gateway.json (mount the directory, not the file, so
-# edits are visible to SIGHUP reloads); usage log under /data.
+# edits are visible to SIGHUP reloads); usage log, keys_file and state_dir under /data.
 #
 # SPDX-License-Identifier: Apache-2.0
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
