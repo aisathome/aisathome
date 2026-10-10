@@ -159,7 +159,8 @@ func (r *redactor) redactText(s string) string {
 // placeholders are never restored into tool arguments, and in a text field only if the
 // whole field, before and after the placeholder, shows nothing URL-, path-, command- or
 // markup-like. This is a second line of defence, not a guarantee; it fails closed.
-var urlish = regexp.MustCompile(`(?i)[/\\?:%<>{}\[\]` + "`" + `@]|&#|www\.|[a-z0-9-]\.[a-z]{2,}|\d\.\d|[\x{FF0E}\x{3002}\x{FF61}]`)
+var urlish = regexp.MustCompile(`(?i)[/\\?:%<>{}\[\]` + "`" + `@]|&#|www\.|[a-z0-9-]\.[a-z]{2,}|\d\.\d|[\x{FF0E}\x{3002}\x{FF61}]` +
+	`|\b(?:0x[0-9a-f]{6,}|\d{8,10})\b|\b(?:curl|wget|nc|ncat|socat|telnet|ssh|scp|ftp|fetch|iwr|irm|invoke-\w+|http\w*)\b`)
 
 // maxHeld bounds the text held back per field while waiting to decide; beyond it the
 // placeholders simply stay.
@@ -187,7 +188,7 @@ func (r *redactor) restore(s string) string { return r.restoreField(false, "", s
 // (seen: its earlier text already had a marker; tail: the end of its earlier text) has
 // anything URL-like.
 func (r *redactor) restoreField(seen bool, tail, s string) string {
-	if !r.active() || seen || !strings.Contains(s, "AISX"+r.nonce) || urlish.MatchString(tail+s) {
+	if !r.restoreOn || !r.active() || seen || !strings.Contains(s, "AISX"+r.nonce) || urlish.MatchString(tail+s) {
 		return s
 	}
 	return r.matcher().ReplaceAllStringFunc(s, func(ph string) string { return r.byPH[ph] })

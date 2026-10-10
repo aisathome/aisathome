@@ -100,6 +100,7 @@ type Gateway struct {
 	wake     chan struct{}        // closed and replaced whenever capacity may have changed
 	queued   atomic.Int32
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
+	bufByTok sync.Map     // node token → *atomic.Int64: the share held for its nodes
 	start    time.Time
 	use      *usageWriter
 	budget   *budgets
@@ -432,8 +433,15 @@ func (rt *route) allows(n *nodeConn) bool {
 	return !rt.exclude[n] && (!rt.trusted || n.trusted) && (rt.operator == "" || n.operator == rt.operator)
 }
 
-// maxBufferedTotal bounds all non-streaming answers held at once.
-const maxBufferedTotal = 64 << 20
+// maxBufferedTotal bounds all non-streaming answers held at once, and maxBufferedPerToken
+// the share one node token can take, so one operator cannot fill it for everyone.
+const (
+	maxBufferedTotal    = 64 << 20
+	maxBufferedPerToken = 12 << 20
+)
+
+// errGatewayBusy means the gateway itself is out of buffer space: not the node's fault.
+var errGatewayBusy = errors.New("gateway busy")
 
 // maxChunkBytes bounds one streamed chunk (a token or a few, plus JSON framing). Larger
 // frames are a malicious or broken node; they would let one request pin gigabytes.
@@ -688,7 +696,9 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		info KeyInfo
 	}{{key, info}}
 	if userKey != key {
-		charge = append(charge, userKey)
+		// Only the end user is charged: a node inflating usage must not drain the shared
+		// front-end key for everyone. The front end keeps its request-rate limits.
+		charge = []string{userKey}
 		limits = append(limits, struct {
 			k    string
 			info KeyInfo
@@ -764,6 +774,11 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 		if isContextOverflow(err.Error()) { // the request itself is too large: no retry
 			contextError(w, err.Error())
+			return
+		}
+		if errors.Is(err, errGatewayBusy) {
+			w.Header().Set("Retry-After", "10")
+			apiError(w, http.StatusServiceUnavailable, "the gateway is busy; try again shortly")
 			return
 		}
 		g.log.Warn("node failed before output, retrying", "node", n.id, "err", errCategory(err.Error()))
@@ -867,8 +882,10 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		return rc.Flush()
 	}
 	chunks, collectedBytes := 0, 0
-	var held int64 // this request's share of g.buffered
-	defer func() { g.buffered.Add(-held) }()
+	var held int64 // this request's share of g.buffered and of its node token's share
+	tokBuf, _ := g.bufByTok.LoadOrStore(n.token, new(atomic.Int64))
+	tokHeld := tokBuf.(*atomic.Int64)
+	defer func() { g.buffered.Add(-held); tokHeld.Add(-held) }()
 	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
 	defer stall.Stop()
 	for {
@@ -902,12 +919,19 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 				chunks++
 				collectedBytes += len(m.Data)
 				relayedChars += textLen(m.Data)
-				overGlobal := false
+				overToken, overGlobal := false, false
 				if !clientStream {
 					held += int64(len(m.Data))
+					overToken = tokHeld.Add(int64(len(m.Data))) > maxBufferedPerToken
 					overGlobal = g.buffered.Add(int64(len(m.Data))) > maxBufferedTotal
 				}
-				if chunks > maxChunks || (!clientStream && collectedBytes > maxCollected) || overGlobal {
+				if overGlobal && !overToken && chunks <= maxChunks && collectedBytes <= maxCollected {
+					cancelOnNode(n, reqID)
+					partial("failed")
+					g.log.Warn("gateway answer buffers full", "node", n.id)
+					return started, errGatewayBusy
+				}
+				if chunks > maxChunks || (!clientStream && collectedBytes > maxCollected) || overToken {
 					cancelOnNode(n, reqID)
 					partial("failed")
 					g.log.Warn("node sent more output than requested", "node", n.id, "chunks", chunks)

