@@ -1,4 +1,5 @@
-// Command aisathome-gateway runs an AIs@home project gateway.
+// Command aisathome-gateway runs an AIs@home project gateway. "aisathome-gateway keys"
+// manages per-user API keys in the keys file.
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -19,6 +20,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "keys" { // operator tool, not the server
+		if err := runKeys(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		return
+	}
 	addr := flag.String("addr", ":8080", "listen address")
 	cfgPath := flag.String("config", "gateway.json", "config file (JSON)")
 	flag.Parse()
@@ -46,7 +54,10 @@ func main() {
 				log.Error("reload failed, keeping the old config", "err", err)
 				continue
 			}
-			g.Reload(c)
+			if err := g.Reload(c); err != nil {
+				log.Error("reload failed, keeping the old config", "err", err)
+				continue
+			}
 			log.Info("config reloaded", "api_keys", len(c.APIKeys)+len(c.Keys), "node_tokens", len(c.NodeTokens))
 		}
 	}()
