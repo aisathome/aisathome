@@ -44,6 +44,9 @@ type Config struct {
 	// StateDir keeps state that must survive a restart (daily token budgets), so a restart
 	// does not hand every key a fresh day. Empty = memory only.
 	StateDir string `json:"state_dir"`
+	// Accounts enables GitHub and/or Google sign-in, self-service API keys and the waitlist
+	// (see accounts.go).
+	Accounts *AccountsConfig `json:"accounts,omitempty"`
 	// QueueTimeoutSec is how long a request waits for a free slot, or for a node serving a
 	// recently seen model to (re)connect, before failing with 503. Default 30.
 	QueueTimeoutSec int `json:"queue_timeout_seconds"`
@@ -108,7 +111,11 @@ type Gateway struct {
 	wake     chan struct{}        // closed and replaced whenever capacity may have changed
 	queued   atomic.Int32
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
-	bufByTok sync.Map     // node token → *atomic.Int64: the share held for its nodes
+	stats    dayStats     // today's counts for /v1/stats
+	acfg     AccountsConfig
+	accounts *AccountStore // nil without accounts
+	gkeys    *jwksCache    // Google's signing keys, for Google sign-in
+	bufByTok sync.Map      // node token → *atomic.Int64: the share held for its nodes
 	start    time.Time
 	use      *usageWriter
 	budget   *budgets
@@ -158,6 +165,22 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{})}
+	g.stats.replay(cfg.UsageLog, time.Now())
+	if cfg.Accounts != nil {
+		g.acfg = *cfg.Accounts
+		if err := g.acfg.defaults(); err != nil {
+			return nil, err
+		}
+		if g.accounts, err = OpenAccountStore(g.acfg.File); err != nil {
+			return nil, err
+		}
+		g.gkeys = newJWKSCache(g.acfg.GoogleCertsURL, g.getJSON)
+		g.every(keysFileCheck, func() { // the operator's CLI changes the file while we run
+			if err := g.accounts.Refresh(); err != nil {
+				log.Error("accounts file not applied, keeping the accounts in use", "err", err)
+			}
+		})
+	}
 	g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg)}})
 	if err := g.loadKeys(cfg); err != nil {
 		return nil, err
@@ -341,6 +364,10 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", g.handleChat)
 	mux.HandleFunc("GET /v1/models", g.handleModels)
 	mux.HandleFunc("GET /v1/node/connect", g.handleNodeConnect)
+	mux.HandleFunc("GET /v1/stats", g.handleStats)
+	if g.accounts != nil {
+		g.accountRoutes(mux)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	return mux
 }
@@ -457,6 +484,21 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
+	// Reload may have revoked or changed the token while we waited for hello: decide with the
+	// token as it is now, under the same lock that registers the node.
+	cur, still := g.tokens[token]
+	reservedNow := false
+	for t, other := range g.tokens {
+		if t != token && other.NodeID == hello.NodeID {
+			reservedNow = true
+		}
+	}
+	if !still || (cur.NodeID != "" && cur.NodeID != hello.NodeID) || reservedNow {
+		g.mu.Unlock()
+		c.Close(websocket.StatusPolicyViolation, "node token revoked or changed")
+		return
+	}
+	n.trusted, n.operator = cur.Trust == "trusted", cur.Operator
 	old := g.node[n.id]
 	if old != nil && old.token != token { // only the node's own token may replace it
 		g.mu.Unlock()
@@ -756,8 +798,24 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 // ---------------------------------------------------------------- user API
 
 func (g *Gateway) user(r *http.Request) (string, bool) {
-	k, ok := g.keys.Load().Lookup(r.Context(), bearer(r))
+	k, _, ok := g.authenticate(r)
 	return k.User, ok
+}
+
+// authenticate resolves the request's API key: configured keys first, then keys that accounts
+// created themselves. accountID is set for the latter. Every endpoint uses this, so a key works
+// the same everywhere.
+func (g *Gateway) authenticate(r *http.Request) (info KeyInfo, accountID string, ok bool) {
+	key := bearer(r)
+	if info, ok = g.keys.Load().Lookup(r.Context(), key); ok {
+		return info, "", true
+	}
+	if g.accounts != nil {
+		if accountID, ok = g.accounts.keyAccount(key); ok {
+			return g.accountInfo(accountID), accountID, true
+		}
+	}
+	return KeyInfo{}, "", false
 }
 
 func bearer(r *http.Request) string {
@@ -798,16 +856,26 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	key := bearer(r)
-	info, ok := g.keys.Load().Lookup(r.Context(), key)
+	info, accountID, ok := g.authenticate(r)
 	if !ok {
 		apiError(w, http.StatusUnauthorized, "invalid API key")
 		return
 	}
 	// End users behind a trusted front end (Open WebUI) are identified by its pseudonymous
-	// user id and get their own limits, on top of the front end's key limits.
+	// user id and get their own limits, on top of the front end's key limits. Signed-in
+	// accounts arrive as gh-<id>@users.invalid or google-<sub>@users.invalid and share one
+	// budget with their API keys.
 	acct, userKey := info, key
-	if info.ForwardUsers {
-		if uid := r.Header.Get("X-OpenWebUI-User-Id"); uid != "" {
+	if accountID != "" {
+		userKey = "acct:" + accountID
+	} else if info.ForwardUsers {
+		if id, isAcct := accountFromEmail(r.Header.Get("X-OpenWebUI-User-Email")); isAcct {
+			if g.accounts == nil || !g.accounts.active(id) { // banned or waiting: not through the chat either
+				apiError(w, http.StatusForbidden, "this account is not active")
+				return
+			}
+			acct, userKey = g.accountInfo(id), "acct:"+id
+		} else if uid := r.Header.Get("X-OpenWebUI-User-Id"); uid != "" {
 			acct, userKey = info.forUser(uid), key+"|"+uid
 		}
 	}
@@ -817,7 +885,9 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		k    string
 		info KeyInfo
 	}{{key, info}}
-	if userKey != key {
+	if accountID != "" { // an account key: limits and budget belong to the account
+		charge, limits[0].k = []string{userKey}, userKey
+	} else if userKey != key {
 		// Only the end user is charged: a node inflating usage must not drain the shared
 		// front-end key for everyone. The front end keeps its request-rate limits.
 		charge = []string{userKey}
@@ -846,6 +916,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if msgs, ok := body["messages"].([]any); body == nil || !ok || len(msgs) == 0 {
 		apiError(w, http.StatusBadRequest, "the body must be a JSON object with a non-empty messages array")
+		return
+	}
+	if n, ok := body["n"].(float64); ok && n != 1 { // answers are assembled as one choice
+		apiError(w, http.StatusBadRequest, "n must be 1")
 		return
 	}
 	want, _ := body["model"].(string)
@@ -967,9 +1041,11 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	record := func(outcome string, u protocol.Usage, estimated bool) {
 		u, clamped := clampUsage(u, len(raw), maxTokens, relayed)
 		u.DurationMs = time.Since(t0).Milliseconds()
-		g.use.record(usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
+		rec := usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
 			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
-			Estimated: estimated, Clamped: clamped})
+			Estimated: estimated, Clamped: clamped}
+		g.use.record(rec)
+		g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
 		// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
 		bu := u
 		bu.PromptTokens = min(bu.PromptTokens, len(raw)/3+256)
@@ -1257,12 +1333,20 @@ type usageRecord struct {
 }
 
 // textLen is the number of generated characters in a streamed chunk (for budget bounds).
+// Generated output is text, reasoning and tool-call arguments: all of it costs GPU time and
+// counts against budgets.
 func textLen(chunk []byte) int {
 	var c struct {
 		Choices []struct {
 			Delta struct {
 				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"delta"`
 		} `json:"choices"`
 	}
@@ -1272,30 +1356,15 @@ func textLen(chunk []byte) int {
 	n := 0
 	for _, ch := range c.Choices {
 		n += len(ch.Delta.Content) + len(ch.Delta.ReasoningContent)
+		for _, tc := range ch.Delta.ToolCalls {
+			n += len(tc.Function.Name) + len(tc.Function.Arguments)
+		}
 	}
 	return n
 }
 
 // hasText reports whether a streamed chunk carries generated text (answer or reasoning).
-func hasText(chunk []byte) bool {
-	var c struct {
-		Choices []struct {
-			Delta struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
-			} `json:"delta"`
-		} `json:"choices"`
-	}
-	if json.Unmarshal(chunk, &c) != nil {
-		return false
-	}
-	for _, ch := range c.Choices {
-		if ch.Delta.Content != "" || ch.Delta.ReasoningContent != "" {
-			return true
-		}
-	}
-	return false
-}
+func hasText(chunk []byte) bool { return textLen(chunk) > 0 }
 
 type usageWriter struct {
 	mu sync.Mutex

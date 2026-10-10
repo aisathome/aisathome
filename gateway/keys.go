@@ -174,6 +174,16 @@ func (b *budgets) over(key string, limit int, now time.Time) (int, bool) {
 	return int(next.Sub(now).Seconds()) + 1, true
 }
 
+// used1 is what key has used today.
+func (b *budgets) used1(key string, now time.Time) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if u := b.used[keyHash(key)]; u != nil && u.Day == utcDay(now) {
+		return u.N
+	}
+	return 0
+}
+
 func (b *budgets) add(key string, n int64, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
