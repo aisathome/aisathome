@@ -184,7 +184,9 @@ Description=AIs@home node: create NVIDIA device nodes for CUDA
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/nvidia-modprobe -u -c=0
+# Not every driver install ships nvidia-modprobe (a Vast VM with driver 535 had none, but
+# already had the device nodes; 2026-10-10 install test): use it only when needed.
+ExecStart=/bin/sh -c 'test -e /dev/nvidia-uvm && exit 0; command -v nvidia-modprobe >/dev/null && exec nvidia-modprobe -u -c=0; echo "no /dev/nvidia-uvm and no nvidia-modprobe: install it (e.g. apt install nvidia-modprobe)" >&2; exit 1'
 
 [Install]
 WantedBy=multi-user.target

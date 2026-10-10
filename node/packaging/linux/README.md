@@ -12,12 +12,21 @@ serves.
 
 - NVIDIA GPU with ~20 GB free VRAM for the default 27B model, plus the NVIDIA driver with
   CUDA (`nvidia-smi` works).
-- `llama-server` built with CUDA, e.g.:
+- `llama-server` built with CUDA. You need the CUDA toolkit matching your driver
+  (`nvidia-smi` shows the highest CUDA version it supports), `cmake`, `ninja` and a C++
+  compiler. On Ubuntu 22.04 with driver 535, for example:
   ```bash
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+  sudo dpkg -i cuda-keyring_1.1-1_all.deb && sudo apt-get update
+  sudo apt-get install -y cuda-toolkit-12-2 cmake ninja-build build-essential
+  export PATH=/usr/local/cuda/bin:$PATH   # nvcc is not on PATH by default
+
   git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp && cd llama.cpp
-  cmake -B build -G Ninja -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89 -DCMAKE_BUILD_TYPE=Release
+  cmake -B build -G Ninja -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=86;89" -DCMAKE_BUILD_TYPE=Release
   cmake --build build --target llama-server
   ```
+  `86;89` covers the RTX 30xx and 40xx series; a build for 89 only fails on an RTX 3090
+  with "no kernel image is available". (`native` needs CMake 3.24; Ubuntu 22.04 has 3.22.)
 - A GGUF model, e.g. `unsloth/Qwen3.8-27B-GGUF` / `Qwen3.8-27B-UD-Q4_K_M.gguf` (16.5 GB).
 - `aisathome-node`: either a prebuilt release binary (`--node-release`, linux amd64 or
   arm64) or your own build (`go build ./node/cmd/aisathome-node`, then `--node-bin`).
@@ -60,6 +69,10 @@ cannot starve another.
 | `long-context-dual` | 2 × 128k | q4_0 | 21,272 MiB. **Head-of-line blocking:** while one ~100k prompt was prefilled (about 60 s), the other stream's decode fell to 3.9 tok/s |
 
 Source: `bench/kvquant/RESULTS.md` in the research repo (llama.cpp v0.5.0, 2026-10-09).
+
+Tested installs: an RTX 4090 (the owner's node) and a fresh RTX 3090 VM (Ubuntu 22.04,
+driver 535, 2026-10-10): `balanced` used 17,972 MiB and decoded about 42 tokens/s for a
+single 400-token answer measured through the gateway (one run).
 Caveats:
 - The 2 × 32k presets were not measured as such: the numbers are for one 64k slot, which
   has the same total context.
