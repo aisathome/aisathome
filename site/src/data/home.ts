@@ -41,7 +41,7 @@ export const cards = [
 	{
 		title: 'Chat',
 		href: '/use/chat/',
-		text: 'Sign in with GitHub and chat. Chats are temporary unless you save them.',
+		text: 'Sign in with GitHub or Google and chat. Chats are temporary unless you save them.',
 	},
 	{
 		title: 'API and opencode',

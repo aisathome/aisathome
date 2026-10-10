@@ -1,4 +1,4 @@
-// HTTP side of accounts: GitHub and Google sign-in, the account page, and the check Caddy's
+// HTTP side of accounts: GitHub and Google sign-in (email sign-in: email.go), the account page, and the check Caddy's
 // forward_auth calls before the chat (Open WebUI) sees a request.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -43,6 +43,9 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	if g.acfg.googleOn() {
 		mux.HandleFunc("GET /account/callback/google", g.handleGoogleCallback)
 	}
+	if g.email != nil {
+		g.emailRoutes(mux)
+	}
 	mux.HandleFunc("POST /account/keys", g.handleKeyCreate)
 	mux.HandleFunc("POST /account/keys/revoke", g.handleKeyRevoke)
 	mux.HandleFunc("POST /account/logout", g.handleLogout)
@@ -50,11 +53,12 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 }
 
 // accountEmail is the chat's address for account id ("gh:123" → "gh-123@users.invalid",
-// "google:1045" → "google-1045@users.invalid").
+// "google:1045" → "google-1045@users.invalid", "em:<hex>" → "em-<hex>@users.invalid").
 func accountEmail(id string) string { return strings.ReplaceAll(id, ":", "-") + accountEmailSuffix }
 
-// accountFromEmail reverses accountEmail; ok only for well-formed GitHub and Google accounts
-// (digits only, so no address can name anything else).
+// accountFromEmail reverses accountEmail; ok only for well-formed GitHub, Google and email
+// accounts (digits, or exactly 32 lowercase hex digits, so no address can name anything
+// else).
 func accountFromEmail(email string) (string, bool) {
 	local, ok := strings.CutSuffix(strings.ToLower(email), accountEmailSuffix)
 	if !ok {
@@ -65,6 +69,9 @@ func accountFromEmail(email string) (string, bool) {
 	}
 	if sub, google := strings.CutPrefix(local, "google-"); google && validGoogleSub(sub) {
 		return "google:" + sub, true
+	}
+	if h, em := strings.CutPrefix(local, "em-"); em && len(h) == 32 && strings.Trim(h, "0123456789abcdef") == "" {
+		return "em:" + h, true
 	}
 	return "", false
 }
@@ -185,6 +192,11 @@ func (g *Gateway) handleCallback(w http.ResponseWriter, r *http.Request) {
 // finishSignIn creates or finds the account for a verified provider id and starts a session.
 func (g *Gateway) finishSignIn(w http.ResponseWriter, r *http.Request, id, next string) {
 	a, err := g.accounts.SignIn(id, time.Now())
+	g.signedIn(w, r, a, err, next)
+}
+
+// signedIn starts a session for a found or created account (err from SignIn or SignInEmail).
+func (g *Gateway) signedIn(w http.ResponseWriter, r *http.Request, a Account, err error, next string) {
 	if errors.Is(err, errSignupClosed) {
 		g.accountPage(w, http.StatusForbidden, pageData{Error: "Sign-up is closed for now. Please try again later."})
 		return
@@ -193,7 +205,7 @@ func (g *Gateway) finishSignIn(w http.ResponseWriter, r *http.Request, id, next 
 		g.accountPage(w, http.StatusInternalServerError, pageData{Error: "Something went wrong. Please try again."})
 		return
 	}
-	g.setCookie(w, sessionCookie, signSession(g.acfg.SessionSecret, id, time.Now().Add(sessionTTL)), "/", sessionTTL)
+	g.setCookie(w, sessionCookie, signSession(g.acfg.SessionSecret, a.ID, time.Now().Add(sessionTTL)), "/", sessionTTL)
 	if next == "chat" && a.Status == StatusActive && g.acfg.ChatURL != "" {
 		http.Redirect(w, r, g.acfg.ChatURL, http.StatusFound)
 		return
@@ -345,6 +357,8 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 type pageData struct {
 	GitHub   bool // sign-in providers on offer
 	Google   bool
+	Email    bool
+	Separate string // "GitHub, Google and email" when more than one way is on offer
 	SignedIn bool
 	Next     bool
 	Account  Account
@@ -367,7 +381,19 @@ func (g *Gateway) createToken(id string, seq int) string {
 }
 
 func (g *Gateway) accountPage(w http.ResponseWriter, status int, d pageData) {
-	d.GitHub, d.Google = g.acfg.githubOn(), g.acfg.googleOn()
+	d.GitHub, d.Google, d.Email = g.acfg.githubOn(), g.acfg.googleOn(), g.email != nil
+	var ways []string
+	for _, w := range []struct {
+		on   bool
+		name string
+	}{{d.GitHub, "GitHub"}, {d.Google, "Google"}, {d.Email, "email"}} {
+		if w.on {
+			ways = append(ways, w.name)
+		}
+	}
+	if n := len(ways); n > 1 {
+		d.Separate = strings.Join(ways[:n-1], ", ") + " and " + ways[n-1]
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://github.com; frame-ancestors 'none'")
@@ -383,29 +409,22 @@ var accountTmpl = template.Must(template.New("account").Funcs(template.FuncMap{
 }).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Your account · AIs@home</title>
-<style>
-:root{color-scheme:dark light;--bg:#111417;--fg:#e6edf0;--mut:#9aa7ad;--acc:#14b8a6;--card:#1a1f23;--line:#2a3237}
-@media (prefers-color-scheme:light){:root{--bg:#f7f9f9;--fg:#132024;--mut:#4d5b60;--acc:#0f766e;--card:#fff;--line:#d6dee0}}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}
-main{max-width:40rem;margin:0 auto;padding:2.5rem 1rem}
-a{color:var(--acc)}h1{font-size:1.6rem;margin:0 0 1rem}
-.card{background:var(--card);border:1px solid var(--line);border-radius:.6rem;padding:1.1rem 1.2rem;margin:1rem 0}
-.btn{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:2rem;padding:.55rem 1.2rem;font:inherit;cursor:pointer;text-decoration:none}
-.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
-code,.key{font-family:ui-monospace,Menlo,monospace}.key{display:block;word-break:break-all;background:var(--bg);padding:.6rem;border-radius:.4rem;border:1px solid var(--acc)}
-.mut{color:var(--mut)}.err{border-color:#e5484d}table{width:100%;border-collapse:collapse}td{padding:.35rem 0;border-bottom:1px solid var(--line)}
-form{display:inline}
-</style></head><body><main>
+` + pageStyle + `</head><body><main>
 <p><a href="/">← AIs@home</a></p>
 {{if .Error}}<div class="card err">{{.Error}}</div>{{end}}
 {{if not .SignedIn}}
 <h1>Sign in</h1>
-<div class="card"><p>AIs@home uses your {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}
+<div class="card">{{if or .GitHub .Google}}<p>AIs@home uses your {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}
 account only to tell accounts apart. We keep only its user id ({{if .GitHub}}GitHub's numeric
 id{{end}}{{if and .GitHub .Google}}, {{end}}{{if .Google}}Google's account identifier{{end}}): no email, no
 name, no password.</p>
 <p>{{if .GitHub}}<a class="btn" href="/account/login?provider=github{{if .Next}}&amp;next=chat{{end}}">Sign in with GitHub</a>{{end}}
-{{if .Google}}<a class="btn" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}">Sign in with Google</a>{{end}}</p>
+{{if .Google}}<a class="btn" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}">Sign in with Google</a>{{end}}</p>{{end}}
+{{if .Email}}<form method="post" action="/account/email" style="display:block"><p><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
+send you a one-time code.</label><br><input id="email" type="email" name="email" required autocomplete="email" maxlength="254">
+{{if .Next}}<input type="hidden" name="next" value="chat">{{end}}<button class="btn">Email me a code</button></p></form>
+<p class="mut">For email we keep a keyed hash of the address (still personal data), not the address itself.</p>{{end}}
+{{if .Separate}}<p class="mut">{{.Separate}} are separate accounts; use the same one each time.</p>{{end}}
 <p class="mut">New accounts are let in in order while there is room; otherwise you get a place in the
 waitlist.</p></div>
 {{else if eq .Account.Status "waitlisted"}}
@@ -440,3 +459,20 @@ func navigation(r *http.Request) bool {
 	}
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
+
+// pageStyle is shared by the account and email pages.
+const pageStyle = `<style>
+:root{color-scheme:dark light;--bg:#111417;--fg:#e6edf0;--mut:#9aa7ad;--acc:#14b8a6;--card:#1a1f23;--line:#2a3237}
+@media (prefers-color-scheme:light){:root{--bg:#f7f9f9;--fg:#132024;--mut:#4d5b60;--acc:#0f766e;--card:#fff;--line:#d6dee0}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}
+main{max-width:40rem;margin:0 auto;padding:2.5rem 1rem}
+a{color:var(--acc)}h1{font-size:1.6rem;margin:0 0 1rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:.6rem;padding:1.1rem 1.2rem;margin:1rem 0}
+.btn{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:2rem;padding:.55rem 1.2rem;font:inherit;cursor:pointer;text-decoration:none}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+code,.key{font-family:ui-monospace,Menlo,monospace}.key{display:block;word-break:break-all;background:var(--bg);padding:.6rem;border-radius:.4rem;border:1px solid var(--acc)}
+.mut{color:var(--mut)}.err{border-color:#e5484d}table{width:100%;border-collapse:collapse}td{padding:.35rem 0;border-bottom:1px solid var(--line)}
+form{display:inline}
+input{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:.4rem;padding:.45rem .7rem;max-width:100%}
+</style>
+`

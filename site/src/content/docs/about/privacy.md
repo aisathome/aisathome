@@ -21,9 +21,10 @@ and sends the answer back the same way.
   not store them.
 
 **What we store.**
-- Your account: GitHub’s numeric user id (you sign in with GitHub), its state (active or
-  waiting) and when it was created. No email, no name, no password. API keys are stored only
-  as a hash.
+- Your account: GitHub’s numeric user id or Google’s account identifier (“sub”), depending
+  on which you sign in with; its state (active or waiting) and when it was created. No
+  email, no name, no password: we ask Google only to confirm who you are (the “openid”
+  scope). API keys are stored only as a hash.
 - Chats: temporary by default. Chats you save are kept until you delete them.
 - For each request: time, a pseudonymous user id, which node answered, token counts and
   duration. Never the content. Kept as long as your account exists.

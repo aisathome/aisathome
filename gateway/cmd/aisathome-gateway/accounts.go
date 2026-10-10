@@ -24,8 +24,10 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   waitlist <id>        move an account back to the waitlist
   ban <id>             close an account and delete its keys (it cannot sign up again)
 
-Ids look like gh:12345 (GitHub's numeric user id) or google:<sub> (Google's account
-identifier, digits). The running gateway picks up changes within seconds.`
+Ids look like gh:12345 (GitHub's numeric user id), google:<sub> (Google's account
+identifier, digits) or em:<32 hex digits> (email sign-in: random, not derived from the
+address; "add" does not take em: ids, since only a sign-in can attach an address to one).
+The running gateway picks up changes within seconds.`
 
 func runAccounts(args []string, out, msg io.Writer) error {
 	fs := flag.NewFlagSet("accounts", flag.ContinueOnError)

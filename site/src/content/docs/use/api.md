@@ -9,7 +9,7 @@ the OpenAI SDKs, `curl`.
 
 ## Get a key
 
-Sign in with GitHub on **[your account page](/account)** and create a key there (up to three).
+Sign in with GitHub or Google on **[your account page](/account)** and create a key there (up to three).
 A key is shown once; copy it then. Keys are personal and share your account’s daily limit
 with the chat. If a key leaks, revoke it on the same page.
 

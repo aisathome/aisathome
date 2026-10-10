@@ -39,7 +39,7 @@ anything you care about. In short:
 
 ## 3. Accounts and API keys (users)
 
-- You sign in with GitHub. The number of accounts is limited; new accounts wait
+- You sign in with GitHub or Google. The number of accounts is limited; new accounts wait
   in line until there is room. We may close sign-up or refuse an account at any time.
 - Your account and API key are personal. Keep the key secret and don't share it. Tell us
   if it leaks so we can revoke it.

@@ -66,10 +66,10 @@ Users point any OpenAI-compatible client (opencode, Open WebUI, `curl`) at
 
 ### Accounts (sign-in, self-service keys)
 
-An `accounts` section turns on sign-in with GitHub and/or Google, up to `max_keys` API keys
-per account and a waitlist beyond the active-account limit. Set `file`, `public_url`,
-`session_secret` (32+ characters) and at least one provider; a provider is on when both its
-client id and secret are set:
+An `accounts` section turns on sign-in with GitHub, Google and/or email, up to `max_keys` API
+keys per account and a waitlist beyond the active-account limit. Set `file`, `public_url`,
+`session_secret` (32+ characters) and at least one way to sign in; a provider is on when
+both its client id and secret are set:
 
 | Provider | Fields | Redirect URI to register |
 |---|---|---|
@@ -84,7 +84,53 @@ GitHub and with Google gets two separate accounts. Manage accounts with
 gateway's own user (in a container: `podman exec aisathome-gateway aisathome-gateway accounts
 ...`), otherwise the file may become unwritable for the gateway. `waitlist` holds an account
 back until you `activate` it. The usage log names accounts by a pseudonym (an HMAC of the id),
-never by their GitHub or Google id.
+never by their GitHub, Google or email id.
+
+#### Email sign-in (one-time code and link)
+
+An `email` section inside `accounts` adds "Email me a code" (no passwords). All fields are
+required:
+
+```json
+"email": {
+  "smtp_host": "email-smtp.eu-north-1.amazonaws.com",
+  "smtp_port": 587,
+  "smtp_user": "<SES SMTP user>",
+  "smtp_password": "<SES SMTP password>",
+  "from": "AIs@home <noreply@aisathome.org>",
+  "email_keys": [{"id": "2026-10", "secret": "<32+ random characters>"}]
+}
+```
+
+- **What is stored.** Never the address: an email account gets a random id (`em:<hex>`) and
+  `email_macs`, the normalised address as HMAC-SHA256 under a key of `email_keys` (still
+  personal data). Normalisation: trim, lowercase, and for gmail.com/googlemail.com without
+  dots and `+tag`. Version 1 takes ASCII addresses only (no NFC/IDNA needed; a Unicode
+  domain can be typed in its `xn--` form). Codes and link tokens live only in memory, as
+  SHA-256 hashes; a restart drops pending sign-ins.
+- **Key rotation.** Put a new key first in `email_keys` and keep the old ones after it. A
+  sign-in found under an old key is rewritten under the current one; drop an old key once
+  the accounts that matter have signed in again (accounts still under it can no longer sign
+  in by email).
+- **The flow.** `POST /account/email` always answers the same and sets a 10-minute `pending`
+  cookie; the mail goes out from a queue afterwards (SMTP with STARTTLS required). It holds a
+  6-digit code and a link `<public_url>/account/email#t=<token>` (token in the fragment, so
+  it never reaches a server log). The code or link works only in the browser that asked
+  (the pending cookie), once, for 10 minutes; mail scanners opening the link change nothing.
+- **Limits** (in memory). Sends: per address 1/minute, 5/hour, 10/day; per client 10/hour,
+  30/day (rightmost `X-Forwarded-For` when the connection comes from Caddy on loopback or a
+  private network; IPv6 per /64); 300/day in all. Wrong codes: 5 end an attempt; 20 per
+  address in 24 h pause email sign-in for that address for an hour (a new code does not
+  reset the count). Requests over a limit, for throwaway domains, or during a pause get the
+  same answer and no mail.
+- **Throwaway domains.** `gateway/disposable_domains.txt` is the CC0 list from
+  [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains),
+  embedded at build time. Refresh it with
+  `curl -fsSL https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf | grep -E '^[a-z0-9.-]+$'`,
+  keeping the header comment (update its commit and date).
+- **SES.** Verify the sending domain (DKIM), request production access, and keep
+  account-level suppression on (the default): SES then keeps addresses that bounce or
+  complain on its suppression list, in clear. The privacy page says so.
 
 ## Licence
 

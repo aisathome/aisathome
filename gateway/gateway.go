@@ -115,6 +115,7 @@ type Gateway struct {
 	acfg     AccountsConfig
 	accounts *AccountStore // nil without accounts
 	gkeys    *jwksCache    // Google's signing keys, for Google sign-in
+	email    *emailSignIn  // nil without email sign-in
 	bufByTok sync.Map      // node token → *atomic.Int64: the share held for its nodes
 	start    time.Time
 	use      *usageWriter
@@ -175,6 +176,12 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 			return nil, err
 		}
 		g.gkeys = newJWKSCache(g.acfg.GoogleCertsURL, g.getJSON)
+		if g.acfg.Email != nil {
+			g.email = newEmailSignIn(*g.acfg.Email, g.acfg.PublicURL, log)
+			g.bg.Add(1)
+			go g.mailWorker()
+			g.every(time.Minute, g.email.prune)
+		}
 		g.every(keysFileCheck, func() { // the operator's CLI changes the file while we run
 			if err := g.accounts.Refresh(); err != nil {
 				log.Error("accounts file not applied, keeping the accounts in use", "err", err)
@@ -880,8 +887,8 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// End users behind a trusted front end (Open WebUI) are identified by its pseudonymous
 	// user id and get their own limits, on top of the front end's key limits. Signed-in
-	// accounts arrive as gh-<id>@users.invalid or google-<sub>@users.invalid and share one
-	// budget with their API keys.
+	// accounts arrive as gh-<id>@users.invalid, google-<sub>@users.invalid or
+	// em-<hex>@users.invalid and share one budget with their API keys.
 	acct, userKey := info, key
 	if accountID != "" {
 		userKey = "acct:" + accountID

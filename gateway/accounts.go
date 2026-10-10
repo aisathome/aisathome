@@ -1,8 +1,9 @@
-// Accounts: self-service sign-in with GitHub or Google, API keys and a waitlist (research
-// decision 0006). The gateway stores only the provider's user id: GitHub's numeric id
-// ("gh:<id>") or Google's account identifier ("google:<sub>"). No email, no name, no
-// password, no token. Accounts beyond the operator's limit wait in a first-come waitlist and
-// are let in automatically when room appears.
+// Accounts: self-service sign-in with GitHub, Google or email, API keys and a waitlist
+// (research decision 0006). The gateway stores only the provider's user id: GitHub's numeric
+// id ("gh:<id>") or Google's account identifier ("google:<sub>"). Email accounts get a random
+// id ("em:<hex>") and keep only a keyed hash of the address (email.go). No address, no name,
+// no password, no token. Accounts beyond the operator's limit wait in a first-come waitlist
+// and are let in automatically when room appears.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -12,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,19 +29,20 @@ import (
 // accounts file, which the operator changes with `aisathome-gateway accounts ...` while the
 // gateway runs.
 type AccountsConfig struct {
-	File               string     `json:"file"`                       // accounts and key hashes (writable volume)
-	PublicURL          string     `json:"public_url"`                 // e.g. https://aisathome.org
-	CookieDomain       string     `json:"cookie_domain"`              // e.g. aisathome.org, so the chat sees the session
-	SessionSecret      string     `json:"session_secret"`             // at least 32 characters; signs session cookies
-	GitHubClientID     string     `json:"github_client_id,omitempty"` // GitHub sign-in: both or neither
-	GitHubClientSecret string     `json:"github_client_secret,omitempty"`
-	GoogleClientID     string     `json:"google_client_id,omitempty"` // Google sign-in: both or neither
-	GoogleClientSecret string     `json:"google_client_secret,omitempty"`
-	ChatURL            string     `json:"chat_url,omitempty"`  // where "next=chat" leads after sign-in
-	Limits             UserLimits `json:"limits"`              // per account: rpm, concurrent, tokens_per_day
-	MinTrust           string     `json:"min_trust,omitempty"` // default "trusted"
-	MaxKeys            int        `json:"max_keys,omitempty"`  // API keys per account; default 3
-	Admins             []string   `json:"admins,omitempty"`    // account ids ("gh:123", "google:<sub>") that are chat admins
+	File               string       `json:"file"`                       // accounts and key hashes (writable volume)
+	PublicURL          string       `json:"public_url"`                 // e.g. https://aisathome.org
+	CookieDomain       string       `json:"cookie_domain"`              // e.g. aisathome.org, so the chat sees the session
+	SessionSecret      string       `json:"session_secret"`             // at least 32 characters; signs session cookies
+	GitHubClientID     string       `json:"github_client_id,omitempty"` // GitHub sign-in: both or neither
+	GitHubClientSecret string       `json:"github_client_secret,omitempty"`
+	GoogleClientID     string       `json:"google_client_id,omitempty"` // Google sign-in: both or neither
+	GoogleClientSecret string       `json:"google_client_secret,omitempty"`
+	Email              *EmailConfig `json:"email,omitempty"`     // email sign-in (one-time code and link)
+	ChatURL            string       `json:"chat_url,omitempty"`  // where "next=chat" leads after sign-in
+	Limits             UserLimits   `json:"limits"`              // per account: rpm, concurrent, tokens_per_day
+	MinTrust           string       `json:"min_trust,omitempty"` // default "trusted"
+	MaxKeys            int          `json:"max_keys,omitempty"`  // API keys per account; default 3
+	Admins             []string     `json:"admins,omitempty"`    // account ids ("gh:123", "google:<sub>", "em:<hex>") that are chat admins
 
 	// GitHub and Google endpoints; tests point them at fakes.
 	GitHubAuthURL   string `json:"-"`
@@ -66,8 +69,13 @@ func (c *AccountsConfig) defaults() error {
 	if (c.GoogleClientID == "") != (c.GoogleClientSecret == "") {
 		return errors.New("accounts: set both google_client_id and google_client_secret, or neither")
 	}
-	if !c.githubOn() && !c.googleOn() {
-		return errors.New("accounts: configure GitHub or Google sign-in (client id and secret)")
+	if c.Email != nil {
+		if err := c.Email.check(); err != nil {
+			return err
+		}
+	}
+	if !c.githubOn() && !c.googleOn() && c.Email == nil {
+		return errors.New("accounts: configure GitHub, Google or email sign-in")
 	}
 	if len(c.SessionSecret) < 32 {
 		return errors.New("accounts: session_secret must be at least 32 characters")
@@ -121,13 +129,20 @@ type AccountSettings struct {
 
 // Account is one user.
 type Account struct {
-	ID        string       `json:"id"` // "gh:<numeric GitHub id>" or "google:<sub>"
+	ID        string       `json:"id"` // "gh:<numeric GitHub id>", "google:<sub>" or "em:<random hex>"
 	Status    string       `json:"status"`
 	Created   time.Time    `json:"created"`
 	Activated *time.Time   `json:"activated,omitempty"`
 	Held      bool         `json:"held,omitempty"`    // put back on the waitlist by the operator; not let in automatically
 	KeySeq    int          `json:"key_seq,omitempty"` // counts created keys; the "create a key" form is tied to it
 	Keys      []AccountKey `json:"keys,omitempty"`
+	EmailMACs []EmailMAC   `json:"email_macs,omitempty"` // email accounts: the address as a keyed hash
+}
+
+// EmailMAC is an email address as HMAC-SHA256 (hex) under the email key with KeyID.
+type EmailMAC struct {
+	KeyID string `json:"key_id"`
+	MAC   string `json:"mac"`
 }
 
 // AccountKey is an API key of an account; only its hash is stored.
@@ -354,6 +369,61 @@ func (s *AccountStore) SignIn(id string, now time.Time) (Account, error) {
 	return a, nil
 }
 
+// SignInEmail returns the email account whose stored hash matches one of macs (the address
+// under each key of the ring, current key first), creating one with a random id unless
+// sign-up is closed. A match under an older key is rewritten under the current key, so a key
+// can be retired once every active account has signed in since.
+func (s *AccountStore) SignInEmail(macs []EmailMAC, now time.Time) (Account, error) {
+	if len(macs) == 0 {
+		return Account{}, errors.New("no email hash")
+	}
+	var id string
+	err := s.Update(func(f *AccountsFile) error {
+		for _, a := range f.Accounts {
+			if emailMatch(a.EmailMACs, macs) {
+				id = a.ID
+				if len(a.EmailMACs) != 1 || a.EmailMACs[0] != macs[0] {
+					a.EmailMACs = []EmailMAC{macs[0]}
+				}
+				return nil
+			}
+		}
+		if f.Settings.Closed {
+			return errSignupClosed
+		}
+		for id == "" || f.find(id) != nil {
+			id = newEmailAccountID()
+		}
+		f.Accounts = append(f.Accounts, &Account{ID: id, Status: StatusWaitlisted, Created: now.UTC(),
+			EmailMACs: []EmailMAC{macs[0]}})
+		return nil
+	})
+	if err != nil {
+		return Account{}, err
+	}
+	a, _, _ := s.Get(id)
+	return a, nil
+}
+
+func emailMatch(stored, macs []EmailMAC) bool {
+	for _, s := range stored {
+		for _, m := range macs {
+			if s.KeyID == m.KeyID && hmac.Equal([]byte(s.MAC), []byte(m.MAC)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// newEmailAccountID is "em:" and 16 random bytes in lowercase hex. It is never derived from
+// the address, and lowercase because the chat lowercases the addresses it is given.
+func newEmailAccountID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return "em:" + hex.EncodeToString(b)
+}
+
 var (
 	errSignupClosed = errors.New("sign-up is closed for now")
 	errStaleForm    = errors.New("this form was already used; reload the page")
@@ -479,7 +549,7 @@ func (g *Gateway) accountInfo(id string) KeyInfo {
 		MinTrust: g.acfg.MinTrust}
 }
 
-// pseudonym names an account in the usage log without its public GitHub or Google id; with
+// pseudonym names an account in the usage log without its GitHub, Google or email id; with
 // the session secret the operator can still map an account to its records (e.g. to delete
 // them).
 func (g *Gateway) pseudonym(id string) string {
