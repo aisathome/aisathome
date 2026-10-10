@@ -174,9 +174,11 @@ func TestBadStateAndForgedSessionRejected(t *testing.T) {
 		t.Fatalf("callback without matching state: %d", resp.StatusCode)
 	}
 	session, _ := a.signIn(t, 1)
-	last := session[len(session)-1:]
-	flip := map[bool]string{true: "A", false: "B"}[last != "A"]
-	forged := session[:len(session)-1] + flip // a changed signature
+	// Change a character in the middle of the signature (the last base64 character carries
+	// unused bits, so changing it may not change the signature at all).
+	i := len(session) - 10
+	flip := map[bool]string{true: "A", false: "Q"}[session[i:i+1] != "A"]
+	forged := session[:i] + flip + session[i+1:]
 	for _, s := range []string{forged, "", "gh:1"} {
 		if resp, _ := a.get(t, "/account/auth", s); resp.StatusCode == http.StatusOK {
 			t.Fatalf("forward_auth accepted session %q", s)
@@ -450,5 +452,21 @@ func TestAccountKeyEndpointsAndFormRaces(t *testing.T) {
 	a.post(t, "/account/keys/revoke", s, "prefix="+got[0][:11])
 	if post() != "" {
 		t.Fatal("an old form created a key after a revoke")
+	}
+}
+
+// A signature that differs only in the unused bits of its last base64 character is the same
+// signature in another spelling; strict decoding refuses it, so each session has one spelling.
+func TestSessionNonCanonicalSpellingRejected(t *testing.T) {
+	a := newAcctRig(t, 100, nil)
+	s, _ := a.signIn(t, 31)
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, s[len(s)-1])
+	variant := s[:len(s)-1] + string(alphabet[last^1]) // flips only an unused bit
+	if r, _ := a.get(t, "/account/auth", variant); r.StatusCode == http.StatusOK {
+		t.Fatal("a non-canonical spelling of the session was accepted")
+	}
+	if r, _ := a.get(t, "/account/auth", s); r.StatusCode != http.StatusOK {
+		t.Fatal("the real session was refused")
 	}
 }

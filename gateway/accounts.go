@@ -453,8 +453,9 @@ func verifySession(secret, v string, now time.Time) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	payload, err1 := base64.RawURLEncoding.DecodeString(p)
-	sum, err2 := base64.RawURLEncoding.DecodeString(mac)
+	strict := base64.RawURLEncoding.Strict() // one encoding per value: no variants in unused bits
+	payload, err1 := strict.DecodeString(p)
+	sum, err2 := strict.DecodeString(mac)
 	if err1 != nil || err2 != nil {
 		return "", false
 	}

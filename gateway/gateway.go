@@ -401,11 +401,28 @@ type pendingReq struct {
 
 // deliver never blocks the node's shared reader: if this request's client is not keeping up,
 // the request is dropped rather than stalling the node's other requests and heartbeats.
+// deliverGrace is how long a full request buffer may block the node's read loop before the
+// request is called too slow. Without it a burst of small chunks, or a briefly busy gateway,
+// was taken for a slow client (seen under the race detector, 2026-10-10); a client that
+// really stopped reading still holds the node for at most this long.
+const deliverGrace = 500 * time.Millisecond
+
 func (p *pendingReq) deliver(m protocol.Msg) {
 	select {
 	case p.ch <- m:
+		return
 	case <-p.done:
+		return
+	case <-p.slow: // already given up on: drop at once, never hold the node again
+		return
 	default:
+	}
+	t := time.NewTimer(deliverGrace)
+	defer t.Stop()
+	select {
+	case p.ch <- m:
+	case <-p.done:
+	case <-t.C:
 		p.slowOnce.Do(func() { close(p.slow) })
 	}
 }
