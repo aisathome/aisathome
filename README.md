@@ -26,6 +26,14 @@ curl -H "Authorization: Bearer <api key>" http://localhost:8080/v1/chat/completi
   -d '{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
+## Releases
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`: the CI checks (`ci.yml`: gofmt,
+`go vet`, `go test -race`, installer tests), then static binaries of `aisathome-node`
+(linux amd64/arm64, windows amd64) and `aisathome-gateway` (linux amd64/arm64) with a
+`SHA256SUMS` file, attached to a GitHub Release. The same build runs locally with
+`./scripts/build-release.sh v0.1.0 dist`; `aisathome-node -version` prints the version.
+
 ## Licence
 
 Apache-2.0 (see `LICENSE`). Each source file carries an SPDX header. The name "AIs@home" is

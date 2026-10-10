@@ -1,0 +1,55 @@
+# On a v* tag: run the CI checks, build static binaries plus SHA256SUMS and attach them to a
+# GitHub Release. A manual run (workflow_dispatch) on a branch builds without publishing.
+# SPDX-License-Identifier: Apache-2.0
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false # no shared build cache in release builds
+      - name: Build
+        run: |
+          if [ "$IS_TAG" = true ]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA::12}"; fi
+          ./scripts/build-release.sh "$version" dist
+      - name: Publish
+        if: env.IS_TAG == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes $pre
+      - name: Summary (not published)
+        if: env.IS_TAG != 'true'
+        run: |
+          { echo "Not a v* tag: built, not published."; echo '```'; cat dist/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
