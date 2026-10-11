@@ -66,8 +66,16 @@ build="${LLAMA_BUILD_DIR:-$work/build}"
 # with -compress-mode=size, which drivers before 570 cannot load ("device kernel image is
 # invalid" on driver 535, rented RTX 3090, 2026-10-11). Uncompressed kernels run there; the
 # library grows (libggml-cuda about 40 MB to 136 MB per architecture).
+# The linker needs libcuda.so.1 (the driver) to resolve libggml-cuda's driver calls. CI runners
+# have no NVIDIA driver, so link against the toolkit's stub instead (rpath-link only: nothing is
+# embedded, and at run time the real driver's libcuda.so.1 is used). Without this the build
+# compiles but fails at the last link on a machine without a GPU (release run, 2026-10-11).
+linkstub="$work/linkstub"; mkdir -p "$linkstub"
+[[ -f "$cuda_lib/stubs/libcuda.so" ]] || { echo "no driver stub in $cuda_lib/stubs" >&2; exit 1; }
+ln -sf "$cuda_lib/stubs/libcuda.so" "$linkstub/libcuda.so.1"
 # shellcheck disable=SC2016 # $ORIGIN is for the linker, not the shell
 cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,$linkstub" "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-rpath-link,$linkstub" \
   -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=$archs" -DGGML_NATIVE=OFF -DGGML_CUDA_NCCL=OFF \
   -DGGML_CUDA_COMPRESSION_MODE=none \
   -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
