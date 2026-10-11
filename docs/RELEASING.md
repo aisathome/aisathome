@@ -16,6 +16,13 @@ For the maintainer. Volunteers read the site page "About the binaries"
    40; add an RTX 50 when its build changed. The test plan with costs is in the research repo
    (`bench/modelcheck/PLAN.md`, bundle test).
 
+## Building locally
+
+`./scripts/build-release.sh v0.1.0 dist` builds the static node and gateway binaries
+(`aisathome-node`: linux amd64/arm64, windows amd64; `aisathome-gateway`: linux amd64/arm64)
+and `SHA256SUMS`; with `LLAMA_DIR` pointing at the output of `scripts/build-llama.sh` it packs
+the node bundle too. `aisathome-node -version` prints the version.
+
 ## Making a release
 
 ```bash
