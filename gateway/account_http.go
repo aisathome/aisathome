@@ -51,6 +51,7 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/keys/revoke", smallForm(g.handleKeyRevoke))
 	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
+	mux.HandleFunc("GET /account/assets/{name}", handleAsset)
 }
 
 // smallForm accepts only short URL-encoded forms. The account pages upload nothing, and
@@ -414,9 +415,10 @@ func (g *Gateway) accountPage(w http.ResponseWriter, status int, d pageData) {
 	if n := len(ways); n > 1 {
 		d.Separate = strings.Join(ways[:n-1], ", ") + " and " + ways[n-1]
 	}
+	d.ChatURL = g.acfg.ChatURL // the header links to the chat on every page
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://github.com; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", pageCSP+"; form-action 'self' https://github.com; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(status)
 	if err := accountTmpl.Execute(w, d); err != nil {
@@ -424,28 +426,27 @@ func (g *Gateway) accountPage(w http.ResponseWriter, status int, d pageData) {
 	}
 }
 
-var accountTmpl = template.Must(template.New("account").Funcs(template.FuncMap{
+var accountTmpl = newPage("account", template.FuncMap{
 	"day": func(t time.Time) string { return t.Format("2006-01-02") },
-}).Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>Your account · AIs@home</title>
-` + pageStyle + `</head><body><main>
-<p><a href="/">← AIs@home</a></p>
-{{if .Error}}<div class="card err">{{.Error}}</div>{{end}}
+}, `{{template "head" "Your account"}}{{template "top" .}}
+{{if .Error}}<div class="card err" role="alert">{{.Error}}</div>{{end}}
 {{if not .SignedIn}}
 <h1>Sign in</h1>
 <div class="card">{{if or .GitHub .Google}}<p>AIs@home uses your {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}
 account only to tell accounts apart. We keep only its user id ({{if .GitHub}}GitHub's numeric
 id{{end}}{{if and .GitHub .Google}}, {{end}}{{if .Google}}Google's account identifier{{end}}): no email, no
 name, no password.</p>
-<p>{{if .GitHub}}<a class="btn" href="/account/login?provider=github{{if .Next}}&amp;next=chat{{end}}">Sign in with GitHub</a>{{end}}
-{{if .Google}}<a class="btn" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}">Sign in with Google</a>{{end}}</p>{{end}}
-{{if .Email}}<form method="post" action="/account/email" style="display:block"><p><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
-send you a one-time code.</label><br><input id="email" type="email" name="email" required autocomplete="email" maxlength="254">
-{{if .Next}}<input type="hidden" name="next" value="chat">{{end}}<button class="btn">Email me a code</button></p></form>
-<p class="mut">For email we keep a keyed hash of the address (still personal data), not the address itself.</p>{{end}}
-{{if .Separate}}<p class="mut">{{.Separate}} are separate accounts; use the same one each time.</p>{{end}}
-<p class="mut">New accounts are let in in order while there is room; otherwise you get a place in the
+<div class="signin">{{if .GitHub}}<a class="btn-gh" href="/account/login?provider=github{{if .Next}}&amp;next=chat{{end}}">`+githubMark+`<span>Sign in with GitHub</span></a>{{end}}
+{{if .Google}}<a class="btn-google" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}"><picture>
+<source media="(prefers-color-scheme: dark)" srcset="{{asset "google-signin-dark.svg"}}">
+<img src="{{asset "google-signin-light.svg"}}" alt="Sign in with Google" width="180" height="40"></picture></a>{{end}}</div>{{end}}
+{{if .Email}}<form class="form" method="post" action="/account/email"><div class="field"><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
+send you a one-time code.</label>
+<div class="row"><input id="email" type="email" name="email" required autocomplete="email" maxlength="254">
+{{if .Next}}<input type="hidden" name="next" value="chat">{{end}}<button class="btn secondary">Email me a code</button></div></div></form>
+<p class="mut small">For email we keep a keyed hash of the address (still personal data), not the address itself.</p>{{end}}
+{{if .Separate}}<p class="mut small">{{.Separate}} are separate accounts; use the same one each time.</p>{{end}}
+<p class="mut small">New accounts are let in in order while there is room; otherwise you get a place in the
 waitlist.</p></div>
 {{else if eq .Account.Status "waitlisted"}}
 <h1>You are on the waitlist</h1>
@@ -461,15 +462,15 @@ appears; come back to this page to check.</p></div>
 {{if .NewKey}}<div class="card"><p><strong>Your new API key.</strong> Copy it now: it is shown only once.</p>
 <code class="key">{{.NewKey}}</code>
 <p class="mut">Use it with any OpenAI-compatible client at <code>{{.API}}/v1</code> (Authorization: Bearer).</p></div>{{end}}
-<div class="card"><h2 style="font-size:1.1rem;margin-top:0">API keys</h2>
+<div class="card"><h2>API keys</h2>
 {{if .Account.Keys}}<table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code></td><td class="mut">{{day .Created}}</td>
-<td style="text-align:right"><form method="post" action="/account/keys/revoke"><input type="hidden" name="prefix" value="{{.Prefix}}">
+<td class="end"><form method="post" action="/account/keys/revoke"><input type="hidden" name="prefix" value="{{.Prefix}}">
 <button class="btn ghost">Revoke</button></form></td></tr>{{end}}</table>{{else}}<p class="mut">No keys yet.</p>{{end}}
 {{if lt (len .Account.Keys) .MaxKeys}}<form method="post" action="/account/keys"><input type="hidden" name="once" value="{{.Once}}"><p><button class="btn">Create a key</button></p></form>{{end}}
 <p class="mut">See <a href="/use/api/">API and opencode</a>.</p></div>
 {{end}}
 {{if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
-</main></body></html>`))
+{{template "bottom" .}}`)
 
 // navigation reports whether a request is a page load in a browser (rather than a script's
 // fetch or a websocket). Browsers send Sec-Fetch-Mode; without it, Accept decides.
@@ -479,20 +480,3 @@ func navigation(r *http.Request) bool {
 	}
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
-
-// pageStyle is shared by the account and email pages.
-const pageStyle = `<style>
-:root{color-scheme:dark light;--bg:#111417;--fg:#e6edf0;--mut:#9aa7ad;--acc:#14b8a6;--card:#1a1f23;--line:#2a3237}
-@media (prefers-color-scheme:light){:root{--bg:#f7f9f9;--fg:#132024;--mut:#4d5b60;--acc:#0f766e;--card:#fff;--line:#d6dee0}}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,sans-serif}
-main{max-width:40rem;margin:0 auto;padding:2.5rem 1rem}
-a{color:var(--acc)}h1{font-size:1.6rem;margin:0 0 1rem}
-.card{background:var(--card);border:1px solid var(--line);border-radius:.6rem;padding:1.1rem 1.2rem;margin:1rem 0}
-.btn{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:2rem;padding:.55rem 1.2rem;font:inherit;cursor:pointer;text-decoration:none}
-.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
-code,.key{font-family:ui-monospace,Menlo,monospace}.key{display:block;word-break:break-all;background:var(--bg);padding:.6rem;border-radius:.4rem;border:1px solid var(--acc)}
-.mut{color:var(--mut)}.err{border-color:#e5484d}table{width:100%;border-collapse:collapse}td{padding:.35rem 0;border-bottom:1px solid var(--line)}
-form{display:inline}
-input{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:.4rem;padding:.45rem .7rem;max-width:100%}
-</style>
-`

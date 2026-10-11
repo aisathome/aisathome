@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"math/big"
 	"net"
@@ -515,7 +514,7 @@ const emailScript = `var m=/^#t=([A-Za-z0-9_-]{43})$/.exec(location.hash);if(m){
 
 var emailScriptCSP = func() string {
 	sum := sha256.Sum256([]byte(emailScript))
-	return "default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" +
+	return pageCSP + "; script-src 'sha256-" +
 		base64.StdEncoding.EncodeToString(sum[:]) + "'; form-action 'self'; frame-ancestors 'none'"
 }()
 
@@ -525,25 +524,22 @@ func (g *Gateway) emailPage(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Security-Policy", emailScriptCSP)
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(status)
-	if err := emailTmpl.Execute(w, struct{ Error string }{msg}); err != nil {
+	if err := emailTmpl.Execute(w, struct{ Error, ChatURL string }{msg, g.acfg.ChatURL}); err != nil {
 		g.log.Error("email page", "err", err)
 	}
 }
 
-var emailTmpl = template.Must(template.New("email").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>Sign in with email · AIs@home</title>
-` + pageStyle + `</head><body><main>
-<p><a href="/account">← Sign in</a></p>
-{{if .Error}}<div class="card err">{{.Error}}</div>{{end}}
+var emailTmpl = newPage("email", nil, `{{template "head" "Sign in with email"}}{{template "top" .}}
+<p class="back"><a href="/account">← Sign in</a></p>
+{{if .Error}}<div class="card err" role="alert">{{.Error}}</div>{{end}}
 <h1>Check your email</h1>
 <div class="card" id="link" hidden><p>Continue signing in with the link from your email.</p>
 <form method="post" action="/account/email/verify"><input type="hidden" name="token" id="token"><button class="btn">Continue</button></form></div>
 <div class="card"><p>If the address can receive mail, a sign-in code is on its way. It works once, for 10 minutes.</p>
-<form method="post" action="/account/email/verify"><p><label for="code">Code</label><br>
-<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
-<button class="btn">Sign in</button></p></form>
+<form class="form" method="post" action="/account/email/verify"><div class="field"><label for="code">Code</label>
+<div class="row"><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required size="8">
+<button class="btn">Sign in</button></div></div></form>
 <p class="mut">Use the code or the link in this browser. No mail after a few minutes? Check your spam folder, or
 <a href="/account">ask again</a>.</p></div>
-<script>` + emailScript + `</script>
-</main></body></html>`))
+<script>`+emailScript+`</script>
+{{template "bottom" .}}`)
