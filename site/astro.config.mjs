@@ -42,6 +42,7 @@ export default defineConfig({
 						{ label: 'Install on Linux', slug: 'node/install' },
 						{ label: 'Presets', slug: 'node/presets' },
 						{ label: 'Day to day', slug: 'node/operate' },
+						{ label: 'Credit', slug: 'node/credit' },
 					],
 				},
 				{

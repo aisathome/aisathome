@@ -52,6 +52,7 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/nodes", smallForm(g.handleNodeCreate))
 	mux.HandleFunc("POST /account/nodes/revoke", smallForm(g.handleNodeRevoke))
 	mux.HandleFunc("POST /account/nodes/pref", smallForm(g.handleNodePref))
+	mux.HandleFunc("POST /account/username", smallForm(g.handleUsername))
 	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
 	mux.HandleFunc("GET /account/assets/{name}", handleAsset)
@@ -330,8 +331,14 @@ func (g *Gateway) accountData(id string) pageData {
 	d := pageData{SignedIn: true, Account: a, Position: pos, ChatURL: g.acfg.ChatURL, API: g.acfg.PublicURL,
 		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq),
 		NodeOnce: g.nodeFormToken(id, a.NodeSeq), MaxNodes: nodeTokensPerAccount}
+	now := time.Now()
 	for _, n := range a.Nodes {
-		d.Nodes = append(d.Nodes, nodeRow{ID: n.ID, Name: n.Name, Created: n.Created, Status: g.nodeStatus(id, n.ID)})
+		c := g.credit.node(n.ID)
+		d.Nodes = append(d.Nodes, nodeRow{ID: n.ID, Name: n.Name, Created: n.Created, Status: g.nodeStatus(id, n.ID),
+			CreditToday: fmtCredit(c.TodayAt(now)), CreditTotal: fmtCredit(c.total())})
+	}
+	if c := g.credit.account(id); c != nil {
+		d.CreditToday, d.CreditTotal, d.CreditRAC = fmtCredit(c.TodayAt(now)), fmtCredit(c.Total), fmtCredit(c.RAC(now))
 	}
 	if a.FirstNode != nil {
 		d.ProbationEnd = a.FirstNode.Add(g.acfg.probation)
@@ -434,6 +441,19 @@ func (g *Gateway) handleNodePref(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
 }
 
+func (g *Gateway) handleUsername(w http.ResponseWriter, r *http.Request) {
+	id, ok := g.session(r)
+	if ok && g.sameOrigin(r) {
+		if err := g.accounts.SetUsername(id, r.FormValue("username")); err != nil {
+			d := g.accountData(id)
+			d.Error, d.TriedName = err.Error(), r.FormValue("username")
+			g.accountPage(w, http.StatusBadRequest, d)
+			return
+		}
+	}
+	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
+}
+
 func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if g.sameOrigin(r) {
 		g.setCookie(w, sessionCookie, "", "/", -time.Second)
@@ -470,11 +490,15 @@ type pageData struct {
 	NetworkFull  bool
 	ProbationEnd time.Time
 	Probation    string // its length, e.g. "7 days"
+
+	CreditToday, CreditTotal, CreditRAC string // the account's credit; "" before any
+	TriedName                           string // a username that was refused, to show it again
 }
 
 type nodeRow struct {
-	ID, Name, Status string
-	Created          time.Time
+	ID, Name, Status         string
+	Created                  time.Time
+	CreditToday, CreditTotal string
 }
 
 // createToken ties a "create a key" form to the account's KeySeq (see AccountStore.AddKey).
@@ -573,6 +597,13 @@ and other requests with tools). Volunteers' answers are not checked yet, so run 
 <div class="actions"><button class="btn">Create a key</button></div></form>{{end}}
 <p class="mut small">Without this, agent requests only go to your own node or the maintainer's, which are often
 offline. See <a href="/use/api/">API and opencode</a>.</p></div>
+<div class="card"><h2>Username</h2>
+<form class="form" method="post" action="/account/username"><div class="field"><label for="username">Username</label>
+<div class="row"><input id="username" name="username" maxlength="32" autocomplete="nickname" value="{{if .TriedName}}{{.TriedName}}{{else}}{{.Account.Username}}{{end}}">
+<button class="btn ghost">Save</button></div>
+<p class="hint">Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit. Leave it empty to stay anonymous.</p></div></form>
+{{if .Account.Username}}<p class="mut small">You appear as <strong>{{.Account.Username}}</strong> on the <a href="/network/">leaderboard</a>.</p>
+{{else}}<p class="mut small">You are anonymous: your credit counts in the totals only.</p>{{end}}</div>
 {{if .NewNode}}<div class="card accent"><p><strong>Your new node token.</strong> Copy it now: it is shown only once.</p>
 <code class="key">{{.NewNode}}</code>
 <p class="mut">Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p></div>{{end}}
@@ -580,8 +611,11 @@ offline. See <a href="/use/api/">API and opencode</a>.</p></div>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
 strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that, and
 only after a probation of {{.Probation}}.</p>
-{{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th>Created</th><th></th></tr>
-{{range .Nodes}}<tr><td>{{if .Name}}{{.Name}}<br>{{end}}<code>{{.ID}}</code></td><td><span class="badge {{.Status}}">{{.Status}}</span></td><td class="mut">{{day .Created}}</td>
+{{if .CreditTotal}}<p>Credit: <strong>{{.CreditToday}}</strong> today, <strong>{{.CreditTotal}}</strong> in total
+(recent average {{.CreditRAC}} a day). <a href="/node/credit/">How credit works</a>.</p>{{end}}
+{{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th class="num">Credit today</th><th class="num">Credit total</th><th>Created</th><th></th></tr>
+{{range .Nodes}}<tr><td>{{if .Name}}{{.Name}}<br>{{end}}<code>{{.ID}}</code></td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+<td class="num">{{.CreditToday}}</td><td class="num">{{.CreditTotal}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/nodes/revoke"><input type="hidden" name="id" value="{{.ID}}">
 <button class="btn danger">Revoke</button></form></td></tr>{{end}}</table></div>
 {{if not .ProbationEnd.IsZero}}<p class="hint">Probation (chats only, no agents) until {{day .ProbationEnd}}.</p>{{end}}

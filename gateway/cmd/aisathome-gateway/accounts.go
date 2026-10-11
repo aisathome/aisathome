@@ -16,7 +16,8 @@ import (
 
 const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json | -file accounts.json] <command>
 
-  list                 accounts, their state and number of keys; the limit and sign-up state
+  list                 accounts, their state, number of keys and username; the limit and
+                       sign-up state
   limit <n>            let at most n accounts be active; waiting accounts get in automatically
   close | open         stop or allow new sign-ups (existing accounts keep working)
   add <id>             create an active account (e.g. gh:12345) without a sign-in, for tests
@@ -24,6 +25,8 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   waitlist <id>        move an account back to the waitlist
   ban <id>             close an account and delete its keys and node tokens (it cannot sign
                        up again); its connected nodes are dropped within seconds
+  username-clear <id>  remove an account's public username (offensive or impersonating);
+                       it leaves the leaderboard and exports at their next regeneration
 
   nodes                node tokens of all accounts, held nodes and the node settings
   nodes close | open   stop or allow new node tokens (existing nodes keep working)
@@ -79,12 +82,12 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		f := store.Snapshot()
 		active := 0
 		tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tCREATED")
+		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tCREATED\tUSERNAME")
 		for _, x := range f.Accounts {
 			if x.Status == gateway.StatusActive {
 				active++
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", x.ID, x.Status, len(x.Keys), x.Created.Format("2006-01-02"))
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%q\n", x.ID, x.Status, len(x.Keys), x.Created.Format("2006-01-02"), x.Username)
 		}
 		tw.Flush()
 		state := "open"
@@ -154,6 +157,11 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return err
 		}
 		return store.ClearNode(a[1])
+	case "username-clear":
+		if err := need(1); err != nil {
+			return err
+		}
+		return store.ClearUsername(a[1])
 	case "routing":
 		if err := need(1); err != nil {
 			return err

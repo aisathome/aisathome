@@ -133,7 +133,7 @@ func TestGuardStopsDangerousToolCalls(t *testing.T) {
 		t.Fatalf("flagged tool call: %d %s", code, out)
 	}
 	u := waitUsage(t, a.rig, 1)
-	if u[0]["outcome"] != "blocked" || u[0]["guard"] != "download-and-execute" || u[0]["node"] != id {
+	if u[0]["outcome"] != "blocked" || u[0]["guard"] != "download-and-execute" || u[0]["node"] != id || u[0]["credit"] != nil {
 		t.Fatalf("usage record: %v", u[0])
 	}
 	if !strings.Contains(logs.String(), "guard stopped") || strings.Contains(logs.String(), promptMarker) ||

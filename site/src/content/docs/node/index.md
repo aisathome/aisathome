@@ -7,7 +7,8 @@ A node is a computer with a strong NVIDIA GPU that serves the model to AIs@home 
 runs two services: `llama-server` (the model, on `127.0.0.1` only) and `aisathome-node`, a
 small agent that connects **outward** to the gateway and passes requests through.
 
-Running a node is **voluntary and unpaid**. There is no token and no payment.
+Running a node is **voluntary and unpaid**. There is no token and no payment. Your node
+earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
 
 ## What you need
 

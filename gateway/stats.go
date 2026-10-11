@@ -28,14 +28,18 @@ type dayStats struct {
 }
 
 func (s *dayStats) add(r usageRecord) {
+	prompt, completion := r.Usage.PromptTokens, r.Usage.CompletionTokens
+	if r.Tokens != nil { // counted by the gateway where it can
+		prompt, completion = r.Tokens.Prompt, r.Tokens.Completion
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.allRequests++
 	if r.Outcome == "ok" {
 		s.allOK++
 	}
-	s.allPromptTok += int64(max(r.Usage.PromptTokens, 0))
-	s.allCompleted += int64(max(r.Usage.CompletionTokens, 0))
+	s.allPromptTok += int64(max(prompt, 0))
+	s.allCompleted += int64(max(completion, 0))
 	if s.since.IsZero() || r.Time.Before(s.since) {
 		s.since = r.Time.UTC()
 	}
@@ -50,8 +54,8 @@ func (s *dayStats) add(r usageRecord) {
 	if r.Outcome == "ok" {
 		s.ok++
 	}
-	s.promptTok += int64(max(r.Usage.PromptTokens, 0))
-	s.completionTok += int64(max(r.Usage.CompletionTokens, 0))
+	s.promptTok += int64(max(prompt, 0))
+	s.completionTok += int64(max(completion, 0))
 }
 
 // replay counts the records in the usage log (JSON lines): all of them for the totals, and

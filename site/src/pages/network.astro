@@ -1,0 +1,169 @@
+---
+// The network page: the live strip and the credit leaderboard. Both read the gateway's public
+// statistics (same origin: /v1/stats and /v1/stats/credit) and stay hidden until real numbers
+// arrive; on any failure they hide again: never dashes, zeros-by-default or error text.
+// Names come only from volunteers who set a username (their consent to appear); they are
+// written with textContent, never as HTML.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import LiveStats from '../components/LiveStats.astro';
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'The network',
+		description: 'Nodes online and credit earned by AIs@home volunteers, in BOINC’s unit.',
+	}}
+>
+	<p>
+		Volunteers’ GPUs earn <a href="/node/credit/">credit</a> for the answers they compute for
+		other people: recognition in BOINC’s unit, not money. Only volunteers who chose a username
+		are listed by name; everyone else counts in the totals.
+	</p>
+
+	<LiveStats class="net-live" />
+
+	<section class="board not-content" data-credit-board hidden aria-labelledby="board-title">
+		<dl class="board-sums">
+			<div><dt>Credit in total</dt><dd data-sum="total"></dd></div>
+			<div><dt>Credit today (UTC)</dt><dd data-sum="today"></dd></div>
+			<div><dt>Volunteers with credit</dt><dd data-sum="volunteers"></dd></div>
+			<div><dt>Nodes with credit</dt><dd data-sum="nodes"></dd></div>
+		</dl>
+		<h2 id="board-title">Top volunteers</h2>
+		<div class="board-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th scope="col">#</th>
+						<th scope="col">Volunteer</th>
+						<th scope="col" class="num">Credit</th>
+						<th scope="col" class="num">Today</th>
+						<th scope="col" class="num">Recent average a day</th>
+						<th scope="col" class="num">Nodes</th>
+					</tr>
+				</thead>
+				<tbody data-rows></tbody>
+			</table>
+		</div>
+		<p class="board-empty" data-empty hidden>No volunteer has chosen a username yet.</p>
+		<p class="board-note" data-anon hidden></p>
+		<p class="board-note" data-maint hidden></p>
+		<p class="board-note">Updated <time data-updated></time> UTC.</p>
+	</section>
+
+	<h2>Statistics files</h2>
+	<p>
+		The same credit is published in BOINC’s statistics format at
+		<a href="/stats/"><code>/stats/</code></a> (<code>tables.xml</code>, <code>user.gz</code>,
+		<code>host.gz</code>, <code>team.gz</code>), rebuilt at most once an hour, with named volunteers
+		only. There are no cross-project ids (CPIDs) yet, so Gridcoin cannot use it.
+	</p>
+</StarlightPage>
+
+<script is:inline>
+	(() => {
+		const box = document.querySelector('[data-credit-board]');
+		if (!box || !window.fetch) return;
+		const num = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+		const small = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
+		const fmt = (n) => (n < 100 ? small : num).format(n);
+		const ok = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+		const hide = () => (box.hidden = true);
+		const load = async () => {
+			try {
+				const ctl = new AbortController();
+				const timer = setTimeout(() => ctl.abort(), 8000);
+				const res = await fetch('/v1/stats/credit', { signal: ctl.signal, headers: { accept: 'application/json' } });
+				clearTimeout(timer);
+				if (!res.ok) return hide();
+				const d = await res.json();
+				const at = new Date(d?.updated);
+				const sums = { total: d?.total?.credit, today: d?.total?.today, volunteers: d?.volunteers?.count, nodes: d?.nodes?.with_credit };
+				if (!Object.values(sums).every(ok) || !Array.isArray(d?.top) || Number.isNaN(at.getTime())) return hide();
+				const rows = d.top.filter((r) => typeof r?.name === 'string' && [r.rank, r.total_credit, r.today, r.recent_average, r.nodes].every(ok));
+				box.querySelectorAll('[data-sum]').forEach((el) => (el.textContent = fmt(sums[el.dataset.sum])));
+				const body = box.querySelector('[data-rows]');
+				body.replaceChildren(
+					...rows.map((r) => {
+						const tr = document.createElement('tr');
+						[r.rank, r.name, fmt(r.total_credit), fmt(r.today), fmt(r.recent_average), r.nodes].forEach((v, i) => {
+							const td = document.createElement(i === 1 ? 'th' : 'td');
+							if (i === 1) td.scope = 'row';
+							if (i > 1) td.className = 'num';
+							td.textContent = String(v);
+							tr.append(td);
+						});
+						return tr;
+					}),
+				);
+				box.querySelector('table').hidden = rows.length === 0;
+				box.querySelector('[data-empty]').hidden = rows.length > 0;
+				const anon = box.querySelector('[data-anon]');
+				const a = d?.anonymous;
+				anon.hidden = !(ok(a?.count) && a.count > 0 && ok(a?.credit));
+				if (!anon.hidden) anon.textContent = `${num.format(a.count)} anonymous volunteer${a.count === 1 ? '' : 's'}: ${fmt(a.credit)} credit.`;
+				const maint = box.querySelector('[data-maint]');
+				const m = d?.maintainer;
+				maint.hidden = !(ok(m?.credit) && m.credit > 0 && ok(m?.nodes));
+				if (!maint.hidden) maint.textContent = `The maintainer’s own nodes: ${fmt(m.credit)} credit (in the totals, not in the list).`;
+				const t = box.querySelector('[data-updated]');
+				t.textContent = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
+				t.dateTime = at.toISOString();
+				box.hidden = false;
+			} catch {
+				hide();
+			}
+		};
+		load();
+		setInterval(() => document.visibilityState === 'visible' && load(), 60000);
+	})();
+</script>
+
+<style>
+	.board[hidden] { display: none !important; }
+	:global(.net-live) {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 2rem;
+		margin-block: 1.5rem;
+		padding: 1rem 1.25rem;
+		border-radius: 0.5rem;
+		background: var(--b-band);
+	}
+	:global(.net-live .live-list) { display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; }
+	:global(.net-live .live-item) { display: flex; flex-direction: column-reverse; }
+	:global(.net-live dd) { font: 800 1.8rem/1 var(--font-display); color: var(--sl-color-white); }
+	:global(.net-live dt), :global(.net-live .live-head), :global(.net-live .live-updated) {
+		font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3);
+	}
+	:global(.net-live .live-head) { display: flex; gap: 0.4rem; align-items: center; color: var(--sl-color-accent-high); font-weight: 700; }
+	.board { margin-block: 2rem; }
+	.board-sums {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+		gap: 1rem;
+		margin: 0 0 2rem;
+	}
+	.board-sums div {
+		display: flex;
+		flex-direction: column-reverse;
+		padding: 1rem 1.25rem;
+		border-top: 4px solid var(--sl-color-accent);
+		border-radius: 0.4rem;
+		background: var(--b-surface);
+	}
+	.board-sums dd { margin: 0; font: 900 clamp(1.8rem, 4vw, 2.6rem)/1 var(--font-display); color: var(--sl-color-white); }
+	.board-sums dt { margin-top: 0.35rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+	.board h2 { font-family: var(--font-display); text-transform: uppercase; color: var(--sl-color-white); margin: 0 0 0.75rem; }
+	.board-wrap { overflow-x: auto; }
+	.board table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+	/* Rows are built by the script, so their cells need :global (no scoped attribute). */
+	.board :global(:is(th, td)) { padding: 0.5rem 0.75rem 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+	.board thead th { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.board :global(tbody th) { font-weight: 600; color: var(--sl-color-white); overflow-wrap: anywhere; }
+	.board :global(.num) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	.board :global(:is(th, td):last-child) { padding-right: 0; }
+	.board-note, .board-empty { margin: 0.75rem 0 0; font-size: 0.9rem; color: var(--sl-color-gray-3); }
+	.board table[hidden] { display: none; }
+</style>

@@ -159,6 +159,9 @@ type Account struct {
 	Nodes     []AccountNode `json:"nodes,omitempty"`
 	FirstNode *time.Time    `json:"first_node,omitempty"`
 	NodePref  string        `json:"node_pref,omitempty"` // NodePrefOwn (default), NodePrefOnly or NodePrefAny
+	// Username is public: setting one is the consent to appear in the leaderboard and the
+	// BOINC-format statistics (username.go). Empty = anonymous, in totals only.
+	Username string `json:"username,omitempty"`
 }
 
 // EmailMAC is an email address as HMAC-SHA256 (hex) under the email key with KeyID.

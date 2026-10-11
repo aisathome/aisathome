@@ -70,8 +70,17 @@ type Config struct {
 	// Slightly longer than the node agent's own engine timeouts. Defaults 330 and 150.
 	FirstChunkTimeoutSec int `json:"first_chunk_timeout_seconds"`
 	IdleTimeoutSec       int `json:"idle_timeout_seconds"`
+	// TokenizerFile is the model's tokenizer.json (Qwen3.8's; README "Credit"). With it the
+	// gateway counts the tokens of each answer itself, for credit; without it credit uses the
+	// node's reported counts, clamped, and the usage log says counted "node".
+	TokenizerFile string `json:"tokenizer_file"`
+	// TokenizerSHA256, if set, must match the tokenizer file (hex), or the gateway won't start.
+	TokenizerSHA256 string `json:"tokenizer_sha256"`
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
+	// StatsRefresh, if set, replaces how often the leaderboard (a minute) and the BOINC-format
+	// exports (an hour) are rebuilt. For tests.
+	StatsRefresh time.Duration `json:"-"`
 }
 
 // NodeToken authorises node connections. In JSON it is either a plain operator id (any
@@ -181,8 +190,12 @@ type Gateway struct {
 	keysCfg  Config     // the config the built-in keys came from; guarded by keysMu
 	keysSum  [32]byte   // hash of the keys file last read; guarded by keysMu
 	lim      *limiter
-	shares   []shareEntry  // recent placements, for the share cap; guarded by mu
-	held     sync.Map      // node id → true: held by a guard, without an accounts file
+	shares   []shareEntry // recent placements, for the share cap; guarded by mu
+	held     sync.Map     // node id → true: held by a guard, without an accounts file
+	tok      *Tokenizer   // the gateway's own token counts; nil = the node's (credit.go)
+	pcache   *prefixCache // what each node served whom lately, for cached prompt tokens
+	credit   *creditLedger
+	statsOut statsCache    // the leaderboard and the BOINC-format exports
 	stop     chan struct{} // closed by Close: ends background work
 	stopOnce sync.Once
 	bg       sync.WaitGroup
@@ -223,7 +236,13 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
-		budget: newBudgets(), stop: make(chan struct{})}
+		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger()}
+	if cfg.TokenizerFile != "" {
+		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {
+			return nil, err
+		}
+		log.Info("counting tokens with the gateway's tokenizer", "sha256", g.tok.SHA256)
+	}
 	g.stats.replay(cfg.UsageLog, time.Now())
 	if cfg.Accounts != nil {
 		g.acfg = *cfg.Accounts
@@ -258,9 +277,14 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		}
 		g.budget.path = filepath.Join(cfg.StateDir, "budgets.json")
 		g.budget.load(time.Now(), log)
+		g.credit.path = filepath.Join(cfg.StateDir, "credit.json")
+		g.credit.load(log)
 		g.every(saveEvery, func() {
 			if err := g.budget.save(); err != nil {
 				log.Warn("saving budgets failed", "err", err)
+			}
+			if err := g.credit.save(); err != nil {
+				log.Warn("saving credit failed", "err", err)
 			}
 		})
 	}
@@ -293,7 +317,7 @@ func (g *Gateway) every(d time.Duration, f func()) {
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
 	g.bg.Wait()
-	return g.budget.save()
+	return errors.Join(g.budget.save(), g.credit.save())
 }
 
 func staticKeys(cfg Config) StaticKeys {
@@ -434,6 +458,9 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/models", g.handleModels)
 	mux.HandleFunc("GET /v1/node/connect", g.handleNodeConnect)
 	mux.HandleFunc("GET /v1/stats", g.handleStats)
+	mux.HandleFunc("GET /v1/stats/credit", g.handleCreditStats)
+	mux.HandleFunc("GET /stats/{$}", handleExportIndex)
+	mux.HandleFunc("GET /stats/{file}", g.handleExport)
 	if g.accounts != nil {
 		g.accountRoutes(mux)
 	}
@@ -1274,12 +1301,12 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		if !n.trusted && n.operator != rt.self {
 			gd = newGuard(reqText)
 		}
-		started, err := g.run(w, r, acct.User, charge, n, model, want, body, clientStream, red, gd, rt.self)
+		started, err := g.run(w, r, acct.User, userKey, charge, n, model, want, body, clientStream, red, gd, rt.self)
 		var flagged *guardError
 		if errors.As(err, &flagged) && !started {
 			// Not one byte of the stopped answer went out: try a trusted node if one is free now.
 			if tn, tmodel := g.pick(&route{want: want, trustedOnly: true, need: rt.need, needMin: rt.needMin, exclude: rt.exclude}); tn != nil {
-				if started, err = g.run(w, r, acct.User, charge, tn, tmodel, want, body, clientStream, red, nil, rt.self); err == nil || started {
+				if started, err = g.run(w, r, acct.User, userKey, charge, tn, tmodel, want, body, clientStream, red, nil, rt.self); err == nil || started {
 					return
 				}
 			}
@@ -1308,8 +1335,9 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 // run sends one request to a node and relays the result. started reports whether any
 // output reached the client (then a retry is no longer possible). gd, if set, checks the
 // answer (guard.go); a stopped tool call returns a *guardError. self is the requesting
-// account's operator name, to record answers an account served itself.
-func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charge []string, n *nodeConn,
+// account's operator name, to record answers an account served itself; who is the requester
+// (account, front-end user or key) whose conversations a node may have cached.
+func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user, who string, charge []string, n *nodeConn,
 	model, want string, body map[string]any, clientStream bool, red *redactor, gd *guard, self string) (started bool, err error) {
 	reqID := newID()
 	nb := forNode(body) // only the fields a node may see
@@ -1317,6 +1345,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	nb["stream"] = true
 	nb["stream_options"] = map[string]any{"include_usage": true}
 	raw, _ := json.Marshal(nb)
+	mt := newMeter(nb, g.tok) // the gateway's own token counts, for credit
 	maxTokens := requestMaxTokens(nb, g.cfg.DefaultMaxTokens)
 	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
 	// collected) and work. About one token per chunk, with room for role and usage chunks.
@@ -1360,6 +1389,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 		rec := usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
 			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
 			Estimated: estimated, Clamped: clamped, SelfServed: self != "" && n.operator == self, Guard: flag}
+		g.meterRecord(&rec, mt, n, who, u, maxTokens, rec.Time)
 		g.use.record(rec)
 		g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
 		if outcome == outcomeBlocked {
@@ -1452,6 +1482,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 				if hasText(m.Data) {
 					relayed++
 				}
+				mt.chunk(m.Data)
 				chunks++
 				collectedBytes += len(m.Data)
 				relayedChars += textLen(m.Data)
@@ -1704,6 +1735,11 @@ type usageRecord struct {
 	// SelfServed: the node's operator is the requesting account (no credit for serving oneself).
 	SelfServed bool   `json:"self_served,omitempty"`
 	Guard      string `json:"guard,omitempty"` // a guard's rule: the answer was stopped, or (text) flagged
+	// Counted says who counted Tokens: "gateway" (its tokenizer) or "node" (reported counts,
+	// clamped). Cached tokens are always the gateway's decision. Credit is what the node earned.
+	Counted string        `json:"counted,omitempty"`
+	Tokens  *creditTokens `json:"tokens,omitempty"`
+	Credit  float64       `json:"credit,omitempty"`
 }
 
 // textLen is the number of generated characters in a streamed chunk (for budget bounds).

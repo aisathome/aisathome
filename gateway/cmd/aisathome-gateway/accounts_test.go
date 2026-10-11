@@ -88,3 +88,27 @@ func TestAccountsNodeCommands(t *testing.T) {
 		t.Fatalf("ban kept node tokens:\n%s", out)
 	}
 }
+
+func TestUsernameClearCommand(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "accounts.json")
+	store, _ := gateway.OpenAccountStore(file)
+	store.SignIn("gh:1", time.Now())
+	if err := store.SetUsername("gh:1", "Crunch Queen"); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	runAccounts([]string{"-file", file, "list"}, &out, &bytes.Buffer{})
+	if !strings.Contains(out.String(), `"Crunch Queen"`) {
+		t.Fatalf("list lacks the username:\n%s", out.String())
+	}
+	if err := runAccounts([]string{"-file", file, "username-clear", "gh:1"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	store.Refresh()
+	if a, _, _ := store.Get("gh:1"); a.Username != "" {
+		t.Fatalf("username kept: %q", a.Username)
+	}
+	if err := runAccounts([]string{"-file", file, "username-clear", "gh:9"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("clearing an unknown account succeeded")
+	}
+}
