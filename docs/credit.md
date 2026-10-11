@@ -17,6 +17,9 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   counts are kept in the usage log (`usage`) but not used: each line has `counted`
   (`"gateway"`, or `"node"` without a tokenizer, when the node's counts are used, clamped as
   for budgets), `tokens` and `credit`.
+- **As the engine renders it.** Prompts are counted as the installed llama-server renders
+  them (`--no-reasoning-preserve`): earlier turns' reasoning counts only when the request sets
+  `chat_template_kwargs.preserve_thinking: true` (or llama.cpp's `preserve_reasoning`).
 - **Cache decided by the gateway.** A prompt counts as cached up to the longest prefix the
   same node served the same requester (account, chat user or key) within 10 minutes. Only
   chained hashes of 256-byte blocks are kept, bounded per node (32 conversations of up to

@@ -446,8 +446,8 @@ func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAc
 		if reqAcct != "" {
 			rt.self = g.pseudonym(reqAcct)
 			switch g.accounts.nodePref(reqAcct) {
-			case NodePrefOnly:
-				rt.operator = rt.self
+			case NodePrefOnly: // on top of a front end's operator: if they differ, no node fits
+				rt.onlySelf = true
 			case NodePrefAny:
 			default:
 				rt.preferSelf = true

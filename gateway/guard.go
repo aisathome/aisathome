@@ -27,6 +27,11 @@ const (
 	ruleUpload       = "file-upload"
 	ruleUnknownURL   = "unknown-address"
 	ruleTextURL      = "unknown-address-in-text" // flagged only
+	// Streams no honest engine sends, built to make the guard and the client see different
+	// calls: tool-call pieces after the calls were completed and released, or keys the guard
+	// reads exactly while a client's decoder may match them in another case.
+	ruleAfterFinish = "tool-call-after-finish"
+	ruleOddKey      = "malformed-chunk"
 )
 
 // guardRules match dangerous tool calls. Credential paths are excused when the request
@@ -168,6 +173,10 @@ type guard struct {
 	finish []byte // the chunk with finish_reason, held until the calls are released
 	meta   map[string]any
 	text   strings.Builder
+	// released: tool calls were checked and passed on; more pieces of tool calls after that
+	// would be checked apart from what the client joins them to.
+	released  bool
+	violation string // a stream rule broken (ruleAfterFinish, ruleOddKey): stop the answer
 }
 
 type heldCall struct {
@@ -225,6 +234,10 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 	if json.Unmarshal(raw, &c) != nil {
 		return raw, false
 	}
+	if oddKey(c) {
+		gd.violation = ruleOddKey
+		return nil, false
+	}
 	if gd.meta == nil {
 		gd.meta = map[string]any{}
 		for _, k := range []string{"id", "object", "created", "model"} {
@@ -245,6 +258,10 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 			gd.text.WriteString(t)
 		}
 		if tcs, ok := delta["tool_calls"].([]any); ok {
+			if gd.released && len(tcs) > 0 {
+				gd.violation = ruleAfterFinish
+				return nil, false
+			}
 			gd.hold(tcs)
 			delete(delta, "tool_calls")
 			changed = true
@@ -350,8 +367,58 @@ func (gd *guard) release() [][]byte {
 	if gd.finish != nil {
 		out = append(out, gd.finish)
 	}
+	gd.released = gd.released || len(gd.calls) > 0
 	gd.calls, gd.finish, gd.held = nil, nil, 0
 	return out
+}
+
+// streamKeys are the chunk keys the guard and the answer assembly read. encoding/json matches
+// struct fields case-insensitively, and clients may too, while the guard reads exact keys.
+var streamKeys = []string{"choices", "delta", "message", "tool_calls", "function", "arguments", "name",
+	"index", "id", "type", "content", "reasoning_content", "finish_reason", "role", "usage"}
+
+// oddKey reports a key anywhere in v that differs from a stream key only in case.
+func oddKey(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			for _, s := range streamKeys {
+				if k != s && strings.EqualFold(k, s) {
+					return true
+				}
+			}
+			if oddKey(e) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if oddKey(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkAssembled returns the rule a tool call in an assembled (non-streaming) answer breaks,
+// or "": the client gets exactly these calls, however the stream was cut into pieces.
+func checkAssembled(ans map[string]any, req string) string {
+	choices, _ := ans["choices"].([]any)
+	for _, ch := range choices {
+		cm, _ := ch.(map[string]any)
+		msg, _ := cm["message"].(map[string]any)
+		calls, _ := msg["tool_calls"].([]any)
+		for _, c := range calls {
+			fn, _ := c.(map[string]any)["function"].(map[string]any)
+			name, _ := fn["name"].(string)
+			args, _ := fn["arguments"].(string)
+			if r := checkToolCall(name, args, req); r != "" {
+				return r
+			}
+		}
+	}
+	return ""
 }
 
 // guardError is a tool call stopped by a guard.

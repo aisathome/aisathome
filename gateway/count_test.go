@@ -27,9 +27,55 @@ func TestRenderPromptMatchesTemplate(t *testing.T) {
 		// As the node gets it: through encoding/json (sorted keys, no HTML escaping issues).
 		var body map[string]any
 		json.Unmarshal(mustJSON(c.Body), &body)
+		// jinja2 renders without llama-server's kwargs: preserve_thinking undefined, which the
+		// template treats as true.
+		kw, _ := body["chat_template_kwargs"].(map[string]any)
+		if _, set := kw["preserve_thinking"]; !set {
+			if kw == nil {
+				kw = map[string]any{}
+				body["chat_template_kwargs"] = kw
+			}
+			kw["preserve_thinking"] = true
+		}
 		got, _ := renderPrompt(body)
 		if got != c.Prompt {
 			t.Errorf("case %d:\n--- got\n%s\n--- want\n%s", i, got, c.Prompt)
+		}
+	}
+}
+
+// The prompt is counted as the node's llama-server renders it. The installer starts it with
+// --no-reasoning-preserve, which in llama.cpp v0.5.0 sets the template's preserve_thinking to
+// false unless the request sets chat_template_kwargs.preserve_thinking (used as given: only
+// true preserves) or llama.cpp's own preserve_reasoning (a boolean replaces the server's).
+func TestPromptFollowsEngineReasoningDefault(t *testing.T) {
+	const earlier = "EARLIER-REASONING"
+	for _, c := range []struct {
+		kwargs   string
+		preserve bool
+	}{
+		{``, false},
+		{`"chat_template_kwargs":{"enable_thinking":true},`, false},
+		{`"chat_template_kwargs":{"preserve_thinking":true},`, true},
+		{`"chat_template_kwargs":{"preserve_thinking":false},`, false},
+		{`"chat_template_kwargs":{"preserve_thinking":"yes"},`, false}, // "is true" needs a boolean
+		{`"chat_template_kwargs":{"preserve_thinking":null},`, false},
+		{`"chat_template_kwargs":{"preserve_reasoning":true},`, true},
+		{`"chat_template_kwargs":{"preserve_reasoning":false},`, false},
+		{`"chat_template_kwargs":{"preserve_reasoning":"x"},`, true}, // replaces the server's; not applied: template default
+		{`"chat_template_kwargs":{"preserve_reasoning":true,"preserve_thinking":false},`, false},
+	} {
+		var body map[string]any
+		raw := `{` + c.kwargs + `"messages":[{"role":"user","content":"first"},{"role":"assistant","content":"one","reasoning_content":"` + earlier + `"},{"role":"user","content":"second"}]}`
+		if err := json.Unmarshal([]byte(raw), &body); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := renderPrompt(body)
+		if strings.Contains(got, earlier) != c.preserve {
+			t.Errorf("%s: earlier reasoning in the prompt = %v, want %v", c.kwargs, !c.preserve, c.preserve)
+		}
+		if !strings.Contains(got, "<|im_start|>assistant\none<|im_end|>") && !c.preserve {
+			t.Errorf("%s: dropped reasoning must leave the bare answer: %q", c.kwargs, got)
 		}
 	}
 }

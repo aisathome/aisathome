@@ -735,8 +735,9 @@ type route struct {
 	trusted     bool   // only trusted nodes, or the requester's own
 	why         string // why trusted is set, for the error message ("" = the key's min_trust)
 	trustedOnly bool   // the operator's emergency switch: trusted nodes only, not even one's own
-	operator    string // only nodes of this operator ("" = any)
+	operator    string // only nodes of this operator ("" = any), e.g. a key's or front end's only_operator
 	self        string // the requesting account's operator name: its own nodes count as trusted for it
+	onlySelf    bool   // only the requester's own nodes (its preference), on top of operator
 	preferSelf  bool   // try the requester's own nodes first
 	tools       bool   // the request defines tools (an agent)
 	consent     bool   // the key allows volunteer nodes for agents
@@ -752,6 +753,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	case rt.exclude[n] || n.held:
 		return false
 	case rt.operator != "" && n.operator != rt.operator:
+		return false
+	case rt.onlySelf && n.operator != rt.self:
 		return false
 	case n.trusted:
 		return true
@@ -786,13 +789,18 @@ func fits(m protocol.ModelInfo, threshold int) bool {
 func serves(m protocol.ModelInfo, want string) bool { return m.Name == want || contains(m.Roles, want) }
 
 // thresholdLocked is the context the request needs on this network now: need if any allowed
-// node fits it, otherwise needMin. Caller holds g.mu.
+// node that is not paused fits it, otherwise needMin. A paused node (held ones are not
+// allowed) may stay paused for hours: waiting for its larger context would time out while a
+// smaller node could answer. Caller holds g.mu.
 func (g *Gateway) thresholdLocked(rt *route, now time.Time) int {
 	if rt.need == 0 {
 		return 0
 	}
 	for _, n := range g.node {
-		if !rt.allows(n, now) {
+		n.mu.Lock()
+		paused := n.paused
+		n.mu.Unlock()
+		if paused || !rt.allows(n, now) {
 			continue
 		}
 		for _, m := range n.models {
@@ -1061,7 +1069,7 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 			w.Header().Set("Retry-After", "60")
 			which, because := "trusted node", "this request may only go to such nodes"
 			switch {
-			case rt.operator != "" && rt.operator == rt.self:
+			case rt.onlySelf:
 				which, because = "node of your own", "your account is set to use only your own nodes"
 			case rt.operator != "":
 				which = "node of your own"
@@ -1304,8 +1312,11 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		started, err := g.run(w, r, acct.User, userKey, charge, n, model, want, body, clientStream, red, gd, rt.self)
 		var flagged *guardError
 		if errors.As(err, &flagged) && !started {
-			// Not one byte of the stopped answer went out: try a trusted node if one is free now.
-			if tn, tmodel := g.pick(&route{want: want, trustedOnly: true, need: rt.need, needMin: rt.needMin, exclude: rt.exclude}); tn != nil {
+			// Not one byte of the stopped answer went out: try a trusted node if one is free now,
+			// within all of the request's restrictions (operator, own nodes only, context).
+			fb := *rt
+			fb.trustedOnly, fb.preferSelf = true, false
+			if tn, tmodel := g.pick(&fb); tn != nil {
 				if started, err = g.run(w, r, acct.User, userKey, charge, tn, tmodel, want, body, clientStream, red, nil, rt.self); err == nil || started {
 					return
 				}
@@ -1510,7 +1521,11 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user, who string, 
 				outs := [][]byte{[]byte(m.Data)}
 				if gd != nil {
 					var big bool
-					if outs, big = gd.filter(m.Data); big {
+					outs, big = gd.filter(m.Data)
+					if gd.violation != "" {
+						return block(gd.violation)
+					}
+					if big {
 						cancelOnNode(n, reqID)
 						partial("failed")
 						if started {
@@ -1562,6 +1577,15 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user, who string, 
 						g.log.Warn("guard flagged a node's answer", "node", n.id, "operator", n.operator, "rule", flag, "req", reqID)
 					}
 				}
+				var ans map[string]any
+				if !clientStream {
+					ans = assemble(reqID, model, collected, u)
+					if gd != nil { // what the client gets, not the pieces the guard saw
+						if rule := checkAssembled(ans, gd.req); rule != "" {
+							return block(rule)
+						}
+					}
+				}
 				for _, data := range held {
 					if clientStream {
 						send(data)
@@ -1577,7 +1601,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user, who string, 
 					}
 					writeSSE([]byte("[DONE]"))
 				} else {
-					writeJSON(w, http.StatusOK, restoreAnswer(assemble(reqID, model, collected, u), red))
+					writeJSON(w, http.StatusOK, restoreAnswer(ans, red))
 				}
 				return true, nil
 			}

@@ -31,8 +31,14 @@ type templateArgs struct {
 	effort             string
 }
 
+// argsOf reads the switches as the node's llama-server applies them. Earlier turns'
+// reasoning: the installer starts llama-server with --no-reasoning-preserve,
+// which in llama.cpp v0.5.0 sets the server's preserve_reasoning kwarg to false; a request's
+// chat_template_kwargs replace the server's per key. A boolean preserve_reasoning becomes the
+// template's preserve_thinking; a preserve_thinking in the request is passed as given and wins
+// (the template preserves only on exactly true, or when it is undefined).
 func argsOf(body map[string]any) templateArgs {
-	a := templateArgs{thinking: true, preserve: true, effort: "xhigh"}
+	a := templateArgs{thinking: true, preserve: false, effort: "xhigh"}
 	if e, ok := body["reasoning_effort"].(string); ok {
 		a.effort = e
 	}
@@ -40,8 +46,11 @@ func argsOf(body map[string]any) templateArgs {
 		if v, ok := kw["enable_thinking"].(bool); ok {
 			a.thinking = v
 		}
-		if v, ok := kw["preserve_thinking"].(bool); ok {
-			a.preserve = v
+		if v, set := kw["preserve_thinking"]; set {
+			a.preserve = v == true
+		} else if v, set := kw["preserve_reasoning"]; set {
+			b, isBool := v.(bool)
+			a.preserve = b || !isBool // not a boolean: not applied, preserve_thinking stays undefined
 		}
 		if e, ok := kw["reasoning_effort"].(string); ok {
 			a.effort = e
