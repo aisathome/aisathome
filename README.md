@@ -35,6 +35,13 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: the CI checks (`ci.yml`
 `./scripts/build-release.sh v0.1.0 dist`; `aisathome-node -version` prints the version.
 The Linux node installer can use them (`--node-release latest`).
 
+The release also has the prebuilt node bundle `aisathome-node-bundle-linux-amd64.tar.xz`:
+the installer, `aisathome-node` and `llama-server` (llama.cpp v0.5.0, CUDA 12.8, RTX 30/40/50)
+with its CUDA libraries, so a volunteer needs only the NVIDIA driver. `scripts/build-llama.sh`
+builds `llama-server` in NVIDIA's CUDA image (an estimated 1 to 2 hours of CI on a tag); details in
+`node/packaging/linux/README.md`. Running the release workflow by hand builds everything
+without publishing.
+
 ## Running a gateway
 
 Config fields beyond the example (`examples/gateway.json`):

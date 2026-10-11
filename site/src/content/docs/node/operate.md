@@ -56,9 +56,28 @@ prompts from RAM or VRAM while they are being served.
 
 ## Troubleshooting
 
+**`NVIDIA driver ... is too old for the prebuilt llama-server`.** The bundle is built with
+CUDA 12.8 and needs driver 525.60.13 or newer (570.26 or newer for an RTX 50). Update the
+driver (Ubuntu: `sudo ubuntu-drivers install`), reboot, and run the installer again. Or
+[build llama.cpp yourself](/node/install/#build-it-yourself) for your driver.
+
+**`has compute capability ...; the prebuilt llama-server supports 8.6 8.9 12.0`.** The
+bundle is built for the RTX 30, 40 and 50 series only. Build llama.cpp yourself for your
+GPU.
+
+**`not enough disk space`.** The model needs 16.5 GB plus about 2 GB in `/var/lib`. Free
+some space and run the installer again; a started download resumes.
+
+**`model checksum mismatch`.** The downloaded model is not the pinned file (a corrupt
+download or a changed mirror). The installer deletes it; run it again to download it again.
+If it happens twice, tell us.
+
+**`the prebuilt llama-server cannot run here`.** Your system's C library is older than
+glibc 2.35 (for example Ubuntu 20.04). Build llama.cpp yourself.
+
 **`no kernel image is available for execution on the device`.** `llama-server` was built for
 another GPU generation. Rebuild with `"-DCMAKE_CUDA_ARCHITECTURES=86;89"` (see
-[install](/node/install/)).
+[install](/node/install/#build-it-yourself)).
 
 **CMake: `CMAKE_CUDA_COMPILER-NOTFOUND`.** `nvcc` is not on `PATH`:
 `export PATH=/usr/local/cuda/bin:$PATH` and configure again from an empty `build/`.

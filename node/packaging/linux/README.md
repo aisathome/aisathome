@@ -8,10 +8,77 @@ gateway, so no inbound ports or router changes are needed.
 **Hardened, not confidential:** whoever controls this machine can see the prompts it
 serves.
 
-## Requirements
+## Install from the prebuilt bundle
 
-- NVIDIA GPU with ~20 GB free VRAM for the default 27B model, plus the NVIDIA driver with
-  CUDA (`nvidia-smi` works).
+Each release has `aisathome-node-bundle-linux-amd64.tar.xz`: this installer, `aisathome-node`
+and `llama-server` with the libraries it needs. No compiler or CUDA toolkit, only the NVIDIA
+driver.
+
+```bash
+base=https://github.com/aisathome/aisathome/releases/latest/download
+curl -LO $base/aisathome-node-bundle-linux-amd64.tar.xz -LO $base/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
+./install.sh --dry-run                 # checks only, no root needed
+sudo ./install.sh --preset balanced    # then paste the node token
+```
+
+Requirements:
+
+- x86_64 with AVX2, systemd, glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer);
+- an NVIDIA GPU with compute capability 8.6, 8.9 or 12.0 (RTX 30, 40, 50 series) and about
+  20 GB free VRAM;
+- NVIDIA driver **525.60.13 or newer**, and **570.26 or newer** on an RTX 50;
+- about 18.5 GB free in `/var/lib` (the 16.5 GB model plus 2 GB).
+
+What is in it (`BUILD-INFO` has the exact values):
+
+| | |
+|---|---|
+| llama.cpp | `v0.5.0`, commit `7fe450e19305b828c199d602c23a8337aaa1f03b`, the version the presets were benchmarked with |
+| CUDA | 12.8.1 (`nvidia/cuda:12.8.1-devel-ubuntu22.04`, pinned by digest), real code for `86-real;89-real;120a-real`, no PTX |
+| Libraries | llama.cpp's, `libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12` (NVIDIA, unmodified), `libgomp.so.1`; see `THIRD_PARTY_NOTICES.md` |
+| Size | 497 MB packed (xz), 927 MiB unpacked; cuBLAS is most of it (869 MB unpacked, 439 MB packed). Measured on a local build with the same CUDA 12.8.1 libraries, 2026-10-11 |
+
+Why driver 525: a CUDA 12.x build runs on any CUDA 12 driver (525 or newer) through NVIDIA's
+minor version compatibility, as long as it contains no PTX, which the build ensures. RTX 50
+cards need the CUDA 12.8 driver (570.26) anyway. Sources: NVIDIA, "CUDA Compatibility",
+minor version compatibility, table 1; CUDA toolkit release notes, table 3. The installer
+checks the driver and every GPU with `nvidia-smi`, the CPU and the C library before anything
+else, and stops with a message naming the fix.
+
+CI builds the bundle (`.github/workflows/release.yml`, `scripts/build-llama.sh`, then
+`scripts/build-release.sh` with `LLAMA_DIR`). A manual run of the release workflow is a dry
+run that builds everything without publishing; its `dist` artifact (kept 7 days) holds the
+bundle for a test install.
+
+### The model
+
+Without `--model`, the installer downloads `Qwen3.8-27B-UD-Q4_K_M.gguf` from
+`unsloth/Qwen3.8-27B-GGUF`, pinned to commit `4ca720788d1e01f1bff70c033e0d0028fd02e502`, and
+checks it against SHA-256 `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`
+(16,464,440,224 bytes, the file `bench/kvquant` in the research repo measured). It goes
+straight to `/var/lib/aisathome-node/models/model.gguf`:
+
+- an interrupted download resumes from `model.gguf.part` on the next run;
+- a wrong checksum deletes the download, so the next run starts clean;
+- an existing `model.gguf` with the right checksum is kept (checked, about a minute);
+- `--download-only <dir>` only downloads and checks, without root, e.g. on a slow line
+  before installing with `--model <dir>/Qwen3.8-27B-UD-Q4_K_M.gguf`;
+- `MODEL_URL`, `MODEL_SHA256` and `MODEL_SIZE` (all three) choose another file.
+
+### node.json
+
+Without `--node-config`, the installer writes `node.json` with the gateway
+(`--gateway-url`, default `wss://api.aisathome.org/v1/node/connect`), the preset's slots and
+context, and the roles `deep` and `agent`. The node id comes from `--node-id`, else from a
+token made on the account page (`nt-<node id>.<secret>`), else from the host name. Only a
+token from a gateway's config needs `--node-id`.
+
+## Install with your own llama.cpp build
+
+For other GPUs, older systems, or if you prefer to compile.
+
 - `llama-server` built with CUDA. You need the CUDA toolkit matching your driver
   (`nvidia-smi` shows the highest CUDA version it supports), `cmake`, `ninja` and a C++
   compiler. On Ubuntu 22.04 with driver 535, for example:
@@ -27,36 +94,38 @@ serves.
   ```
   `86;89` covers the RTX 30xx and 40xx series; a build for 89 only fails on an RTX 3090
   with "no kernel image is available". (`native` needs CMake 3.24; Ubuntu 22.04 has 3.22.)
-- A GGUF model, e.g. `unsloth/Qwen3.8-27B-GGUF` / `Qwen3.8-27B-UD-Q4_K_M.gguf` (16.5 GB).
 - `aisathome-node`: either a prebuilt release binary (`--node-release`, linux amd64 or
   arm64) or your own build (`go build ./node/cmd/aisathome-node`, then `--node-bin`).
-- A `node.json` (see `examples/node.json`) and a node token: sign in at
-  `https://aisathome.org/account`, "Your nodes", "Add a node". The token carries the node's
-  id, so `node_id` in `node.json` is not needed (it is used only with tokens from a
-  gateway's config).
-
-## Install
+- Optional: a GGUF model you already have (`--model`) and your own `node.json`
+  (`--node-config`, see `examples/node.json`).
+- A node token: sign in at `https://aisathome.org/account`, "Your nodes", "Add a node". The
+  token carries the node's id, so `node_id` (and `--node-id`) is needed only with tokens
+  from a gateway's config.
 
 ```bash
-sudo ./install.sh --llama-build llama.cpp/build --model Qwen3.8-27B-UD-Q4_K_M.gguf \
-     --node-release latest --node-config node.json
+sudo ./install.sh --llama-build llama.cpp/build --node-release latest
 ```
+
+## Install options
 
 - `--node-release latest` (or a tag such as `v0.1.0`) downloads `aisathome-node` for
   this machine's architecture from the
   [GitHub releases](https://github.com/aisathome/aisathome/releases) and checks it against
   that release's `SHA256SUMS`. This catches corrupt downloads, not a compromised release:
-  the checksums come from the same place. Pin a tag to install a known version; `latest`
-  skips pre-releases. `llama-server` is not part of the release; build it as above.
+  the checksums come from the same place (the same holds for the bundle). Pin a tag to
+  install a known version; `latest` skips pre-releases.
 - `--node-bin ./aisathome-node` installs your own build instead.
-- The token is read from stdin (hidden), never from the command line.
-- The model file is **moved** to `/var/lib/aisathome-node/models/`.
+- An explicit `--llama-build` wins over the bundle's `llama-server` and skips its checks.
+- The node token is read from stdin (hidden), never from the command line.
+- A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the `balanced` preset (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot`.
-- `--dry-run` prints the resulting `llama-server` command and exits without installing
-  (no root needed; with `--node-release` it downloads and verifies the binary too).
-  `./install_test.sh` tests presets, overrides and the release download this way.
+- `--dry-run` runs the checks (bundle, driver, GPU, disk), prints the generated `node.json`
+  and the `llama-server` command, and exits without installing (no root needed; with
+  `--node-release` it downloads and verifies the binary too). `./install_test.sh` tests
+  presets, overrides, the checks (with a fake `nvidia-smi` and `df`) and the downloads this
+  way; `../../../scripts/bundle_test.sh` tests the bundle's packaging.
 
 ## Presets
 

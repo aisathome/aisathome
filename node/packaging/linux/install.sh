@@ -2,20 +2,28 @@
 # Install an AIs@home node on Linux (systemd): llama-server plus aisathome-node, both
 # running as the unprivileged system user "aisathome", sandboxed by systemd.
 #
-#   sudo ./install.sh --llama-build <llama.cpp/build> --model <file.gguf> \
-#        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) \
-#        --node-config <node.json> [--preset <name>] [--enable-at-boot] [--dry-run]
+# From the prebuilt bundle (this script next to bin/llama-server, lib/ and aisathome-node):
+#   sudo ./install.sh [--preset <name>] [--node-id <id>] [--enable-at-boot] [--dry-run]
+# With your own llama.cpp build:
+#   sudo ./install.sh --llama-build <llama.cpp/build> \
+#        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
+# Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
+#   --preset <name>, --enable-at-boot, --dry-run, --download-only <dir>.
 #
+# Without --model, the pinned model is downloaded from Hugging Face, resumed if interrupted
+# and checked against its SHA-256. --download-only <dir> only does that (no root needed).
+# Without --node-config, node.json is written from --node-id (default: the host name),
+# --gateway-url and the preset. The bundle checks the NVIDIA driver and GPU first.
 # --node-release downloads aisathome-node for this machine's architecture from a GitHub
 # release of aisathome/aisathome and checks it against that release's SHA256SUMS.
 # Presets: balanced (default), low-vram, long-context, long-context-dual (see README.md).
-# --dry-run prints the llama-server command and exits without installing (no root needed).
-# The node token is read from stdin (never from argv), e.g.
-#   cat token.txt | sudo ./install.sh ...
+# --dry-run runs the checks, prints the plan and the llama-server command, and exits
+# without installing (no root needed). The node token is read from stdin (never from argv):
+# paste it when asked, or: cat token.txt | sudo ./install.sh ...
 #
 # What it touches:
 #   /opt/aisathome-node/            binaries and llama.cpp shared libraries (root-owned)
-#   /var/lib/aisathome-node/models  the model (moved, not copied; owned by aisathome)
+#   /var/lib/aisathome-node/models  the model (moved or downloaded; owned by aisathome)
 #   /etc/aisathome-node/            node.json (root:aisathome 0640), token.env (root 0600)
 #   /etc/systemd/system/aisathome-{llama,node}.service
 #   local UI: see the "Local node UI" section below (UI_PORT=<port>|off, default 7381)
@@ -25,9 +33,11 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
+here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
+node_id="" gateway_url="" download_only=""
 preset="${PRESET:-balanced}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +46,9 @@ while [[ $# -gt 0 ]]; do
     --node-bin) node_bin="$2"; shift 2 ;;
     --node-release) node_release="$2"; shift 2 ;;
     --node-config) node_config="$2"; shift 2 ;;
+    --node-id) node_id="$2"; shift 2 ;;
+    --gateway-url) gateway_url="$2"; shift 2 ;;
+    --download-only) download_only="$2"; shift 2 ;;
     --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
     --dry-run) dry_run=1; shift ;;
@@ -80,12 +93,55 @@ release_base="${AISATHOME_RELEASE_URL:-https://github.com/aisathome/aisathome/re
 [[ "$release_base" =~ ^(https|file):// ]] || die "AISATHOME_RELEASE_URL must start with https:// or file://" 2
 [[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
 
+# The model the presets were measured with, pinned to a commit of the Hugging Face
+# repository and checked by SHA-256 (the hash bench/kvquant/setup.sh in the research repo
+# verified, 2026-10-09). MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace it, all
+# three together.
+pin_url=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_M.gguf
+pin_sha=322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482
+pin_size=16464440224
+if [[ -n "${MODEL_URL:-}${MODEL_SHA256:-}${MODEL_SIZE:-}" ]] &&
+   [[ -z "${MODEL_URL:-}" || -z "${MODEL_SHA256:-}" || -z "${MODEL_SIZE:-}" ]]; then
+  die "set MODEL_URL, MODEL_SHA256 and MODEL_SIZE together" 2
+fi
+model_url="${MODEL_URL:-$pin_url}" model_sha="${MODEL_SHA256:-$pin_sha}" model_size="${MODEL_SIZE:-$pin_size}"
+[[ "$model_url" =~ ^(https|file)://[^[:space:]]+$ ]] || die "MODEL_URL must start with https:// or file://" 2
+[[ "$model_sha" =~ ^[0-9a-f]{64}$ ]] || die "MODEL_SHA256 must be 64 lowercase hex digits" 2
+[[ "$model_size" =~ ^[1-9][0-9]{0,14}$ ]] || die "MODEL_SIZE must be a positive number of bytes" 2
+model_name="${model_url##*/}"; model_name="${model_name%%\?*}"
+[[ "$model_name" =~ ^[A-Za-z0-9._-]+\.gguf$ ]] || model_name=model.gguf
+# Disk space kept free beyond the model: the binaries (about 1.5 GB) and some slack.
+reserve=$((2 * 1024 * 1024 * 1024))
+
+# node.json is written by the installer unless --node-config is given.
+if [[ -n "$node_config" ]]; then
+  [[ -z "$node_id$gateway_url" ]] || die "--node-id and --gateway-url are for a generated node.json; edit your --node-config instead" 2
+else
+  [[ -z "$node_id" || "$node_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+    die "--node-id '$node_id': use letters, digits, '.', '_' and '-' (up to 64)" 2
+  gateway_url="${gateway_url:-wss://api.aisathome.org/v1/node/connect}"
+  [[ "$gateway_url" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] ||
+    die "--gateway-url must look like wss://host/v1/node/connect" 2
+fi
+
+# The prebuilt bundle: this script next to bin/llama-server, lib/ and BUILD-INFO. An explicit
+# --llama-build, --node-bin or --node-release wins over the bundle's copy.
+bundle=0
+if [[ -z "$llama_build" && -x "$here/bin/llama-server" && -f "$here/BUILD-INFO" ]]; then
+  bundle=1 llama_build="$here"
+  [[ -n "$node_bin" || -n "$node_release" ]] || node_bin="$here/bin/aisathome-node"
+fi
+
 target=/var/lib/aisathome-node/models/model.gguf
 llama_exec="/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
   --reasoning-budget $reasoning_budget \\
   --reasoning-budget-message \"(Thinking budget reached; answering now.)\" --no-reasoning-preserve \\
   -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics"
+
+# A temporary directory, removed on exit; created on first use (call workdir, then use $work).
+work=""
+workdir() { [[ -n "$work" ]] || { work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT; }; }
 
 # Download the node binary for this architecture from a release and verify it against the
 # release's SHA256SUMS. This catches corrupt downloads; it does not protect against a
@@ -99,18 +155,17 @@ fetch_node_release() {
   esac
   local asset="aisathome-node-linux-$arch"
   if [[ "$node_release" = latest ]]; then url="$release_base/latest/download"; else url="$release_base/download/$node_release"; fi
-  dl_dir="$(mktemp -d)"
-  trap 'rm -rf "$dl_dir"' EXIT
+  workdir
   for f in "$asset" SHA256SUMS; do
-    curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 -o "$dl_dir/$f" "$url/$f" ||
+    curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 -o "$work/$f" "$url/$f" ||
       die "download failed: $url/$f"
   done
-  want="$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1 }' "$dl_dir/SHA256SUMS")"
+  want="$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1 }' "$work/SHA256SUMS")"
   [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "no checksum for $asset in $url/SHA256SUMS"
-  got="$(sha256sum "$dl_dir/$asset" | cut -d' ' -f1)"
+  got="$(sha256sum "$work/$asset" | cut -d' ' -f1)"
   [[ "$got" = "$want" ]] || die "checksum mismatch for $asset: got $got, SHA256SUMS says $want"
-  chmod 0755 "$dl_dir/$asset"
-  node_bin="$dl_dir/$asset"
+  chmod 0755 "$work/$asset"
+  node_bin="$work/$asset"
   echo "aisathome-node: $asset from $url, sha256 $got (verified)" >&2
 }
 
@@ -207,9 +262,160 @@ MSG
 node_ui_check
 # ---- end of local node UI ----------------------------------------------------------------
 
-dl_dir=""
+gb() { LC_ALL=C awk -v b="$1" 'BEGIN { printf "%.1f", b / 1e9 }'; }
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+# ver_ge A B: version A >= version B.
+ver_ge() { [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]]; }
+# info KEY: a value from the bundle's BUILD-INFO (key=value lines; read, never sourced).
+info() { sed -n "s/^$1=//p" "$here/BUILD-INFO" | head -n1; }
+
+# The prebuilt llama-server needs x86_64 with AVX2, glibc 2.35 or newer, and an NVIDIA
+# driver new enough for its CUDA version, on a GPU it was compiled for.
+check_bundle() {
+  local caps min min12 cuda out idx name drv cap n=0 missing
+  caps="$(info compute_caps)" min="$(info min_driver)" min12="$(info min_driver_cc12)" cuda="$(info cuda_version)"
+  [[ "$caps" =~ ^[0-9]+\.[0-9]+(\ [0-9]+\.[0-9]+)*$ && "$min" =~ ^[0-9]+(\.[0-9]+)+$ && "$min12" =~ ^[0-9]+(\.[0-9]+)+$ ]] ||
+    die "$here/BUILD-INFO is incomplete; download the bundle again"
+  echo "llama-server: prebuilt, llama.cpp $(info llama_cpp_tag) ($(info llama_cpp_commit | cut -c1-12)), CUDA $cuda, compute capability $caps" >&2
+  [[ "$(uname -m)" = x86_64 ]] || die "the prebuilt bundle is for x86_64; this machine is $(uname -m). Build llama.cpp and use --llama-build."
+  grep -qw avx2 /proc/cpuinfo || die "this CPU has no AVX2, which the prebuilt llama-server needs. Build llama.cpp and use --llama-build."
+  command -v nvidia-smi >/dev/null ||
+    die "nvidia-smi not found: install the NVIDIA driver ($min or newer; $min12 or newer for an RTX 50) and reboot"
+  out="$(nvidia-smi --query-gpu=index,name,driver_version,compute_cap --format=csv,noheader 2>&1)" ||
+    die "nvidia-smi failed, so the NVIDIA driver is not working: $out"
+  while IFS=, read -r idx name drv cap; do
+    idx="$(trim "$idx")" name="$(trim "$name")" drv="$(trim "$drv")" cap="$(trim "${cap:-}")"
+    [[ -n "$idx" ]] || continue
+    [[ "$drv" =~ ^[0-9]+(\.[0-9]+)+$ && "$cap" =~ ^[0-9]+\.[0-9]+$ ]] || die "cannot read nvidia-smi's output: $out"
+    ver_ge "$drv" "$min" || die "NVIDIA driver $drv is too old for the prebuilt llama-server (CUDA $cuda): it needs $min or newer. Update the driver (Ubuntu: sudo ubuntu-drivers install, then reboot), or build llama.cpp yourself and use --llama-build."
+    case " $caps " in
+      *" $cap "*) ;;
+      *) die "GPU $idx ($name) has compute capability $cap; the prebuilt llama-server supports $caps (RTX 30, 40 and 50 series). Build llama.cpp for this GPU and use --llama-build." ;;
+    esac
+    if [[ "${cap%%.*}" -ge 12 ]] && ! ver_ge "$drv" "$min12"; then
+      die "GPU $idx ($name) needs NVIDIA driver $min12 or newer; this machine has $drv. Update the driver, then reboot."
+    fi
+    echo "GPU $idx: $name, driver $drv, compute capability $cap: supported" >&2
+    n=$((n + 1))
+  done <<<"$out"
+  [[ $n -gt 0 ]] || die "nvidia-smi lists no GPU"
+  missing="$(LD_LIBRARY_PATH="$here/lib" ldd "$here/bin/llama-server" 2>&1 | grep 'not found' || true)"
+  [[ -z "$missing" ]] || die "the prebuilt llama-server cannot run here (it needs glibc 2.35 or newer, e.g. Ubuntu 22.04 or Debian 12):
+$missing"
+}
+
+# model_missing <file>: bytes still to download for <file> (a complete file counts as 0;
+# fetch_model checks its hash).
+model_missing() {
+  local have=0
+  if [[ -f "$1" && "$(stat -c %s "$1")" = "$model_size" ]]; then echo 0; return; fi
+  if [[ -f "$1.part" ]]; then have="$(stat -c %s "$1.part")"; fi
+  if (( have > model_size )); then have=0; fi
+  echo $((model_size - have))
+}
+
+# check_disk <dir> <bytes>: <dir> (or its nearest existing parent) must have <bytes> free.
+check_disk() {
+  local d="$1" kb
+  while [[ ! -d "$d" ]]; do d="$(dirname "$d")"; done
+  kb="$(df -Pk "$d" | awk 'NR == 2 { print $4 }')"
+  [[ "$kb" =~ ^[0-9]+$ ]] || die "cannot read the free disk space of $d"
+  (( kb * 1024 >= $2 )) ||
+    die "not enough disk space on $d: need $(gb "$2") GB for the model download, $(gb $((kb * 1024))) GB free. Free some space and run the installer again (it resumes)."
+  echo "disk: $(gb $((kb * 1024))) GB free on $d, $(gb "$2") GB needed" >&2
+}
+
+# fetch_model <file>: download the model to <file> and verify its SHA-256. An interrupted
+# download resumes from <file>.part; a complete <file> with the right hash is kept.
+fetch_model() {
+  local dest="$1" part="$1.part" have=0 got rc i progress=(-sS)
+  [[ -t 2 ]] && progress=(-#)
+  if [[ -f "$dest" && "$(stat -c %s "$dest")" = "$model_size" ]]; then
+    echo "model: checking the existing $dest (about a minute)" >&2
+    got="$(sha256sum "$dest" | cut -d' ' -f1)"
+    if [[ "$got" = "$model_sha" ]]; then echo "model: $dest, sha256 $got (verified)" >&2; return 0; fi
+    echo "model: $dest is not the pinned model; downloading it" >&2
+  fi
+  if [[ -f "$part" ]]; then have="$(stat -c %s "$part")"; fi
+  if (( have > model_size )); then rm -f "$part"; have=0; fi
+  check_disk "$(dirname "$dest")" $((model_size - have + reserve))
+  if (( have < model_size )); then
+    if (( have > 0 )); then
+      echo "model: resuming at $(gb "$have") of $(gb "$model_size") GB from $model_url" >&2
+    else
+      echo "model: downloading $(gb "$model_size") GB from $model_url" >&2
+    fi
+    # Retries resume where the last attempt stopped; a stalled transfer (under 10 kB/s for
+    # a minute) counts as interrupted. HTTP errors (22) and missing files (37) are final; a
+    # server that cannot resume (33) gets a fresh download.
+    for i in 1 2 3 4 5; do
+      rc=0
+      curl -fL "${progress[@]}" --proto '=https,file' --proto-redir '=https' --retry 3 --retry-delay 5 \
+        --connect-timeout 30 --speed-limit 10000 --speed-time 60 -C - -o "$part" "$model_url" || rc=$?
+      [[ $rc -ne 0 ]] || break
+      case $rc in
+        22|37) die "model download failed: $model_url (curl exit $rc)" ;;
+        33) rm -f "$part" ;;
+      esac
+      (( i < 5 )) || die "model download failed 5 times (curl exit $rc); run the installer again to resume"
+      echo "model: download interrupted (curl exit $rc); resuming in 10 s" >&2
+      sleep 10
+    done
+  fi
+  echo "model: checking sha256 (about a minute)" >&2
+  got="$(sha256sum "$part" | cut -d' ' -f1)"
+  if [[ "$got" != "$model_sha" ]]; then
+    rm -f "$part"
+    die "model checksum mismatch: got $got, want $model_sha. The download was deleted; run the installer again to download it again."
+  fi
+  mv -f "$part" "$dest"
+  echo "model: $dest, sha256 $got (verified)" >&2
+}
+
+# The node id for a generated node.json: --node-id, else the id that a token from the
+# account page carries ("nt-<id>.<secret>", as node.TokenNodeID reads it), else the host
+# name. (The node also takes an account token's id over node_id, with a warning.)
+pick_node_id() {
+  [[ -z "$node_id" ]] || return 0
+  if [[ "$1" =~ ^nt-(n-[0-9a-f]{8})\. ]]; then node_id="${BASH_REMATCH[1]}"; return 0; fi
+  node_id="$(hostname -s 2>/dev/null || true)"
+  [[ "$node_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+    die "the host name '$node_id' is not a valid node id; pass --node-id" 2
+}
+
+# node.json for the preset, when no --node-config is given (inputs validated above).
+gen_node_config() {
+  printf '{\n  "node_id": "%s",\n  "gateway_url": "%s",\n  "upstream": "http://127.0.0.1:8000",\n  "models": [{"name": "%s", "roles": ["deep", "agent"], "slots": %s, "ctx": %s}]\n}\n' \
+    "$node_id" "$gateway_url" "$alias" "$slots" "$ctx_per_slot"
+}
+
+if [[ -n "$download_only" ]]; then
+  [[ -d "$download_only" ]] || die "--download-only: no directory $download_only" 2
+  [[ -z "$model" ]] || die "use --download-only or --model, not both" 2
+  fetch_model "$download_only/$model_name"
+  echo "Downloaded. Install with --model $download_only/$model_name (the file is moved)." >&2
+  exit 0
+fi
+
+[[ $dry_run = 1 || $EUID -eq 0 ]] || die "run with sudo"
+[[ $dry_run = 1 || -n "$llama_build" ]] ||
+  die "no llama-server: run install.sh from the prebuilt bundle, or pass --llama-build <llama.cpp/build>" 2
+[[ $bundle = 0 ]] || check_bundle
+if [[ -n "$model" ]]; then
+  [[ -f "$model" ]] || die "no model file: $model"
+else
+  echo "model: $model_url (sha256 $model_sha, $(gb "$model_size") GB) to $target" >&2
+  check_disk "$(dirname "$target")" $(( $(model_missing "$target") + reserve ))
+fi
+[[ -z "$node_config" || -f "$node_config" ]] || die "no node config: $node_config"
+[[ -z "$node_release" ]] || fetch_node_release
+
 if [[ $dry_run = 1 ]]; then
-  [[ -z "$node_release" ]] || fetch_node_release
+  if [[ -z "$node_config" ]]; then
+    [[ -n "$node_id" ]] || echo "node id: the one an account-page token carries, else the host name" >&2
+    pick_node_id ""
+    echo "node.json (generated):"; gen_node_config
+  fi
   echo "preset: $preset"
   echo "$llama_exec"
   echo "local UI: $ui_port"
@@ -217,30 +423,42 @@ if [[ $dry_run = 1 ]]; then
   exit 0
 fi
 
-[[ $EUID -eq 0 ]] || die "run with sudo"
 [[ -x "$llama_build/bin/llama-server" ]] || die "no llama-server in $llama_build/bin"
-[[ -f "$model" && -f "$node_config" ]] || usage
-[[ -z "$node_release" ]] || fetch_node_release
 [[ -x "$node_bin" ]] || usage
-python3 -m json.tool "$node_config" >/dev/null || die "invalid JSON: $node_config"
+[[ -z "$node_config" ]] || python3 -m json.tool "$node_config" >/dev/null || die "invalid JSON: $node_config"
 
 [[ -t 0 ]] && echo "Paste the node token (input hidden), then Enter:" >&2
 IFS= read -rs token || true
 [[ -n "$token" ]] || die "no token on stdin"
+if [[ -z "$node_config" ]]; then
+  pick_node_id "$token"
+  workdir; node_config="$work/node.json"; gen_node_config > "$node_config"
+fi
 
 # 1. Unprivileged system user without a login shell.
 id aisathome >/dev/null 2>&1 || useradd --system --home-dir /var/lib/aisathome-node --shell /usr/sbin/nologin aisathome
 
-# 2. Binaries and llama.cpp shared libraries.
+# 2. Binaries and llama.cpp shared libraries. The old lib/ is removed first: no stale
+# libraries from an earlier build, and a running llama-server keeps its unlinked copies
+# instead of crashing on files overwritten in place. The bundle's BUILD-INFO and licences
+# (llama.cpp, NVIDIA CUDA runtime and cuBLAS) go along with the libraries.
+rm -rf /opt/aisathome-node/lib
 install -d -m 0755 /opt/aisathome-node/bin /opt/aisathome-node/lib
 install -m 0755 "$llama_build/bin/llama-server" /opt/aisathome-node/bin/
 install -m 0755 "$node_bin" /opt/aisathome-node/bin/aisathome-node
 find "$llama_build" -name '*.so*' \( -type f -o -type l \) -exec cp -a {} /opt/aisathome-node/lib/ \;
+for f in BUILD-INFO THIRD_PARTY_NOTICES.md licenses; do
+  if [[ $bundle = 1 && -e "$llama_build/$f" ]]; then rm -rf "/opt/aisathome-node/$f"; cp -r "$llama_build/$f" /opt/aisathome-node/; fi
+done
 chown -R root:root /opt/aisathome-node
 
-# 3. Model (moved to save disk space) and state directory.
+# 3. Model (moved to save disk space, or downloaded and verified) and state directory.
 install -d -o aisathome -g aisathome -m 0750 /var/lib/aisathome-node /var/lib/aisathome-node/models
-if [[ "$(readlink -f "$model")" != "$target" ]]; then mv "$model" "$target"; fi
+if [[ -z "$model" ]]; then
+  fetch_model "$target"
+elif [[ "$(readlink -f "$model")" != "$target" ]]; then
+  mv "$model" "$target"
+fi
 chown aisathome:aisathome "$target"; chmod 0640 "$target"
 
 # 4. Config and token.

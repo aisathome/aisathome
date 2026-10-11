@@ -1,5 +1,8 @@
-# On a v* tag: run the CI checks, build static binaries plus SHA256SUMS and attach them to a
-# draft GitHub Release (the owner publishes it after review). A manual run (workflow_dispatch) on a branch builds without publishing.
+# On a v* tag: run the CI checks, build static binaries, llama-server with CUDA and the
+# prebuilt node bundle, plus SHA256SUMS, and attach them to a draft GitHub Release (the owner
+# publishes it after review). A manual run (workflow_dispatch) on a branch is the dry run:
+# it builds everything without publishing and keeps the files as a workflow artifact for
+# 7 days (for a test install on a rented GPU).
 # SPDX-License-Identifier: Apache-2.0
 name: release
 
@@ -7,6 +10,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      cuda_archs:
+        description: "CUDA architectures for llama-server (one, e.g. 86-real, makes a faster dry run)"
+        type: string
+        default: "86-real;89-real;120a-real"
 
 permissions: {}
 
@@ -20,10 +28,51 @@ jobs:
     permissions:
       contents: read
 
-  release:
-    needs: check
+  # llama-server with CUDA, built by scripts/build-llama.sh in NVIDIA's CUDA 12.8 devel image
+  # (pinned by digest; Ubuntu 22.04, so the bundle needs glibc 2.35 or newer).
+  llama:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      CUDA_IMAGE: nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
+      CUDA_ARCHS: ${{ inputs.cuda_archs || '86-real;89-real;120a-real' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Free disk space (the CUDA image is about 10 GB unpacked)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Build llama-server
+        run: |
+          docker pull -q "$CUDA_IMAGE"
+          # The container runs as root; hand the output back to the runner's user.
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src \
+            -e CUDA_ARCHS -e BUILD_IMAGE="$CUDA_IMAGE" -e JOBS="$(nproc)" -e HOST_IDS="$(id -u):$(id -g)" \
+            "$CUDA_IMAGE" bash -euo pipefail -c '
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                git ca-certificates cmake ninja-build g++ >/dev/null
+              scripts/build-llama.sh /src/llama-out
+              chown -R "$HOST_IDS" /src/llama-out'
+          # A tar keeps the library symlinks and modes, which artifacts do not.
+          tar -C llama-out -cf llama.tar .
+          { echo '### llama-server'; echo '```'; cat llama-out/BUILD-INFO; du -sh llama-out/bin/* llama-out/lib/* llama-out; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: llama
+          path: llama.tar
+          retention-days: 7
+          compression-level: 1
+          if-no-files-found: error
+
+  release:
+    needs: [check, llama]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
@@ -36,10 +85,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # no shared build cache in release builds
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: llama
+          path: ${{ runner.temp }}/llama-artifact
       - name: Build
         run: |
           if [ "$IS_TAG" = true ]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA::12}"; fi
-          ./scripts/build-release.sh "$version" dist
+          mkdir "$RUNNER_TEMP/llama"
+          tar -C "$RUNNER_TEMP/llama" -xf "$RUNNER_TEMP/llama-artifact/llama.tar"
+          LLAMA_DIR="$RUNNER_TEMP/llama" ./scripts/build-release.sh "$version" dist
+          ls -l dist
       - name: Publish
         if: env.IS_TAG == 'true'
         env:
@@ -52,4 +108,12 @@ jobs:
       - name: Summary (not published)
         if: env.IS_TAG != 'true'
         run: |
-          { echo "Not a v* tag: built, not published."; echo '```'; cat dist/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "Not a v* tag: built, not published. Files: the 'dist' artifact (7 days)."; echo '```'; ls -l dist; cat dist/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: env.IS_TAG != 'true'
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+          compression-level: 0 # the bundle is already xz-compressed
+          if-no-files-found: error

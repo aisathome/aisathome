@@ -32,11 +32,14 @@ jobs:
         run: go test -race -count=1 ./...
       - name: install.sh tests
         run: ./node/packaging/linux/install_test.sh
+      - name: prebuilt bundle packaging (fake llama-server)
+        run: ./scripts/bundle_test.sh
       - name: release build, installed from file:// by install.sh
         run: |
           ./scripts/build-release.sh v0.0.0 "$RUNNER_TEMP/rel/download/v0.0.0"
+          # --model: any existing file, so the dry run does not depend on the runner's free disk.
           AISATHOME_RELEASE_URL="file://$RUNNER_TEMP/rel" \
-            ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0
+            ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0 --model go.mod
 
   site:
     runs-on: ubuntu-24.04

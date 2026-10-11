@@ -14,7 +14,8 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
 
 - An NVIDIA GPU with **24 GB** of memory. Tested: RTX 4090 and RTX 3090.
 - Linux with systemd and the NVIDIA driver (`nvidia-smi` works).
-- About 20 GB of disk for the model and an hour for the first install.
+- About 20 GB of disk for the model. With the prebuilt bundle, the install is mostly the
+  17 GB download; building llama.cpp yourself takes about an hour.
 - A **node token**: email [contact@aisathome.org](mailto:contact@aisathome.org).
   Nodes are added by hand while the network is small.
 
