@@ -43,6 +43,8 @@ anything you care about. In short:
   revoke them yourself. Keep keys secret and don't share them; if one leaks, revoke it.
 - Each account has a daily usage limit, shared by the chat and its API keys. Don't try to
   get around it (several accounts, shared keys, scripts).
+- A username you set is public. Don't pick one that is offensive, misleading or someone
+  else's name or brand; we may clear it.
 
 ## 4. Acceptable use (everyone)
 
@@ -57,8 +59,10 @@ Do not:
 
 ## 5. Node operators
 
-Running a node is voluntary and unpaid. You need a node token from us, and you keep
-control of your own machine and power bill. As an operator you agree to:
+Running a node is voluntary and unpaid. You create node tokens on your account page, and
+you keep control of your own machine and power bill. New nodes serve chats only for a
+probation period before they receive requests with tools. Credit is recognition, not money,
+and we may correct or remove credit, for example after abuse. As an operator you agree to:
 
 - **Not log, store, copy or inspect prompts or answers** beyond what running the model
   requires, and not share them with anyone;
@@ -68,8 +72,9 @@ control of your own machine and power bill. As an operator you agree to:
 - keep your node token secret and tell us if it leaks;
 - follow the law where you are, including any rules on processing other people's data.
 
-We may revoke a node token, stop routing to a node, or ban an operator at any time, for
-example on suspicion of a breach. Running a node may affect your hardware, electricity
+We may revoke a node token, stop routing to a node, hold a node whose answers a safety
+check flagged, or ban an operator at any time, for example on suspicion of a breach.
+**Deliberately altering answers leads to a permanent ban.** Running a node may affect your hardware, electricity
 costs and other GPU work; that is your choice and your risk.
 
 ## 6. Suspension

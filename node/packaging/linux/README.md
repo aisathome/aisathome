@@ -138,7 +138,6 @@ cannot starve another.
 | `balanced` (default) | 2 × 32k | q8_0 | 1 × 64k q8: 17,858 MiB VRAM; mean KLD against f16 0.0020; no needle loss up to 60k |
 | `low-vram` | 2 × 32k | q4_0 | 1 × 64k q4: 16,834 MiB (1.0 GB less than q8); no needle loss up to 60k; mean KLD 0.0044 (2.16× q8) |
 | `long-context` | 1 × 128k | q4_0 | 18,306 MiB; hard needles at 120k 118/120 (q8: 119/120 at 20,354 MiB); first 120k prompt 82 s; decode 46.6 tok/s short, 32.5 at 120k |
-| `long-context-dual` | 2 × 128k | q4_0 | 21,272 MiB. **Head-of-line blocking:** while one ~100k prompt was prefilled (about 60 s), the other stream's decode fell to 3.9 tok/s |
 
 Source: `bench/kvquant/RESULTS.md` in the research repo (llama.cpp v0.5.0, 2026-10-09).
 

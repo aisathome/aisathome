@@ -4,9 +4,10 @@ description: How AIs@home counts credit for the GPU time a node gives, in BOINC'
 ---
 
 Your node earns **credit** for the answers it computes for other people. Credit is
-recognition, in the spirit of [BOINC](https://boinc.berkeley.edu): a number on the
-[network page](/network/) and in BOINC-format statistics. **It is not money**, there is no
-token, and it cannot be exchanged for anything.
+recognition: a number on the [network page](/network/) and in statistics files in the
+format BOINC projects use. **It is not money**, there is no token, and it cannot be
+exchanged for anything. AIs@home is not affiliated with or endorsed by BOINC or any BOINC
+project; we only use the same unit and file format.
 
 ## How much
 

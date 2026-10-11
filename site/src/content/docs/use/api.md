@@ -57,15 +57,38 @@ Add a provider to `~/.config/opencode/opencode.json`:
 }
 ```
 
+Set `context` to the `context_length` that `/v1/models` reports for `agent` (the context every
+node serving it can take, for example 32768):
+
+```bash
+curl -s https://api.aisathome.org/v1/models -H "Authorization: Bearer $AISATHOME_API_KEY"
+```
+
 Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. Tool calls
 (reading and editing files, running commands) work.
 
 ## Good to know
 
-- **Secrets in your code are hidden from nodes.** Well-known key formats are replaced by a
-  placeholder like `sk-proj-AISX…XXXX` before a node sees them, and they are **not put back**
-  into the answer or into tool calls. A file the agent writes may therefore contain the
-  placeholder instead of your real key.
-- Requests run on trusted nodes only, unless your key says otherwise.
+- **Secrets: a safety net, not a guarantee.** A simple scan tries to replace well-known key
+  formats with a placeholder like `sk-proj-AISX…XXXX` before a node sees them, and does
+  **not put them back** into the answer or into tool calls, so a file the agent writes may
+  contain the placeholder instead of your real key. Unusual formats get through: treat the
+  service as untrusted and keep secrets out of what the agent can read.
+- **Who serves you.** Chats and plain API requests may be answered by any volunteer's node;
+  anything that looks like personal data goes only to the maintainer's nodes. Requests with
+  tools (agents) go to volunteers' nodes only if you ticked **Let volunteers run my agents**
+  when creating the key; without it, only to your own node or the maintainer's, which are
+  often offline.
+- **Run agents carefully, with any provider.** A model can propose a harmful command, and a
+  malicious node could alter one; volunteers' answers pass simple checks but are not
+  verified yet. In opencode, keep approval of commands on, and **run it isolated**: in a
+  dedicated Docker container or virtual machine with only the project mounted, no SSH keys,
+  cloud credentials or browser profile, and nothing you could not afford to lose.
+- **Context and answer length.** A request must fit the context of a node that serves it:
+  the prompt (everything sent, including tool definitions and earlier turns) plus the room
+  for the answer. `/v1/models` reports `context_length`, the context every node serving the
+  model can take right now. A request larger than any node can take fails at once with
+  `400 context_length_exceeded`, naming the largest available. Answers are capped at
+  32,768 tokens; without `max_tokens`, at 16,384.
 - Limits: a daily token budget, requests per minute and concurrent requests per key. Over
   the limit you get `429` with a `Retry-After` header.

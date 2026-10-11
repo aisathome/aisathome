@@ -11,7 +11,7 @@ Yes. Each account has a daily limit so that the volunteers’ GPUs are shared fa
 
 No. It is **hardened, not confidential**: the volunteer whose GPU answers you can
 technically read the conversation. We limit what they learn (no identity, secrets hidden,
-personal data only to trusted nodes), but we can’t make it confidential. See
+personal data only to the maintainer's own nodes), but we can’t make it confidential. See
 [Privacy](/about/privacy/).
 
 ## Which model runs?
@@ -20,7 +20,7 @@ Qwen3.8 27B, an open-weight model, quantised to 4 bits so that it fits a 24 GB G
 
 ## Do volunteers get paid?
 
-No. There is no token and no payment; running a node is voluntary, like BOINC.
+No. There is no token and no payment; running a node is voluntary.
 
 ## Can I run a node on Windows or a smaller GPU?
 

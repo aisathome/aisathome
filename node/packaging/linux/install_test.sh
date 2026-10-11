@@ -63,7 +63,6 @@ has default "-ctk q8_0 -ctv q8_0 "
 check_preset balanced 2 32768 q8_0
 check_preset low-vram 2 32768 q4_0
 check_preset long-context 1 131072 q4_0
-check_preset long-context-dual 2 131072 q4_0
 
 # PRESET from the environment, and --preset winning over it.
 run PRESET=long-context -- --dry-run
@@ -74,8 +73,10 @@ ok "--preset over PRESET"; has "--preset over PRESET" "preset: low-vram"
 # Explicit variables override a preset, one at a time.
 run SLOTS=3 -- --dry-run --preset long-context
 ok "SLOTS override"; has "SLOTS override" "-np 3 --kv-unified-per-slot 131072 "
-run CTX_PER_SLOT=65536 -- --dry-run --preset long-context-dual
+run CTX_PER_SLOT=65536 -- --dry-run --preset balanced
 ok "CTX override"; has "CTX override" "-np 2 --kv-unified-per-slot 65536 "
+run -- --dry-run --preset long-context-dual
+usage_err "removed preset"; has "removed preset" "unknown preset 'long-context-dual'"
 run KV_TYPE=q8_0 -- --dry-run --preset long-context
 ok "KV override"; has "KV override" "-ctk q8_0 -ctv q8_0 "; lacks "KV override" "q4_0"
 run REASONING_BUDGET=-1 CACHE_RAM_MIB=0 MODEL_ALIAS=my-model -- --dry-run

@@ -1,7 +1,6 @@
 ---
 // The home page ("volunteer science" design, chosen by the owner 2026-10-10): bold condensed
-// headlines, a warm accent and a drawn network of home GPUs (in the spirit of Folding@home and
-// BOINC). Its theme tokens live in styles/global.css and brand.css for the whole site.
+// headlines, a warm accent and a drawn network of home GPUs (volunteer computing). Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, steps } from '../data/home';
@@ -22,7 +21,7 @@ const icons: Record<string, string> = {
 <StarlightPage
 	frontmatter={{
 		title: 'AIs@home',
-		description: 'Open AI models on volunteers’ GPUs, in the spirit of BOINC. Non-commercial and open source.',
+		description: 'Open AI models on volunteers’ GPUs. Non-commercial and open source.',
 		template: 'splash',
 		hero: { title: hero.title },
 	}}
@@ -101,7 +100,7 @@ const icons: Record<string, string> = {
 		</section>
 
 		<section class="block" aria-labelledby="b-count">
-			<h2 id="b-count">What volunteers can count on</h2>
+			<h2 id="b-count">Running a node</h2>
 			<ul class="guar grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
 				{
 					guarantees.map((g) => (

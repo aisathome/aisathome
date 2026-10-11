@@ -15,7 +15,7 @@ export const links = {
 export const hero = {
 	title: 'Open AI models on volunteers’ GPUs',
 	lead:
-		'AIs@home runs open-weight AI models on GPUs that volunteers contribute, in the spirit of BOINC and Gridcoin: AI that does not have to go through a handful of big companies.',
+		'AIs@home runs open-weight AI models on GPUs that volunteers contribute: AI that does not have to go through a handful of big companies.',
 	status: 'Early experiment. Non-commercial and open source. Things will break.',
 	privacyTitle: 'Hardened, not confidential',
 	privacyText: 'The volunteer whose GPU answers you can technically read the conversation.',
@@ -29,7 +29,7 @@ export const steps = [
 	},
 	{
 		title: 'A volunteer’s GPU answers',
-		text: 'Not a big company’s data centre: volunteers’ own GPUs, at home, run the model (currently Qwen3.8 27B) and write the answer. Anyone with a 24 GB NVIDIA GPU can join; while the network is small, the maintainer adds a few rented ones.',
+		text: 'Not a big company’s data centre: volunteers’ own GPUs, at home, run the model (currently Qwen3.8 27B) and write the answer. Anyone with a 24 GB NVIDIA GPU can join; while the network is small, the maintainer adds a few of their own, some of them rented.',
 	},
 	{
 		title: 'The answer comes back',

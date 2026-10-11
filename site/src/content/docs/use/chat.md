@@ -6,7 +6,7 @@ description: Use the AIs@home chat at chat.aisathome.org.
 The chat runs [Open WebUI](https://openwebui.com) at
 **[chat.aisathome.org](https://chat.aisathome.org)**.
 
-1. **Sign in with GitHub or Google.** We keep only the account’s identifier (GitHub’s
+1. **Sign in with GitHub or Google.** Only the account’s identifier is kept (GitHub’s
    numeric user id, or Google’s “sub”): no email, no name, no password. GitHub and Google are
    separate accounts, so use the same one each time.
 2. **Wait, if there is a queue.** While the network is small the number of accounts is
@@ -17,13 +17,17 @@ The chat runs [Open WebUI](https://openwebui.com) at
 ## Temporary by default
 
 New chats are **temporary**: they are not saved, and they are gone when you close them. To
-keep one, use **Save chat** or switch temporary mode off. Saved chats are stored on our
-server until you delete them.
+keep one, use **Save chat** or switch temporary mode off. Saved chats are stored by the chat
+application in its database on our server (not on the volunteers' nodes) until you delete
+them.
 
 ## Before you type
 
-- The volunteer whose GPU answers you can technically read the conversation. See
+- The volunteer whose GPU answers you can technically read the conversation, and any
+  volunteer can run a node. See
   [Privacy](/about/privacy/).
-- Well-known secret formats (API keys, private keys) are replaced by a placeholder before a
-  node sees them, so the answer may show the placeholder instead of your key.
+- A simple scan tries to replace well-known secret formats (API keys, private keys) with a
+  placeholder before a node sees them, so the answer may show the placeholder instead of
+  your key. It is a safety net, not a guarantee: treat the system as untrusted and don't
+  paste secrets.
 - Each account has a daily usage limit.

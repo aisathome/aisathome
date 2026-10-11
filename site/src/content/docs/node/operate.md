@@ -15,7 +15,8 @@ description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home n
 
 ## Local UI
 
-The node serves a status page on your computer at **http://127.0.0.1:7381/** (desktops also
+Nodes installed from release `v0.1.0` or later serve a status page on your computer at
+**http://127.0.0.1:7381/**; an older node gets it when you run the new installer (desktops also
 get an "AIs@home node" menu entry). It shows whether the node is connected, paused or
 serving, the model, slots in use, the GPU's memory and temperature, requests and tokens
 served today and since install, and recent connections and errors. It never shows prompts

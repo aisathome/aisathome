@@ -1,7 +1,7 @@
 # AIs@home
 
-**Experimental.** Volunteer-run LLM inference in the spirit of BOINC: people contribute
-GPUs, and anyone can run a project server.
+**Experimental.** Volunteer-run LLM inference: people contribute GPUs, and anyone can run a
+project server.
 
 | Directory | What |
 |---|---|

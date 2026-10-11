@@ -16,7 +16,7 @@
 # --gateway-url and the preset. The bundle checks the NVIDIA driver and GPU first.
 # --node-release downloads aisathome-node for this machine's architecture from a GitHub
 # release of aisathome/aisathome and checks it against that release's SHA256SUMS.
-# Presets: balanced (default), low-vram, long-context, long-context-dual (see README.md).
+# Presets: balanced (default), low-vram, long-context (see README.md).
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
 # without installing (no root needed). The node token is read from stdin (never from argv):
 # paste it when asked, or: cat token.txt | sudo ./install.sh ...
@@ -70,8 +70,7 @@ case "$preset" in
   long-context) p_slots=1 p_ctx=131072 p_kv=q4_0 ;;
   # 2 x 128k q4: 21,272 MiB. A ~100k prefill nearly stalls the other slot's decode
   # (3.9 tok/s for about a minute): head-of-line blocking.
-  long-context-dual) p_slots=2 p_ctx=131072 p_kv=q4_0 ;;
-  *) die "unknown preset '$preset'; choose balanced, low-vram, long-context or long-context-dual" 2 ;;
+  *) die "unknown preset '$preset'; choose balanced, low-vram or long-context" 2 ;;
 esac
 slots="${SLOTS:-$p_slots}" ctx_per_slot="${CTX_PER_SLOT:-$p_ctx}" kv_type="${KV_TYPE:-$p_kv}"
 # Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
