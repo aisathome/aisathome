@@ -71,6 +71,13 @@ Details are in `THIRD_PARTY_NOTICES.md` inside the bundle.
 
 ## What has been tested
 
-Releases are tested before we publish them, and we say plainly what was not. The first
-bundle was built and checked on a machine with an RTX 4090, and is being tested on rented
-RTX 3090, 4090 and 5090 machines (including an older driver, 535) before its first release.
+Releases are tested before we publish them, and we say plainly what was not. A test build of
+the first bundle (2026-10-11):
+
+- **RTX 3090, driver 535, Ubuntu 22.04:** it failed at first: llama.cpp compresses its CUDA
+  kernels by default, and drivers before 570 cannot load them. The build now leaves them
+  uncompressed (a larger bundle). With that, the full path worked: install, an interrupted
+  model download resumed, the node connected, 18.3 GB of GPU memory, about 42 tokens/s.
+- **RTX 4090 and RTX 5090, driver 595:** the bundle's `llama-server` ran without problems.
+- **Not tested yet:** drivers between 525 and 535, and the release built by GitHub Actions
+  (it is tested on a GPU before it is published).

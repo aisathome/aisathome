@@ -28,7 +28,8 @@ Windows is not supported yet.
 |---|---|---|---|---|
 | RTX 4090 | Ubuntu 22.04.5 (desktop) | 530.30.02 | llama.cpp built by hand | The maintainer's node, serving since 2026-10-09 |
 | RTX 3090 | Ubuntu 22.04 (rented VM) | 535 | llama.cpp built by hand | Install and one chat through the gateway, 2026-10-10 (about 42 tokens/s) |
-| RTX 3090, 4090, 5090 | rented | 535 and newer | prebuilt bundle | Being tested now, before the first release |
+| RTX 3090 | Ubuntu 22.04 (rented VM) | 535.183.01 | prebuilt bundle | Install, download resume, connect, 1 × 128k in 18,302 MiB, about 42 tokens/s (2026-10-11). Needed a build fix: kernels must not be compressed for drivers before 570 |
+| RTX 4090, RTX 5090 | rented | 595 | the bundle's `llama-server` | Runs; used for the model-check measurement (2026-10-11) |
 
 Other 24 GB NVIDIA cards and distributions may work; the installer checks what it needs and
 says what is missing. Tell us what worked for you: [contact@aisathome.org](mailto:contact@aisathome.org).

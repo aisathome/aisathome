@@ -62,9 +62,14 @@ got="$(git -C "$src" rev-parse HEAD)"
 # RPATH $ORIGIN/../lib: bin/llama-server finds lib/ without LD_LIBRARY_PATH, and a library
 # in lib/ finds its neighbours the same way.
 build="${LLAMA_BUILD_DIR:-$work/build}"
+# GGML_CUDA_COMPRESSION_MODE=none: llama.cpp's default ("size") compresses the CUDA kernels
+# with -compress-mode=size, which drivers before 570 cannot load ("device kernel image is
+# invalid" on driver 535, rented RTX 3090, 2026-10-11). Uncompressed kernels run there; the
+# library grows (libggml-cuda about 40 MB to 136 MB per architecture).
 # shellcheck disable=SC2016 # $ORIGIN is for the linker, not the shell
 cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=$archs" -DGGML_NATIVE=OFF -DGGML_CUDA_NCCL=OFF \
+  -DGGML_CUDA_COMPRESSION_MODE=none \
   -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
   -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
   '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib' -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
