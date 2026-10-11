@@ -44,6 +44,14 @@ type Config struct {
 	// Defaults 300 s and 120 s.
 	FirstChunkTimeout time.Duration `json:"-"`
 	IdleTimeout       time.Duration `json:"-"`
+
+	// Local UI and state (see status.go). StateFile keeps the pause switch, counters and
+	// events across restarts ("" = memory only). RestartTrigger is a file that a root-owned
+	// systemd path unit watches to restart the engine ("" = the agent cannot restart it).
+	// Preset is a label for the engine settings, shown in the UI.
+	StateFile      string `json:"state_file,omitempty"`
+	RestartTrigger string `json:"restart_trigger,omitempty"`
+	Preset         string `json:"preset,omitempty"`
 }
 
 // Agent is a running node agent.
@@ -54,6 +62,20 @@ type Agent struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+
+	// Local status (status.go), guarded by mu.
+	ps          persisted // saved to cfg.StateFile
+	connected   bool
+	gatewayID   string
+	connectedAt time.Time
+	engine      string
+	started     time.Time
+	lastRestart time.Time
+	push        func() // sends a heartbeat now; nil while disconnected
+	now         func() time.Time
+
+	saveMu     sync.Mutex
+	saveFailed bool
 }
 
 // New creates an agent.
@@ -70,11 +92,19 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = 120 * time.Second
 	}
-	return &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelFunc{}}
+	a := &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelFunc{},
+		engine: EngineUnknown, now: time.Now}
+	a.started = a.now()
+	a.load()
+	if a.ps.Paused {
+		log.Info("starting paused (resume in the local UI)")
+	}
+	return a
 }
 
 // Run connects to the gateway and serves until ctx is cancelled, reconnecting with backoff.
 func (a *Agent) Run(ctx context.Context) error {
+	a.event("started", AgentVersion)
 	backoff := time.Second
 	for {
 		// Only offer capacity while the engine answers: a hung engine (e.g. after a CUDA
@@ -93,6 +123,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		// Jitter (±20%) so many nodes do not reconnect in lockstep after a gateway restart.
 		wait := time.Duration(float64(backoff) * (0.8 + 0.4*rand.Float64()))
 		a.log.Warn("disconnected from gateway, reconnecting", "err", err, "in", wait)
+		a.event("disconnected", errText(err))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -115,11 +146,14 @@ func (a *Agent) healthy(ctx context.Context) bool {
 		return false
 	}
 	resp, err := a.client.Do(req)
-	if err != nil {
-		return false
+	ok := err == nil && resp.StatusCode == http.StatusOK
+	if err == nil {
+		resp.Body.Close()
 	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if ctx.Err() == nil {
+		a.setEngine(map[bool]string{true: EngineHealthy, false: EngineUnhealthy}[ok])
+	}
+	return ok
 }
 
 // waitHealthy blocks until the engine is healthy.
@@ -128,6 +162,7 @@ func (a *Agent) waitHealthy(ctx context.Context) error {
 	for !a.healthy(ctx) {
 		if !logged {
 			a.log.Warn("engine not healthy; staying away from the gateway until it is", "upstream", a.cfg.Upstream)
+			a.event("engine_unhealthy", "waiting for the engine before connecting")
 			logged = true
 		}
 		select {
@@ -138,6 +173,7 @@ func (a *Agent) waitHealthy(ctx context.Context) error {
 	}
 	if logged {
 		a.log.Info("engine healthy again")
+		a.event("engine_healthy", "")
 	}
 	return nil
 }
@@ -177,6 +213,29 @@ func (a *Agent) session(ctx context.Context) error {
 
 	sctx, stop := context.WithCancel(ctx)
 	defer stop()
+	heartbeat := func() error {
+		a.mu.Lock()
+		m := protocol.Msg{Type: protocol.TypeHeartbeat, Active: len(a.cancels), Paused: a.ps.Paused}
+		a.mu.Unlock()
+		return send(m)
+	}
+	a.mu.Lock()
+	a.connected, a.gatewayID, a.connectedAt = true, welcome.GatewayID, a.now()
+	a.push = func() { _ = heartbeat() }
+	a.eventLocked("connected", welcome.GatewayID)
+	paused := a.ps.Paused
+	a.mu.Unlock()
+	a.save()
+	defer func() {
+		a.mu.Lock()
+		a.connected, a.push = false, nil
+		a.mu.Unlock()
+	}()
+	if paused { // tell the gateway before it routes anything here
+		if err := heartbeat(); err != nil {
+			return err
+		}
+	}
 	go func() { // engine health: leave the gateway after 3 failed checks in a row
 		fails := 0
 		for {
@@ -191,6 +250,7 @@ func (a *Agent) session(ctx context.Context) error {
 			}
 			if fails++; fails >= 3 && sctx.Err() == nil {
 				a.log.Error("engine unhealthy, leaving the gateway", "upstream", a.cfg.Upstream)
+				a.event("engine_unhealthy", "3 failed health checks; leaving the gateway")
 				c.Close(websocket.StatusGoingAway, "engine unhealthy")
 				stop()
 				return
@@ -205,10 +265,7 @@ func (a *Agent) session(ctx context.Context) error {
 			case <-sctx.Done():
 				return
 			case <-t.C:
-				a.mu.Lock()
-				active := len(a.cancels)
-				a.mu.Unlock()
-				if send(protocol.Msg{Type: protocol.TypeHeartbeat, Active: active}) != nil {
+				if heartbeat() != nil {
 					stop()
 					return
 				}
@@ -223,8 +280,13 @@ func (a *Agent) session(ctx context.Context) error {
 		}
 		switch m.Type {
 		case protocol.TypeRequest:
-			rctx, cancel := context.WithCancel(sctx)
 			a.mu.Lock()
+			if a.ps.Paused { // the gateway did not know yet (or predates "paused"): it retries elsewhere
+				a.mu.Unlock()
+				go send(protocol.Msg{Type: protocol.TypeError, ReqID: m.ReqID, Error: ErrPausedMsg})
+				continue
+			}
+			rctx, cancel := context.WithCancel(sctx)
 			a.cancels[m.ReqID] = cancel
 			a.mu.Unlock()
 			go func(m protocol.Msg) {
@@ -248,8 +310,12 @@ func (a *Agent) session(ctx context.Context) error {
 
 // handle runs one request against the local engine and streams chunks back.
 func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.Msg) error) {
+	parent := ctx
 	fail := func(err error) {
 		_ = send(protocol.Msg{Type: protocol.TypeError, ReqID: m.ReqID, Error: err.Error()})
+		if parent.Err() == nil { // not a cancel by the gateway or the end of the session
+			a.failed(err.Error())
+		}
 	}
 	// Stall watchdog, running from the start: cancels the request if the engine sends
 	// nothing for too long, before the headers or between chunks.
@@ -353,7 +419,17 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 		fail(errors.New("engine stream ended before the answer was complete"))
 		return
 	}
-	_ = send(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &u})
+	if send(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &u}) == nil {
+		a.served(u)
+	}
+}
+
+// errText is an error's message, or "" for nil.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // meterChunk extracts token counts from an OpenAI usage object or llama.cpp timings.

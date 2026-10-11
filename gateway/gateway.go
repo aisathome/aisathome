@@ -458,6 +458,7 @@ type nodeConn struct {
 	pending  map[string]*pendingReq
 	inflight int // slots reserved by pick, released when run ends; guarded by mu
 	active   int
+	paused   bool // from the last heartbeat: take no new requests; guarded by mu
 	lastSeen time.Time
 	closed   chan struct{}
 }
@@ -650,11 +651,17 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		}
 		n.mu.Lock()
 		n.lastSeen = time.Now()
+		resumed := false
 		if m.Type == protocol.TypeHeartbeat {
 			n.active = m.Active
+			resumed = n.paused && !m.Paused
+			n.paused = m.Paused
 		}
 		p := n.pending[m.ReqID]
 		n.mu.Unlock()
+		if resumed {
+			g.signal() // waiting requests may use it again
+		}
 		if p != nil && (m.Type == protocol.TypeChunk || m.Type == protocol.TypeDone || m.Type == protocol.TypeError) {
 			p.deliver(m) // outside the lock: a slow client must not block other requests
 		}
@@ -743,7 +750,7 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 			// Reserve the slot here, under the lock: checking now and registering the
 			// request later lets concurrent requests oversubscribe the node.
 			n.mu.Lock()
-			free := n.inflight < m.Slots
+			free := n.inflight < m.Slots && !n.paused
 			if free {
 				n.inflight++
 			}
@@ -1515,7 +1522,7 @@ func errCategory(msg string) string {
 		return "engine stalled"
 	case strings.Contains(msg, "ended before the answer was complete"):
 		return "engine stream ended early"
-	case msg == "node disconnected", msg == "node stalled", msg == "client too slow",
+	case msg == "node paused", msg == "node disconnected", msg == "node stalled", msg == "client too slow",
 		msg == "node sent more output than requested", msg == "context canceled":
 		return msg
 	}

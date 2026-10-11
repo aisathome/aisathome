@@ -40,6 +40,10 @@ type Msg struct {
 
 	// heartbeat
 	Active int `json:"active,omitempty"` // requests in flight on this node
+	// Paused: the volunteer paused the node; it finishes requests in flight but takes no new
+	// ones. Optional and added after v0.1 shipped: older gateways ignore it (the node then
+	// answers new requests with an error, which those gateways retry on another node).
+	Paused bool `json:"paused,omitempty"`
 
 	// request: an OpenAI-compatible /v1/chat/completions body; "model" holds the local
 	// model name chosen by the gateway, and "stream" is always true towards nodes.

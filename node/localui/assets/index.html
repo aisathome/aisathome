@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>AIs@home node</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+	<p class="brand"><span class="logo" aria-hidden="true">@</span><span>AIs@home <em>node</em></span></p>
+	<a class="acct" id="account" href="https://aisathome.org/account" target="_blank" rel="noopener noreferrer">Your nodes <span aria-hidden="true">&#8599;</span></a>
+</header>
+
+<main>
+	<section class="hero" aria-labelledby="state">
+		<p class="pill"><span id="node-id">Node</span><span class="sep" aria-hidden="true">&middot;</span><span id="agent-version"></span></p>
+		<h1 id="state" data-state="loading"><span class="dot" aria-hidden="true"></span><span id="state-word">Loading</span></h1>
+		<p class="state-line" id="state-line" aria-live="polite">Asking the agent&hellip;</p>
+	</section>
+
+	<section class="cards" aria-label="Node details">
+		<article class="card">
+			<h2>Slots</h2>
+			<p class="big"><span id="slots-used">&ndash;</span><small> of <span id="slots-total">&ndash;</span> in use</small></p>
+			<div class="bar" aria-hidden="true"><span id="slots-bar"></span></div>
+			<p class="muted" id="slots-note"></p>
+		</article>
+		<article class="card">
+			<h2>Model</h2>
+			<ul class="kv" id="models"></ul>
+			<p class="muted" id="preset"></p>
+		</article>
+		<article class="card">
+			<h2>GPU</h2>
+			<div id="gpus"></div>
+			<p class="muted" id="gpu-note"></p>
+		</article>
+		<article class="card">
+			<h2>Today</h2>
+			<dl class="counts" id="today"></dl>
+		</article>
+		<article class="card">
+			<h2>Since install</h2>
+			<dl class="counts" id="total"></dl>
+		</article>
+	</section>
+
+	<section class="panel" aria-labelledby="controls-h">
+		<h2 id="controls-h">Controls</h2>
+		<p class="muted" id="controls-off" hidden></p>
+		<form id="login" hidden>
+			<label for="password">Local password</label>
+			<div class="row">
+				<input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" spellcheck="false">
+				<button class="btn btn-primary" type="submit">Unlock</button>
+			</div>
+			<p class="muted">Show it with <code>sudo cat /etc/aisathome-node/ui-password</code>. This browser remembers it.</p>
+			<p class="msg" id="login-msg" role="alert"></p>
+		</form>
+		<div id="unlocked" hidden>
+			<div class="row">
+				<button class="btn btn-primary" id="pause" type="button">Pause</button>
+				<button class="btn btn-secondary" id="restart" type="button">Restart engine</button>
+				<button class="link" id="logout" type="button">Lock</button>
+			</div>
+			<p class="msg" id="control-msg" role="status"></p>
+			<p class="cmd" id="restart-cmd" hidden><span class="muted">Restart the engine yourself:</span> <code id="restart-cmd-text"></code><button class="link" id="copy" type="button">Copy</button></p>
+		</div>
+		<p class="muted small"><strong>Pause</strong> finishes requests in flight and takes no new ones; the model stays in
+			GPU memory. To free the GPU, stop the node: <code>sudo systemctl stop aisathome-node aisathome-llama</code>.
+			<strong>Restart engine</strong> restarts llama-server and this agent; requests in flight end.</p>
+	</section>
+
+	<section class="panel" aria-labelledby="events-h">
+		<h2 id="events-h">Recent events</h2>
+		<ol class="events" id="events"></ol>
+		<p class="muted small">Connections, pauses and errors only. Prompts and answers are never shown or kept here.</p>
+	</section>
+</main>
+
+<footer class="foot">
+	<p>Served by the node agent on this computer only (127.0.0.1). Other computers reach it only through an SSH tunnel.</p>
+</footer>
+</body>
+</html>

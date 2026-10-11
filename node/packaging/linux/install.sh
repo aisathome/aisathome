@@ -18,7 +18,9 @@
 #   /var/lib/aisathome-node/models  the model (moved, not copied; owned by aisathome)
 #   /etc/aisathome-node/            node.json (root:aisathome 0640), token.env (root 0600)
 #   /etc/systemd/system/aisathome-{llama,node}.service
-# Nothing listens on a public port: llama-server binds 127.0.0.1, and the node only dials out.
+#   local UI: see the "Local node UI" section below (UI_PORT=<port>|off, default 7381)
+# Nothing listens on a public port: llama-server and the node's local UI bind 127.0.0.1, and
+# the node only dials out.
 #
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
@@ -112,11 +114,106 @@ fetch_node_release() {
   echo "aisathome-node: $asset from $url, sha256 $got (verified)" >&2
 }
 
+# ---- Local node UI ---------------------------------------------------------------------
+# aisathome-node serves a status page with pause/resume and engine restart on
+# http://127.0.0.1:$UI_PORT (README.md, "Local UI"). Kept in these functions, apart from the
+# rest of the installer. UI_PORT=off installs no UI.
+ui_port="${UI_PORT:-7381}"
+ui_password=/etc/aisathome-node/ui-password
+ui_restart_trigger=/var/lib/aisathome-node/restart-engine
+
+node_ui_check() {
+  [[ "$ui_port" = off || ( "$ui_port" =~ ^[1-9][0-9]{3,4}$ && "$ui_port" -le 65535 && "$ui_port" != 8000 ) ]] ||
+    die "UI_PORT must be a port from 1000 to 65535 other than 8000 (llama-server), or off" 2
+}
+
+# The agent's systemd drop-in: UI settings, state file and the GPU access nvidia-smi needs.
+node_ui_dropin() {
+  cat <<UNIT
+[Service]
+Environment=AISATHOME_UI_PORT=$ui_port
+Environment=AISATHOME_UI_PASSWORD_FILE=$ui_password
+Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json
+Environment=AISATHOME_RESTART_TRIGGER=$ui_restart_trigger
+Environment="AISATHOME_PRESET=$preset: $slots x $ctx_per_slot tokens, KV $kv_type"
+# Read-only GPU facts for the UI (name, memory, temperature) through nvidia-smi.
+DeviceAllow=char-nvidia-frontend rw
+UNIT
+}
+
+node_ui_install() {
+  local d=/etc/systemd/system/aisathome-node.service.d
+  install -d -m 0755 "$d"
+  node_ui_dropin > "$d/local-ui.conf"
+  [[ "$ui_port" != off ]] || return 0
+  # Password: random, kept across re-installs; readable by root and the agent only.
+  if [[ ! -s "$ui_password" ]]; then
+    (umask 077; head -c 18 /dev/urandom | base64 | tr '+/' '-_' > "$ui_password")
+  fi
+  chown root:aisathome "$ui_password"; chmod 0640 "$ui_password"
+  # Engine restart from the UI: the unprivileged agent writes a file; this root path unit
+  # restarts llama-server (and with it the agent). No sudo, polkit or capability needed.
+  cat > /etc/systemd/system/aisathome-node-restart.path <<UNIT
+[Unit]
+Description=AIs@home node: restart llama-server when the local UI asks
+
+[Path]
+PathChanged=$ui_restart_trigger
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  cat > /etc/systemd/system/aisathome-node-restart.service <<UNIT
+[Unit]
+Description=AIs@home node: restart llama-server (asked by the local UI)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart aisathome-llama.service
+UNIT
+  systemctl daemon-reload
+  systemctl enable --now aisathome-node-restart.path
+  # "aisathome-node status" on PATH, with this UI port.
+  printf '#!/bin/sh\nexport AISATHOME_UI_PORT="${AISATHOME_UI_PORT:-%s}"\nexec /opt/aisathome-node/bin/aisathome-node "$@"\n' \
+    "$ui_port" > /usr/local/bin/aisathome-node
+  chmod 0755 /usr/local/bin/aisathome-node
+  # A menu entry when a desktop is installed.
+  if compgen -G '/usr/share/xsessions/*.desktop' >/dev/null || compgen -G '/usr/share/wayland-sessions/*.desktop' >/dev/null; then
+    install -d -m 0755 /usr/local/share/applications /usr/local/share/icons/hicolor/scalable/apps
+    cat > /usr/local/share/icons/hicolor/scalable/apps/aisathome-node.svg <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><rect width="32" height="32" rx="7" fill="#c2410c"/><text x="16" y="22" text-anchor="middle" font-family="monospace" font-size="17" font-weight="700" fill="#fff8f0">@</text></svg>
+SVG
+    cat > /usr/local/share/applications/aisathome-node.desktop <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=AIs@home node
+Comment=Status, pause and resume of this computer's AIs@home node
+Exec=xdg-open http://127.0.0.1:$ui_port/
+Icon=aisathome-node
+Terminal=false
+Categories=Network;System;Monitor;
+DESKTOP
+  fi
+}
+
+node_ui_message() {
+  [[ "$ui_port" != off ]] || return 0
+  cat <<MSG
+Local UI (this computer only):               http://127.0.0.1:$ui_port/   or: aisathome-node status
+UI password:                                 sudo cat $ui_password
+From another computer:                       ssh -N -L $ui_port:127.0.0.1:$ui_port <user>@<this machine>
+MSG
+}
+node_ui_check
+# ---- end of local node UI ----------------------------------------------------------------
+
 dl_dir=""
 if [[ $dry_run = 1 ]]; then
   [[ -z "$node_release" ]] || fetch_node_release
   echo "preset: $preset"
   echo "$llama_exec"
+  echo "local UI: $ui_port"
+  node_ui_dropin
   exit 0
 fi
 
@@ -312,6 +409,7 @@ $sandbox
 WantedBy=multi-user.target
 UNIT
 
+node_ui_install
 systemctl daemon-reload
 systemctl enable --now aisathome-node-watchdog.timer
 systemctl enable aisathome-node-sleep.service
@@ -334,3 +432,4 @@ Logs:                                        journalctl -u aisathome-node -u ais
 Start at boot: $([[ $at_boot = 1 ]] && echo yes || echo "no (re-run with --enable-at-boot, or: sudo systemctl enable aisathome-llama aisathome-node)")
 Remove:                                      sudo ./uninstall.sh
 MSG
+node_ui_message

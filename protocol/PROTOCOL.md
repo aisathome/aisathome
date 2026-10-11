@@ -20,7 +20,7 @@ users, keys or billing.
 |---|---|---|---|
 | `hello` | node → gw | `node_id`, `protocol`, `agent`, `models[]` | first frame. `models[]` = `{name, roles[], slots, ctx}` |
 | `welcome` | gw → node | `gateway_id`, `protocol` | accepted. A different major protocol version closes the connection |
-| `heartbeat` | node → gw | `active` | every ~10 s. Gateways drop nodes silent for more than 45 s |
+| `heartbeat` | node → gw | `active`, `paused` | every ~10 s, and at once when `paused` changes. Gateways drop nodes silent for more than 45 s. `paused` (optional, default `false`): send no new requests; requests in flight finish |
 | `request` | gw → node | `req_id`, `body` | an OpenAI `/v1/chat/completions` body; `model` is a model name from `hello`, and `stream` is always `true` |
 | `cancel` | gw → node | `req_id` | the client went away; stop work |
 | `chunk` | node → gw | `req_id`, `data` | one OpenAI `chat.completion.chunk`, passed through unchanged |
@@ -32,6 +32,10 @@ users, keys or billing.
 - **Routing:** users may name a node model or a **role** (`fast`, `deep`, `agent`). The
   gateway picks a node with a free slot, round-robin, and retries once on another node if
   the first fails before streaming any output.
+- **Pause:** a node whose last heartbeat said `paused: true` gets no new requests until a
+  heartbeat says otherwise. A paused node answers any request that still reaches it (sent
+  before the heartbeat arrived, or by a gateway that predates `paused`) with an `error`
+  `node paused` before any `chunk`, so the gateway retries it on another node.
 - **Metering:** one usage record per completed request (user, node, operator, model,
   tokens, duration), with tokens as reported by the node. Verification of reported usage
   comes later.

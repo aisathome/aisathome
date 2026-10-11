@@ -74,13 +74,16 @@ func (s *dayStats) replay(path string, now time.Time) {
 
 // handleStats serves GET /v1/stats without authentication.
 func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
-	nodes, slots, busy := 0, 0, 0
+	nodes, slots, busy, paused := 0, 0, 0, 0
 	models := map[string]bool{}
 	g.mu.Lock()
 	for _, n := range g.node {
 		nodes++
 		n.mu.Lock()
 		busy += n.inflight
+		if n.paused {
+			paused++
+		}
 		n.mu.Unlock()
 		for _, m := range n.models {
 			slots += m.Slots
@@ -115,7 +118,7 @@ func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=15")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"updated": now.Format(time.RFC3339),
-		"nodes":   map[string]any{"online": nodes, "slots": slots, "busy": busy},
+		"nodes":   map[string]any{"online": nodes, "slots": slots, "busy": busy, "paused": paused},
 		"models":  roles,
 		"today":   today,
 		"total":   total,

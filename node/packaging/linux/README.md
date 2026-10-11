@@ -107,7 +107,56 @@ prompts from RAM or VRAM while they are being served.
 
 | | |
 |---|---|
+| Status | `aisathome-node status` (exit code 0 when connected), or the local UI below |
+| Pause (model stays loaded) | the local UI's **Pause** button |
 | Pause and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` |
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Remove | `sudo ./uninstall.sh` (keeps the model; `--purge` removes it too) |
+
+## Local UI
+
+The agent serves a status page at **http://127.0.0.1:7381/** (on desktops there is also an
+"AIs@home node" menu entry). It shows whether the node is connected, paused or serving, the
+gateway, node id, model and preset, slots in use, the GPU (name, memory, temperature, through
+`nvidia-smi`), requests and tokens served today and since install, and recent events
+(connections, pauses, errors). It never shows prompts or answers. **Your nodes** links to
+your account page.
+
+**Controls** (pause, resume, restart the engine) need the local password, created by the
+installer:
+
+```bash
+sudo cat /etc/aisathome-node/ui-password
+```
+
+Enter it once; the browser keeps a session cookie for 90 days or until the password
+changes. To change it, write a new one (12 characters or more) to that file.
+
+- **Pause** finishes requests in flight and takes no new ones; the model stays in GPU
+  memory. The gateway is told at once. The pause survives restarts until you resume.
+- **Restart engine** restarts `llama-server`, and the agent with it; requests in flight
+  end. The agent has no privileges: it writes `/var/lib/aisathome-node/restart-engine`, and
+  the root-owned `aisathome-node-restart.path` unit runs the restart. Without that unit the
+  page shows the command to run instead: `sudo systemctl restart aisathome-llama`.
+
+The UI listens on 127.0.0.1 only, so there is no port to open or to close. It answers only
+to `127.0.0.1`, `localhost` or `[::1]` in the address bar, and its controls refuse requests
+from other web pages. `UI_PORT=<port>` at install picks another port, `UI_PORT=off` turns the
+UI off.
+
+**Headless machines:** open an SSH tunnel from your own computer, then browse to
+http://localhost:7381/ there:
+
+```bash
+ssh -N -L 7381:127.0.0.1:7381 you@node-machine
+```
+
+Any local port works on your side (`-L 8000:127.0.0.1:7381`, then http://localhost:8000/).
+
+`aisathome-node status` prints the same status in a terminal (`-json` for the raw data). It
+exits with 0 when the node is connected (also when paused), 1 when it is not, and 3 when no
+agent answers.
+
+Counters and events are kept in `/var/lib/aisathome-node/node-state.json`: counts and event
+types only, no request content.

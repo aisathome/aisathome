@@ -77,6 +77,23 @@ done
 run -- --dry-run --frobnicate
 usage_err "unknown flag"
 
+# Local node UI: port, drop-in for the agent, and validation.
+run -- --dry-run
+ok "UI default"; has "UI default" "local UI: 7381"; has "UI default" "Environment=AISATHOME_UI_PORT=7381"
+has "UI default" "Environment=AISATHOME_UI_PASSWORD_FILE=/etc/aisathome-node/ui-password"
+has "UI default" "Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json"
+has "UI default" "Environment=AISATHOME_RESTART_TRIGGER=/var/lib/aisathome-node/restart-engine"
+has "UI default" 'Environment="AISATHOME_PRESET=balanced: 2 x 32768 tokens, KV q8_0"'
+has "UI default" "DeviceAllow=char-nvidia-frontend rw"
+run UI_PORT=8123 SLOTS=1 -- --dry-run --preset long-context
+ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"
+run UI_PORT=off -- --dry-run
+ok "UI off"; has "UI off" "AISATHOME_UI_PORT=off"
+for bad in UI_PORT=80 UI_PORT=8000 UI_PORT=70000 UI_PORT=abc "UI_PORT=7381;x" UI_PORT=07381; do
+  run "$bad" -- --dry-run
+  usage_err "$bad"
+done
+
 # --node-release: download and checksum check against a fake release served over file://.
 case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="" ;; esac
 if [[ -n "$arch" ]]; then

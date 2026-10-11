@@ -5,11 +5,41 @@ description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home n
 
 | | |
 |---|---|
+| Status | `aisathome-node status`, or the [local UI](#local-ui) |
+| Pause (model stays loaded) | **Pause** in the [local UI](#local-ui) |
 | Pause and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` |
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` |
 | Remove | `sudo ./node/packaging/linux/uninstall.sh` (keeps the model; `--purge` removes it too) |
+
+## Local UI
+
+The node serves a status page on your computer at **http://127.0.0.1:7381/** (desktops also
+get an "AIs@home node" menu entry). It shows whether the node is connected, paused or
+serving, the model, slots in use, the GPU's memory and temperature, requests and tokens
+served today and since install, and recent connections and errors. It never shows prompts
+or answers. **Your nodes** opens your [account page](https://aisathome.org/account).
+
+Pause, resume and restarting the engine need the local password the installer created:
+
+```bash
+sudo cat /etc/aisathome-node/ui-password
+```
+
+Enter it once and the browser remembers it. **Pause** lets requests in flight finish and
+takes no new ones, while the model stays in GPU memory; it lasts until you resume, also
+across restarts. To free the GPU, stop the node instead (table above).
+
+The page is reachable from this computer only. On a machine without a screen, open an SSH
+tunnel from your own computer and browse to http://localhost:7381/ there:
+
+```bash
+ssh -N -L 7381:127.0.0.1:7381 you@node-machine
+```
+
+In a terminal, `aisathome-node status` prints the same; it exits with 0 when the node is
+connected and 1 when it is not, so scripts and monitoring can use it.
 
 ## Privacy hardening
 
