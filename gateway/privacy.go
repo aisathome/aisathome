@@ -78,6 +78,7 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}\b`),                                               // Hugging Face
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`), // JWT
 	regexp.MustCompile(`\b(?:ak|nt)-[A-Za-z0-9_\-]{40,}`),                                       // AIs@home API keys and node tokens
+	regexp.MustCompile(`\bnt-n-[0-9a-f]{8}\.[A-Za-z0-9_\-]{40,}`),                               // AIs@home account node tokens
 }
 
 // redactor replaces secrets with per-request placeholders and restores them. Its mapping

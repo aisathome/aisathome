@@ -73,7 +73,8 @@ func toolEngine(t *testing.T) *httptest.Server {
 
 func TestNonStreamingToolCalls(t *testing.T) {
 	r := newRig(t, toolEngine(t))
-	resp := r.do(t, "POST", "/v1/chat/completions", "user-key",
+	// agent-key: requests with tools reach untrusted (volunteer) nodes only with consent.
+	resp := r.do(t, "POST", "/v1/chat/completions", "agent-key",
 		`{"model":"deep","messages":[{"role":"user","content":"weather?"}],"tools":[{"type":"function","function":{"name":"get_weather"}}]}`)
 	defer resp.Body.Close()
 	var out struct {

@@ -95,11 +95,60 @@ Only the provider's user id is stored: `gh:<numeric id>` or `google:<sub>`. No e
 token. Google's ID token is checked against Google's published keys (RS256, issuer,
 audience, expiry, nonce) and the flow uses state and PKCE. The same person signing in with
 GitHub and with Google gets two separate accounts. Manage accounts with
-`aisathome-gateway accounts list|limit|close|open|add|activate|waitlist|ban`. Run it as the
+`aisathome-gateway accounts list|limit|close|open|add|activate|waitlist|ban` (nodes: see
+below). Run it as the
 gateway's own user (in a container: `podman exec aisathome-gateway aisathome-gateway accounts
 ...`), otherwise the file may become unwritable for the gateway. `waitlist` holds an account
 back until you `activate` it. The usage log names accounts by a pseudonym (an HMAC of the id),
 never by their GitHub, Google or email id.
+
+### Volunteer nodes (self-registered)
+
+**Trust model.** "Trusted" means *operated by the maintainer* (node tokens in the gateway
+config with `"trust": "trusted"`), not "secure": the maintainer's nodes are partly rented,
+and whoever controls a machine can read what it serves. Every other node is an untrusted
+volunteer. Nothing here is confidential; the measures below make keeping or misusing data
+harder and more visible ("hardened, not confidential").
+
+Signed-in active accounts add nodes on the account page ("Your nodes"): up to 3 node tokens
+per account, shown once, stored as SHA-256 hashes in the accounts file, revocable there. A
+token looks like `nt-<node id>.<secret>`; the gateway assigns the node id (`n-<8 hex>`), and
+the node agent takes it from the token, so a node needs only its token. Config tokens keep
+working; ids of the form `n-<8 hex>` are reserved for account nodes. In the usage log an
+account node's operator is the account's pseudonym, and `self_served` marks requests an
+account's own node answered.
+
+Routing and protections:
+
+| What | Rule |
+|---|---|
+| Personal data (email addresses, card numbers, IBANs, Norwegian ID numbers) | trusted nodes only (and the requester's own nodes) |
+| Requests with `tools` (agents) | trusted nodes and the requester's own, unless the API key was created with "allow volunteer nodes for agents" (`agents` on the key; `volunteer_agents` for config keys) **and** the node's account is past probation. The chat (Open WebUI) never carries consent |
+| Probation | `accounts.node_probation` (Go duration, default `168h`) from the account's first node token; revoking and recreating does not reset it |
+| Share cap | no untrusted operator gets more than about a third of the requests placed in the last 10 minutes while other nodes are free (soft: if only its nodes are free, they serve) |
+| Per address | at most 3 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from Caddy) |
+| Own nodes | per account: "my own nodes first" (default), "only my own nodes" or "any node", for its chat and API requests |
+| Cut-off | revoking a token, `accounts ban` or `accounts node-revoke` drops the node within ~2 s (no restart); requests in flight on it fail over to another node if no output was sent yet |
+| Guards | answers from untrusted nodes (not the requester's own): tool-call arguments are held back until the call is complete and checked for download-and-execute (`curl … \| sh`), credential paths (`~/.ssh`, `~/.aws`, `.env`, `id_rsa`; excused if the request names them), encoded commands, file uploads and web addresses that appear nowhere in the request. A flagged call is never released: the request is retried on a free trusted node or fails with 502, the node is **held** (no requests until `accounts node-clear`), and the event is logged without content (usage log `outcome: blocked`, `guard: <rule>`). Unknown addresses in plain text are only flagged (`guard: unknown-address-in-text`). These are tripwires for crude attacks, not answer checking |
+| Context | a request goes only to nodes whose announced context fits its estimated prompt (bytes/3) plus `max_tokens`; if no node fits that, prompt plus 4,096 tokens is enough (llama-server ends the answer at the context limit). If none fits even that: 400 `context_length_exceeded`. `/v1/models` advertises per model the smallest context among connected nodes (ignoring announcements below 8,192 when larger ones exist) |
+
+The account page shows each node as online, busy, offline, probation, paused (by the
+volunteer in the local node UI) or held (by a guard), with a generic reason only.
+
+Operator commands (the gateway applies them within seconds):
+
+```bash
+aisathome-gateway accounts nodes                  # node tokens, held nodes, settings
+aisathome-gateway accounts nodes close|open       # stop or allow new node tokens
+aisathome-gateway accounts nodes limit 10         # node tokens over all accounts (max_nodes, default 10)
+aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token
+aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
+aisathome-gateway accounts routing trusted-only   # emergency: everything to trusted nodes; "any" to undo
+aisathome-gateway accounts ban gh:12345           # also deletes the account's node tokens
+```
+
+Beyond `max_nodes` the page says "the network is full for now" (there is no waitlist for
+nodes).
 
 #### Email sign-in (one-time code and link)
 

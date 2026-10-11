@@ -52,6 +52,11 @@ func newAcctRig(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig)) 
 
 // newAcctRigWith also lets a test adjust the rest of the gateway config.
 func newAcctRigWith(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig), extra func(*gateway.Config)) *acctRig {
+	return newAcctRigNodes(t, maxActive, mod, extra, mockEngine(t, false))
+}
+
+// newAcctRigNodes starts one config-token node (operator op1, untrusted) per engine.
+func newAcctRigNodes(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig), extra func(*gateway.Config), engines ...*httptest.Server) *acctRig {
 	gh := fakeGitHub(t)
 	t.Cleanup(gh.Close)
 	file := filepath.Join(t.TempDir(), "accounts.json")
@@ -73,7 +78,7 @@ func newAcctRigWith(t *testing.T, maxActive int, mod func(*gateway.AccountsConfi
 		if extra != nil {
 			extra(c)
 		}
-	}, mockEngine(t, false))
+	}, engines...)
 	return &acctRig{rig: r, store: store, file: file}
 }
 

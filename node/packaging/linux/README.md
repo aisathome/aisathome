@@ -30,7 +30,10 @@ serves.
 - A GGUF model, e.g. `unsloth/Qwen3.8-27B-GGUF` / `Qwen3.8-27B-UD-Q4_K_M.gguf` (16.5 GB).
 - `aisathome-node`: either a prebuilt release binary (`--node-release`, linux amd64 or
   arm64) or your own build (`go build ./node/cmd/aisathome-node`, then `--node-bin`).
-- A `node.json` (see `examples/node.json`) and a node token from the gateway operator.
+- A `node.json` (see `examples/node.json`) and a node token: sign in at
+  `https://aisathome.org/account`, "Your nodes", "Add a node". The token carries the node's
+  id, so `node_id` in `node.json` is not needed (it is used only with tokens from a
+  gateway's config).
 
 ## Install
 

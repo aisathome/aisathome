@@ -36,6 +36,10 @@ type KeyInfo struct {
 	// runs it (an image URL, a command written as text), and no context check catches every
 	// form. Enable only for clients that render no remote content and execute nothing.
 	RestoreSecrets bool `json:"restore_secrets,omitempty"`
+	// VolunteerAgents lets this key's requests with tools (agents) reach volunteer nodes past
+	// their probation; without it they go only to trusted nodes (decision 0007 addendum).
+	// Never carried over to end users behind a front end.
+	VolunteerAgents bool `json:"volunteer_agents,omitempty"`
 }
 
 // UserLimits apply to each end user behind a ForwardUsers key.

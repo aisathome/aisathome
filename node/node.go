@@ -29,9 +29,12 @@ const AgentVersion = "aisathome-node/0.1.0"
 
 // Config holds node settings.
 type Config struct {
+	// NodeID names the node. A token created on the account page ("nt-<id>.<secret>")
+	// carries the id the gateway assigned, and that id is used; only tokens from the gateway's
+	// config need a node_id here.
 	NodeID     string               `json:"node_id"`
 	GatewayURL string               `json:"gateway_url"` // ws(s)://host/v1/node/connect
-	Token      string               `json:"token"`       // node token issued by the gateway operator
+	Token      string               `json:"token"`       // node token from the account page (or the operator)
 	Upstream   string               `json:"upstream"`    // local engine, e.g. http://127.0.0.1:8000
 	Models     []protocol.ModelInfo `json:"models"`
 	// Heartbeat interval; defaults to 10 s.
@@ -92,6 +95,12 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = 120 * time.Second
 	}
+	if id, ok := TokenNodeID(cfg.Token); ok && cfg.NodeID != id {
+		if cfg.NodeID != "" {
+			log.Warn("the node token belongs to another node id than node_id in the config; using the token's", "node", id)
+		}
+		cfg.NodeID = id
+	}
 	a := &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelFunc{},
 		engine: EngineUnknown, now: time.Now}
 	a.started = a.now()
@@ -100,6 +109,21 @@ func New(cfg Config, log *slog.Logger) *Agent {
 		log.Info("starting paused (resume in the local UI)")
 	}
 	return a
+}
+
+// TokenNodeID returns the node id carried by a token from the account page:
+// "nt-<id>.<secret>", where the id is "n-" and 8 hex digits.
+func TokenNodeID(token string) (string, bool) {
+	rest, ok := strings.CutPrefix(token, "nt-")
+	if !ok {
+		return "", false
+	}
+	id, _, ok := strings.Cut(rest, ".")
+	h, isID := strings.CutPrefix(id, "n-")
+	if !ok || !isID || len(h) != 8 || strings.Trim(h, "0123456789abcdef") != "" {
+		return "", false
+	}
+	return id, true
 }
 
 // Run connects to the gateway and serves until ctx is cancelled, reconnecting with backoff.

@@ -107,7 +107,8 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 		GatewayID: "test-gw",
 		APIKeys:   map[string]string{"user-key": "alice"},
 		Keys: map[string]gateway.KeyInfo{"limited-key": {User: "bob", RPM: 2},
-			"restore-key": {User: "carol", RestoreSecrets: true}},
+			"restore-key": {User: "carol", RestoreSecrets: true},
+			"agent-key":   {User: "dave", VolunteerAgents: true}}, // tools may reach volunteer nodes
 		NodeTokens: map[string]gateway.NodeToken{"node-token": {Operator: "op1"}},
 		UsageLog:   usage,
 	}

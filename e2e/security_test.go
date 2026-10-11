@@ -113,7 +113,11 @@ func readAnswer(t *testing.T, resp *http.Response, stream bool) (text, args stri
 
 // HIGH 1: a node must not be able to make the gateway put a secret into a URL.
 func TestNoSecretRestoreIntoLinks(t *testing.T) {
-	r := newRig(t, exfilEngine(t))
+	// A trusted node: on an untrusted one the guards stop this answer before restoring matters
+	// (TestGuardStopsDangerousToolCalls); the restore policy must hold on every node.
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.NodeTokens["node-token"] = gateway.NodeToken{Operator: "op1", Trust: "trusted"}
+	}, exfilEngine(t))
 	for _, stream := range []bool{true, false} {
 		body, _ := json.Marshal(map[string]any{"model": "deep", "stream": stream,
 			"messages": []any{map[string]any{"role": "user", "content": "my key is " + secret}}})

@@ -6,6 +6,7 @@ package gateway
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -78,8 +79,9 @@ type Config struct {
 type NodeToken struct {
 	Operator string `json:"operator"`
 	NodeID   string `json:"node_id,omitempty"`
-	// Trust "trusted" marks nodes that may serve user chats (MinTrust keys, and requests
-	// carrying personal data). New volunteers start untrusted.
+	// Trust "trusted" marks the maintainer's own nodes (not "secure"): they serve MinTrust
+	// keys, requests carrying personal data, and agents without consent. Volunteers, and
+	// every node registered from the account page, are untrusted.
 	Trust string `json:"trust,omitempty"`
 }
 
@@ -179,6 +181,8 @@ type Gateway struct {
 	keysCfg  Config     // the config the built-in keys came from; guarded by keysMu
 	keysSum  [32]byte   // hash of the keys file last read; guarded by keysMu
 	lim      *limiter
+	shares   []shareEntry  // recent placements, for the share cap; guarded by mu
+	held     sync.Map      // node id → true: held by a guard, without an accounts file
 	stop     chan struct{} // closed by Close: ends background work
 	stopOnce sync.Once
 	bg       sync.WaitGroup
@@ -240,6 +244,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 			if err := g.accounts.Refresh(); err != nil {
 				log.Error("accounts file not applied, keeping the accounts in use", "err", err)
 			}
+			g.sweepNodes() // banned accounts, revoked node tokens, held or cleared nodes
 		})
 	}
 	g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg)}})
@@ -385,6 +390,9 @@ func (g *Gateway) Reload(cfg Config) error {
 	g.tokens = copyTokens(cfg.NodeTokens)
 	var revoked []*nodeConn
 	for _, n := range g.node {
+		if n.account != "" { // an account's node: its token is in the accounts file (sweepNodes)
+			continue
+		}
 		if t, ok := g.tokens[n.token]; !ok || (t.NodeID != "" && t.NodeID != n.id) || (t.Trust == "trusted") != n.trusted {
 			revoked = append(revoked, n)
 			continue
@@ -448,9 +456,13 @@ func (g *Gateway) FrontendHandler() http.Handler {
 
 type nodeConn struct {
 	id       string
-	operator string
-	token    string // to disconnect the node if its token is revoked
-	trusted  bool   // from its token; only trusted nodes serve user chats
+	operator string    // the config token's operator, or the account's pseudonym
+	token    string    // to disconnect the node if its token is revoked
+	trusted  bool      // from its token: the maintainer's own nodes (not "secure"; see README)
+	account  string    // the account that registered it; "" for a token from the config
+	ip       string    // client address it connected from (account nodes: maxNodesPerIP)
+	held     bool      // stopped by a guard until the operator clears it; guarded by g.mu
+	probEnd  time.Time // account nodes: no agents (requests with tools) before; guarded by g.mu
 	models   []protocol.ModelInfo
 	conn     *websocket.Conn
 	wmu      sync.Mutex // serialises writes
@@ -521,14 +533,12 @@ func (n *nodeConn) slots(model string) int {
 
 func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	g.mu.Lock()
-	tok, ok := g.tokens[token]
-	g.mu.Unlock()
+	tok, account, ok := g.nodeAuth(token)
 	if !ok {
 		http.Error(w, "unknown node token", http.StatusUnauthorized)
 		return
 	}
-	operator := tok.Operator
+	operator, ip := tok.Operator, clientIP(r)
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
@@ -556,6 +566,10 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "this node token belongs to another node id")
 		return
 	}
+	if account == "" && validNodeID(hello.NodeID) { // the gateway assigns these to account nodes
+		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
+		return
+	}
 	g.mu.Lock()
 	reserved := false
 	for t, other := range g.tokens { // an id bound to another token cannot be squatted
@@ -568,27 +582,39 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
 		return
 	}
-	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", models: hello.Models, conn: c,
-		pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
+	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", account: account, ip: ip,
+		models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
 	if err := n.send(ctx, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: g.cfg.GatewayID, Protocol: protocol.Version}); err != nil {
 		return
 	}
+	var first time.Time
+	if account != "" {
+		first, _ = g.accounts.nodeLive(keyHash(token))
+	}
 	g.mu.Lock()
-	// Reload may have revoked or changed the token while we waited for hello: decide with the
-	// token as it is now, under the same lock that registers the node.
-	cur, still := g.tokens[token]
+	// Reload, a revocation or a ban may have changed the token while we waited for hello:
+	// decide with the token as it is now, under the same lock that registers the node.
+	var still bool
+	if account == "" {
+		var cur NodeToken
+		cur, still = g.tokens[token]
+		still = still && (cur.NodeID == "" || cur.NodeID == hello.NodeID)
+		n.trusted, n.operator = cur.Trust == "trusted", cur.Operator
+	} else {
+		_, _, still = g.accounts.nodeToken(token)
+		n.probEnd = first.Add(g.acfg.probation)
+	}
 	reservedNow := false
 	for t, other := range g.tokens {
 		if t != token && other.NodeID == hello.NodeID {
 			reservedNow = true
 		}
 	}
-	if !still || (cur.NodeID != "" && cur.NodeID != hello.NodeID) || reservedNow {
+	if !still || reservedNow {
 		g.mu.Unlock()
 		c.Close(websocket.StatusPolicyViolation, "node token revoked or changed")
 		return
 	}
-	n.trusted, n.operator = cur.Trust == "trusted", cur.Operator
 	old := g.node[n.id]
 	if old != nil && old.token != token { // only the node's own token may replace it
 		g.mu.Unlock()
@@ -600,6 +626,12 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "too many nodes for this token")
 		return
 	}
+	if account != "" && g.nodesFromLocked(ip, n.id) >= maxNodesPerIP {
+		g.mu.Unlock()
+		c.Close(websocket.StatusPolicyViolation, fmt.Sprintf("at most %d nodes per address", maxNodesPerIP))
+		return
+	}
+	n.held = g.nodeHeld(n.id)
 	g.node[n.id] = n
 	now := time.Now()
 	for name, last := range g.known { // forget models nobody has offered for a long time
@@ -613,7 +645,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}
 	g.signal() // waiting requests may now find a slot
-	g.log.Info("node connected", "node", n.id, "operator", operator, "models", len(n.models))
+	g.log.Info("node connected", "node", n.id, "operator", n.operator, "models", len(n.models))
 
 	defer func() {
 		g.mu.Lock()
@@ -672,14 +704,77 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 // it. exclude holds connections that already failed this request; a node that reconnected
 // is a new connection and may be tried.
 type route struct {
-	want     string
-	trusted  bool   // only nodes whose token is trusted
-	operator string // only nodes of this operator ("" = any)
-	exclude  map[*nodeConn]bool
+	want        string
+	trusted     bool   // only trusted nodes, or the requester's own
+	why         string // why trusted is set, for the error message ("" = the key's min_trust)
+	trustedOnly bool   // the operator's emergency switch: trusted nodes only, not even one's own
+	operator    string // only nodes of this operator ("" = any)
+	self        string // the requesting account's operator name: its own nodes count as trusted for it
+	preferSelf  bool   // try the requester's own nodes first
+	tools       bool   // the request defines tools (an agent)
+	consent     bool   // the key allows volunteer nodes for agents
+	need        int    // context tokens: estimated prompt plus max_tokens
+	needMin     int    // prompt plus minOutputRoom: enough when no node fits need
+	exclude     map[*nodeConn]bool
 }
 
-func (rt *route) allows(n *nodeConn) bool {
-	return !rt.exclude[n] && (!rt.trusted || n.trusted) && (rt.operator == "" || n.operator == rt.operator)
+// allows reports whether n may see the request, ignoring context and free slots. Caller
+// holds g.mu (n.held, n.probEnd).
+func (rt *route) allows(n *nodeConn, now time.Time) bool {
+	switch {
+	case rt.exclude[n] || n.held:
+		return false
+	case rt.operator != "" && n.operator != rt.operator:
+		return false
+	case n.trusted:
+		return true
+	case rt.trustedOnly:
+		return false
+	case rt.self != "" && n.operator == rt.self:
+		return true // one's own node sees nothing one did not send oneself
+	case rt.trusted:
+		return false
+	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
+		return rt.consent && !now.Before(n.probEnd)
+	}
+	return true
+}
+
+// minOutputRoom is the room for the answer that a node's context must leave when no node
+// fits the request's full max_tokens: llama-server ends an answer at the end of the context
+// (finish_reason "length") rather than failing, so a large max_tokens alone must not make a
+// request unservable.
+const minOutputRoom = 4096
+
+// maxCtx bounds the context a node may announce.
+const maxCtx = 4 << 20
+
+// fits reports whether model m has context for the request at threshold (0 = no need given).
+// A node that announces no context is assumed to fit; it reports an overflow if not.
+func fits(m protocol.ModelInfo, threshold int) bool {
+	return threshold == 0 || m.Ctx == 0 || m.Ctx >= threshold
+}
+
+// serves reports whether m offers the model or role want.
+func serves(m protocol.ModelInfo, want string) bool { return m.Name == want || contains(m.Roles, want) }
+
+// thresholdLocked is the context the request needs on this network now: need if any allowed
+// node fits it, otherwise needMin. Caller holds g.mu.
+func (g *Gateway) thresholdLocked(rt *route, now time.Time) int {
+	if rt.need == 0 {
+		return 0
+	}
+	for _, n := range g.node {
+		if !rt.allows(n, now) {
+			continue
+		}
+		for _, m := range n.models {
+			if serves(m, rt.want) && fits(m, rt.need) {
+				return rt.need
+			}
+		}
+	}
+	return rt.needMin
 }
 
 // maxBufferedTotal bounds all non-streaming answers held at once, and maxBufferedPerToken
@@ -716,7 +811,7 @@ func validHello(h protocol.Msg) string {
 		return "a node announces 1-16 models"
 	}
 	for _, m := range h.Models {
-		if m.Name == "" || len(m.Name) > 128 || len(m.Roles) > 8 || m.Slots < 1 || m.Slots > 64 || m.Ctx < 0 {
+		if m.Name == "" || len(m.Name) > 128 || len(m.Roles) > 8 || m.Slots < 1 || m.Slots > 64 || m.Ctx < 0 || m.Ctx > maxCtx {
 			return "invalid model announcement"
 		}
 		for _, r := range m.Roles {
@@ -728,40 +823,59 @@ func validHello(h protocol.Msg) string {
 	return ""
 }
 
-// pick chooses an allowed node serving the requested model or role that has a free slot,
-// round-robin. It returns the node and the local model name to request.
+// pick chooses an allowed node serving the requested model or role, with enough context and
+// a free slot: the requester's own nodes first if it prefers them, then nodes whose operator
+// is under its share, then any, round-robin. It returns the node and the local model name.
 func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	now := time.Now()
 	ids := make([]string, 0, len(g.node))
 	for id := range g.node {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	for i := 0; i < len(ids); i++ {
-		n := g.node[ids[(g.rr+i)%len(ids)]]
-		if !rt.allows(n) {
-			continue
-		}
-		for _, m := range n.models {
-			if m.Name != rt.want && !contains(m.Roles, rt.want) {
+	threshold := g.thresholdLocked(rt, now)
+	try := func(ok func(*nodeConn) bool) (*nodeConn, string) {
+		for i := 0; i < len(ids); i++ {
+			n := g.node[ids[(g.rr+i)%len(ids)]]
+			if !rt.allows(n, now) || (ok != nil && !ok(n)) {
 				continue
 			}
-			// Reserve the slot here, under the lock: checking now and registering the
-			// request later lets concurrent requests oversubscribe the node.
-			n.mu.Lock()
-			free := n.inflight < m.Slots && !n.paused
-			if free {
-				n.inflight++
-			}
-			n.mu.Unlock()
-			if free {
-				g.rr = (g.rr + i + 1) % len(ids)
-				return n, m.Name
+			for _, m := range n.models {
+				if !serves(m, rt.want) || !fits(m, threshold) {
+					continue
+				}
+				// Reserve the slot here, under the lock: checking now and registering the
+				// request later lets concurrent requests oversubscribe the node.
+				n.mu.Lock()
+				free := n.inflight < m.Slots && !n.paused // the volunteer paused it
+				if free {
+					n.inflight++
+				}
+				n.mu.Unlock()
+				if free {
+					g.rr = (g.rr + i + 1) % len(ids)
+					return n, m.Name
+				}
 			}
 		}
+		return nil, ""
 	}
-	return nil, ""
+	if rt.preferSelf && rt.self != "" {
+		if n, m := try(func(n *nodeConn) bool { return n.operator == rt.self }); n != nil {
+			return n, m // serving oneself counts for no share
+		}
+	}
+	over := g.overShareLocked(now)
+	n, m := try(func(n *nodeConn) bool { return n.trusted || n.operator == rt.self || !over(n.operator) })
+	if n == nil {
+		n, m = try(nil) // every free node is over its share: better served than waiting
+	}
+	if n != nil && n.operator != rt.self {
+		g.shares = append(g.shares, shareEntry{now, n.operator})
+	}
+	return n, m
 }
 
 // Why a request could not be placed on a node.
@@ -770,6 +884,7 @@ const (
 	queueFull    = "full"     // too many requests already waiting
 	timedOut     = "timeout"  // waited QueueTimeoutSec without a free slot
 	clientGone   = "canceled" // the client disconnected while waiting
+	tooLong      = "context"  // no allowed node has the context the request needs
 )
 
 // pickWait is pick, but waits until deadline for capacity: a free slot, or a node serving a
@@ -788,6 +903,13 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 		g.mu.Unlock()
 		if n, model := g.pick(rt); n != nil {
 			return n, model, ""
+		}
+		if rt.need > 0 && g.servesFor(rt) == 0 { // allowed nodes are here, but none is large enough
+			loose := *rt
+			loose.need = 0
+			if g.servesFor(&loose) > 0 {
+				return nil, "", tooLong
+			}
 		}
 		// Unknown models fail at once, except just after a restart while no node is back yet.
 		restarting := time.Since(g.start) < startupGrace && g.NodeCount() == 0
@@ -825,26 +947,60 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 	}
 }
 
-// servesNow counts connected nodes offering the model or role.
-func (g *Gateway) servesNow(want string) int { return g.servesFor(&route{want: want}) }
-
-// servesFor counts connected nodes that offer the model or role and that the route allows.
-func (g *Gateway) servesFor(rt *route) int {
+// servesNow counts connected nodes offering the model or role (held ones included: they
+// are online, just not for this network's users).
+func (g *Gateway) servesNow(want string) int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	c := 0
 	for _, n := range g.node {
-		if !rt.allows(n) {
-			continue
-		}
 		for _, m := range n.models {
-			if m.Name == rt.want || contains(m.Roles, rt.want) {
+			if serves(m, want) {
 				c++
 				break
 			}
 		}
 	}
 	return c
+}
+
+// servesFor counts connected nodes that offer the model or role with enough context and
+// that the route allows.
+func (g *Gateway) servesFor(rt *route) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now := time.Now()
+	threshold := g.thresholdLocked(rt, now)
+	c := 0
+	for _, n := range g.node {
+		if !rt.allows(n, now) {
+			continue
+		}
+		for _, m := range n.models {
+			if serves(m, rt.want) && fits(m, threshold) {
+				c++
+				break
+			}
+		}
+	}
+	return c
+}
+
+// largestCtx is the largest context among nodes the route allows (0 = unknown).
+func (g *Gateway) largestCtx(rt *route) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	now, best := time.Now(), 0
+	for _, n := range g.node {
+		if rt.allows(n, now) {
+			for _, m := range n.models {
+				if serves(m, rt.want) {
+					best = max(best, m.Ctx)
+				}
+			}
+		}
+	}
+	return best
 }
 
 // unavailable answers a request that could not be placed, with an honest reason.
@@ -855,6 +1011,13 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 		return
 	case unknownModel:
 		apiError(w, http.StatusNotFound, fmt.Sprintf("model %q is not served on this network", want))
+	case tooLong:
+		loose := *rt
+		loose.need, loose.exclude = 0, nil
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+			"message": fmt.Sprintf("the conversation (about %d tokens, with room for the answer) is longer than the context of any node that may serve it (largest: %d tokens); shorten or compact it",
+				rt.needMin, g.largestCtx(&loose)),
+			"type": "invalid_request_error", "code": "context_length_exceeded"}})
 	case queueFull:
 		w.Header().Set("Retry-After", "10")
 		apiError(w, http.StatusServiceUnavailable, "too many requests are waiting; try again shortly")
@@ -865,14 +1028,31 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				"no node serving %q is online right now; AIs@home runs on volunteer machines, try again later", want))
 			return
 		}
-		if g.servesFor(&route{want: want, trusted: rt.trusted, operator: rt.operator}) == 0 {
+		loose := *rt
+		loose.exclude = nil
+		if g.servesFor(&loose) == 0 {
 			w.Header().Set("Retry-After", "60")
-			which := "trusted node"
-			if rt.operator != "" {
+			which, because := "trusted node", "this request may only go to such nodes"
+			switch {
+			case rt.operator != "" && rt.operator == rt.self:
+				which, because = "node of your own", "your account is set to use only your own nodes"
+			case rt.operator != "":
 				which = "node of your own"
+			case rt.trustedOnly:
+				because = "the network is in trusted-only mode for now"
+			case rt.trusted && rt.why != "":
+				because = rt.why
+			case rt.tools && !rt.trusted:
+				which = "trusted node, or volunteer node past its probation,"
+				because = "requests with tools go to volunteer nodes only with an API key that allows them"
+				if !rt.consent {
+					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
+						"requests with tools go only to your own node or the maintainer's, and none serving %q is online. "+
+						"Create a key with \"Let volunteers run my agents\" on your account page, or try again later", want))
+					return
+				}
 			}
-			apiError(w, http.StatusServiceUnavailable, fmt.Sprintf(
-				"no %s serving %q is online right now (this request may only go to such nodes)", which, want))
+			apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no %s serving %q is online right now (%s)", which, want, because))
 			return
 		}
 		w.Header().Set("Retry-After", "10")
@@ -899,8 +1079,11 @@ func (g *Gateway) authenticate(r *http.Request) (info KeyInfo, accountID string,
 		return info, "", true
 	}
 	if g.accounts != nil {
-		if accountID, ok = g.accounts.keyAccount(key); ok {
-			return g.accountInfo(accountID), accountID, true
+		var agents bool
+		if accountID, agents, ok = g.accounts.keyAccount(key); ok {
+			info = g.accountInfo(accountID)
+			info.VolunteerAgents = agents
+			return info, accountID, true
 		}
 	}
 	return KeyInfo{}, "", false
@@ -910,23 +1093,38 @@ func bearer(r *http.Request) string {
 	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 }
 
+// minAdvertisedCtx: smaller announced contexts do not lower what /v1/models advertises.
+const minAdvertisedCtx = 8192
+
 func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 	if _, ok := g.user(r); !ok {
 		apiError(w, http.StatusUnauthorized, "invalid API key")
 		return
 	}
-	// One entry per model or role, with the largest context any connected node offers for
-	// it (clients such as opencode size their compaction from context_length).
+	// One entry per model or role, with the context that is reliably available for it: the
+	// smallest among the connected nodes serving it, so that a client sizing its compaction
+	// from context_length (opencode) fits on every node. Announcements below
+	// minAdvertisedCtx count only if no node offers more: one node announcing a tiny context
+	// must not shrink it for everyone (it still gets the requests that fit it).
 	var ids []string
-	ctx := map[string]int{}
+	small, all := map[string]int{}, map[string]int{} // smallest ≥ minAdvertisedCtx; smallest of any
 	g.mu.Lock()
 	for _, n := range g.node {
+		if n.held {
+			continue
+		}
 		for _, m := range n.models {
 			for _, id := range append([]string{m.Name}, m.Roles...) {
-				if _, ok := ctx[id]; !ok {
+				if _, ok := all[id]; !ok {
 					ids = append(ids, id)
+					all[id] = m.Ctx
 				}
-				ctx[id] = max(ctx[id], m.Ctx)
+				if m.Ctx > 0 && (all[id] == 0 || m.Ctx < all[id]) {
+					all[id] = m.Ctx
+				}
+				if m.Ctx >= minAdvertisedCtx && (small[id] == 0 || m.Ctx < small[id]) {
+					small[id] = m.Ctx
+				}
 			}
 		}
 	}
@@ -934,8 +1132,8 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 	data := []map[string]any{}
 	for _, id := range ids {
 		e := map[string]any{"id": id, "object": "model", "owned_by": "AIs@home"}
-		if ctx[id] > 0 {
-			e["context_length"] = ctx[id]
+		if c := cmp.Or(small[id], all[id]); c > 0 {
+			e["context_length"] = c
 		}
 		data = append(data, e)
 	}
@@ -953,7 +1151,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	// user id and get their own limits, on top of the front end's key limits. Signed-in
 	// accounts arrive as gh-<id>@users.invalid, google-<sub>@users.invalid or
 	// em-<hex>@users.invalid and share one budget with their API keys.
-	acct, userKey := info, key
+	acct, userKey, reqAcct := info, key, accountID // reqAcct: the account behind the request, API key or chat
 	if accountID != "" {
 		userKey = "acct:" + accountID
 	} else if info.ForwardUsers {
@@ -962,7 +1160,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 				apiError(w, http.StatusForbidden, "this account is not active")
 				return
 			}
-			acct, userKey = g.accountInfo(id).within(info), "acct:"+id
+			acct, userKey, reqAcct = g.accountInfo(id).within(info), "acct:"+id, id
 		} else if uid := r.Header.Get("X-OpenWebUI-User-Id"); uid != "" {
 			acct, userKey = info.forUser(uid), key+"|"+uid
 		}
@@ -1043,13 +1241,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			body[k] = g.cfg.MaxMaxTokens
 		}
 	}
-	// Privacy: personal data goes only to trusted nodes; secrets never reach a node at all
-	// (replaced by placeholders, restored in the answer).
-	rt := &route{want: want, trusted: acct.MinTrust == "trusted", operator: acct.OnlyOperator,
-		exclude: map[*nodeConn]bool{}}
-	if !rt.trusted && hasPII(body) {
-		rt.trusted = true
-	}
+	// Privacy: personal data goes only to trusted nodes (and the requester's own); secrets
+	// never reach a node at all (replaced by placeholders, restored in the answer).
+	rt := g.routeFor(want, body, acct, reqAcct, acct.VolunteerAgents && !info.ForwardUsers)
+	reqText := requestText(body) // before redaction: addresses the user wrote, for the guards
 	red := newRedactor()
 	// Nothing to hide only when the key itself belongs to the operator whose nodes serve it
 	// (not for end users behind a shared front-end key).
@@ -1075,7 +1270,24 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.exclude[n] = true
-		started, err := g.run(w, r, acct.User, charge, n, model, want, body, clientStream, red)
+		var gd *guard // answers from strangers' nodes are checked (guard.go)
+		if !n.trusted && n.operator != rt.self {
+			gd = newGuard(reqText)
+		}
+		started, err := g.run(w, r, acct.User, charge, n, model, want, body, clientStream, red, gd, rt.self)
+		var flagged *guardError
+		if errors.As(err, &flagged) && !started {
+			// Not one byte of the stopped answer went out: try a trusted node if one is free now.
+			if tn, tmodel := g.pick(&route{want: want, trustedOnly: true, need: rt.need, needMin: rt.needMin, exclude: rt.exclude}); tn != nil {
+				if started, err = g.run(w, r, acct.User, charge, tn, tmodel, want, body, clientStream, red, nil, rt.self); err == nil || started {
+					return
+				}
+			}
+			apiError(w, http.StatusBadGateway, "the volunteer node's answer was stopped by a safety check (a tool call that "+
+				"downloads and runs code, reads credentials, sends files, or uses a web address not in the conversation), "+
+				"and no trusted node is free to answer instead; try again later")
+			return
+		}
 		if err == nil || started {
 			return // success, or failure after output began: the client sees the error
 		}
@@ -1094,26 +1306,18 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 // run sends one request to a node and relays the result. started reports whether any
-// output reached the client (then a retry is no longer possible).
+// output reached the client (then a retry is no longer possible). gd, if set, checks the
+// answer (guard.go); a stopped tool call returns a *guardError. self is the requesting
+// account's operator name, to record answers an account served itself.
 func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charge []string, n *nodeConn,
-	model, want string, body map[string]any, clientStream bool, red *redactor) (started bool, err error) {
+	model, want string, body map[string]any, clientStream bool, red *redactor, gd *guard, self string) (started bool, err error) {
 	reqID := newID()
 	nb := forNode(body) // only the fields a node may see
 	nb["model"] = model
 	nb["stream"] = true
 	nb["stream_options"] = map[string]any{"include_usage": true}
 	raw, _ := json.Marshal(nb)
-	maxTokens := g.cfg.DefaultMaxTokens
-	for _, k := range []string{"max_tokens", "max_completion_tokens"} {
-		if v, ok := nb[k].(float64); ok && v > 0 {
-			maxTokens = int(v)
-		} else if v, ok := nb[k].(int); ok && v > 0 {
-			maxTokens = v
-		}
-	}
-	if maxTokens <= 0 {
-		maxTokens = 16384
-	}
+	maxTokens := requestMaxTokens(nb, g.cfg.DefaultMaxTokens)
 	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
 	// collected) and work. About one token per chunk, with room for role and usage chunks.
 	maxChunks := 2*maxTokens + 256
@@ -1149,14 +1353,18 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 	// requests that end early (the node sends no usage then) and cross-checks node-reported
 	// completion tokens (llama.cpp streams about one token per chunk).
 	relayed, relayedChars := 0, 0
+	flag := "" // a guard's finding, for the usage log
 	record := func(outcome string, u protocol.Usage, estimated bool) {
 		u, clamped := clampUsage(u, len(raw), maxTokens, relayed)
 		u.DurationMs = time.Since(t0).Milliseconds()
 		rec := usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
 			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
-			Estimated: estimated, Clamped: clamped}
+			Estimated: estimated, Clamped: clamped, SelfServed: self != "" && n.operator == self, Guard: flag}
 		g.use.record(rec)
 		g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
+		if outcome == outcomeBlocked {
+			return // the user never got the answer
+		}
 		// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
 		bu := u
 		bu.PromptTokens = min(bu.PromptTokens, len(raw)/3+256)
@@ -1189,6 +1397,25 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 			return err
 		}
 		return rc.Flush()
+	}
+	send := func(data []byte) error {
+		started = true
+		if rest != nil {
+			data = rest.chunk(data)
+		}
+		return writeSSE(data)
+	}
+	// block stops an answer a guard flagged: nothing more of it reaches the client, and the
+	// node gets no requests until the operator clears it.
+	block := func(rule string) (bool, error) {
+		cancelOnNode(n, reqID)
+		flag = rule
+		record(outcomeBlocked, protocol.Usage{CompletionTokens: relayed}, true)
+		g.holdNode(n, rule, reqID)
+		if started {
+			writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the answer was stopped by a safety check"}}))
+		}
+		return started, &guardError{rule}
 	}
 	chunks, collectedBytes := 0, 0
 	var held int64 // this request's share of g.buffered and of its node token's share
@@ -1249,19 +1476,34 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 					}
 					return started, errors.New("node sent more output than requested")
 				}
+				outs := [][]byte{[]byte(m.Data)}
+				if gd != nil {
+					var big bool
+					if outs, big = gd.filter(m.Data); big {
+						cancelOnNode(n, reqID)
+						partial("failed")
+						if started {
+							writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the node sent more output than requested"}}))
+						}
+						return started, errors.New("node sent more output than requested")
+					}
+					if gd.finish != nil { // a finish_reason after tool calls: they are complete
+						if rule := gd.check(); rule != "" {
+							return block(rule)
+						}
+						outs = append(outs, gd.release()...)
+					}
+				}
 				if !clientStream {
 					collected = append(collected, m.Data)
 					continue
 				}
-				started = true
-				data := []byte(m.Data)
-				if rest != nil {
-					data = rest.chunk(data)
-				}
-				if err := writeSSE(data); err != nil {
-					cancelOnNode(n, reqID)
-					partial("cancelled")
-					return started, err
+				for _, data := range outs {
+					if err := send(data); err != nil {
+						cancelOnNode(n, reqID)
+						partial("cancelled")
+						return started, err
+					}
 				}
 			case protocol.TypeError:
 				m.Error = errCategory(m.Error) // never pass on (or log) free text from a node
@@ -1278,6 +1520,21 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user string, charg
 				u := protocol.Usage{}
 				if m.Usage != nil {
 					u = *m.Usage
+				}
+				var held [][]byte
+				if gd != nil {
+					if rule := gd.check(); rule != "" {
+						return block(rule)
+					}
+					held = gd.release()
+					if flag = gd.textFlag(); flag != "" { // text is only flagged, not stopped
+						g.log.Warn("guard flagged a node's answer", "node", n.id, "operator", n.operator, "rule", flag, "req", reqID)
+					}
+				}
+				for _, data := range held {
+					if clientStream {
+						send(data)
+					}
 				}
 				record("ok", u, false)
 				u.DurationMs = time.Since(t0).Milliseconds()
@@ -1428,6 +1685,9 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage) map[
 
 // ---------------------------------------------------------------- metering
 
+// outcomeBlocked: a guard stopped the answer (guard.go).
+const outcomeBlocked = "blocked"
+
 type usageRecord struct {
 	Time      time.Time      `json:"time"`
 	ReqID     string         `json:"req_id"`
@@ -1436,11 +1696,14 @@ type usageRecord struct {
 	Operator  string         `json:"operator"`
 	Model     string         `json:"model"`
 	Requested string         `json:"requested"`
-	Outcome   string         `json:"outcome"`        // ok, cancelled (client left) or failed
+	Outcome   string         `json:"outcome"`        // ok, cancelled (client left), failed or blocked
 	Relayed   int            `json:"relayed_chunks"` // text chunks the gateway relayed itself
 	Estimated bool           `json:"estimated,omitempty"`
 	Clamped   bool           `json:"clamped,omitempty"` // node reported implausible usage
 	Usage     protocol.Usage `json:"usage"`             // node-reported, or estimated from relayed chunks
+	// SelfServed: the node's operator is the requesting account (no credit for serving oneself).
+	SelfServed bool   `json:"self_served,omitempty"`
+	Guard      string `json:"guard,omitempty"` // a guard's rule: the answer was stopped, or (text) flagged
 }
 
 // textLen is the number of generated characters in a streamed chunk (for budget bounds).

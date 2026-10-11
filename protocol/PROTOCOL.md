@@ -11,7 +11,9 @@ users, keys or billing.
 ## Connection
 
 - `GET wss://<gateway>/v1/node/connect`
-- Header: `Authorization: Bearer <node token>`, a token issued by the gateway operator.
+- Header: `Authorization: Bearer <node token>`: a token from the gateway's account page
+  (`nt-<node id>.<secret>`; `node_id` in hello must be that id) or one issued by the gateway
+  operator.
 - Every frame is one UTF-8 JSON object with a `type` field. Unknown fields must be ignored.
 
 ## Messages

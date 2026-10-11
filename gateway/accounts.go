@@ -43,6 +43,10 @@ type AccountsConfig struct {
 	MinTrust           string       `json:"min_trust,omitempty"` // default "trusted"
 	MaxKeys            int          `json:"max_keys,omitempty"`  // API keys per account; default 3
 	Admins             []string     `json:"admins,omitempty"`    // account ids ("gh:123", "google:<sub>", "em:<hex>") that are chat admins
+	// NodeProbation is how long after an account's first node token its nodes serve chats
+	// but no agents (requests with tools). A Go duration; default "168h" (7 days).
+	NodeProbation string `json:"node_probation,omitempty"`
+	probation     time.Duration
 
 	// GitHub and Google endpoints; tests point them at fakes.
 	GitHubAuthURL   string `json:"-"`
@@ -87,6 +91,14 @@ func (c *AccountsConfig) defaults() error {
 	if c.MaxKeys == 0 {
 		c.MaxKeys = 3
 	}
+	if c.NodeProbation == "" {
+		c.NodeProbation = "168h"
+	}
+	p, err := time.ParseDuration(c.NodeProbation)
+	if err != nil || p < 0 {
+		return errors.New("accounts: node_probation must be a duration such as 168h")
+	}
+	c.probation = p
 	if c.GitHubAuthURL == "" {
 		c.GitHubAuthURL = "https://github.com/login/oauth/authorize"
 	}
@@ -125,6 +137,10 @@ const DefaultMaxActive = 100
 type AccountSettings struct {
 	MaxActive int  `json:"max_active"`       // active accounts at most; the rest wait
 	Closed    bool `json:"closed,omitempty"` // no new accounts at all ("raid mode")
+	// Self-registered nodes (decision 0007, nodes.go).
+	MaxNodes    int    `json:"max_nodes,omitempty"`    // node tokens over all accounts; 0 = DefaultMaxNodes
+	NodesClosed bool   `json:"nodes_closed,omitempty"` // no new node tokens (existing ones keep working)
+	Routing     string `json:"routing,omitempty"`      // RoutingTrustedOnly sends every request to trusted nodes; "" or "any" = normal
 }
 
 // Account is one user.
@@ -137,6 +153,12 @@ type Account struct {
 	KeySeq    int          `json:"key_seq,omitempty"` // counts created keys; the "create a key" form is tied to it
 	Keys      []AccountKey `json:"keys,omitempty"`
 	EmailMACs []EmailMAC   `json:"email_macs,omitempty"` // email accounts: the address as a keyed hash
+	// Nodes the account registered itself (nodes.go). FirstNode is when it created its first
+	// node token; probation counts from there and is not reset by revoking and recreating.
+	NodeSeq   int           `json:"node_seq,omitempty"` // counts created node tokens; the form is tied to it
+	Nodes     []AccountNode `json:"nodes,omitempty"`
+	FirstNode *time.Time    `json:"first_node,omitempty"`
+	NodePref  string        `json:"node_pref,omitempty"` // NodePrefOwn (default), NodePrefOnly or NodePrefAny
 }
 
 // EmailMAC is an email address as HMAC-SHA256 (hex) under the email key with KeyID.
@@ -150,12 +172,16 @@ type AccountKey struct {
 	Hash    string    `json:"sha256"`
 	Prefix  string    `json:"prefix"`
 	Created time.Time `json:"created"`
+	// Agents: the user allowed volunteer nodes for requests with tools (decision 0007
+	// addendum). Without it such requests go only to trusted nodes and the account's own.
+	Agents bool `json:"agents,omitempty"`
 }
 
 // AccountsFile is the accounts file's format.
 type AccountsFile struct {
-	Settings AccountSettings `json:"settings"`
-	Accounts []*Account      `json:"accounts"`
+	Settings  AccountSettings `json:"settings"`
+	Accounts  []*Account      `json:"accounts"`
+	NodeHolds []NodeHold      `json:"node_holds,omitempty"` // nodes stopped by a guard, until the operator clears them
 }
 
 // promote lets waiting accounts in, oldest first, while there is room.
@@ -218,10 +244,12 @@ func (f *AccountsFile) position(id string) int {
 type AccountStore struct {
 	path string
 
-	mu    sync.Mutex
-	f     AccountsFile
-	sum   [32]byte
-	byKey map[string]*Account // key hash → account
+	mu     sync.Mutex
+	f      AccountsFile
+	sum    [32]byte
+	byKey  map[string]*Account // key hash → account
+	byNode map[string]nodeRef  // node token hash → account and node
+	held   map[string]bool     // node id → held by a guard
 }
 
 // OpenAccountStore opens (or starts) the accounts file at path.
@@ -300,14 +328,20 @@ func (s *AccountStore) Refresh() error {
 }
 
 func (s *AccountStore) apply(f AccountsFile, sum [32]byte) {
-	byKey := map[string]*Account{}
+	byKey, byNode, held := map[string]*Account{}, map[string]nodeRef{}, map[string]bool{}
 	for _, a := range f.Accounts {
 		for _, k := range a.Keys {
 			byKey[k.Hash] = a
 		}
+		for i := range a.Nodes {
+			byNode[a.Nodes[i].Hash] = nodeRef{a, &a.Nodes[i]}
+		}
+	}
+	for _, p := range f.NodeHolds {
+		held[p.Node] = true
 	}
 	s.mu.Lock()
-	s.f, s.sum, s.byKey = f, sum, byKey
+	s.f, s.sum, s.byKey, s.byNode, s.held = f, sum, byKey, byNode, held
 	s.mu.Unlock()
 }
 
@@ -332,15 +366,22 @@ func (s *AccountStore) Snapshot() AccountsFile {
 	return f
 }
 
-// keyAccount returns the active account that owns key.
-func (s *AccountStore) keyAccount(key string) (string, bool) {
+// keyAccount returns the active account that owns key, and whether the key allows volunteer
+// nodes for agents.
+func (s *AccountStore) keyAccount(key string) (id string, agents bool, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a := s.byKey[keyHash(key)]
+	h := keyHash(key)
+	a := s.byKey[h]
 	if a == nil || a.Status != StatusActive {
-		return "", false
+		return "", false, false
 	}
-	return a.ID, true
+	for _, k := range a.Keys {
+		if k.Hash == h {
+			agents = k.Agents
+		}
+	}
+	return a.ID, agents, true
 }
 
 // active reports whether id is an active account.
@@ -433,7 +474,8 @@ var (
 // the form's one-time token against the account's KeySeq inside the file lock, and KeySeq
 // then goes up, so two concurrent posts of one form cannot both create a key, and revoking a
 // key never makes an old form valid again. nil skips the check (CLI, tests).
-func (s *AccountStore) AddKey(id string, max int, now time.Time, valid func(seq int) bool) (string, error) {
+// agents records the user's consent to volunteer nodes for requests with tools.
+func (s *AccountStore) AddKey(id string, max int, now time.Time, agents bool, valid func(seq int) bool) (string, error) {
 	key, err := newAPIKey()
 	if err != nil {
 		return "", err
@@ -449,7 +491,7 @@ func (s *AccountStore) AddKey(id string, max int, now time.Time, valid func(seq 
 			return errStaleForm
 		}
 		a.KeySeq++
-		a.Keys = append(a.Keys, AccountKey{Hash: keyHash(key), Prefix: key[:keyPrefixLen], Created: now.UTC()})
+		a.Keys = append(a.Keys, AccountKey{Hash: keyHash(key), Prefix: key[:keyPrefixLen], Created: now.UTC(), Agents: agents})
 		return nil
 	})
 	return key, err
@@ -473,7 +515,9 @@ func (s *AccountStore) RevokeKey(id, prefix string) error {
 }
 
 // SetStatus activates, waitlists or bans an account (operator). A banned account keeps its
-// record, so signing in again does not create a fresh one; its keys stop working.
+// record, so signing in again does not create a fresh one; its keys and node tokens are
+// deleted (the gateway drops its connected nodes within seconds). An account that is merely
+// waitlisted keeps its node tokens, but they work only while it is active.
 func (s *AccountStore) SetStatus(id, status string) error {
 	return s.Update(func(f *AccountsFile) error {
 		a := f.find(id)
@@ -486,7 +530,7 @@ func (s *AccountStore) SetStatus(id, status string) error {
 		}
 		a.Status, a.Held = status, status == StatusWaitlisted // only the operator waitlists an account by hand
 		if status == StatusBanned {
-			a.Keys = nil
+			a.Keys, a.Nodes = nil, nil
 		}
 		return nil
 	})
@@ -542,7 +586,8 @@ func verifySession(secret, v string, now time.Time) (string, bool) {
 	return id, true
 }
 
-// accountInfo is the KeyInfo of an account's requests (API key or chat).
+// accountInfo is the KeyInfo of an account's requests (API key or chat); the caller adds the
+// key's consent for agents (VolunteerAgents).
 func (g *Gateway) accountInfo(id string) KeyInfo {
 	l := g.acfg.Limits
 	return KeyInfo{User: g.pseudonym(id), RPM: l.RPM, MaxConcurrent: l.MaxConcurrent, TokensPerDay: l.TokensPerDay,

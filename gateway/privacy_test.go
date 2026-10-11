@@ -177,3 +177,14 @@ func TestRestoreLooksAtWholeField(t *testing.T) {
 		t.Fatalf("plain text not restored: %q", out)
 	}
 }
+
+func TestNodeTokensRedacted(t *testing.T) {
+	tok, err := newNodeToken("n-0a1b2c3d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newRedactor()
+	if out := r.redactText("my node token is " + tok + " ok"); strings.Contains(out, tok) || strings.Contains(out, tok[len(tok)-20:]) {
+		t.Fatalf("node token not redacted: %s", out)
+	}
+}

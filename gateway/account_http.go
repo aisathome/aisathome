@@ -49,6 +49,9 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /account/keys", smallForm(g.handleKeyCreate))
 	mux.HandleFunc("POST /account/keys/revoke", smallForm(g.handleKeyRevoke))
+	mux.HandleFunc("POST /account/nodes", smallForm(g.handleNodeCreate))
+	mux.HandleFunc("POST /account/nodes/revoke", smallForm(g.handleNodeRevoke))
+	mux.HandleFunc("POST /account/nodes/pref", smallForm(g.handleNodePref))
 	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
 	mux.HandleFunc("GET /account/assets/{name}", handleAsset)
@@ -324,8 +327,20 @@ func (g *Gateway) accountData(id string) pageData {
 		return pageData{}
 	}
 	used := g.budget.used1("acct:"+id, time.Now())
-	return pageData{SignedIn: true, Account: a, Position: pos, ChatURL: g.acfg.ChatURL, API: g.acfg.PublicURL,
-		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq)}
+	d := pageData{SignedIn: true, Account: a, Position: pos, ChatURL: g.acfg.ChatURL, API: g.acfg.PublicURL,
+		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq),
+		NodeOnce: g.nodeFormToken(id, a.NodeSeq), MaxNodes: nodeTokensPerAccount}
+	for _, n := range a.Nodes {
+		d.Nodes = append(d.Nodes, nodeRow{ID: n.ID, Name: n.Name, Created: n.Created, Status: g.nodeStatus(id, n.ID)})
+	}
+	if a.FirstNode != nil {
+		d.ProbationEnd = a.FirstNode.Add(g.acfg.probation)
+	}
+	d.Probation = probationText(g.acfg.probation)
+	st := g.accounts.Settings()
+	d.NodesClosed = st.NodesClosed
+	d.NetworkFull = g.accounts.nodeTotal() >= st.MaxNodesOrDefault()
+	return d
 }
 
 func (g *Gateway) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +351,8 @@ func (g *Gateway) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	d := g.accountData(id)
 	once := r.FormValue("once")
-	key, err := g.accounts.AddKey(id, g.acfg.MaxKeys, time.Now(), func(seq int) bool {
+	agents := r.FormValue("agents") == "1"
+	key, err := g.accounts.AddKey(id, g.acfg.MaxKeys, time.Now(), agents, func(seq int) bool {
 		return hmac.Equal([]byte(once), []byte(g.createToken(id, seq)))
 	})
 	if errors.Is(err, errStaleForm) { // a reloaded, replayed or concurrent post of one form
@@ -357,6 +373,58 @@ func (g *Gateway) handleKeyRevoke(w http.ResponseWriter, r *http.Request) {
 	id, ok := g.session(r)
 	if ok && g.sameOrigin(r) {
 		if err := g.accounts.RevokeKey(id, r.FormValue("prefix")); err != nil {
+			d := g.accountData(id)
+			d.Error = err.Error()
+			g.accountPage(w, http.StatusBadRequest, d)
+			return
+		}
+	}
+	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
+}
+
+func (g *Gateway) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
+	id, ok := g.session(r)
+	if !ok || !g.sameOrigin(r) {
+		http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
+		return
+	}
+	once := r.FormValue("once")
+	token, nodeID, err := g.accounts.AddNode(id, r.FormValue("name"), time.Now(), func(seq int) bool {
+		return hmac.Equal([]byte(once), []byte(g.nodeFormToken(id, seq)))
+	})
+	if errors.Is(err, errStaleForm) {
+		http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
+		return
+	}
+	d := g.accountData(id)
+	if err != nil {
+		d.Error = err.Error()
+		g.accountPage(w, http.StatusBadRequest, d)
+		return
+	}
+	g.log.Info("node token created", "node", nodeID, "operator", g.pseudonym(id))
+	d.NewNode, d.NewNodeID = token, nodeID
+	g.accountPage(w, http.StatusOK, d) // shown once: rendered here, never stored
+}
+
+func (g *Gateway) handleNodeRevoke(w http.ResponseWriter, r *http.Request) {
+	id, ok := g.session(r)
+	if ok && g.sameOrigin(r) {
+		if err := g.accounts.RevokeNode(id, r.FormValue("id")); err != nil {
+			d := g.accountData(id)
+			d.Error = err.Error()
+			g.accountPage(w, http.StatusBadRequest, d)
+			return
+		}
+		g.sweepNodes() // the node goes now, not at the next sweep
+	}
+	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
+}
+
+func (g *Gateway) handleNodePref(w http.ResponseWriter, r *http.Request) {
+	id, ok := g.session(r)
+	if ok && g.sameOrigin(r) {
+		if err := g.accounts.SetNodePref(id, r.FormValue("pref")); err != nil {
 			d := g.accountData(id)
 			d.Error = err.Error()
 			g.accountPage(w, http.StatusBadRequest, d)
@@ -392,12 +460,45 @@ type pageData struct {
 	Budget   int
 	MaxKeys  int
 	Once     string // one-time token for the "create a key" form
+
+	Nodes        []nodeRow
+	NewNode      string // a new node token, shown once
+	NewNodeID    string
+	NodeOnce     string // one-time token for the "add a node" form
+	MaxNodes     int    // node tokens per account
+	NodesClosed  bool
+	NetworkFull  bool
+	ProbationEnd time.Time
+	Probation    string // its length, e.g. "7 days"
+}
+
+type nodeRow struct {
+	ID, Name, Status string
+	Created          time.Time
 }
 
 // createToken ties a "create a key" form to the account's KeySeq (see AccountStore.AddKey).
 func (g *Gateway) createToken(id string, seq int) string {
 	m := hmac.New(sha256.New, []byte(g.acfg.SessionSecret))
 	fmt.Fprintf(m, "create|%s|%d", id, seq)
+	return hex.EncodeToString(m.Sum(nil)[:12])
+}
+
+// probationText says how long probation lasts, in days when it is whole days.
+func probationText(p time.Duration) string {
+	if p >= 24*time.Hour && p%(24*time.Hour) == 0 {
+		if d := int(p / (24 * time.Hour)); d != 1 {
+			return fmt.Sprintf("%d days", d)
+		}
+		return "1 day"
+	}
+	return p.String()
+}
+
+// nodeFormToken ties an "add a node" form to the account's NodeSeq (see AccountStore.AddNode).
+func (g *Gateway) nodeFormToken(id string, seq int) string {
+	m := hmac.New(sha256.New, []byte(g.acfg.SessionSecret))
+	fmt.Fprintf(m, "node|%s|%d", id, seq)
 	return hex.EncodeToString(m.Sum(nil)[:12])
 }
 
@@ -463,11 +564,39 @@ appears; come back to this page to check.</p></div>
 <code class="key">{{.NewKey}}</code>
 <p class="mut">Use it with any OpenAI-compatible client at <code>{{.API}}/v1</code> (Authorization: Bearer).</p></div>{{end}}
 <div class="card"><h2>API keys</h2>
-{{if .Account.Keys}}<table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code></td><td class="mut">{{day .Created}}</td>
+{{if .Account.Keys}}<div class="table-wrap"><table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code>{{if .Agents}} <span class="mut small">volunteers run agents</span>{{end}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/keys/revoke"><input type="hidden" name="prefix" value="{{.Prefix}}">
-<button class="btn ghost">Revoke</button></form></td></tr>{{end}}</table>{{else}}<p class="mut">No keys yet.</p>{{end}}
-{{if lt (len .Account.Keys) .MaxKeys}}<form method="post" action="/account/keys"><input type="hidden" name="once" value="{{.Once}}"><p><button class="btn">Create a key</button></p></form>{{end}}
-<p class="mut">See <a href="/use/api/">API and opencode</a>.</p></div>
+<button class="btn ghost">Revoke</button></form></td></tr>{{end}}</table></div>{{else}}<p class="mut">No keys yet.</p>{{end}}
+{{if lt (len .Account.Keys) .MaxKeys}}<form class="form" method="post" action="/account/keys"><input type="hidden" name="once" value="{{.Once}}">
+<label class="check"><input type="checkbox" name="agents" value="1"><span><strong>Let volunteers run my agents</strong> (opencode
+and other requests with tools). Volunteers' answers are not checked yet, so run opencode with approval of commands.</span></label>
+<div class="actions"><button class="btn">Create a key</button></div></form>{{end}}
+<p class="mut small">Without this, agent requests only go to your own node or the maintainer's, which are often
+offline. See <a href="/use/api/">API and opencode</a>.</p></div>
+{{if .NewNode}}<div class="card accent"><p><strong>Your new node token.</strong> Copy it now: it is shown only once.</p>
+<code class="key">{{.NewNode}}</code>
+<p class="mut">Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p></div>{{end}}
+<div class="card"><h2>Your nodes</h2>
+<p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
+strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that, and
+only after a probation of {{.Probation}}.</p>
+{{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th>Created</th><th></th></tr>
+{{range .Nodes}}<tr><td>{{if .Name}}{{.Name}}<br>{{end}}<code>{{.ID}}</code></td><td><span class="badge {{.Status}}">{{.Status}}</span></td><td class="mut">{{day .Created}}</td>
+<td class="end"><form method="post" action="/account/nodes/revoke"><input type="hidden" name="id" value="{{.ID}}">
+<button class="btn danger">Revoke</button></form></td></tr>{{end}}</table></div>
+{{if not .ProbationEnd.IsZero}}<p class="hint">Probation (chats only, no agents) until {{day .ProbationEnd}}.</p>{{end}}
+{{else}}<p class="mut">No nodes yet.</p>{{end}}
+{{if .NodesClosed}}<p class="mut">New nodes are not being accepted right now.</p>
+{{else if .NetworkFull}}<p class="mut">The network is full for now: no new nodes are being added.</p>
+{{else if lt (len .Nodes) .MaxNodes}}<form class="form" method="post" action="/account/nodes"><input type="hidden" name="once" value="{{.NodeOnce}}">
+<div class="field"><label for="nodename">Name (optional, only you see it)</label>
+<div class="row"><input id="nodename" name="name" maxlength="40"><button class="btn secondary">Add a node</button></div></div></form>{{end}}
+{{if or .Nodes .Account.NodePref}}<form class="form" method="post" action="/account/nodes/pref"><div class="field"><label for="pref">Your own chats and API requests go to</label>
+<div class="row"><select id="pref" name="pref"><option value=""{{if eq .Account.NodePref ""}} selected{{end}}>my own nodes first, then any</option>
+<option value="only"{{if eq .Account.NodePref "only"}} selected{{end}}>only my own nodes</option>
+<option value="any"{{if eq .Account.NodePref "any"}} selected{{end}}>any node</option></select>
+<button class="btn ghost">Save</button></div></div></form>{{end}}
+<p class="mut small">See <a href="/node/">Run a node</a>.</p></div>
 {{end}}
 {{if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
 {{template "bottom" .}}`)
