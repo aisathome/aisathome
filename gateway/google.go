@@ -49,13 +49,13 @@ func pkceChallenge(verifier string) string {
 func (g *Gateway) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	f, ok := g.takeFlow(w, r, "google")
 	if !ok || f.nonce == "" || f.verifier == "" {
-		g.accountPage(w, http.StatusBadRequest, pageData{Error: "The sign-in expired or came from elsewhere. Please try again."})
+		g.accountPage(w, r, http.StatusBadRequest, pageData{Error: "The sign-in expired or came from elsewhere. Please try again."})
 		return
 	}
 	id, err := g.googleID(r.Context(), r.URL.Query().Get("code"), f)
 	if err != nil {
 		g.log.Warn("google sign-in failed", "err", err) // errors never carry tokens or claims
-		g.accountPage(w, http.StatusBadGateway, pageData{Error: "Google sign-in failed. Please try again."})
+		g.accountPage(w, r, http.StatusBadGateway, pageData{Error: "Google sign-in failed. Please try again."})
 		return
 	}
 	g.finishSignIn(w, r, id, f.next)

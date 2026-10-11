@@ -454,7 +454,7 @@ func (g *Gateway) handleEmailStart(w http.ResponseWriter, r *http.Request) {
 	typed := strings.TrimSpace(r.FormValue("email"))
 	norm, ok := normaliseEmail(typed)
 	if !ok { // the form, not the address's fate: says nothing about any account
-		g.accountPage(w, http.StatusBadRequest, pageData{Next: r.FormValue("next") == "chat",
+		g.accountPage(w, r, http.StatusBadRequest, pageData{Next: r.FormValue("next") == "chat",
 			Error: "Please enter a plain email address (for an international domain, its xn-- form)."})
 		return
 	}
@@ -483,7 +483,7 @@ func (g *Gateway) handleEmailStart(w http.ResponseWriter, r *http.Request) {
 // offers a Continue button. GET changes nothing, so a mail scanner opening the link uses up
 // nothing.
 func (g *Gateway) handleEmailPage(w http.ResponseWriter, r *http.Request) {
-	g.emailPage(w, http.StatusOK, "")
+	g.emailPage(w, r, http.StatusOK, "")
 }
 
 // handleEmailVerify takes a code or link token, only together with the pending cookie.
@@ -494,12 +494,12 @@ func (g *Gateway) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := r.Cookie(g.cookieName(pendingCookie))
 	if err != nil || c.Value == "" {
-		g.emailPage(w, http.StatusBadRequest, "Open the link in the browser where you asked for the code, or type the code there. A code works for 10 minutes.")
+		g.emailPage(w, r, http.StatusBadRequest, "Open the link in the browser where you asked for the code, or type the code there. A code works for 10 minutes.")
 		return
 	}
 	macs, next, ok := g.email.verify(c.Value, strings.TrimSpace(r.FormValue("code")), r.FormValue("token"))
 	if !ok { // one message for every failure, so it tells nothing about the address
-		g.emailPage(w, http.StatusBadRequest, "That did not work: the code is wrong, used or expired. Check the latest email or ask for a new code. After many wrong codes, email sign-in for the address pauses for an hour.")
+		g.emailPage(w, r, http.StatusBadRequest, "That did not work: the code is wrong, used or expired. Check the latest email or ask for a new code. After many wrong codes, email sign-in for the address pauses for an hour.")
 		return
 	}
 	g.setCookie(w, pendingCookie, "", "/account/email", -time.Second)
@@ -518,18 +518,21 @@ var emailScriptCSP = func() string {
 		base64.StdEncoding.EncodeToString(sum[:]) + "'; form-action 'self'; frame-ancestors 'none'"
 }()
 
-func (g *Gateway) emailPage(w http.ResponseWriter, status int, msg string) {
+func (g *Gateway) emailPage(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", emailScriptCSP)
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(status)
-	if err := emailTmpl.Execute(w, struct{ Error, ChatURL string }{msg, g.acfg.ChatURL}); err != nil {
+	if err := emailTmpl.Execute(w, struct {
+		shell
+		Error string
+	}{shell{Title: "Sign in with email", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account/email"}, msg}); err != nil {
 		g.log.Error("email page", "err", err)
 	}
 }
 
-var emailTmpl = newPage("email", nil, `{{template "head" "Sign in with email"}}{{template "top" .}}
+var emailTmpl = newPage("email", nil, `{{template "head" .}}{{template "top" .}}
 <p class="back"><a href="/account">← Sign in</a></p>
 {{if .Error}}<div class="card err" role="alert">{{.Error}}</div>{{end}}
 <h1>Check your email</h1>

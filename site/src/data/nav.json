@@ -1,0 +1,8 @@
+[
+	{ "label": "Chat", "href": "https://chat.{domain}" },
+	{ "label": "Account", "href": "https://{domain}/account" },
+	{ "label": "Docs", "href": "/docs/" },
+	{ "label": "Run a node", "href": "/node/" },
+	{ "label": "Network", "href": "/network/" },
+	{ "label": "About", "href": "/about/" }
+]

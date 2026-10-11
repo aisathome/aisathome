@@ -40,6 +40,31 @@ func TestAccountsCommand(t *testing.T) {
 	}
 }
 
+// signup goes through the same path as a first sign-in: the waitlist when the network is
+// full, active when there is room; only test ids.
+func TestAccountsSignup(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "accounts.json")
+	run := func(args ...string) (string, error) {
+		var out, msg bytes.Buffer
+		err := runAccounts(append([]string{"-file", file}, args...), &out, &msg)
+		return strings.TrimSpace(out.String()), err
+	}
+	run("limit", "1")
+	if s, err := run("signup", "test:a"); err != nil || s != "active" {
+		t.Fatalf("first signup: %q %v", s, err)
+	}
+	if s, err := run("signup", "test:b"); err != nil || s != "waitlisted" {
+		t.Fatalf("signup over the limit: %q %v", s, err)
+	}
+	run("limit", "2")
+	if out, _ := run("list"); !strings.Contains(strings.Join(strings.Fields(out), " "), "test:b active") {
+		t.Fatalf("raising the limit did not let test:b in:\n%s", out)
+	}
+	if _, err := run("signup", "gh:99"); err == nil {
+		t.Fatal("signup accepted a real provider id")
+	}
+}
+
 func TestAccountsNodeCommands(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "accounts.json")
 	store, _ := gateway.OpenAccountStore(file)

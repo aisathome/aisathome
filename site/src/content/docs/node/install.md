@@ -30,7 +30,7 @@ release has no bundle yet, use [build it yourself](#build-it-yourself).
 
 ```bash
 ./install.sh --dry-run                 # checks driver, GPU and disk; installs nothing
-sudo ./install.sh --preset balanced
+sudo ./install.sh
 ```
 
 Paste the node token when asked (input is hidden). A token from your account page carries
@@ -43,7 +43,7 @@ The installer then:
 - downloads the model (Qwen3.8 27B `UD-Q4_K_M`, 16.5 GB) from Hugging Face, pinned to one
   exact file, and checks its SHA-256. An interrupted download resumes when you run the
   installer again;
-- writes `node.json` for the [preset](/node/presets/) and the gateway
+- writes `node.json` for the network's [model setting](/node/presets/) and the gateway
   `wss://api.aisathome.org/v1/node/connect` (`--gateway-url` for another);
 - creates the `aisathome` user, the two services, a watchdog that restarts a hung
   `llama-server`, and a hook that stops the node around suspend, and waits until the model

@@ -4,6 +4,13 @@
 import { defineConfig, passthroughImageService } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import tailwindcss from '@tailwindcss/vite';
+import { readFileSync } from 'node:fs';
+
+// Shares the theme choice with the account pages (see the file); inlined before Starlight's
+// theme script. The file's leading comment stays in the repo, not in every page.
+const themeSync = readFileSync(new URL('./src/scripts/theme-sync.js', import.meta.url), 'utf8')
+	.replace(/^(\/\/.*\n)+/, '')
+	.trim();
 
 export default defineConfig({
 	site: `https://${process.env.PUBLIC_DOMAIN || 'aisathome.org'}`,
@@ -16,6 +23,7 @@ export default defineConfig({
 				'Open AI models on volunteers’ GPUs, in the spirit of BOINC. Non-commercial and open source.',
 			logo: { src: './src/assets/logo.svg', alt: 'AIs@home' },
 			favicon: '/favicon.svg',
+			head: [{ tag: 'script', content: themeSync }],
 			// global.css wires Tailwind 4 and Starlight to one theme (fonts, accent, grays).
 			customCss: ['./src/styles/global.css', './src/styles/brand.css'],
 			components: {
@@ -28,6 +36,7 @@ export default defineConfig({
 			],
 			editLink: { baseUrl: 'https://github.com/aisathome/aisathome/edit/main/site/' },
 			sidebar: [
+				{ label: 'Docs overview', slug: 'docs' },
 				{
 					label: 'Use it',
 					items: [
@@ -40,7 +49,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'node' },
 						{ label: 'Install on Linux', slug: 'node/install' },
-						{ label: 'Presets', slug: 'node/presets' },
+						{ label: 'Model settings', slug: 'node/presets' },
 						{ label: 'Day to day', slug: 'node/operate' },
 						{ label: 'About the binaries', slug: 'node/binaries' },
 						{ label: 'Credit', slug: 'node/credit' },

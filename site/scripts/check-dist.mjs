@@ -1,9 +1,11 @@
 // Checks the built site (dist/) in CI: internal links resolve, nothing loads from a third
-// party, and the live network strip and the leaderboard start hidden (they show themselves
-// only with real data).
+// party, the live network strip and the leaderboard start hidden (they show themselves
+// only with real data), and every page shares the theme choice with the account pages (the
+// theme script runs before Starlight's).
 // SPDX-License-Identifier: Apache-2.0
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const dist = new URL('../dist/', import.meta.url).pathname;
 const files = (dir) => readdirSync(dir).flatMap((f) => {
@@ -17,6 +19,8 @@ const css = all.filter((f) => f.endsWith('.css'));
 const dynamic = ['/account', '/v1/', '/__login', '/stats/'];
 const ownHosts = /^https:\/\/([a-z.]*\.)?aisathome\.org(\/|$)/;
 const errors = [];
+// As astro.config.mjs inlines it.
+const themeSync = readFileSync(new URL('../src/scripts/theme-sync.js', import.meta.url), 'utf8').replace(/^(\/\/.*\n)+/, '').trim();
 
 for (const f of html) {
 	const page = relative(dist, f);
@@ -28,6 +32,10 @@ for (const f of html) {
 			errors.push(`${page}: broken link ${url}`);
 		}
 	}
+	const sync = text.indexOf(`<script>${themeSync}</script>`);
+	const starlight = text.indexOf('window.StarlightThemeProvider');
+	if (sync < 0 || !themeSync.includes('aisathome_theme')) errors.push(`${page}: no theme script (src/scripts/theme-sync.js)`);
+	else if (starlight >= 0 && starlight < sync) errors.push(`${page}: the theme script runs after Starlight's`);
 	for (const [, url] of text.matchAll(/<(?:script|link|img|iframe|source)\b[^>]*\s(?:src|href)="(https?:\/\/[^"]+)"/g)) {
 		const isCanonical = /rel="(canonical|alternate|sitemap)"/.test(text.slice(text.lastIndexOf('<', text.indexOf(url)), text.indexOf(url)));
 		if (!ownHosts.test(url) && !isCanonical) errors.push(`${page}: loads from a third party: ${url}`);
@@ -55,3 +63,4 @@ if (errors.length) {
 	process.exit(1);
 }
 console.log(`site check ok: ${html.length} pages, ${css.length} stylesheets`);
+console.log(`theme script CSP hash: 'sha256-${createHash('sha256').update(themeSync).digest('base64')}'`);

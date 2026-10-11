@@ -1,15 +1,11 @@
 ---
 // Top-bar navigation next to Starlight's social icons (Starlight has no top nav of its own).
+// The items are in src/data/nav.json, which the gateway's account pages follow too
+// (gateway/page.go headerNav; e2e/header_test.go checks they match).
 import Default from '@astrojs/starlight/components/SocialIcons.astro';
-import { accountURL, chatURL } from '../data/site';
-const links = [
-	{ label: 'Chat', href: chatURL },
-	{ label: 'Account', href: accountURL },
-	{ label: 'Use', href: '/use/chat/' },
-	{ label: 'Run a node', href: '/node/' },
-	{ label: 'Network', href: '/network/' },
-	{ label: 'About', href: '/about/' },
-];
+import nav from '../data/nav.json';
+import { domain } from '../data/site';
+const links = nav.map((l) => ({ label: l.label, href: l.href.replace('{domain}', domain) }));
 ---
 <nav class="top-links" aria-label="Main">
 	{links.map((l) => <a href={l.href}>{l.label}</a>)}

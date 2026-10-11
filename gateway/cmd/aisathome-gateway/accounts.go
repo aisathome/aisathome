@@ -21,6 +21,8 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   limit <n>            let at most n accounts be active; waiting accounts get in automatically
   close | open         stop or allow new sign-ups (existing accounts keep working)
   add <id>             create an active account (e.g. gh:12345) without a sign-in, for tests
+  signup <id>          sign up like a first sign-in (test:<name> ids only): active if there is
+                       room, otherwise on the waitlist; for end-to-end tests of the queue
   activate <id>        let one account in now (also beyond the limit)
   waitlist <id>        move an account back to the waitlist
   ban <id>             close an account and delete its keys and node tokens (it cannot sign
@@ -125,6 +127,19 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			f.Accounts = append(f.Accounts, &gateway.Account{ID: a[1], Status: gateway.StatusActive, Created: now, Activated: &now})
 			return nil
 		})
+	case "signup":
+		if err := need(1); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(a[1], "test:") {
+			return fmt.Errorf("signup takes test:<name> ids only; real accounts sign in themselves")
+		}
+		acct, err := store.SignIn(a[1], time.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, acct.Status)
+		return nil
 	case "nodes":
 		if len(a) == 1 || a[1] == "list" {
 			return listNodes(out, store.Snapshot())

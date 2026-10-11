@@ -50,8 +50,8 @@ printf '#!/bin/sh\necho "0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6"\n' > "$tmp
 printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 1 1 100000000 1%% /"\n' > "$tmp/fake/df"
 chmod +x "$tmp/fake/"*
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
-  out="$(PATH="$tmp/fake:$PATH" "$d/install.sh" --dry-run --preset balanced --node-id ci 2>&1)" || fail "dry run: $out"
-  for want in "llama-server: prebuilt, llama.cpp v0.5.0" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "preset: balanced"; do
+  out="$(PATH="$tmp/fake:$PATH" "$d/install.sh" --dry-run --node-id ci 2>&1)" || fail "dry run: $out"
+  for want in "llama-server: prebuilt, llama.cpp v0.5.0" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "preset: long-context"; do
     [[ "$out" == *"$want"* ]] || fail "dry run lacks '$want': $out"
   done
 fi

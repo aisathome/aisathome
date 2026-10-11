@@ -40,6 +40,9 @@ and sends the answer back the same way.
 - Your IP address is used in memory for rate limits and to limit nodes per address; we do
   not log it.
 
+**Cookies.** A sign-in cookie (only once you sign in), and `aisathome_theme`, which remembers
+whether you chose light or dark. No tracking or advertising cookies.
+
 **What we never do.** We don't sell data, don't show ads, don't train models on your
 chats, and run no analytics or tracking.
 

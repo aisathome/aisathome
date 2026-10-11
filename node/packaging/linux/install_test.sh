@@ -55,28 +55,28 @@ check_preset() {
   has "$name" "--host 127.0.0.1 "
 }
 
-# Defaults: no preset given means balanced.
+# Defaults: no preset given means the network's one setting, long-context.
 run -- --dry-run
-ok default; has default "preset: balanced"; has default "-np 2 --kv-unified-per-slot 32768 "
-has default "-ctk q8_0 -ctv q8_0 "
+ok default; has default "preset: long-context"; has default "-np 1 --kv-unified-per-slot 131072 "
+has default "-ctk q4_0 -ctv q4_0 "
 
-check_preset balanced 2 32768 q8_0
-check_preset low-vram 2 32768 q4_0
 check_preset long-context 1 131072 q4_0
+for gone in balanced low-vram long-context-dual; do
+  run -- --dry-run --preset "$gone"
+  usage_err "removed preset $gone"; has "removed preset $gone" "unknown preset '$gone'"
+done
 
 # PRESET from the environment, and --preset winning over it.
 run PRESET=long-context -- --dry-run
 ok "PRESET env"; has "PRESET env" "-np 1 --kv-unified-per-slot 131072 "
-run PRESET=long-context -- --dry-run --preset low-vram
-ok "--preset over PRESET"; has "--preset over PRESET" "preset: low-vram"
+run PRESET=turbo -- --dry-run --preset long-context
+ok "--preset over PRESET"; has "--preset over PRESET" "preset: long-context"
 
 # Explicit variables override a preset, one at a time.
 run SLOTS=3 -- --dry-run --preset long-context
 ok "SLOTS override"; has "SLOTS override" "-np 3 --kv-unified-per-slot 131072 "
-run CTX_PER_SLOT=65536 -- --dry-run --preset balanced
-ok "CTX override"; has "CTX override" "-np 2 --kv-unified-per-slot 65536 "
-run -- --dry-run --preset long-context-dual
-usage_err "removed preset"; has "removed preset" "unknown preset 'long-context-dual'"
+run CTX_PER_SLOT=65536 -- --dry-run
+ok "CTX override"; has "CTX override" "-np 1 --kv-unified-per-slot 65536 "
 run KV_TYPE=q8_0 -- --dry-run --preset long-context
 ok "KV override"; has "KV override" "-ctk q8_0 -ctv q8_0 "; lacks "KV override" "q4_0"
 run REASONING_BUDGET=-1 CACHE_RAM_MIB=0 MODEL_ALIAS=my-model -- --dry-run
@@ -103,7 +103,7 @@ ok "UI default"; has "UI default" "local UI: 7381"; has "UI default" "Environmen
 has "UI default" "Environment=AISATHOME_UI_PASSWORD_FILE=/etc/aisathome-node/ui-password"
 has "UI default" "Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json"
 has "UI default" "Environment=AISATHOME_RESTART_TRIGGER=/var/lib/aisathome-node/restart-engine"
-has "UI default" 'Environment="AISATHOME_PRESET=balanced: 2 x 32768 tokens, KV q8_0"'
+has "UI default" 'Environment="AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"'
 has "UI default" "DeviceAllow=char-nvidia-frontend rw"
 run UI_PORT=8123 SLOTS=1 -- --dry-run --preset long-context
 ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"
@@ -134,7 +134,7 @@ if [[ -n "$arch" ]]; then
 
   run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release latest
   ok "release latest"; has "release latest" "$asset from file://$rel/latest/download"
-  has "release latest" "(verified)"; has "release latest" "-np 2 --kv-unified-per-slot 32768 "
+  has "release latest" "(verified)"; has "release latest" "-np 1 --kv-unified-per-slot 131072 "
   run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.3 --preset long-context
   ok "release tag"; has "release tag" "file://$rel/download/v1.2.3"; has "release tag" "-np 1 "
   run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.4
@@ -163,7 +163,7 @@ ok "model plan"; has "model plan" "model: https://huggingface.co/unsloth/Qwen3.8
 has "model plan" "sha256 322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
 has "model plan" "disk: 102.4 GB free"; lacks "model plan" "GPU 0"
 has "model plan" '"node_id": "test-node"'; has "model plan" '"gateway_url": "wss://api.aisathome.org/v1/node/connect"'
-has "model plan" '"name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 2, "ctx": 32768'
+has "model plan" '"name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 1, "ctx": 131072'
 # Sizes print with a decimal point in any locale (a comma locale gave "16,5 GB").
 comma_locale="$(locale -a 2>/dev/null | grep -m1 -iE '^(nb_NO|de_DE|fr_FR)\.utf-?8$' || true)"
 if [[ -n "$comma_locale" ]]; then
@@ -263,11 +263,11 @@ min_driver_cc12=570.26
 INFO
 repo_installer="$installer" installer="$b/install.sh"
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
-  run -- --dry-run --preset balanced --node-id test-node
+  run -- --dry-run --node-id test-node
   ok "bundle"; has "bundle" "llama-server: prebuilt, llama.cpp v0.5.0 (7fe450e19305), CUDA 12.8"
   has "bundle" "GPU 0: NVIDIA GeForce RTX 3090, driver 535.183.01, compute capability 8.6: supported"
   has "bundle" "model: https://huggingface.co/unsloth/"; has "bundle" '"node_id": "test-node"'
-  has "bundle" "-np 2 --kv-unified-per-slot 32768 "
+  has "bundle" "-np 1 --kv-unified-per-slot 131072 "
   # gpu "lines" expect: ok or the error text.
   check_gpus() {
     run FAKE_GPUS="$1" -- --dry-run --node-id t
@@ -301,7 +301,7 @@ installer="$repo_installer"
 
 # Without --dry-run and without root, nothing is installed.
 if [[ $EUID -ne 0 ]]; then
-  run -- --preset balanced
+  run --
   [[ $code -ne 0 ]] || fail "non-root install: exit 0"
   has "non-root install" "run with sudo"
 fi

@@ -88,7 +88,9 @@ helper that creates them is not installed: `sudo apt install nvidia-modprobe`, t
 the services again.
 
 **`llama-server did not become healthy`.** Check `journalctl -u aisathome-llama`. Out of
-memory usually means another program uses the GPU; try `--preset low-vram`.
+memory usually means another program uses the GPU: close it, or on a desktop whose display
+runs on the same card, a smaller context may fit (`CTX_PER_SLOT=65536 sudo -E ./install.sh`);
+the node then gets only requests that fit it.
 
 **The node does not connect.** Check the `gateway_url` in `/etc/aisathome-node/node.json`
 and that the machine can reach `api.aisathome.org` on port 443. A rejected token shows up

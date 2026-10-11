@@ -1,32 +1,30 @@
 ---
-title: Presets
-description: Pick slots, context length and KV cache type for your GPU.
+title: Model settings
+description: "The one setting every AIs@home node uses: 1 request at a time, 128k context."
 ---
 
-`--preset <name>` (or `PRESET=<name>`) picks the slots, the context per slot and the KV
-cache type. Every slot has its own context (`--kv-unified-per-slot`), so one long request
-cannot starve another.
+One setting for the whole network: **1 request at a time with a 128k context**, KV cache
+`q4_0`. Every node takes the same requests, and the model check compares against one
+reference. The installer uses it without asking; there is nothing to choose.
 
-| Preset | Slots × context | KV cache | Measured on an RTX 4090 with Qwen3.8 27B `UD-Q4_K_M` |
-|---|---|---|---|
-| `balanced` (default) | 2 × 32k | q8_0 | 1 × 64k q8: 17,858 MiB VRAM; mean KLD against f16 0.0020; no needle loss up to 60k |
-| `low-vram` | 2 × 32k | q4_0 | 1 × 64k q4: 16,834 MiB (1.0 GB less than q8); no needle loss up to 60k; mean KLD 0.0044 (2.16× q8) |
-| `long-context` | 1 × 128k | q4_0 | 18,306 MiB; hard needles at 120k 118/120 (q8: 119/120 at 20,354 MiB); first 120k prompt 82 s; decode 46.6 tok/s short, 32.5 at 120k |
+| Setting | Measured on an RTX 4090 with Qwen3.8 27B `UD-Q4_K_M` |
+|---|---|
+| 1 × 128k context, KV `q4_0` | 18,306 MiB VRAM; hard needles at 120k: 118/120 (q8: 119/120 at 20,354 MiB); first 120k prompt 82 s; decode 46.6 tokens/s short, 32.5 at 120k |
 
 Source: `bench/kvquant/RESULTS.md` in the research repo (llama.cpp v0.5.0, 2026-10-09).
 
-Tested installs: an RTX 4090 (the owner's node) and a fresh RTX 3090 VM (Ubuntu 22.04,
-driver 535, 2026-10-10): `balanced` used 17,972 MiB and decoded about 42 tokens/s for a
-single 400-token answer measured through the gateway (one run).
-Caveats:
-- The 2 × 32k presets were not measured as such: the numbers are for one 64k slot, which
-  has the same total context.
-- The 128k rows were measured on a headless card. A desktop on the same GPU needs extra
-  VRAM.
-- q8 is the default because q4's mean KLD is 2.16× q8's, just over the 2× rule set before
-  the benchmark. q4 showed no task loss, including at 120k.
+What this means:
+- **One request at a time per GPU.** A long prompt keeps the GPU busy before the first word
+  (about 80 seconds at 120k); short chats are quick. Daily token limits keep very long
+  requests rare.
+- **`q4_0` KV cache:** its mean divergence from full precision is about twice that of `q8_0`
+  (KLD 0.0044 vs 0.0020), with no task loss measured, including at 120k. It is what lets
+  128k fit in 24 GB.
+- **A desktop on the same GPU** needs extra memory; the numbers above are for a card
+  without a display. If the model does not fit, see
+  [Troubleshooting](/node/operate/#troubleshooting).
 
-Explicit variables override the preset: `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE` (`q8_0`, `q4_0`
-or `f16`), `REASONING_BUDGET` (`-1` = unlimited), `CACHE_RAM_MIB` and `MODEL_ALIAS`, e.g.
-`KV_TYPE=q8_0 sudo -E ./install.sh --preset long-context ...`.
-
+For testing only, `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE`, `REASONING_BUDGET` (`-1` =
+unlimited), `CACHE_RAM_MIB` and `MODEL_ALIAS` override the setting, e.g.
+`CTX_PER_SLOT=65536 sudo -E ./install.sh`. A node with a smaller context gets only requests
+that fit it.

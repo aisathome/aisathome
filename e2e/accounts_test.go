@@ -528,3 +528,23 @@ func TestForwardAuthNavigationVersusFetch(t *testing.T) {
 		t.Fatalf("fetch without Sec-Fetch headers: %d, want 401", r.StatusCode)
 	}
 }
+
+// A place on the waitlist matches the order accounts are let in: accounts the operator
+// holds back are not counted ahead of others, and see that they are on hold.
+func TestWaitlistPlaceSkipsHeldAccounts(t *testing.T) {
+	a := newAcctRig(t, 1, nil)
+	a.signIn(t, 1) // active
+	s2, _ := a.signIn(t, 2)
+	s3, _ := a.signIn(t, 3)
+	a.store.Update(func(f *gateway.AccountsFile) error { f.Find("gh:2").Held = true; return nil })
+	// gh:3 is next to be let in, so place 1 (once the gateway has reread the file).
+	waitFor(t, func() bool { _, p := a.get(t, "/account", s3); return strings.Contains(p, "Place <strong>1</strong>") })
+	if _, page := a.get(t, "/account", s2); !strings.Contains(page, "on hold") || strings.Contains(page, "Place <strong>") {
+		t.Fatalf("a held account should see that it is on hold: %s", page)
+	}
+	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxActive = 2; return nil })
+	waitFor(t, func() bool { r, _ := a.get(t, "/account/auth", s3); return r.StatusCode == http.StatusOK })
+	if r, _ := a.get(t, "/account/auth", s2); r.StatusCode == http.StatusOK {
+		t.Fatal("a held account was let in")
+	}
+}

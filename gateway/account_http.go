@@ -54,6 +54,7 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/nodes/pref", smallForm(g.handleNodePref))
 	mux.HandleFunc("POST /account/username", smallForm(g.handleUsername))
 	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
+	mux.HandleFunc("POST /account/theme", smallForm(g.handleTheme))
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
 	mux.HandleFunc("GET /account/assets/{name}", handleAsset)
 }
@@ -190,7 +191,7 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		f.nonce, f.verifier = randomToken(), randomToken()
 		target = g.googleAuthURL(f)
 	default:
-		g.accountPage(w, http.StatusNotFound, pageData{Error: "There is no such way to sign in."})
+		g.accountPage(w, r, http.StatusNotFound, pageData{Error: "There is no such way to sign in."})
 		return
 	}
 	g.setCookie(w, oauthCookie, f.String(), "/account", 10*time.Minute)
@@ -202,13 +203,13 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) handleCallback(w http.ResponseWriter, r *http.Request) {
 	f, ok := g.takeFlow(w, r, "github")
 	if !ok {
-		g.accountPage(w, http.StatusBadRequest, pageData{Error: "The sign-in expired or came from elsewhere. Please try again."})
+		g.accountPage(w, r, http.StatusBadRequest, pageData{Error: "The sign-in expired or came from elsewhere. Please try again."})
 		return
 	}
 	id, err := g.githubID(r, r.URL.Query().Get("code"))
 	if err != nil {
 		g.log.Warn("github sign-in failed", "err", err)
-		g.accountPage(w, http.StatusBadGateway, pageData{Error: "GitHub sign-in failed. Please try again."})
+		g.accountPage(w, r, http.StatusBadGateway, pageData{Error: "GitHub sign-in failed. Please try again."})
 		return
 	}
 	g.finishSignIn(w, r, id, f.next)
@@ -223,11 +224,11 @@ func (g *Gateway) finishSignIn(w http.ResponseWriter, r *http.Request, id, next 
 // signedIn starts a session for a found or created account (err from SignIn or SignInEmail).
 func (g *Gateway) signedIn(w http.ResponseWriter, r *http.Request, a Account, err error, next string) {
 	if errors.Is(err, errSignupClosed) {
-		g.accountPage(w, http.StatusForbidden, pageData{Error: "Sign-up is closed for now. Please try again later."})
+		g.accountPage(w, r, http.StatusForbidden, pageData{Error: "Sign-up is closed for now. Please try again later."})
 		return
 	} else if err != nil {
 		g.log.Error("account sign-in", "err", err)
-		g.accountPage(w, http.StatusInternalServerError, pageData{Error: "Something went wrong. Please try again."})
+		g.accountPage(w, r, http.StatusInternalServerError, pageData{Error: "Something went wrong. Please try again."})
 		return
 	}
 	g.setCookie(w, sessionCookie, signSession(g.acfg.SessionSecret, a.ID, time.Now().Add(sessionTTL)), "/", sessionTTL)
@@ -316,10 +317,10 @@ func (g *Gateway) handleForwardAuth(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) handleAccount(w http.ResponseWriter, r *http.Request) {
 	id, ok := g.session(r)
 	if !ok {
-		g.accountPage(w, http.StatusOK, pageData{Next: r.URL.Query().Get("next") == "chat"})
+		g.accountPage(w, r, http.StatusOK, pageData{Next: r.URL.Query().Get("next") == "chat"})
 		return
 	}
-	g.accountPage(w, http.StatusOK, g.accountData(id))
+	g.accountPage(w, r, http.StatusOK, g.accountData(id))
 }
 
 func (g *Gateway) accountData(id string) pageData {
@@ -328,7 +329,7 @@ func (g *Gateway) accountData(id string) pageData {
 		return pageData{}
 	}
 	used := g.budget.used1("acct:"+id, time.Now())
-	d := pageData{SignedIn: true, Account: a, Position: pos, ChatURL: g.acfg.ChatURL, API: g.acfg.PublicURL,
+	d := pageData{SignedIn: true, Account: a, Position: pos, API: g.acfg.PublicURL,
 		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq),
 		NodeOnce: g.nodeFormToken(id, a.NodeSeq), MaxNodes: nodeTokensPerAccount}
 	now := time.Now()
@@ -368,12 +369,12 @@ func (g *Gateway) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		d.Error = err.Error()
-		g.accountPage(w, http.StatusBadRequest, d)
+		g.accountPage(w, r, http.StatusBadRequest, d)
 		return
 	}
 	d = g.accountData(id)
 	d.NewKey = key
-	g.accountPage(w, http.StatusOK, d) // shown once: rendered here, never stored
+	g.accountPage(w, r, http.StatusOK, d) // shown once: rendered here, never stored
 }
 
 func (g *Gateway) handleKeyRevoke(w http.ResponseWriter, r *http.Request) {
@@ -382,7 +383,7 @@ func (g *Gateway) handleKeyRevoke(w http.ResponseWriter, r *http.Request) {
 		if err := g.accounts.RevokeKey(id, r.FormValue("prefix")); err != nil {
 			d := g.accountData(id)
 			d.Error = err.Error()
-			g.accountPage(w, http.StatusBadRequest, d)
+			g.accountPage(w, r, http.StatusBadRequest, d)
 			return
 		}
 	}
@@ -406,12 +407,12 @@ func (g *Gateway) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 	d := g.accountData(id)
 	if err != nil {
 		d.Error = err.Error()
-		g.accountPage(w, http.StatusBadRequest, d)
+		g.accountPage(w, r, http.StatusBadRequest, d)
 		return
 	}
 	g.log.Info("node token created", "node", nodeID, "operator", g.pseudonym(id))
 	d.NewNode, d.NewNodeID = token, nodeID
-	g.accountPage(w, http.StatusOK, d) // shown once: rendered here, never stored
+	g.accountPage(w, r, http.StatusOK, d) // shown once: rendered here, never stored
 }
 
 func (g *Gateway) handleNodeRevoke(w http.ResponseWriter, r *http.Request) {
@@ -420,7 +421,7 @@ func (g *Gateway) handleNodeRevoke(w http.ResponseWriter, r *http.Request) {
 		if err := g.accounts.RevokeNode(id, r.FormValue("id")); err != nil {
 			d := g.accountData(id)
 			d.Error = err.Error()
-			g.accountPage(w, http.StatusBadRequest, d)
+			g.accountPage(w, r, http.StatusBadRequest, d)
 			return
 		}
 		g.sweepNodes() // the node goes now, not at the next sweep
@@ -434,7 +435,7 @@ func (g *Gateway) handleNodePref(w http.ResponseWriter, r *http.Request) {
 		if err := g.accounts.SetNodePref(id, r.FormValue("pref")); err != nil {
 			d := g.accountData(id)
 			d.Error = err.Error()
-			g.accountPage(w, http.StatusBadRequest, d)
+			g.accountPage(w, r, http.StatusBadRequest, d)
 			return
 		}
 	}
@@ -447,7 +448,7 @@ func (g *Gateway) handleUsername(w http.ResponseWriter, r *http.Request) {
 		if err := g.accounts.SetUsername(id, r.FormValue("username")); err != nil {
 			d := g.accountData(id)
 			d.Error, d.TriedName = err.Error(), r.FormValue("username")
-			g.accountPage(w, http.StatusBadRequest, d)
+			g.accountPage(w, r, http.StatusBadRequest, d)
 			return
 		}
 	}
@@ -464,6 +465,7 @@ func (g *Gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- page
 
 type pageData struct {
+	shell
 	GitHub   bool // sign-in providers on offer
 	Google   bool
 	Email    bool
@@ -474,7 +476,6 @@ type pageData struct {
 	Position int
 	NewKey   string
 	Error    string
-	ChatURL  string
 	API      string
 	Used     int64
 	Budget   int
@@ -526,7 +527,7 @@ func (g *Gateway) nodeFormToken(id string, seq int) string {
 	return hex.EncodeToString(m.Sum(nil)[:12])
 }
 
-func (g *Gateway) accountPage(w http.ResponseWriter, status int, d pageData) {
+func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int, d pageData) {
 	d.GitHub, d.Google, d.Email = g.acfg.githubOn(), g.acfg.googleOn(), g.email != nil
 	var ways []string
 	for _, w := range []struct {
@@ -540,7 +541,10 @@ func (g *Gateway) accountPage(w http.ResponseWriter, status int, d pageData) {
 	if n := len(ways); n > 1 {
 		d.Separate = strings.Join(ways[:n-1], ", ") + " and " + ways[n-1]
 	}
-	d.ChatURL = g.acfg.ChatURL // the header links to the chat on every page
+	d.shell = shell{Title: "Your account", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account"}
+	if d.Next {
+		d.Back = "/account?next=chat"
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
 	w.Header().Set("Content-Security-Policy", pageCSP+"; form-action 'self' https://github.com; frame-ancestors 'none'")
@@ -553,7 +557,7 @@ func (g *Gateway) accountPage(w http.ResponseWriter, status int, d pageData) {
 
 var accountTmpl = newPage("account", template.FuncMap{
 	"day": func(t time.Time) string { return t.Format("2006-01-02") },
-}, `{{template "head" "Your account"}}{{template "top" .}}
+}, `{{template "head" .}}{{template "top" .}}
 {{if .Error}}<div class="card err" role="alert">{{.Error}}</div>{{end}}
 {{if not .SignedIn}}
 <h1>Sign in</h1>
@@ -562,9 +566,9 @@ account only to tell accounts apart. We keep only its user id ({{if .GitHub}}Git
 id{{end}}{{if and .GitHub .Google}}, {{end}}{{if .Google}}Google's account identifier{{end}}): no email, no
 name, no password.</p>
 <div class="signin">{{if .GitHub}}<a class="btn-gh" href="/account/login?provider=github{{if .Next}}&amp;next=chat{{end}}">`+githubMark+`<span>Sign in with GitHub</span></a>{{end}}
-{{if .Google}}<a class="btn-google" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}"><picture>
+{{if .Google}}<a class="btn-google" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}">{{if .Theme}}<img src="{{asset (printf "google-signin-%s.svg" .Theme)}}" alt="Sign in with Google" width="180" height="40">{{else}}<picture>
 <source media="(prefers-color-scheme: dark)" srcset="{{asset "google-signin-dark.svg"}}">
-<img src="{{asset "google-signin-light.svg"}}" alt="Sign in with Google" width="180" height="40"></picture></a>{{end}}</div>{{end}}
+<img src="{{asset "google-signin-light.svg"}}" alt="Sign in with Google" width="180" height="40"></picture>{{end}}</a>{{end}}</div>{{end}}
 {{if .Email}}<form class="form" method="post" action="/account/email"><div class="field"><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
 send you a one-time code.</label>
 <div class="row"><input id="email" type="email" name="email" required autocomplete="email" maxlength="254">
@@ -575,8 +579,10 @@ send you a one-time code.</label>
 waitlist.</p></div>
 {{else if eq .Account.Status "waitlisted"}}
 <h1>You are on the waitlist</h1>
-<div class="card"><p>Place <strong>{{.Position}}</strong>. Accounts are let in in order as room
+{{if .Position}}<div class="card"><p>Place <strong>{{.Position}}</strong>. Accounts are let in in order as room
 appears; come back to this page to check.</p></div>
+{{else}}<div class="card"><p>Your account is on hold: the maintainer lets it in by hand. You can write to
+<a href="mailto:contact@aisathome.org">contact@aisathome.org</a>.</p></div>{{end}}
 {{else if eq .Account.Status "banned"}}
 <h1>Account closed</h1>
 <div class="card"><p>This account can no longer use AIs@home.</p></div>

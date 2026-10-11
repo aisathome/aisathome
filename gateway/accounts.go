@@ -226,10 +226,12 @@ func (f *AccountsFile) find(id string) *Account {
 }
 
 // position is a waiting account's place in the queue (1 = next), or 0.
+// Held accounts (put back by the operator) have no place and are not counted, because
+// promote skips them too: a place must match the order accounts are let in.
 func (f *AccountsFile) position(id string) int {
 	var waiting []*Account
 	for _, a := range f.Accounts {
-		if a.Status == StatusWaitlisted {
+		if a.Status == StatusWaitlisted && !a.Held {
 			waiting = append(waiting, a)
 		}
 	}

@@ -16,7 +16,7 @@
 # --gateway-url and the preset. The bundle checks the NVIDIA driver and GPU first.
 # --node-release downloads aisathome-node for this machine's architecture from a GitHub
 # release of aisathome/aisathome and checks it against that release's SHA256SUMS.
-# Presets: balanced (default), low-vram, long-context (see README.md).
+# Preset: long-context, the network's one setting (see README.md).
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
 # without installing (no root needed). The node token is read from stdin (never from argv):
 # paste it when asked, or: cat token.txt | sudo ./install.sh ...
@@ -38,7 +38,7 @@ die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
 node_id="" gateway_url="" download_only=""
-preset="${PRESET:-balanced}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
+preset="${PRESET:-long-context}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
@@ -56,21 +56,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Presets set slots, context per slot and KV cache type; explicit environment variables
-# (SLOTS, CTX_PER_SLOT, KV_TYPE) override them. Numbers: bench/kvquant/RESULTS.md in the
+# One setting for the whole network (owner, 2026-10-11): 1 slot x 128k context, q4_0 KV cache,
+# so every node takes the same requests and the model check has one reference. Explicit
+# environment variables (SLOTS, CTX_PER_SLOT, KV_TYPE) override it, for testing only. Numbers: bench/kvquant/RESULTS.md in the
 # research repo (RTX 4090, Qwen3.8 27B UD-Q4_K_M, 2026-10-09). Per-slot context means one
 # long request cannot starve the others (a single shared pool can: "Context size has been
 # exceeded" on 2026-10-08).
 case "$preset" in
-  # q8 KV: mean KLD 0.0020 vs f16, no needle loss to 60k; 1 x 64k q8 used 17,858 MiB.
-  balanced) p_slots=2 p_ctx=32768 p_kv=q8_0 ;;
-  # q4 KV: 1.0 GB less than q8 at 64k (16,834 MiB), no needle loss, mean KLD 2x q8.
-  low-vram) p_slots=2 p_ctx=32768 p_kv=q4_0 ;;
   # 1 x 128k q4: 18,306 MiB, hard needles at 120k 118/120 (q8: 119/120, 20,354 MiB).
   long-context) p_slots=1 p_ctx=131072 p_kv=q4_0 ;;
-  # 2 x 128k q4: 21,272 MiB. A ~100k prefill nearly stalls the other slot's decode
-  # (3.9 tok/s for about a minute): head-of-line blocking.
-  *) die "unknown preset '$preset'; choose balanced, low-vram or long-context" 2 ;;
+  *) die "unknown preset '$preset'; the network uses one setting: long-context (1 x 128k, KV q4_0)" 2 ;;
 esac
 slots="${SLOTS:-$p_slots}" ctx_per_slot="${CTX_PER_SLOT:-$p_ctx}" kv_type="${KV_TYPE:-$p_kv}"
 # Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
