@@ -76,9 +76,9 @@ Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. To
   service as untrusted and keep secrets out of what the agent can read.
 - **Who serves you.** Chats and plain API requests may be answered by any volunteer's node;
   anything that looks like personal data goes only to the maintainer's nodes. Requests with
-  tools (agents) go to volunteers' nodes only if you ticked **Let volunteers run my agents**
-  when creating the key; without it, only to your own node or the maintainer's, which are
-  often offline.
+  tools (agents) go to volunteers' nodes when the key allows it: **Run requests through
+  nodes operated by other people** is ticked by default when you create a key. If you untick
+  it, agent requests go only to your own node or the maintainer's, which are often offline.
 - **Run agents carefully, with any provider.** A model can propose a harmful command, and a
   malicious node could alter one; volunteers' answers pass simple checks but are not
   verified yet. In opencode, keep approval of commands on, and **run it isolated**: in a

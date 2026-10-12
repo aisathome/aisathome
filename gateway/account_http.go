@@ -596,15 +596,15 @@ appears; come back to this page to check.</p></div>
 <code class="key">{{.NewKey}}</code>
 <p class="mut">Use it with any OpenAI-compatible client at <code>{{.API}}/v1</code> (Authorization: Bearer).</p></div>{{end}}
 <div class="card"><h2>API keys</h2>
-{{if .Account.Keys}}<div class="table-wrap"><table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code>{{if .Agents}} <span class="mut small">volunteers run agents</span>{{end}}</td><td class="mut">{{day .Created}}</td>
+{{if .Account.Keys}}<div class="table-wrap"><table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code>{{if not .Agents}} <span class="mut small">tools: your own nodes only</span>{{end}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/keys/revoke"><input type="hidden" name="prefix" value="{{.Prefix}}">
 <button class="btn ghost">Revoke</button></form></td></tr>{{end}}</table></div>{{else}}<p class="mut">No keys yet.</p>{{end}}
 {{if lt (len .Account.Keys) .MaxKeys}}<form class="form" method="post" action="/account/keys"><input type="hidden" name="once" value="{{.Once}}">
-<label class="check"><input type="checkbox" name="agents" value="1"><span><strong>Let volunteers run my agents</strong> (opencode
-and other requests with tools). Volunteers' answers are not checked yet, so run opencode with approval of commands.</span></label>
+<label class="check"><input type="checkbox" name="agents" value="1" checked><span><strong>Run requests through nodes operated by
+other people.</strong> If you untick this, you need your own node to use opencode or other tools.</span></label>
 <div class="actions"><button class="btn">Create a key</button></div></form>{{end}}
-<p class="mut small">Without this, agent requests only go to your own node or the maintainer's, which are often
-offline. See <a href="/use/api/">API and opencode</a>.</p></div>
+<p class="mut small">Volunteers' answers are not checked yet: run opencode with approval of commands, and isolated.
+See <a href="/use/api/">API and opencode</a>.</p></div>
 <div class="card"><h2>Username</h2>
 <form class="form" method="post" action="/account/username"><div class="field"><label for="username">Username</label>
 <div class="row"><input id="username" name="username" maxlength="32" autocomplete="nickname" value="{{if .TriedName}}{{.TriedName}}{{else}}{{.Account.Username}}{{end}}">

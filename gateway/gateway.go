@@ -1083,7 +1083,7 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				if !rt.consent {
 					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
 						"requests with tools go only to your own node or the maintainer's, and none serving %q is online. "+
-						"Create a key with \"Let volunteers run my agents\" on your account page, or try again later", want))
+						"Create a key with \"Run requests through nodes operated by other people\" ticked on your account page, or try again later", want))
 					return
 				}
 			}

@@ -26,10 +26,11 @@ const toolsBody = `{"model":"deep","messages":[{"role":"user","content":"weather
 // createKeyAgents creates a key with consent to volunteer nodes for agents.
 func (a *acctRig) createKeyAgents(t *testing.T, session string) string {
 	t.Helper()
-	_, page := a.get(t, "/account", session)
-	_, page = a.post(t, "/account/keys", session, "agents=1&once="+onceRe.FindStringSubmatch(page)[1])
-	if !strings.Contains(page, "volunteers run agents") {
-		t.Fatalf("consent not shown: %s", page)
+	const mark = "tools: your own nodes only"
+	_, before := a.get(t, "/account", session)
+	_, page := a.post(t, "/account/keys", session, "agents=1&once="+onceRe.FindStringSubmatch(before)[1])
+	if strings.Count(page, mark) != strings.Count(before, mark) {
+		t.Fatalf("a key with consent is marked as own nodes only: %s", page)
 	}
 	return keyRe.FindString(page)
 }
@@ -271,7 +272,7 @@ func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {
 	s1, _ := a.signIn(t, 1)
 	_, page := a.createKey(t, s1)
 	code, body := ask(t, a.rig, keyRe.FindString(page), toolsBody)
-	if code != http.StatusServiceUnavailable || !strings.Contains(body, "Let volunteers run my agents") {
+	if code != http.StatusServiceUnavailable || !strings.Contains(body, "Run requests through nodes operated by other people") {
 		t.Fatalf("%d %s", code, body)
 	}
 	if vol.Load() != 0 {
@@ -315,5 +316,19 @@ func TestNoProbationByDefault(t *testing.T) {
 	_, page := a.createKey(t, s1)
 	if code, _ := ask(t, a.rig, keyRe.FindString(page), toolsBody); code == 200 {
 		t.Fatal("an agent request without consent reached a volunteer node")
+	}
+}
+
+// The consent box is ticked by default (owner, 2026-10-12); a key made without it is marked.
+func TestConsentBoxTickedByDefault(t *testing.T) {
+	a := nodeRig(t, nil)
+	s, _ := a.signIn(t, 1)
+	_, page := a.get(t, "/account", s)
+	if !strings.Contains(page, `name="agents" value="1" checked`) {
+		t.Fatalf("the consent box is not ticked by default: %s", page)
+	}
+	_, page = a.createKey(t, s) // the helper posts the form without the box: unticked
+	if !strings.Contains(page, "tools: your own nodes only") {
+		t.Fatalf("a key without consent is not marked: %s", page)
 	}
 }
