@@ -127,7 +127,14 @@ func TestPausedNodeRefusesRequests(t *testing.T) {
 	if d := nextOf(t, c, protocol.TypeDone); d.ReqID != "r3" || hits.Load() != 2 {
 		t.Fatalf("resumed: done %+v, engine hits %d", d, hits.Load())
 	}
+	// The agent counts a request once its done message is sent, so the count may land a
+	// moment after the gateway (here the test) has it: wait briefly (flaky in CI, 2026-10-11).
+	deadline := time.Now().Add(2 * time.Second)
 	st := a.Status()
+	for st.Today.Requests != 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		st = a.Status()
+	}
 	if st.Today.Requests != 2 || st.Today.PromptTokens != 14 || st.Today.CompletionTokens != 4 || st.Total.Requests != 2 {
 		t.Fatalf("counters: %+v", st)
 	}
