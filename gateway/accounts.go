@@ -44,7 +44,8 @@ type AccountsConfig struct {
 	MaxKeys            int          `json:"max_keys,omitempty"`  // API keys per account; default 3
 	Admins             []string     `json:"admins,omitempty"`    // account ids ("gh:123", "google:<sub>", "em:<hex>") that are chat admins
 	// NodeProbation is how long after an account's first node token its nodes serve chats
-	// but no agents (requests with tools). A Go duration; default "168h" (7 days).
+	// but no agents (requests with tools). A Go duration; default "0" (none: the owner
+	// decided on 2026-10-12 that all nodes serve all requests from the start).
 	NodeProbation string `json:"node_probation,omitempty"`
 	probation     time.Duration
 
@@ -92,7 +93,7 @@ func (c *AccountsConfig) defaults() error {
 		c.MaxKeys = 3
 	}
 	if c.NodeProbation == "" {
-		c.NodeProbation = "168h"
+		c.NodeProbation = "0"
 	}
 	p, err := time.ParseDuration(c.NodeProbation)
 	if err != nil || p < 0 {

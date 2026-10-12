@@ -60,8 +60,7 @@ Do not:
 ## 5. Node operators
 
 Running a node is voluntary and unpaid. You create node tokens on your account page, and
-you keep control of your own machine and power bill. New nodes serve chats only for a
-probation period before they receive requests with tools. Credit is recognition, not money,
+you keep control of your own machine and power bill. Credit is recognition, not money,
 and we may correct or remove credit, for example after abuse. As an operator you agree to:
 
 - **Not log, store, copy or inspect prompts or answers** beyond what running the model

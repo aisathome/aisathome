@@ -90,8 +90,8 @@ func TestNodeTokensOnAccountPage(t *testing.T) {
 	defer cancel()
 	a.startTokenNode(ctx, token, mockEngine(t, false), 2, 32768)
 	a.waitNodes(t, 1)
-	if _, page := a.get(t, "/account", s); !strings.Contains(page, `badge probation`) {
-		t.Fatalf("a new node is in probation: %s", page)
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, `badge online`) || strings.Contains(page, "after a probation") || strings.Contains(page, "Probation (") {
+		t.Fatalf("a new node serves at once, with no probation (the default): %s", page)
 	}
 	// SIGHUP-style reloads of the config keep account nodes (their tokens are not in it).
 	a.g.Reload(gateway.Config{NodeTokens: map[string]gateway.NodeToken{"node-token": {Operator: "op1"}}})

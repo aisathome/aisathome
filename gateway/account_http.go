@@ -341,10 +341,12 @@ func (g *Gateway) accountData(id string) pageData {
 	if c := g.credit.account(id); c != nil {
 		d.CreditToday, d.CreditTotal, d.CreditRAC = fmtCredit(c.TodayAt(now)), fmtCredit(c.Total), fmtCredit(c.RAC(now))
 	}
-	if a.FirstNode != nil {
-		d.ProbationEnd = a.FirstNode.Add(g.acfg.probation)
+	if g.acfg.probation > 0 { // off by default (owner, 2026-10-12)
+		if a.FirstNode != nil {
+			d.ProbationEnd = a.FirstNode.Add(g.acfg.probation)
+		}
+		d.Probation = probationText(g.acfg.probation)
 	}
-	d.Probation = probationText(g.acfg.probation)
 	st := g.accounts.Settings()
 	d.NodesClosed = st.NodesClosed
 	d.NetworkFull = g.accounts.nodeTotal() >= st.MaxNodesOrDefault()
@@ -615,8 +617,8 @@ offline. See <a href="/use/api/">API and opencode</a>.</p></div>
 <p class="mut">Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p></div>{{end}}
 <div class="card"><h2>Your nodes</h2>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
-strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that, and
-only after a probation of {{.Probation}}.</p>
+strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that{{if .Probation}},
+and only after a probation of {{.Probation}}{{end}}.</p>
 {{if .CreditTotal}}<p>Credit: <strong>{{.CreditToday}}</strong> today, <strong>{{.CreditTotal}}</strong> in total
 (recent average {{.CreditRAC}} a day). <a href="/node/credit/">How credit works</a>.</p>{{end}}
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th class="num">Credit today</th><th class="num">Credit total</th><th>Created</th><th></th></tr>

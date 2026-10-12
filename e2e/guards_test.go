@@ -36,7 +36,7 @@ func (a *acctRig) createKeyAgents(t *testing.T, session string) string {
 
 func TestAgentConsentAndProbation(t *testing.T) {
 	var vol, home atomic.Int32
-	a := nodeRig(t, nil) // probation: the default 7 days
+	a := nodeRig(t, func(c *gateway.AccountsConfig) { c.NodeProbation = "168h" }) // optional; off by default
 	s2, _ := a.signIn(t, 2)
 	token, _, _ := a.addNode(t, s2, "")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -276,5 +276,44 @@ func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {
 	}
 	if vol.Load() != 0 {
 		t.Fatal("a tool request without consent reached the volunteer node")
+	}
+}
+
+// The usage log says whether a request carried tools (never which), so the operator can see
+// whether a front end turns ordinary chats into agent requests (Open WebUI did, 2026-10-12).
+func TestUsageLogMarksToolRequests(t *testing.T) {
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.Keys["agent-key"] = gateway.KeyInfo{User: "agent"}
+		c.NodeTokens["node-token"] = gateway.NodeToken{Operator: "op1", Trust: "trusted"} // may serve agents
+	}, mockEngine(t, false))
+	for _, body := range []string{chatBody, toolsBody} {
+		resp := r.do(t, "POST", "/v1/chat/completions", "agent-key", body)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	lines := waitUsage(t, r, 2)
+	if lines[0]["tools"] != nil || lines[1]["tools"] != true {
+		t.Fatalf("tools flag: chat %v, agent %v", lines[0]["tools"], lines[1]["tools"])
+	}
+}
+
+// Without node_probation (the default since 2026-10-12), a consenting key's agents may use a
+// volunteer node from its first minute; keys without consent still may not.
+func TestNoProbationByDefault(t *testing.T) {
+	var vol atomic.Int32
+	a := nodeRig(t, nil)
+	s2, _ := a.signIn(t, 2)
+	token, _, _ := a.addNode(t, s2, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.startTokenNode(ctx, token, countEngine(t, &vol), 4, 32768)
+	a.waitNodes(t, 1)
+	s1, _ := a.signIn(t, 1)
+	if code, b := ask(t, a.rig, a.createKeyAgents(t, s1), toolsBody); code != 200 || vol.Load() != 1 {
+		t.Fatalf("consenting agent on a brand-new node: %d %s (node hits %d)", code, b, vol.Load())
+	}
+	_, page := a.createKey(t, s1)
+	if code, _ := ask(t, a.rig, keyRe.FindString(page), toolsBody); code == 200 {
+		t.Fatal("an agent request without consent reached a volunteer node")
 	}
 }

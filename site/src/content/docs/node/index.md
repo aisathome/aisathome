@@ -46,9 +46,8 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
 
 ## How new nodes start
 
-- A new node serves **chats** from day one. Requests with tools (agents such as opencode)
-  reach it only after a **probation of 7 days**, and only from users who allow volunteer
-  nodes for agents.
+- A new node serves requests from day one. Requests with tools (agents such as opencode)
+  reach it only from users who allow volunteer nodes for agents.
 - Answers from volunteers' nodes pass simple safety checks. If an answer looks like it
   injects a dangerous command, it is stopped and the node is **held** until we have looked
   at it; the account page shows that.

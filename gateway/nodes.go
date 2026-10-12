@@ -432,7 +432,7 @@ func (g *Gateway) overShareLocked(now time.Time) func(op string) bool {
 func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAcct string, consent bool) *route {
 	rt := &route{want: want, trusted: acct.MinTrust == "trusted", operator: acct.OnlyOperator, consent: consent,
 		exclude: map[*nodeConn]bool{}}
-	if tools, _ := body["tools"].([]any); len(tools) > 0 {
+	if hasTools(body) {
 		rt.tools = true
 	}
 	if hasPII(body) {

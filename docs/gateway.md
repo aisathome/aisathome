@@ -92,7 +92,7 @@ Routing and protections:
 |---|---|
 | Personal data (email addresses, card numbers, IBANs, Norwegian ID numbers) | trusted nodes only (and the requester's own nodes) |
 | Requests with `tools` (agents) | trusted nodes and the requester's own, unless the API key was created with "allow volunteer nodes for agents" (`agents` on the key; `volunteer_agents` for config keys) **and** the node's account is past probation. The chat (Open WebUI) never carries consent |
-| Probation | `accounts.node_probation` (Go duration, default `168h`) from the account's first node token; revoking and recreating does not reset it |
+| Probation | `accounts.node_probation` (Go duration, default `0`: none) from the account's first node token; revoking and recreating does not reset it |
 | Share cap | no untrusted operator gets more than about a third of the requests placed in the last 10 minutes while other nodes are free (soft: if only its nodes are free, they serve) |
 | Per address | at most 3 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from Caddy) |
 | Own nodes | per account: "my own nodes first" (default), "only my own nodes" or "any node", for its chat and API requests; "only my own nodes" applies on top of a front-end key's `only_operator` (if they differ, no node serves) |

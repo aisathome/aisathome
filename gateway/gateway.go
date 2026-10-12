@@ -1399,7 +1399,8 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user, who string, 
 		u.DurationMs = time.Since(t0).Milliseconds()
 		rec := usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
 			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
-			Estimated: estimated, Clamped: clamped, SelfServed: self != "" && n.operator == self, Guard: flag}
+			Estimated: estimated, Clamped: clamped, SelfServed: self != "" && n.operator == self, Guard: flag,
+			Tools: hasTools(body)}
 		g.meterRecord(&rec, mt, n, who, u, maxTokens, rec.Time)
 		g.use.record(rec)
 		g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
@@ -1757,8 +1758,10 @@ type usageRecord struct {
 	Clamped   bool           `json:"clamped,omitempty"` // node reported implausible usage
 	Usage     protocol.Usage `json:"usage"`             // node-reported, or estimated from relayed chunks
 	// SelfServed: the node's operator is the requesting account (no credit for serving oneself).
-	SelfServed bool   `json:"self_served,omitempty"`
-	Guard      string `json:"guard,omitempty"` // a guard's rule: the answer was stopped, or (text) flagged
+	SelfServed bool `json:"self_served,omitempty"`
+	// Tools: the request carried tool definitions (an agent request); never which ones.
+	Tools bool   `json:"tools,omitempty"`
+	Guard string `json:"guard,omitempty"` // a guard's rule: the answer was stopped, or (text) flagged
 	// Counted says who counted Tokens: "gateway" (its tokenizer) or "node" (reported counts,
 	// clamped). Cached tokens are always the gateway's decision. Credit is what the node earned.
 	Counted string        `json:"counted,omitempty"`
@@ -1903,4 +1906,10 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// hasTools reports whether a request carries tool definitions (an agent request).
+func hasTools(body map[string]any) bool {
+	tools, _ := body["tools"].([]any)
+	return len(tools) > 0
 }
