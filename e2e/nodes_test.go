@@ -1,6 +1,7 @@
 // Self-registered nodes (decision 0007, backlog 15): node tokens on the account page, the
 // cut-off (revoke, ban), the per-address cap, the share cap, node preferences and the
-// trusted-only switch.
+// trusted-only switch; and the node connection itself: bound ids, revocation while
+// connecting, frame limits, stalled reconnects.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e
@@ -8,6 +9,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -351,4 +353,129 @@ func TestNodeStatusPausedByVolunteer(t *testing.T) {
 	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHeartbeat, Paused: true})
 	c.Write(context.Background(), websocket.MessageText, b)
 	waitFor(t, func() bool { _, page := a.get(t, "/account", s); return strings.Contains(page, "badge paused") })
+}
+
+// A token revoked between the WebSocket handshake and hello must not register the node.
+func TestRevokedWhileConnecting(t *testing.T) {
+	r := newRigCfg(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := http.Header{}
+	h.Set("Authorization", "Bearer node-token")
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.gw.URL, "http")+"/v1/node/connect", &websocket.DialOptions{HTTPHeader: h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	time.Sleep(100 * time.Millisecond) // the gateway has read the token and waits for hello
+	r.g.Reload(gateway.Config{APIKeys: map[string]string{"user-key": "alice"}, NodeTokens: map[string]gateway.NodeToken{}})
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "late", Protocol: protocol.Version,
+		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
+	c.Write(ctx, websocket.MessageText, b)
+	time.Sleep(300 * time.Millisecond)
+	if n := r.g.NodeCount(); n != 0 {
+		t.Fatalf("a node with a revoked token registered (%d nodes)", n)
+	}
+}
+
+// A node that reconnects while its old connection ignores the close handshake does not stall
+// the gateway: the old connection is closed outside the shared lock.
+func TestStalledReconnectDoesNotBlockGateway(t *testing.T) {
+	r := newRigCfg(t, nil)
+	hello := func() (*websocket.Conn, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		h := http.Header{}
+		h.Set("Authorization", "Bearer node-token")
+		c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.gw.URL, "http")+"/v1/node/connect", &websocket.DialOptions{HTTPHeader: h})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "same", Protocol: protocol.Version,
+			Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
+		c.Write(ctx, websocket.MessageText, b)
+		return c, cancel
+	}
+	_, cancel1 := hello() // never reads again: its close handshake stalls
+	defer cancel1()
+	r.waitNodes(t, 1)
+	_, cancel2 := hello()
+	defer cancel2()
+	time.Sleep(300 * time.Millisecond)
+	start := time.Now()
+	resp := r.do(t, "GET", "/v1/models", "user-key", "")
+	resp.Body.Close()
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("the gateway was blocked for %s while a replaced node stalled", d)
+	}
+}
+
+func TestOversizedChunkDropsNode(t *testing.T) {
+	r := newRigCfg(t, nil)
+	rawNodeWith(t, r, "big", "node-token", func(write func(protocol.Msg), _ func([]byte), m protocol.Msg) {
+		write(chunkMsg(m.ReqID, strings.Repeat("x", 200<<10)))
+	})
+	r.waitNodes(t, 1)
+	start := time.Now()
+	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode == 200 && time.Since(start) < time.Second {
+		t.Fatalf("a 200 KB chunk was accepted")
+	}
+	r.waitNodes(t, 0)
+}
+
+func TestMalformedFrameDoesNotDropNode(t *testing.T) {
+	r := newRigCfg(t, nil)
+	rawNodeWith(t, r, "messy", "node-token", func(write func(protocol.Msg), raw func([]byte), m protocol.Msg) {
+		raw(nil)                 // empty frame
+		raw([]byte("{not json")) // garbage
+		write(chunkMsg(m.ReqID, "ok"))
+		write(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &protocol.Usage{PromptTokens: 3, CompletionTokens: 1}})
+	})
+	r.waitNodes(t, 1)
+	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || r.g.NodeCount() != 1 {
+		t.Fatalf("status %d, nodes %d: a bad frame must be skipped, not drop the node", resp.StatusCode, r.g.NodeCount())
+	}
+}
+
+func TestBoundIDCannotBeSquatted(t *testing.T) {
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", NodeID: "home-1", Trust: "trusted"}
+		c.NodeTokens["other-token"] = gateway.NodeToken{Operator: "mallory"}
+	})
+	rawNodeWith(t, r, "home-1", "other-token", func(func(protocol.Msg), func([]byte), protocol.Msg) {})
+	time.Sleep(300 * time.Millisecond)
+	if r.g.NodeCount() != 0 {
+		t.Fatal("another token squatted a bound node id")
+	}
+	rawNodeWith(t, r, "home-1", "home-token", func(func(protocol.Msg), func([]byte), protocol.Msg) {})
+	r.waitNodes(t, 1)
+}
+
+// A node id bound to another token is refused before the node is registered, with the reason.
+func TestSquatterIsToldIDIsReserved(t *testing.T) {
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", NodeID: "home-1"}
+		c.NodeTokens["other-token"] = gateway.NodeToken{Operator: "mallory"}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h := http.Header{}
+	h.Set("Authorization", "Bearer other-token")
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.gw.URL, "http")+"/v1/node/connect", &websocket.DialOptions{HTTPHeader: h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "home-1", Protocol: protocol.Version,
+		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Slots: 1}}})
+	c.Write(ctx, websocket.MessageText, b)
+	_, _, err = c.Read(ctx)
+	var ce websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != websocket.StatusPolicyViolation || ce.Reason != "node id is reserved" {
+		t.Fatalf("got %v, want a close with \"node id is reserved\"", err)
+	}
 }

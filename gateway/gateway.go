@@ -5,7 +5,6 @@
 package gateway
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -598,12 +597,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.mu.Lock()
-	reserved := false
-	for t, other := range g.tokens { // an id bound to another token cannot be squatted
-		if t != token && other.NodeID == hello.NodeID {
-			reserved = true
-		}
-	}
+	reserved := g.idReservedLocked(token, hello.NodeID)
 	g.mu.Unlock()
 	if reserved {
 		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
@@ -631,13 +625,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		_, _, still = g.accounts.nodeToken(token)
 		n.probEnd = first.Add(g.acfg.probation)
 	}
-	reservedNow := false
-	for t, other := range g.tokens {
-		if t != token && other.NodeID == hello.NodeID {
-			reservedNow = true
-		}
-	}
-	if !still || reservedNow {
+	if !still || g.idReservedLocked(token, hello.NodeID) {
 		g.mu.Unlock()
 		c.Close(websocket.StatusPolicyViolation, "node token revoked or changed")
 		return
@@ -686,7 +674,24 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		// In-flight requests see n.closed and fail over or report the error themselves.
 		g.log.Info("node disconnected", "node", n.id)
 	}()
+	g.readLoop(ctx, n)
+}
 
+// idReservedLocked reports whether node id is bound to a token other than token: such an id
+// cannot be squatted. Caller holds g.mu.
+func (g *Gateway) idReservedLocked(token, id string) bool {
+	for t, other := range g.tokens {
+		if t != token && other.NodeID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// readLoop reads a node's messages until the connection ends: heartbeats update its state,
+// answers go to the requests waiting for them.
+func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) {
+	c := n.conn
 	badFrames := 0
 	for {
 		rctx, cancel := context.WithTimeout(ctx, g.cfg.HeartbeatTimeout)
@@ -1175,6 +1180,12 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
+// keyLimit is a key whose budget and request limits a chat request is held to.
+type keyLimit struct {
+	k    string
+	info KeyInfo
+}
+
 func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	key := bearer(r)
 	info, accountID, ok := g.authenticate(r)
@@ -1202,20 +1213,14 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	charge := []string{key}
-	limits := []struct {
-		k    string
-		info KeyInfo
-	}{{key, info}}
+	limits := []keyLimit{{key, info}}
 	if accountID != "" { // an account key: limits and budget belong to the account
 		charge, limits[0].k = []string{userKey}, userKey
 	} else if userKey != key {
 		// Only the end user is charged: a node inflating usage must not drain the shared
 		// front-end key for everyone. The front end keeps its request-rate limits.
 		charge = []string{userKey}
-		limits = append(limits, struct {
-			k    string
-			info KeyInfo
-		}{userKey, acct})
+		limits = append(limits, keyLimit{userKey, acct})
 	}
 	for _, l := range limits {
 		if wait, over := g.budget.over(l.k, l.info.TokensPerDay, now); over {
@@ -1293,6 +1298,8 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req := &chatReq{user: acct.User, who: userKey, charge: charge, self: rt.self, want: want,
+		clientStream: clientStream, body: body, red: red}
 	deadline := time.Now().Add(time.Duration(g.cfg.QueueTimeoutSec) * time.Second)
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)
@@ -1309,7 +1316,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		if !n.trusted && n.operator != rt.self {
 			gd = newGuard(reqText)
 		}
-		started, err := g.run(w, r, acct.User, userKey, charge, n, model, want, body, clientStream, red, gd, rt.self)
+		started, err := g.run(w, r, req, n, model, gd)
 		var flagged *guardError
 		if errors.As(err, &flagged) && !started {
 			// Not one byte of the stopped answer went out: try a trusted node if one is free now,
@@ -1317,7 +1324,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			fb := *rt
 			fb.trustedOnly, fb.preferSelf = true, false
 			if tn, tmodel := g.pick(&fb); tn != nil {
-				if started, err = g.run(w, r, acct.User, userKey, charge, tn, tmodel, want, body, clientStream, red, nil, rt.self); err == nil || started {
+				if started, err = g.run(w, r, req, tn, tmodel, nil); err == nil || started {
 					return
 				}
 			}
@@ -1341,273 +1348,6 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		g.log.Warn("node failed before output, retrying", "node", n.id, "err", errCategory(err.Error()))
 	}
 	apiError(w, http.StatusBadGateway, "request failed on all available nodes")
-}
-
-// run sends one request to a node and relays the result. started reports whether any
-// output reached the client (then a retry is no longer possible). gd, if set, checks the
-// answer (guard.go); a stopped tool call returns a *guardError. self is the requesting
-// account's operator name, to record answers an account served itself; who is the requester
-// (account, front-end user or key) whose conversations a node may have cached.
-func (g *Gateway) run(w http.ResponseWriter, r *http.Request, user, who string, charge []string, n *nodeConn,
-	model, want string, body map[string]any, clientStream bool, red *redactor, gd *guard, self string) (started bool, err error) {
-	reqID := newID()
-	nb := forNode(body) // only the fields a node may see
-	nb["model"] = model
-	nb["stream"] = true
-	nb["stream_options"] = map[string]any{"include_usage": true}
-	raw, _ := json.Marshal(nb)
-	mt := newMeter(nb, g.tok) // the gateway's own token counts, for credit
-	maxTokens := requestMaxTokens(nb, g.cfg.DefaultMaxTokens)
-	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
-	// collected) and work. About one token per chunk, with room for role and usage chunks.
-	maxChunks := 2*maxTokens + 256
-	const maxCollected = 2 << 20 // per non-streaming request; all of them share g.buffered
-	var rest *restorer
-	if red.restoring() {
-		rest = newRestorer(red)
-	}
-
-	p := &pendingReq{ch: make(chan protocol.Msg, 64), done: make(chan struct{}), slow: make(chan struct{})}
-	ch := p.ch
-	n.mu.Lock()
-	n.pending[reqID] = p
-	n.mu.Unlock()
-	defer func() {
-		close(p.done)
-		n.mu.Lock()
-		delete(n.pending, reqID)
-		n.inflight-- // reserved by pick
-		n.mu.Unlock()
-		g.signal() // a slot is free again
-	}()
-
-	t0 := time.Now()
-	sctx, scancel := context.WithTimeout(r.Context(), 15*time.Second)
-	err = n.send(sctx, protocol.Msg{Type: protocol.TypeRequest, ReqID: reqID, Body: raw})
-	scancel()
-	if err != nil {
-		return false, err
-	}
-
-	// relayed counts chunks carrying generated text, as seen by the gateway itself. It meters
-	// requests that end early (the node sends no usage then) and cross-checks node-reported
-	// completion tokens (llama.cpp streams about one token per chunk).
-	relayed, relayedChars := 0, 0
-	flag := "" // a guard's finding, for the usage log
-	record := func(outcome string, u protocol.Usage, estimated bool) {
-		u, clamped := clampUsage(u, len(raw), maxTokens, relayed)
-		u.DurationMs = time.Since(t0).Milliseconds()
-		rec := usageRecord{Time: time.Now().UTC(), User: user, Node: n.id, Operator: n.operator,
-			Model: model, Requested: want, Usage: u, ReqID: reqID, Outcome: outcome, Relayed: relayed,
-			Estimated: estimated, Clamped: clamped, SelfServed: self != "" && n.operator == self, Guard: flag,
-			Tools: hasTools(body)}
-		g.meterRecord(&rec, mt, n, who, u, maxTokens, rec.Time)
-		g.use.record(rec)
-		g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
-		if outcome == outcomeBlocked {
-			return // the user never got the answer
-		}
-		// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
-		bu := u
-		bu.PromptTokens = min(bu.PromptTokens, len(raw)/3+256)
-		bu.CachedTokens = min(bu.CachedTokens, bu.PromptTokens)
-		bu.CompletionTokens = min(bu.CompletionTokens, relayedChars/2+16) // by characters, not chunks
-		for _, k := range charge {
-			g.budget.add(k, weighted(bu), time.Now())
-		}
-	}
-	partial := func(outcome string) {
-		if relayed > 0 { // the node did visible work; bill an estimate rather than nothing
-			record(outcome, protocol.Usage{CompletionTokens: relayed}, true)
-		}
-	}
-
-	var sse *bufio.Writer
-	var collected []json.RawMessage
-	rc := http.NewResponseController(w)
-	// writeSSE sends one event; a client that does not take it within 30 s is treated as gone.
-	writeSSE := func(data []byte) error {
-		if sse == nil {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.WriteHeader(http.StatusOK)
-			sse = bufio.NewWriter(w)
-		}
-		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
-		fmt.Fprintf(sse, "data: %s\n\n", data)
-		if err := sse.Flush(); err != nil {
-			return err
-		}
-		return rc.Flush()
-	}
-	send := func(data []byte) error {
-		started = true
-		if rest != nil {
-			data = rest.chunk(data)
-		}
-		return writeSSE(data)
-	}
-	// block stops an answer a guard flagged: nothing more of it reaches the client, and the
-	// node gets no requests until the operator clears it.
-	block := func(rule string) (bool, error) {
-		cancelOnNode(n, reqID)
-		flag = rule
-		record(outcomeBlocked, protocol.Usage{CompletionTokens: relayed}, true)
-		g.holdNode(n, rule, reqID)
-		if started {
-			writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the answer was stopped by a safety check"}}))
-		}
-		return started, &guardError{rule}
-	}
-	chunks, collectedBytes := 0, 0
-	var held int64 // this request's share of g.buffered and of its node token's share
-	tokBuf, _ := g.bufByTok.LoadOrStore(n.token, new(atomic.Int64))
-	tokHeld := tokBuf.(*atomic.Int64)
-	defer func() { g.buffered.Add(-held); tokHeld.Add(-held) }()
-	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
-	defer stall.Stop()
-	for {
-		select {
-		case <-stall.C: // the node went silent (e.g. a hung engine): give up on it
-			cancelOnNode(n, reqID)
-			partial("failed")
-			g.log.Warn("node stalled", "node", n.id, "req", reqID, "started", started)
-			if started {
-				writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the node stopped responding"}}))
-			}
-			return started, errors.New("node stalled")
-		case <-p.slow: // the client is not reading; free the node for others
-			cancelOnNode(n, reqID)
-			partial("cancelled")
-			return started, errors.New("client too slow")
-		case <-r.Context().Done(): // client went away: tell the node to stop
-			cancelOnNode(n, reqID)
-			partial("cancelled")
-			return started, r.Context().Err()
-		case <-n.closed:
-			partial("failed")
-			return started, errors.New("node disconnected")
-		case m := <-ch:
-			stall.Reset(time.Duration(g.cfg.IdleTimeoutSec) * time.Second)
-			switch m.Type {
-			case protocol.TypeChunk:
-				if hasText(m.Data) {
-					relayed++
-				}
-				mt.chunk(m.Data)
-				chunks++
-				collectedBytes += len(m.Data)
-				relayedChars += textLen(m.Data)
-				overToken, overGlobal := false, false
-				if !clientStream {
-					held += int64(len(m.Data))
-					overToken = tokHeld.Add(int64(len(m.Data))) > maxBufferedPerToken
-					overGlobal = g.buffered.Add(int64(len(m.Data))) > maxBufferedTotal
-				}
-				if overGlobal && !overToken && chunks <= maxChunks && collectedBytes <= maxCollected {
-					cancelOnNode(n, reqID)
-					partial("failed")
-					g.log.Warn("gateway answer buffers full", "node", n.id)
-					return started, errGatewayBusy
-				}
-				if chunks > maxChunks || (!clientStream && collectedBytes > maxCollected) || overToken {
-					cancelOnNode(n, reqID)
-					partial("failed")
-					g.log.Warn("node sent more output than requested", "node", n.id, "chunks", chunks)
-					if started {
-						writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the node sent more output than requested"}}))
-					}
-					return started, errors.New("node sent more output than requested")
-				}
-				outs := [][]byte{[]byte(m.Data)}
-				if gd != nil {
-					var big bool
-					outs, big = gd.filter(m.Data)
-					if gd.violation != "" {
-						return block(gd.violation)
-					}
-					if big {
-						cancelOnNode(n, reqID)
-						partial("failed")
-						if started {
-							writeSSE(mustJSON(map[string]any{"error": map[string]any{"message": "the node sent more output than requested"}}))
-						}
-						return started, errors.New("node sent more output than requested")
-					}
-					if gd.finish != nil { // a finish_reason after tool calls: they are complete
-						if rule := gd.check(); rule != "" {
-							return block(rule)
-						}
-						outs = append(outs, gd.release()...)
-					}
-				}
-				if !clientStream {
-					collected = append(collected, m.Data)
-					continue
-				}
-				for _, data := range outs {
-					if err := send(data); err != nil {
-						cancelOnNode(n, reqID)
-						partial("cancelled")
-						return started, err
-					}
-				}
-			case protocol.TypeError:
-				m.Error = errCategory(m.Error) // never pass on (or log) free text from a node
-				if started {
-					e := map[string]any{"message": m.Error}
-					if isContextOverflow(m.Error) {
-						e["type"], e["code"] = "invalid_request_error", "context_length_exceeded"
-					}
-					writeSSE(mustJSON(map[string]any{"error": e}))
-				}
-				partial("failed")
-				return started, errors.New(m.Error)
-			case protocol.TypeDone:
-				u := protocol.Usage{}
-				if m.Usage != nil {
-					u = *m.Usage
-				}
-				var held [][]byte
-				if gd != nil {
-					if rule := gd.check(); rule != "" {
-						return block(rule)
-					}
-					held = gd.release()
-					if flag = gd.textFlag(); flag != "" { // text is only flagged, not stopped
-						g.log.Warn("guard flagged a node's answer", "node", n.id, "operator", n.operator, "rule", flag, "req", reqID)
-					}
-				}
-				var ans map[string]any
-				if !clientStream {
-					ans = assemble(reqID, model, collected, u)
-					if gd != nil { // what the client gets, not the pieces the guard saw
-						if rule := checkAssembled(ans, gd.req); rule != "" {
-							return block(rule)
-						}
-					}
-				}
-				for _, data := range held {
-					if clientStream {
-						send(data)
-					}
-				}
-				record("ok", u, false)
-				u.DurationMs = time.Since(t0).Milliseconds()
-				if clientStream { // writeSSE also answers an empty stream properly
-					if rest != nil {
-						if f := rest.flush(); f != nil {
-							writeSSE(f)
-						}
-					}
-					writeSSE([]byte("[DONE]"))
-				} else {
-					writeJSON(w, http.StatusOK, restoreAnswer(ans, red))
-				}
-				return true, nil
-			}
-		}
-	}
 }
 
 // cancelOnNode tells a node to stop a request, without waiting long on a stuck connection.

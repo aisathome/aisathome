@@ -1,13 +1,15 @@
 // Accounts (decision 0006): GitHub sign-in, waitlist and cap, self-service keys, the chat's
-// forward_auth check, and one budget for an account's chat and API use.
+// forward_auth check, one budget for an account's chat and API use, and limits on account forms.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -546,5 +548,37 @@ func TestWaitlistPlaceSkipsHeldAccounts(t *testing.T) {
 	waitFor(t, func() bool { r, _ := a.get(t, "/account/auth", s3); return r.StatusCode == http.StatusOK })
 	if r, _ := a.get(t, "/account/auth", s2); r.StatusCode == http.StatusOK {
 		t.Fatal("a held account was let in")
+	}
+}
+
+// Account forms take only short URL-encoded bodies: no multipart (which may spill to disk)
+// and nothing large, whether or not the session is valid.
+func TestAccountFormsRejectMultipartAndLargeBodies(t *testing.T) {
+	a := newAcctRig(t, 100, nil)
+	s, _ := a.signIn(t, 7)
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("upload", "big.bin")
+	fw.Write(bytes.Repeat([]byte("x"), 64<<10))
+	mw.Close()
+	for _, path := range []string{"/account/keys", "/account/keys/revoke", "/account/logout"} {
+		req, _ := http.NewRequest("POST", a.gw.URL+path, bytes.NewReader(buf.Bytes()))
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Cookie", s)
+		req.Header.Set("Origin", "https://site.test")
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("%s multipart: %d", path, resp.StatusCode)
+		}
+	}
+	if resp, _ := a.post(t, "/account/keys", s, "once="+strings.Repeat("a", 20<<10)); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("20 KB form: %d", resp.StatusCode)
+	}
+	if resp, page := a.createKey(t, s); resp.StatusCode != 200 || !keyRe.MatchString(page) { // the real form still works
+		t.Fatalf("normal key form: %d", resp.StatusCode)
 	}
 }

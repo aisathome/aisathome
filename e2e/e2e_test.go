@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aisathome/aisathome/gateway"
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/protocol"
@@ -327,4 +329,49 @@ func TestRateLimit(t *testing.T) {
 	if codes[0] != 200 || codes[1] != 200 || codes[2] != 429 {
 		t.Fatalf("expected 200,200,429 with rpm=2, got %v", codes)
 	}
+}
+
+// rawNodeWith connects a hand-written node that answers requests with onRequest.
+func rawNodeWith(t *testing.T, r *rig, id, token string, onRequest func(write func(protocol.Msg), raw func([]byte), m protocol.Msg)) *websocket.Conn {
+	t.Helper()
+	return rawNodeAll(t, r, id, token, func(write func(protocol.Msg), raw func([]byte), m protocol.Msg) {
+		if m.Type == protocol.TypeRequest {
+			onRequest(write, raw, m)
+		}
+	})
+}
+
+// rawNodeAll is rawNodeWith for every message the gateway sends (requests and cancels).
+func rawNodeAll(t *testing.T, r *rig, id, token string, onMsg func(write func(protocol.Msg), raw func([]byte), m protocol.Msg)) *websocket.Conn {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+token)
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.gw.URL, "http")+"/v1/node/connect", &websocket.DialOptions{HTTPHeader: h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetReadLimit(16 << 20)
+	raw := func(b []byte) { c.Write(ctx, websocket.MessageText, b) }
+	write := func(m protocol.Msg) { b, _ := json.Marshal(m); raw(b) }
+	write(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.Version,
+		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
+	go func() {
+		for {
+			_, b, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			var m protocol.Msg
+			json.Unmarshal(b, &m)
+			onMsg(write, raw, m)
+		}
+	}()
+	return c
+}
+
+func chunkMsg(id, text string) protocol.Msg {
+	b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": text}}}})
+	return protocol.Msg{Type: protocol.TypeChunk, ReqID: id, Data: b}
 }
