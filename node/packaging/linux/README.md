@@ -184,6 +184,13 @@ prompts from RAM or VRAM while they are being served.
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Remove | `sudo ./uninstall.sh` (keeps the model; `--purge` removes it too) |
 
+**Suspend and resume:** the node stops before the computer sleeps and starts again after
+resume, if it was running. The sleep hook waits until llama-server has released the GPU,
+before the NVIDIA driver suspends it (SIGKILL after 20 s, at most 30 s in all), and
+llama-server starts again only after the driver's resume. Logs:
+`journalctl -u aisathome-node-sleep`. Installs from before 2026-10-13: run the installer
+again to get this.
+
 ## Local UI
 
 The agent serves a status page at **http://127.0.0.1:7381/** (on desktops there is also an

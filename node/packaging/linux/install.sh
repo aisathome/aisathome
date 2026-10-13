@@ -506,6 +506,9 @@ cat > /etc/systemd/system/aisathome-llama.service <<UNIT
 Description=AIs@home node: local llama-server (127.0.0.1 only)
 After=network.target aisathome-gpu-init.service
 Requires=aisathome-gpu-init.service
+# On resume, start only after the driver has woken the GPU (nvidia-resume.service runs in
+# parallel with the sleep hook's restart otherwise). No effect when no resume is pending.
+After=nvidia-resume.service
 
 [Service]
 User=aisathome
@@ -571,19 +574,70 @@ UNIT
 # PreserveVideoMemoryAllocations=0), so a llama-server running through a suspend uses lost
 # memory after resume (Xid 31 MMU fault and a broken CUDA state, 2026-10-09). Stop it before
 # sleeping and start it again after resume, but only if it was running.
+#
+# The node must be gone before the GPU sleeps. The driver's nvidia-suspend.service (and
+# nvidia-hibernate) suspends the GPU through /proc/driver/nvidia/suspend and is ordered only
+# before systemd-suspend.service, so it used to run in parallel with this hook. When it won
+# the race, llama-server's CUDA teardown blocked in nvidia_uvm (state D, immune to SIGKILL),
+# systemctl stop gave up after 80 s and the kernel's freezer aborted the suspend ("1 tasks
+# refusing to freeze", RTX 4090, driver 530, 2026-10-11 00:19 and 22:23; at 00:37 llama
+# stopped first and the suspend worked). Hence Before=nvidia-suspend.service etc. below.
+#
+# Timing: this unit runs inside the suspend job, after logind has released its delay
+# inhibitors, so logind's InhibitDelayMaxSec (5 s) does not apply, and a oneshot has no
+# start timeout by default. "pre" bounds itself: SIGTERM, SIGKILL after 20 s, give up after
+# 30 s (a process stuck in the driver cannot be killed; suspend then fails, as before).
+# TimeoutStartSec=90 is only a backstop. "pre" always exits 0, so "post" runs on resume.
 cat > /usr/local/libexec/aisathome-node-sleep <<'SL'
 #!/bin/sh
-mark=/run/aisathome-node-was-running
+# pre:  stop the node and return only when none of its processes is left (bounded).
+# post: start it again, if pre stopped it (a node stopped by hand stays stopped).
+# AISATHOME_SLEEP_ROOT and the *_WAIT variables exist for install_test.sh only.
+root="${AISATHOME_SLEEP_ROOT:-}"
+mark="$root/run/aisathome-node-was-running"
+units="aisathome-node.service aisathome-llama.service"
+term_wait="${AISATHOME_SLEEP_TERM_WAIT:-20}" kill_wait="${AISATHOME_SLEEP_KILL_WAIT:-10}"
+log() { echo "aisathome-node-sleep: $*" >&2; }
+# PIDs in the node's cgroups (cgroup v2, hybrid or v1 layout) that still exist.
+node_pids() {
+  for u in $units; do
+    for d in "" /unified /systemd; do
+      cat "$root/sys/fs/cgroup$d/system.slice/$u/cgroup.procs" 2>/dev/null
+    done
+  done | sort -un | while read -r p; do [ -d "/proc/$p" ] && echo "$p"; done
+}
+# wait_gone <seconds>: succeeds once no node process is left; fails after <seconds>.
+wait_gone() {
+  end=$(( $(date +%s) + $1 ))
+  while [ -n "$(node_pids)" ]; do
+    [ "$(date +%s)" -lt "$end" ] || return 1
+    sleep 0.2
+  done
+}
 case "$1" in
-  pre)  if systemctl is-active -q aisathome-llama; then touch "$mark"; systemctl stop aisathome-llama; fi ;;
-  post) if [ -e "$mark" ]; then rm -f "$mark"; systemctl start aisathome-llama aisathome-node; fi ;;
+  pre)
+    if systemctl is-active -q aisathome-llama; then touch "$mark"; fi
+    # Also when inactive: a failed stop can leave processes behind.
+    systemctl stop --no-block $units
+    wait_gone "$term_wait" && exit 0
+    log "still running ${term_wait} s after SIGTERM, sending SIGKILL: $(node_pids | tr '\n' ' ')"
+    systemctl kill --signal=KILL $units 2>/dev/null
+    for p in $(node_pids); do kill -KILL "$p" 2>/dev/null; done
+    wait_gone "$kill_wait" && exit 0
+    log "still running after SIGKILL; suspend will probably fail (stuck in the GPU driver?):"
+    ps -o pid=,stat=,wchan:40=,comm= -p "$(node_pids | paste -sd, -)" >&2
+    exit 0 ;;
+  post)
+    if [ -e "$mark" ]; then rm -f "$mark"; systemctl start aisathome-llama aisathome-node; fi ;;
 esac
 SL
 chmod 0755 /usr/local/libexec/aisathome-node-sleep
+# Before= on units that do not exist (no NVIDIA systemd sleep integration) is harmless.
 cat > /etc/systemd/system/aisathome-node-sleep.service <<UNIT
 [Unit]
 Description=AIs@home node: stop before suspend, restart after resume
 Before=sleep.target
+Before=nvidia-suspend.service nvidia-hibernate.service nvidia-suspend-then-hibernate.service
 StopWhenUnneeded=yes
 
 [Service]
@@ -591,6 +645,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/libexec/aisathome-node-sleep pre
 ExecStop=/usr/local/libexec/aisathome-node-sleep post
+TimeoutStartSec=90
 
 [Install]
 WantedBy=sleep.target

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests for install.sh that need no root, GPU or network: presets, overrides, input
 # validation, the prebuilt bundle's driver and GPU checks (fake nvidia-smi), free disk space
-# (fake df) and the model download (file:// URLs), through --dry-run and --download-only.
+# (fake df), the model download (file:// URLs), through --dry-run and --download-only, and
+# the suspend hook (fake cgroups and systemctl, real processes).
 #
 #   ./node/packaging/linux/install_test.sh
 #
@@ -298,6 +299,100 @@ else
   echo "skipping bundle tests: not x86_64 with AVX2"
 fi
 installer="$repo_installer"
+
+# The suspend hook (aisathome-node-sleep), taken from install.sh and run with sh against fake
+# cgroups, a fake systemctl and real processes: before suspend it must return only once no
+# node process is left (SIGKILL after a while, give up after a bound).
+s="$tmp/sleep"; mkdir -p "$s/bin" "$s/run"
+sed -n "/^cat > \/usr\/local\/libexec\/aisathome-node-sleep <<'SL'\$/,/^SL\$/p" "$installer" | sed '1d;$d' > "$s/hook"
+grep -q '^#!/bin/sh' "$s/hook" || fail "sleep hook: not found in install.sh"
+procs="$s/sys/fs/cgroup/system.slice/aisathome-llama.service/cgroup.procs"
+mkdir -p "${procs%/*}"
+# systemctl: logs its arguments; is-active from FAKE_ACTIVE; stop sends SIGTERM to the PIDs
+# in the fake cgroup, as systemd would. kill does nothing, so the hook's own kill is tested.
+cat > "$s/bin/systemctl" <<'FAKE'
+#!/bin/sh
+echo "systemctl $*" >> "$AISATHOME_SLEEP_ROOT/systemctl.log"
+case "$1" in
+  is-active) [ "${FAKE_ACTIVE:-1}" = 1 ]; exit ;;
+  stop) for p in $(cat "$AISATHOME_SLEEP_ROOT"/sys/fs/cgroup/system.slice/*/cgroup.procs); do kill -TERM "$p" 2>/dev/null; done ;;
+esac
+exit 0
+FAKE
+# nvidia-smi that hangs: the hook must not depend on it (a stuck driver hangs it too).
+printf '#!/bin/sh\nsleep 1000\n' > "$s/bin/nvidia-smi"
+chmod +x "$s/bin/"*
+# spawn <script>: starts a detached bash process (reaped by init, as systemd reaps a
+# service's processes) and prints its PID.
+spawned=()
+spawn() { ( bash -c "$1" </dev/null >/dev/null 2>&1 & echo $! ); }
+alive() { [[ -d "/proc/$1" ]]; }
+# hook <pre|post> [VAR=value...]: runs the hook; sets out, code and secs (elapsed seconds).
+hook() {
+  local arg="$1" t0; shift
+  : > "$s/systemctl.log"; t0="$(date +%s)"
+  out="$(env -i PATH="$s/bin:$PATH" AISATHOME_SLEEP_ROOT="$s" "$@" sh "$s/hook" "$arg" 2>&1)"; code=$?
+  secs=$(( $(date +%s) - t0 ))
+  out+=$'\n'"$(cat "$s/systemctl.log")"
+}
+# A process that needs 2 s to exit after SIGTERM (like llama-server freeing GPU memory),
+# and one that exits at once.
+slow="$(spawn 'trap "sleep 2; exit 0" TERM; while :; do sleep 0.1; done')"
+quick="$(spawn 'exec sleep 1000')"
+spawned+=("$slow" "$quick")
+sleep 0.3
+printf '%s\n%s\n' "$slow" "$quick" > "$procs"
+hook pre
+ok "sleep pre"; has "sleep pre" "systemctl stop --no-block aisathome-node.service aisathome-llama.service"
+alive "$slow" && fail "sleep pre: returned while a node process (slow to exit) still ran"
+alive "$quick" && fail "sleep pre: returned while a node process still ran"
+[[ $secs -ge 1 ]] || fail "sleep pre: returned after $secs s, before the slow process could exit"
+lacks "sleep pre" "SIGKILL"; lacks "sleep pre" "systemctl kill"
+[[ -e "$s/run/aisathome-node-was-running" ]] || fail "sleep pre: running node not marked for resume"
+# Resume restarts what the hook stopped, once.
+hook post
+ok "sleep post"; has "sleep post" "systemctl start aisathome-llama aisathome-node"
+[[ ! -e "$s/run/aisathome-node-was-running" ]] || fail "sleep post: mark left behind"
+hook post
+lacks "sleep post, nothing stopped" "systemctl start"
+# A node stopped by hand stays stopped after resume; the hook still stops and checks.
+: > "$procs"
+hook pre FAKE_ACTIVE=0
+ok "sleep pre, node stopped"; has "sleep pre, node stopped" "systemctl stop --no-block"
+[[ $secs -le 2 ]] || fail "sleep pre, node stopped: took $secs s"
+[[ ! -e "$s/run/aisathome-node-was-running" ]] || fail "sleep pre, node stopped: marked for resume"
+hook post
+lacks "sleep post, node stopped by hand" "systemctl start"
+# A process that ignores SIGTERM is killed after AISATHOME_SLEEP_TERM_WAIT seconds.
+stubborn="$(spawn "trap '' TERM; exec sleep 1000")"
+spawned+=("$stubborn")
+sleep 0.3
+echo "$stubborn" > "$procs"
+hook pre AISATHOME_SLEEP_TERM_WAIT=1
+ok "sleep pre, SIGTERM ignored"; has "sleep pre, SIGTERM ignored" "sending SIGKILL: $stubborn"
+has "sleep pre, SIGTERM ignored" "systemctl kill --signal=KILL aisathome-node.service aisathome-llama.service"
+alive "$stubborn" && fail "sleep pre: returned while a process that ignores SIGTERM still ran"
+[[ $secs -le 4 ]] || fail "sleep pre, SIGTERM ignored: took $secs s"
+# A process that survives SIGKILL (stuck in the kernel, like the nvidia_uvm teardown): the
+# hook gives up after the bound, says so, and exits 0 so that resume still works. PID 1
+# stands in for it (a kill from a non-root user cannot touch it).
+if [[ $EUID -ne 0 ]]; then
+  echo 1 > "$procs"
+  hook pre AISATHOME_SLEEP_TERM_WAIT=1 AISATHOME_SLEEP_KILL_WAIT=1
+  ok "sleep pre, unkillable"; has "sleep pre, unkillable" "still running after SIGKILL; suspend will probably fail"
+  [[ $secs -le 5 ]] || fail "sleep pre, unkillable: took $secs s"
+fi
+: > "$procs"
+kill -KILL "${spawned[@]}" 2>/dev/null
+# The units: the hook runs before sleep and before the NVIDIA driver suspends the GPU, and
+# llama-server starts only after the driver's resume.
+unit="$(sed -n '/^cat > \/etc\/systemd\/system\/aisathome-node-sleep.service <<UNIT$/,/^UNIT$/p' "$installer")"
+for want in "Before=sleep.target" "WantedBy=sleep.target" \
+            "Before=nvidia-suspend.service nvidia-hibernate.service nvidia-suspend-then-hibernate.service"; do
+  [[ "$unit" == *"$want"* ]] || fail "sleep unit: missing $want"
+done
+llama_unit="$(sed -n '/^cat > \/etc\/systemd\/system\/aisathome-llama.service <<UNIT$/,/^UNIT$/p' "$installer")"
+[[ "$llama_unit" == *"After=nvidia-resume.service"* ]] || fail "llama unit: missing After=nvidia-resume.service"
 
 # Without --dry-run and without root, nothing is installed.
 if [[ $EUID -ne 0 ]]; then
