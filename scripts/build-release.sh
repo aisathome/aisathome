@@ -26,9 +26,11 @@ for t in "${targets[@]}"; do
   ext=""; [[ $os = windows ]] && ext=.exe
   name="aisathome-$cmd-$os-$arch$ext"
   echo "building $name ($version)"
-  # main.version exists only where the command defines it; the linker ignores it elsewhere.
+  # The node reports node.Version (logs, -version, the gateway's hello, the local UI). The
+  # linker ignores -X for a variable that a command does not link.
   CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-    -ldflags "-s -w -X main.version=$version" -o "$out/$name" "./$cmd/cmd/aisathome-$cmd"
+    -ldflags "-s -w -X main.version=$version -X github.com/aisathome/aisathome/node.Version=$version" \
+    -o "$out/$name" "./$cmd/cmd/aisathome-$cmd"
 done
 if [[ -n "${LLAMA_DIR:-}" ]]; then
   [[ -x "$LLAMA_DIR/bin/llama-server" && -f "$LLAMA_DIR/BUILD-INFO" ]] ||
@@ -41,6 +43,8 @@ if [[ -n "${LLAMA_DIR:-}" ]]; then
   install -m 0755 "$out/aisathome-node-linux-amd64" "$stage/$bundle/bin/aisathome-node"
   install -m 0755 node/packaging/linux/install.sh node/packaging/linux/uninstall.sh "$stage/$bundle/"
   install -m 0644 LICENSE node/packaging/linux/README.md node/packaging/linux/THIRD_PARTY_NOTICES.md "$stage/$bundle/"
+  # One aisathome_version line, also when LLAMA_DIR is an unpacked older bundle (which has one).
+  sed -i '/^aisathome_version=/d' "$stage/$bundle/BUILD-INFO"
   echo "aisathome_version=$version" >> "$stage/$bundle/BUILD-INFO"
   echo "packing $bundle.tar.xz ($(du -sh "$stage/$bundle" | cut -f1) unpacked)"
   # Reproducible archive: sorted, root-owned, timestamps from the last commit.

@@ -105,7 +105,21 @@ has "UI default" "Environment=AISATHOME_UI_PASSWORD_FILE=/etc/aisathome-node/ui-
 has "UI default" "Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json"
 has "UI default" "Environment=AISATHOME_RESTART_TRIGGER=/var/lib/aisathome-node/restart-engine"
 has "UI default" 'Environment="AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"'
-has "UI default" "DeviceAllow=char-nvidia-frontend rw"
+# GPU access in the rendered units: major 195 is "nvidia-frontend" in /proc/devices up to driver
+# 535 and "nvidia" from 545 on; with only the old name, driver 575 ran on the CPU (2026-10-18).
+# device_rules <name> <unit text> <rule>...: each rule is a line of the unit.
+device_rules() {
+  local name="$1" text="$2" rule; shift 2
+  for rule in "$@"; do grep -qxF "$rule" <<<"$text" || fail "$name: no line '$rule'"; done
+}
+dropin="$(sed -n '/^local UI: /,/^aisathome-llama.service:$/p' <<<"$out")"
+llama="$(sed -n '/^aisathome-llama.service:$/,$p' <<<"$out")"
+device_rules "UI drop-in" "$dropin" "DeviceAllow=char-nvidia-frontend rw" "DeviceAllow=char-nvidia rw"
+device_rules "llama unit" "$llama" "DeviceAllow=char-nvidia-frontend rw" "DeviceAllow=char-nvidia rw" \
+  "DeviceAllow=char-nvidia-uvm rw" "DeviceAllow=char-nvidia-caps r" "ProtectClock=yes" "User=aisathome" \
+  "After=nvidia-resume.service" "Environment=GGML_NO_BACKTRACE=1"
+grep -q '^ExecStart=/opt/aisathome-node/bin/llama-server -m /var/lib/aisathome-node/models/model.gguf ' <<<"$llama" ||
+  fail "llama unit: no ExecStart"
 run UI_PORT=8123 SLOTS=1 -- --dry-run --preset long-context
 ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"
 run UI_PORT=off -- --dry-run
@@ -204,6 +218,103 @@ check_id "" "config-token" "$(hostname -s)"
 check_id "" "nt-n-0123ABCD.secret" "$(hostname -s)"
 check_id "" "nt-n-0123abcd" "$(hostname -s)"
 unset -f die check_id pick_node_id
+
+# install_libs on its own: a bundle unpacked under umask 077 (owner-only files) must still give
+# libraries the aisathome service user can read, and keep the version symlinks.
+eval "$(sed -n '/^install_libs() {/,/^}/p' "$installer")"
+mkdir -p "$tmp/libsrc/lib" "$tmp/libdst"
+(umask 077; : > "$tmp/libsrc/lib/libllama.so.0.5.0"; : > "$tmp/libsrc/lib/libllama-server-impl.so"
+ chmod 0700 "$tmp/libsrc/lib/libllama.so.0.5.0"; ln -s libllama.so.0.5.0 "$tmp/libsrc/lib/libllama.so.0")
+install_libs "$tmp/libsrc" "$tmp/libdst"
+for f in libllama.so.0.5.0 libllama-server-impl.so; do
+  [[ "$(stat -c %A "$tmp/libdst/$f" 2>/dev/null)" =~ ^-r..r..r.. ]] || fail "install_libs: $f is $(stat -c %A "$tmp/libdst/$f" 2>/dev/null), want readable by all"
+done
+[[ -L "$tmp/libdst/libllama.so.0" ]] || fail "install_libs: the libllama.so.0 symlink was not kept"
+unset -f install_libs
+
+# The device rules against /proc/devices as two drivers list it. systemd allows, for each
+# DeviceAllow=char-<pattern>, the majors whose name under "Character devices:" matches the
+# glob <pattern>, and skips a pattern that matches nothing (src/core/bpf-devices.c, systemd
+# v249 and main). majors <unit text> <proc devices file>: the majors the unit allows.
+majors() {
+  local pat line maj name in
+  while read -r pat; do
+    in=0
+    while IFS= read -r line; do
+      if [[ "$line" = "Character devices:" ]]; then in=1; continue; fi
+      if [[ -z "$line" ]]; then in=0; continue; fi
+      [[ $in = 1 ]] || continue
+      read -r maj name <<<"$line"
+      # a glob, like systemd's fnmatch
+      if [[ "$name" == $pat ]]; then echo "$maj"; fi
+    done < "$2"
+  done < <(sed -n 's/^DeviceAllow=char-\([^ ]*\) .*/\1/p' <<<"$1") | sort -un | paste -sd' ' -
+}
+# Driver 530 (RTX 4090 desktop) and 575.51.03 (RTX 3090 VM), both read on 2026-10-18.
+printf 'Character devices:\n  1 mem\n195 nvidia-frontend\n234 nvidia-caps\n509 nvidia-uvm\n510 nvidia-nvswitch\n511 nvidia-nvlink\n\nBlock devices:\n195 nvidia\n259 blkext\n' > "$tmp/devices-530"
+printf 'Character devices:\n  1 mem\n195 nvidia\n195 nvidia-modeset\n195 nvidiactl\n236 nvidia-uvm\n239 nvidia-caps\n\nBlock devices:\n259 blkext\n' > "$tmp/devices-575"
+for drv in "530 509" "575 236"; do
+  read -r v uvm <<<"$drv"
+  got="$(majors "$llama" "$tmp/devices-$v")"
+  [[ " $got " == *" 195 "* && " $got " == *" $uvm "* ]] || fail "llama unit, driver $v: allows majors '$got', want 195 (GPU) and $uvm (nvidia-uvm)"
+  got="$(majors "$dropin" "$tmp/devices-$v")"
+  [[ " $got " == *" 195 "* ]] || fail "UI drop-in, driver $v: allows majors '$got', want 195 (GPU, for nvidia-smi)"
+done
+
+# engine_on_gpu on its own (fake journalctl and systemctl): llama-server on the CPU stops
+# the install, and the engine is stopped and left disabled rather than running on the CPU.
+eval "$(sed -n '/^engine_on_gpu() {/,/^}/p' "$installer")"
+die() { echo "$1"; return 1; }
+e="$tmp/engine"; mkdir -p "$e"
+printf '#!/bin/sh\nprintf "%%s\\n" "$FAKE_JOURNAL"\n' > "$e/journalctl"
+printf '#!/bin/sh\necho "systemctl $*" >> "%s/systemctl.log"\n' "$e" > "$e/systemctl"
+chmod +x "$e/journalctl" "$e/systemctl"
+check_engine() {
+  : > "$e/systemctl.log"
+  out="$(export PATH="$e:$PATH" FAKE_JOURNAL="$1"; engine_on_gpu "2026-10-18 17:40:00")"; code=$?
+  out+=$'\n'"$(cat "$e/systemctl.log")"
+}
+check_engine $'load_backend: loaded CUDA backend\nggml_cuda_init: found 1 CUDA devices:'
+ok "engine on the GPU"; lacks "engine on the GPU" "systemctl"
+check_engine $'E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected\nwarning: no usable GPU found, --gpu-layers option will be ignored'
+[[ $code -eq 1 ]] || fail "engine on the CPU: exit $code, want 1"
+has "engine on the CPU" "ran on the CPU, so the installer stopped it"
+has "engine on the CPU" "systemctl disable --now aisathome-node aisathome-llama"
+unset -f engine_on_gpu die check_engine
+
+# uninstall.sh in a fake root (fake systemctl and userdel): removes the units, their drop-ins
+# (also one made with "systemctl edit"), binaries and config; keeps the model unless --purge.
+u="$tmp/uninstall"; mkdir -p "$u/bin"
+for c in systemctl userdel; do printf '#!/bin/sh\necho "%s $*" >> "%s/log"\n' "$c" "$u" > "$u/bin/$c"; chmod +x "$u/bin/$c"; done
+uninstall() {
+  : > "$u/log"
+  out="$(env -i PATH="$u/bin:$PATH" AISATHOME_UNINSTALL_ROOT="$u/root" bash "$here/uninstall.sh" "$@" 2>&1)"; code=$?
+  out+=$'\n'"$(cat "$u/log")"
+}
+fake_install() {
+  local sd="$u/root/etc/systemd/system"
+  mkdir -p "$sd/aisathome-node.service.d" "$sd/aisathome-llama.service.d" "$sd/other.service.d" \
+    "$u/root/opt/aisathome-node/bin" "$u/root/etc/aisathome-node" "$u/root/var/lib/aisathome-node/models" \
+    "$u/root/usr/local/bin" "$u/root/usr/local/libexec"
+  for f in aisathome-node.service aisathome-llama.service aisathome-gpu-init.service aisathome-node-sleep.service \
+           aisathome-node-watchdog.service aisathome-node-watchdog.timer aisathome-node-restart.path \
+           aisathome-node-restart.service aisathome-node.service.d/local-ui.conf \
+           aisathome-llama.service.d/override.conf other.service.d/keep.conf; do : > "$sd/$f"; done
+  : > "$u/root/usr/local/bin/aisathome-node"; : > "$u/root/var/lib/aisathome-node/models/model.gguf"
+}
+fake_install
+uninstall
+ok "uninstall"; has "uninstall" "kept /var/lib/aisathome-node"; lacks "uninstall" "userdel"
+has "uninstall" "systemctl disable --now aisathome-node-watchdog.timer aisathome-node aisathome-llama"
+left="$(cd "$u/root" && find etc opt usr -name '*aisathome*')"
+[[ -z "$left" ]] || fail "uninstall: left behind: $left"
+[[ -e "$u/root/etc/systemd/system/other.service.d/keep.conf" ]] || fail "uninstall: removed another unit's drop-in"
+[[ -e "$u/root/var/lib/aisathome-node/models/model.gguf" ]] || fail "uninstall: removed the model without --purge"
+fake_install
+uninstall --purge
+ok "uninstall --purge"; has "uninstall --purge" "userdel aisathome"
+[[ ! -e "$u/root/var/lib/aisathome-node" ]] || fail "uninstall --purge: kept /var/lib/aisathome-node"
+[[ -z "$(cd "$u/root" && find etc opt usr -name '*aisathome*')" ]] || fail "uninstall --purge: left files behind"
 
 # --download-only: a fake model served over file://, checked against its SHA-256.
 mkdir -p "$tmp/hf" "$tmp/dl1" "$tmp/dl2" "$tmp/dl3" "$tmp/dl4"
@@ -391,8 +502,6 @@ for want in "Before=sleep.target" "WantedBy=sleep.target" \
             "Before=nvidia-suspend.service nvidia-hibernate.service nvidia-suspend-then-hibernate.service"; do
   [[ "$unit" == *"$want"* ]] || fail "sleep unit: missing $want"
 done
-llama_unit="$(sed -n '/^cat > \/etc\/systemd\/system\/aisathome-llama.service <<UNIT$/,/^UNIT$/p' "$installer")"
-[[ "$llama_unit" == *"After=nvidia-resume.service"* ]] || fail "llama unit: missing After=nvidia-resume.service"
 
 # Without --dry-run and without root, nothing is installed.
 if [[ $EUID -ne 0 ]]; then

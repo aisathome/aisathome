@@ -25,8 +25,14 @@ import (
 	"github.com/aisathome/aisathome/protocol"
 )
 
-// AgentVersion is reported to the gateway in hello.
-const AgentVersion = "aisathome-node/0.1.0"
+// Version is the release this agent was built as, set at build time by
+// scripts/build-release.sh: go build -ldflags "-X github.com/aisathome/aisathome/node.Version=v1.2.3".
+// Other builds are "dev".
+var Version = "dev"
+
+// AgentVersion names this agent and its version ("aisathome-node/1.2.3") for the gateway's
+// hello, the status events and the local UI.
+func AgentVersion() string { return "aisathome-node/" + strings.TrimPrefix(Version, "v") }
 
 // Config holds node settings.
 type Config struct {
@@ -137,7 +143,7 @@ func TokenNodeID(token string) (string, bool) {
 
 // Run connects to the gateway and serves until ctx is cancelled, reconnecting with backoff.
 func (a *Agent) Run(ctx context.Context) error {
-	a.event("started", AgentVersion)
+	a.event("started", AgentVersion())
 	backoff := time.Second
 	for {
 		// Only offer capacity while the engine answers: a hung engine (e.g. after a CUDA
@@ -235,7 +241,7 @@ func (a *Agent) session(ctx context.Context) error {
 	}
 
 	if err := send(protocol.Msg{Type: protocol.TypeHello, NodeID: a.cfg.NodeID, Protocol: protocol.Version,
-		Agent: AgentVersion, Models: a.cfg.Models}); err != nil {
+		Agent: AgentVersion(), Models: a.cfg.Models}); err != nil {
 		return err
 	}
 	var welcome protocol.Msg

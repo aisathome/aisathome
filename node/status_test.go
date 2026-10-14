@@ -232,3 +232,24 @@ func TestRestartEngine(t *testing.T) {
 		t.Fatal("CanRestart false with a trigger")
 	}
 }
+
+// The agent reports the release it was built as (scripts/build-release.sh sets Version), not a
+// constant: a v0.2.0 node said aisathome-node/0.1.0 (fresh-install test, 2026-10-18).
+func TestAgentVersionFollowsBuildVersion(t *testing.T) {
+	old := Version
+	t.Cleanup(func() { Version = old })
+	for _, c := range []struct{ build, want string }{
+		{"v0.2.0", "aisathome-node/0.2.0"},
+		{"v1.2.3-rc.1", "aisathome-node/1.2.3-rc.1"},
+		{"dev-0123456789ab", "aisathome-node/dev-0123456789ab"},
+	} {
+		Version = c.build
+		if got := AgentVersion(); got != c.want {
+			t.Errorf("Version %q: AgentVersion() = %q, want %q", c.build, got, c.want)
+		}
+		a := New(testConfig("ws://127.0.0.1:1", "http://127.0.0.1:1", filepath.Join(t.TempDir(), "state.json")), quietLog())
+		if got := a.Status().Agent; got != c.want {
+			t.Errorf("Version %q: status shows agent %q, want %q", c.build, got, c.want)
+		}
+	}
+}

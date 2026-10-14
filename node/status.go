@@ -290,7 +290,7 @@ func (a *Agent) Status() Status {
 		Gateway:    gatewayHost(a.cfg.GatewayURL),
 		GatewayID:  a.gatewayID,
 		StartedAt:  a.started,
-		Agent:      AgentVersion,
+		Agent:      AgentVersion(),
 		Models:     append([]protocol.ModelInfo(nil), a.cfg.Models...),
 		Preset:     a.cfg.Preset,
 		SlotsInUse: len(a.cancels),

@@ -18,9 +18,6 @@ import (
 	"github.com/aisathome/aisathome/node/localui"
 )
 
-// version is set at build time: go build -ldflags "-X main.version=v1.2.3".
-var version = "dev"
-
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "status" {
 		os.Exit(localui.RunStatus(os.Args[2:], os.Stdout, os.Stderr))
@@ -29,11 +26,11 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("aisathome-node", version)
+		fmt.Println("aisathome-node", node.Version)
 		return
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	log.Info("starting", "version", version)
+	log.Info("starting", "version", node.Version)
 
 	b, err := os.ReadFile(*cfgPath)
 	if err != nil {

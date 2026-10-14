@@ -26,6 +26,8 @@ compute_caps=8.6 8.9 12.0
 min_driver=525.60.13
 min_driver_cc12=570.26
 INFO
+# As in an unpacked older bundle used as LLAMA_DIR: the release must replace this line.
+echo "aisathome_version=v0.1.0" >> "$llama/BUILD-INFO"
 
 LLAMA_DIR="$llama" ./scripts/build-release.sh v0.0.0-test "$tmp/dist" >/dev/null
 b=aisathome-node-bundle-linux-amd64
@@ -38,10 +40,12 @@ d="$tmp/x/$b"
 for f in install.sh uninstall.sh bin/aisathome-node bin/llama-server; do [[ -x "$d/$f" ]] || fail "$f missing or not executable"; done
 for f in LICENSE README.md THIRD_PARTY_NOTICES.md BUILD-INFO licenses/llama.cpp/LICENSE lib/libggml-cuda.so; do [[ -f "$d/$f" ]] || fail "$f missing"; done
 [[ -L "$d/lib/libggml-cuda.so.0" ]] || fail "library symlink not kept"
-grep -qx 'aisathome_version=v0.0.0-test' "$d/BUILD-INFO" || fail "BUILD-INFO has no aisathome_version"
+[[ "$(grep '^aisathome_version=' "$d/BUILD-INFO")" = aisathome_version=v0.0.0-test ]] ||
+  fail "BUILD-INFO needs one aisathome_version=v0.0.0-test line: $(grep '^aisathome_version=' "$d/BUILD-INFO" | paste -sd' ' -)"
 cmp -s "$d/install.sh" node/packaging/linux/install.sh || fail "install.sh differs from the repository's"
 if [[ "$(uname -m)" = x86_64 ]]; then
-  "$d/bin/aisathome-node" -version | grep -q v0.0.0-test || fail "bundled aisathome-node is not this build"
+  # -version prints node.Version, which the agent also reports as aisathome-node/0.0.0-test.
+  [[ "$("$d/bin/aisathome-node" -version)" = "aisathome-node v0.0.0-test" ]] || fail "bundled aisathome-node is not this build"
 fi
 
 # The unpacked installer finds the bundle by itself.

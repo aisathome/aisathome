@@ -133,6 +133,83 @@ llama_exec="/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --reasoning-budget-message \"(Thinking budget reached; answering now.)\" --no-reasoning-preserve \\
   -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics"
 
+# GPU access for the sandboxed services. Their device allowlist (implied by ProtectClock=)
+# would otherwise hide the GPU, and CUDA would silently fall back to the CPU. systemd matches
+# char-<name> against the names in /proc/devices (a glob) and skips a name that is not listed
+# there, with a debug message only (Checked: src/core/bpf-devices.c and cgroup.c in systemd
+# v249 and main). The GPU's major 195 (/dev/nvidia0, /dev/nvidiactl) is "nvidia-frontend" up
+# to driver 535 and "nvidia" (plus "nvidiactl") from 545 on (Checked: NVIDIA's open kernel
+# modules, nv-frontend.c in 535.183.01, nv.c in 545.23.06 and 575.51.03; on machines, 530
+# lists nvidia-frontend and 575 lists nvidia, 2026-10-18). With only the old name, driver 575
+# ran llama-server on the CPU. nvidia-uvm and nvidia-caps kept their names.
+gpu_devices='DeviceAllow=char-nvidia-frontend rw
+DeviceAllow=char-nvidia rw'
+
+# Shared sandbox: no access to /home, read-only system, no privileges. Prompts must not
+# reach disk: no core dumps (a dump holds prompts from RAM) and no swap (MemorySwapMax needs
+# cgroup v2; systemd ignores it on v1).
+sandbox='LimitCORE=0
+MemorySwapMax=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/aisathome-node'
+
+llama_unit() {
+  cat <<UNIT
+[Unit]
+Description=AIs@home node: local llama-server (127.0.0.1 only)
+After=network.target aisathome-gpu-init.service
+Requires=aisathome-gpu-init.service
+# On resume, start only after the driver has woken the GPU (nvidia-resume.service runs in
+# parallel with the sleep hook's restart otherwise). No effect when no resume is pending.
+After=nvidia-resume.service
+
+[Service]
+User=aisathome
+Group=aisathome
+Environment=LD_LIBRARY_PATH=/opt/aisathome-node/lib
+# On a crash, ggml forks a debugger to print a backtrace; inside this sandbox that can hang
+# the process instead of ending it (CUDA MMU fault, 2026-10-09). Exit at once so systemd
+# restarts it.
+Environment=GGML_NO_BACKTRACE=1
+# GPU access: the GPU under its old and new driver names, then CUDA's memory manager.
+$gpu_devices
+DeviceAllow=char-nvidia-uvm rw
+DeviceAllow=char-nvidia-caps r
+ExecStart=$llama_exec
+Restart=on-failure
+RestartSec=5
+# A hung CUDA process may ignore SIGTERM: kill it quickly instead of waiting 90 s.
+TimeoutStopSec=20
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+$sandbox
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# engine_on_gpu <since>: llama-server, started at <since>, must run on the GPU. When CUDA sees
+# no GPU (in the sandbox, most likely device rules that do not match the driver), llama-server
+# carries on on the CPU: stop it then and leave it disabled, so nothing runs on the CPU.
+engine_on_gpu() {
+  journalctl -u aisathome-llama --since "$1" -o cat | grep -q "no usable GPU found" || return 0
+  systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
+  local names
+  names="$(grep -i nvidia /proc/devices 2>/dev/null | paste -sd, - || true)"
+  die "llama-server found no GPU and ran on the CPU, so the installer stopped it. If nvidia-smi works, the service's device rules probably do not match this driver: get the newest installer and run it again, or tell us (NVIDIA devices in /proc/devices: ${names:-none}). Details: journalctl -u aisathome-llama"
+}
+
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
 work=""
 workdir() { [[ -n "$work" ]] || { work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT; }; }
@@ -186,7 +263,7 @@ Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json
 Environment=AISATHOME_RESTART_TRIGGER=$ui_restart_trigger
 Environment="AISATHOME_PRESET=$preset: $slots x $ctx_per_slot tokens, KV $kv_type"
 # Read-only GPU facts for the UI (name, memory, temperature) through nvidia-smi.
-DeviceAllow=char-nvidia-frontend rw
+$gpu_devices
 UNIT
 }
 
@@ -366,6 +443,14 @@ fetch_model() {
   echo "model: $dest, sha256 $got (verified)" >&2
 }
 
+# install_libs <build dir> <lib dir>: llama.cpp's shared libraries, with modes set here rather
+# than taken from the source. A bundle unpacked under umask 077 has owner-only files, which
+# the aisathome service user then cannot load ("cannot open shared object file", 2026-10-15).
+install_libs() {
+  find "$1" -name '*.so*' \( -type f -o -type l \) -exec cp -P {} "$2"/ \;
+  find "$2" -type f -exec chmod u=rwX,go=rX {} +
+}
+
 # The node id for a generated node.json: --node-id, else the id that a token from the
 # account page carries ("nt-<id>.<secret>", as node.TokenNodeID reads it), else the host
 # name. (The node also takes an account token's id over node_id, with a warning.)
@@ -414,6 +499,7 @@ if [[ $dry_run = 1 ]]; then
   echo "$llama_exec"
   echo "local UI: $ui_port"
   node_ui_dropin
+  echo "aisathome-llama.service:"; llama_unit
   exit 0
 fi
 
@@ -440,11 +526,12 @@ rm -rf /opt/aisathome-node/lib
 install -d -m 0755 /opt/aisathome-node/bin /opt/aisathome-node/lib
 install -m 0755 "$llama_build/bin/llama-server" /opt/aisathome-node/bin/
 install -m 0755 "$node_bin" /opt/aisathome-node/bin/aisathome-node
-find "$llama_build" -name '*.so*' \( -type f -o -type l \) -exec cp -a {} /opt/aisathome-node/lib/ \;
+install_libs "$llama_build" /opt/aisathome-node/lib
 for f in BUILD-INFO THIRD_PARTY_NOTICES.md licenses; do
   if [[ $bundle = 1 && -e "$llama_build/$f" ]]; then rm -rf "/opt/aisathome-node/$f"; cp -r "$llama_build/$f" /opt/aisathome-node/; fi
 done
 chown -R root:root /opt/aisathome-node
+chmod -R u=rwX,go=rX /opt/aisathome-node
 
 # 3. Model (moved to save disk space, or downloaded and verified) and state directory.
 install -d -o aisathome -g aisathome -m 0750 /var/lib/aisathome-node /var/lib/aisathome-node/models
@@ -465,24 +552,7 @@ rm -f /etc/aisathome-node/node.json.new
 umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/token.env; umask 022
 chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env
 
-# 5. systemd units. Shared sandbox: no access to /home, read-only system, no privileges.
-# Prompts must not reach disk: no core dumps (a dump holds prompts from RAM) and no swap
-# (MemorySwapMax needs cgroup v2; systemd ignores it on v1).
-sandbox='LimitCORE=0
-MemorySwapMax=0
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-ProtectClock=yes
-RestrictSUIDSGID=yes
-RestrictNamespaces=yes
-LockPersonality=yes
-CapabilityBoundingSet=
-ReadWritePaths=/var/lib/aisathome-node'
+# 5. systemd units (the sandbox and llama-server's unit are defined above).
 
 # Creates /dev/nvidia-uvm (normally done by a setuid helper on first CUDA use, which the
 # sandbox blocks). Runs once, as root, outside the sandbox.
@@ -501,39 +571,7 @@ ExecStart=/bin/sh -c 'test -e /dev/nvidia-uvm && exit 0; command -v nvidia-modpr
 WantedBy=multi-user.target
 UNIT
 
-cat > /etc/systemd/system/aisathome-llama.service <<UNIT
-[Unit]
-Description=AIs@home node: local llama-server (127.0.0.1 only)
-After=network.target aisathome-gpu-init.service
-Requires=aisathome-gpu-init.service
-# On resume, start only after the driver has woken the GPU (nvidia-resume.service runs in
-# parallel with the sleep hook's restart otherwise). No effect when no resume is pending.
-After=nvidia-resume.service
-
-[Service]
-User=aisathome
-Group=aisathome
-Environment=LD_LIBRARY_PATH=/opt/aisathome-node/lib
-# On a crash, ggml forks a debugger to print a backtrace; inside this sandbox that can hang
-# the process instead of ending it (CUDA MMU fault, 2026-10-09). Exit at once so systemd
-# restarts it.
-Environment=GGML_NO_BACKTRACE=1
-# GPU access. The sandbox's device allowlist (implied by ProtectClock=) would otherwise
-# block the GPU, and CUDA would silently fall back to the CPU.
-DeviceAllow=char-nvidia-frontend rw
-DeviceAllow=char-nvidia-uvm rw
-DeviceAllow=char-nvidia-caps r
-ExecStart=$llama_exec
-Restart=on-failure
-RestartSec=5
-# A hung CUDA process may ignore SIGTERM: kill it quickly instead of waiting 90 s.
-TimeoutStopSec=20
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-$sandbox
-
-[Install]
-WantedBy=multi-user.target
-UNIT
+llama_unit > /etc/systemd/system/aisathome-llama.service
 
 # Watchdog: restart llama-server if /health has failed for 3 checks in a row (one a minute),
 # for hangs that do not end the process. Skips the first 5 minutes after a start (loading).
@@ -685,9 +723,7 @@ started="$(date '+%Y-%m-%d %H:%M:%S')"
 systemctl restart aisathome-llama
 for i in $(seq 1 90); do curl -fs http://127.0.0.1:8000/health >/dev/null && break; sleep 2; done
 curl -fs http://127.0.0.1:8000/health >/dev/null || { echo "llama-server did not become healthy; see: journalctl -u aisathome-llama" >&2; exit 1; }
-if journalctl -u aisathome-llama --since "$started" -o cat | grep -q "no usable GPU found"; then
-  echo "llama-server is running on the CPU, not the GPU; see: journalctl -u aisathome-llama" >&2; exit 1
-fi
+engine_on_gpu "$started"
 systemctl restart aisathome-node
 sleep 3
 systemctl --no-pager --lines=3 status aisathome-node | tail -3

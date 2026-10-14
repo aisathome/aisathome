@@ -36,7 +36,7 @@ func (f *fakeAgent) Status() node.Status {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	st := node.Status{NodeID: "my-4090", Gateway: "api.aisathome.org", Connected: f.connected, Paused: f.paused,
-		Engine: node.EngineHealthy, Agent: node.AgentVersion, SlotsTotal: 2, CanRestart: f.canRestar,
+		Engine: node.EngineHealthy, Agent: node.AgentVersion(), SlotsTotal: 2, CanRestart: f.canRestar,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b", Slots: 2, Ctx: 32768}},
 		Today:  node.Counters{Requests: 3, PromptTokens: 1200, CompletionTokens: 345}}
 	st.State = node.StateConnected
