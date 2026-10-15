@@ -1,8 +1,13 @@
+// Relaying a chat request to a node and delivering its answer.
+//
+// SPDX-License-Identifier: Apache-2.0
 package gateway
 
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -338,4 +343,20 @@ func (rl *relay) onDone(m protocol.Msg) error {
 		writeJSON(rl.w, http.StatusOK, restoreAnswer(ans, rl.req.red))
 	}
 	return nil
+}
+
+// maxBufferedTotal bounds all non-streaming answers held at once, and maxBufferedPerToken
+// the share one node token can take, so one operator cannot fill it for everyone.
+const (
+	maxBufferedTotal    = 64 << 20
+	maxBufferedPerToken = 12 << 20
+)
+
+// errGatewayBusy means the gateway itself is out of buffer space: not the node's fault.
+var errGatewayBusy = errors.New("gateway busy")
+
+func newID() string {
+	b := make([]byte, 12)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
