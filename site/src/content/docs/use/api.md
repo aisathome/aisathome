@@ -91,4 +91,6 @@ Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. To
   `400 context_length_exceeded`, naming the largest available. Answers are capped at
   32,768 tokens; without `max_tokens`, at 16,384.
 - Limits: a daily token budget, requests per minute and concurrent requests per key. Over
-  the limit you get `429` with a `Retry-After` header.
+  the limit you get `429` with a `Retry-After` header. Answers from your own nodes don't
+  count against the daily budget, and once it is used up your requests still go to your own
+  nodes.

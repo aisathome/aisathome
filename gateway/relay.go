@@ -172,8 +172,8 @@ func (rl *relay) record(outcome string, u protocol.Usage, estimated bool) {
 	g.meterRecord(&rec, rl.mt, n, req.who, u, rl.maxTokens, rec.Time)
 	g.use.record(rec)
 	g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
-	if outcome == outcomeBlocked {
-		return // the user never got the answer
+	if outcome == outcomeBlocked || rec.SelfServed {
+		return // the user never got the answer, or it came from the account's own node
 	}
 	// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
 	bu := u

@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,6 +40,59 @@ func longToolEngine() *httptest.Server {
 		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":900}}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
+}
+
+// Answers from the account's own nodes cost nothing from its daily budget, and an account over
+// its budget can still use its own nodes, and only those.
+func TestOwnNodesOutsideTheBudget(t *testing.T) {
+	a := nodeRig(t, func(c *gateway.AccountsConfig) { c.Limits.TokensPerDay = 40 })
+	s, _ := a.signIn(t, 1)
+	token, nodeID, _ := a.addNode(t, s, "my 3090")
+	_, page := a.createKey(t, s)
+	key := keyRe.FindString(page)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Only its own node: far more requests than a budget of 40 would allow.
+	ownCtx, stopOwn := context.WithCancel(ctx)
+	a.startTokenNode(ownCtx, token, mockEngine(t, false), 2, 32768)
+	a.waitNodes(t, 1)
+	for i := 0; i < 15; i++ {
+		if c, b := ask(t, a.rig, key, chatBody); c != 200 {
+			t.Fatalf("request %d on its own node: %d %s", i, c, b)
+		}
+	}
+	served := len(waitUsage(t, a.rig, 15))
+
+	// Only a stranger's node (the maintainer's): the budget runs out.
+	stopOwn()
+	a.waitNodes(t, 0)
+	a.startNode(ctx, "home", "home-token", mockEngine(t, false), 2)
+	a.waitNodes(t, 1)
+	charged := 0
+	for ; charged < 20; charged++ {
+		if c, _ := ask(t, a.rig, key, chatBody); c != 200 {
+			break
+		}
+		waitUsage(t, a.rig, served+charged+1)
+	}
+	if c, _ := ask(t, a.rig, key, chatBody); c != 429 || charged == 0 || charged == 20 {
+		t.Fatalf("stranger's node: %d answered before the budget ran out, then %d; want some, then 429", charged, c)
+	}
+
+	// Its own node is back: over budget, it is served again, by its own node only.
+	a.startTokenNode(ctx, token, mockEngine(t, false), 2, 32768)
+	a.waitNodes(t, 2)
+	for i := 0; i < 4; i++ {
+		if c, b := ask(t, a.rig, key, chatBody); c != 200 {
+			t.Fatalf("over budget with its own node online: %d %s", c, b)
+		}
+	}
+	for _, u := range waitUsage(t, a.rig, served+charged+4)[served+charged:] {
+		if u["node"] != nodeID || u["self_served"] != true {
+			t.Fatalf("over-budget request not served by its own node: %v", u)
+		}
+	}
 }
 
 // Tool-call arguments are generated output and count against the daily budget.

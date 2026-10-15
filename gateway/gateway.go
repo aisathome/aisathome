@@ -1222,10 +1222,16 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		charge = []string{userKey}
 		limits = append(limits, keyLimit{userKey, acct})
 	}
+	// An account over its budget may still use its own nodes, which it is not charged for
+	// (relay.go); the route is narrowed to them once it is built.
+	overWait := 0
 	for _, l := range limits {
 		if wait, over := g.budget.over(l.k, l.info.TokensPerDay, now); over {
-			w.Header().Set("Retry-After", strconv.Itoa(wait))
-			apiError(w, http.StatusTooManyRequests, "daily token budget used up; it resets at 00:00 UTC")
+			if reqAcct != "" && l.k == userKey {
+				overWait = max(wait, 1)
+				continue
+			}
+			budgetError(w, wait)
 			return
 		}
 	}
@@ -1284,6 +1290,13 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Privacy: personal data goes only to trusted nodes (and the requester's own); secrets
 	// never reach a node at all (replaced by placeholders, restored in the answer).
 	rt := g.routeFor(want, body, acct, reqAcct, acct.VolunteerAgents && !info.ForwardUsers)
+	if overWait > 0 {
+		rt.onlySelf = true
+		if g.servesFor(rt) == 0 {
+			budgetError(w, overWait)
+			return
+		}
+	}
 	reqText := requestText(body) // before redaction: addresses the user wrote, for the guards
 	red := newRedactor()
 	// Nothing to hide only when the key itself belongs to the operator whose nodes serve it
@@ -1621,6 +1634,12 @@ func readMsg(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {
 
 func apiError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]any{"error": map[string]any{"message": msg, "type": http.StatusText(code)}})
+}
+
+// budgetError: the daily budget is used up; wait is the number of seconds until it resets.
+func budgetError(w http.ResponseWriter, wait int) {
+	w.Header().Set("Retry-After", strconv.Itoa(wait))
+	apiError(w, http.StatusTooManyRequests, "daily token budget used up; it resets at 00:00 UTC")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
