@@ -63,6 +63,10 @@ type route struct {
 	need        int    // context tokens: estimated prompt plus max_tokens
 	needMin     int    // prompt plus minOutputRoom: enough when no node fits need
 	exclude     map[*nodeConn]bool
+	// For sticky routing: the requester (as the prefix cache keys it) and the block hashes of
+	// the rendered conversation. Empty: no preference.
+	who  string
+	conv []uint64
 }
 
 // allows reports whether n may see the request, ignoring context and free slots. Caller
@@ -130,39 +134,67 @@ func (g *Gateway) thresholdLocked(rt *route, now time.Time) int {
 
 // pick chooses an allowed node serving the requested model or role, with enough context and
 // a free slot: the requester's own nodes first if it prefers them, then nodes whose operator
-// is under its share, then any, round-robin. It returns the node and the local model name.
+// is under its share (or that hold this very conversation, already counted for it), then
+// any. Within each of these steps the node that holds the longest prefix of this conversation
+// for this requester comes first (stickyOrder), then the others round-robin. It returns the node and the local model name.
 func (g *Gateway) pick(rt *route) (*nodeConn, string) {
+	now := time.Now()
+	var hits map[string]prefixHit
+	var key uint64
+	if g.pcache != nil && rt.who != "" {
+		hits = g.pcache.held(rt.who, rt.conv, now) // its own lock, not under g.mu
+		key = g.pcache.convKey(rt.who, rt.conv)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	now := time.Now()
 	ids := make([]string, 0, len(g.node))
 	for id := range g.node {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	sticky := stickyOrder(hits, g.node)
 	threshold := g.thresholdLocked(rt, now)
-	try := func(ok func(*nodeConn) bool) (*nodeConn, string) {
-		for i := 0; i < len(ids); i++ {
-			n := g.node[ids[(g.rr+i)%len(ids)]]
-			if !rt.allows(n, now) || (ok != nil && !ok(n)) {
+	take := func(n *nodeConn) (string, bool) {
+		for _, m := range n.models {
+			if !serves(m, rt.want) || !fits(m, threshold) {
 				continue
 			}
-			for _, m := range n.models {
-				if !serves(m, rt.want) || !fits(m, threshold) {
-					continue
+			// Reserve the slot here, under the lock: checking now and registering the
+			// request later lets concurrent requests oversubscribe the node.
+			n.mu.Lock()
+			free := n.inflight < m.Slots && !n.paused // the volunteer paused it
+			if free {
+				n.inflight++
+			}
+			n.mu.Unlock()
+			if free {
+				return m.Name, true
+			}
+		}
+		return "", false
+	}
+	try := func(ok func(*nodeConn) bool) (*nodeConn, string) {
+		allowed := func(n *nodeConn) bool { return rt.allows(n, now) && (ok == nil || ok(n)) }
+		for _, n := range sticky {
+			if !allowed(n) {
+				continue
+			}
+			if m, free := take(n); free {
+				g.log.Debug("routed", "sticky", true, "node", n.id, "held_kib", hits[n.id].blocks*cacheBlock/1024)
+				return n, m
+			}
+		}
+		for i := 0; i < len(ids); i++ {
+			n := g.node[ids[(g.rr+i)%len(ids)]]
+			if !allowed(n) {
+				continue
+			}
+			if m, free := take(n); free {
+				g.rr = (g.rr + i + 1) % len(ids)
+				if len(sticky) > 0 {
+					g.log.Debug("routed", "sticky", false, "node", n.id, "held_elsewhere_kib", hits[sticky[0].id].blocks*cacheBlock/1024)
 				}
-				// Reserve the slot here, under the lock: checking now and registering the
-				// request later lets concurrent requests oversubscribe the node.
-				n.mu.Lock()
-				free := n.inflight < m.Slots && !n.paused // the volunteer paused it
-				if free {
-					n.inflight++
-				}
-				n.mu.Unlock()
-				if free {
-					g.rr = (g.rr + i + 1) % len(ids)
-					return n, m.Name
-				}
+				return n, m
 			}
 		}
 		return nil, ""
@@ -172,15 +204,50 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 			return n, m // serving oneself counts for no share
 		}
 	}
-	over := g.overShareLocked(now)
-	n, m := try(func(n *nodeConn) bool { return n.trusted || n.operator == rt.self || !over(n.operator) })
+	over, seen := g.overShareLocked(now, key)
+	// counted: the request goes on with a conversation this node holds, and that conversation
+	// already counts for the node's operator in the window. It adds nothing to the share.
+	counted := func(n *nodeConn) bool { return hits[n.id].cont && seen(n.operator) }
+	n, m := try(func(n *nodeConn) bool {
+		return n.trusted || n.operator == rt.self || !over(n.operator) || counted(n)
+	})
 	if n == nil {
 		n, m = try(nil) // every free node is over its share: better served than waiting
 	}
-	if n != nil && n.operator != rt.self {
-		g.shares = append(g.shares, shareEntry{now, n.operator})
+	if n != nil && n.operator != rt.self && !counted(n) {
+		g.shares = append(g.shares, shareEntry{now, n.operator, key})
 	}
 	return n, m
+}
+
+// stickyOrder lists the connected nodes that hold a prefix of the conversation, longest
+// first, then the most recent. When none of them is free the request goes elsewhere at once
+// rather than waiting. A wait pays off only if the holder frees up sooner than another node
+// re-reads the conversation (about 90 s for 100k tokens on a 3090), and the gateway cannot
+// know when it will: an agent's answer can take minutes, and the holder is often busy with
+// the same requester's parallel request. The node that answers instead holds the
+// conversation from then on, so the following turns stick to it.
+func stickyOrder(hits map[string]prefixHit, nodes map[string]*nodeConn) []*nodeConn {
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make([]*nodeConn, 0, len(hits))
+	for id := range hits {
+		if n := nodes[id]; n != nil {
+			out = append(out, n)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := hits[out[i].id], hits[out[j].id]
+		if a.blocks != b.blocks {
+			return a.blocks > b.blocks
+		}
+		if !a.at.Equal(b.at) {
+			return a.at.After(b.at)
+		}
+		return out[i].id < out[j].id
+	})
+	return out
 }
 
 // Why a request could not be placed on a node.

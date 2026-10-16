@@ -90,7 +90,7 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, n *nodeConn, who stri
 	if ended {
 		tail = next
 	}
-	matched := g.pcache.served(n.id, keyHash(who), mt.prompt, tail, now, rec.Outcome != outcomeBlocked)
+	matched := g.pcache.servedHashed(n.id, keyHash(who), mt.hashes, mt.prompt, tail, now, rec.Outcome != outcomeBlocked)
 	if g.tok != nil {
 		b := 0
 		for _, id := range mt.promptIDs {

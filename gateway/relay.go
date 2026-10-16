@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +30,7 @@ type chatReq struct {
 	clientStream bool           // the client asked for a stream (nodes always stream)
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
+	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
 }
 
 // maxCollected bounds a non-streaming answer; all of them share g.buffered.
@@ -66,6 +68,7 @@ type relay struct {
 	collected             []json.RawMessage // a non-streaming answer, assembled at the end
 	chunks                int
 	collectedBytes        int
+	free                  func()        // frees the node's slot; once, however often called
 	bufHeld               int64         // this request's share of g.buffered and of tokBuf
 	tokBuf                *atomic.Int64 // what the node token's requests buffer together
 }
@@ -81,7 +84,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	nb["stream_options"] = map[string]any{"include_usage": true}
 	raw, _ := json.Marshal(nb)
 	rl := &relay{g: g, w: w, ctx: r.Context(), req: req, n: n, model: model, gd: gd, reqID: reqID, raw: raw}
-	rl.mt = newMeter(nb, g.tok)
+	rl.mt = newMeter(nb, req.conv, g.tok)
 	rl.maxTokens = requestMaxTokens(nb, g.cfg.DefaultMaxTokens)
 	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
 	// collected) and work. About one token per chunk, with room for role and usage chunks.
@@ -94,13 +97,21 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	n.mu.Lock()
 	n.pending[reqID] = p
 	n.mu.Unlock()
+	// The slot reserved by pick is freed once: as soon as the node is finished with the request
+	// (Done, its error, or it left), before the end goes out to the client, so that the client's
+	// next turn finds the node holding its conversation free; otherwise when run returns.
+	rl.free = sync.OnceFunc(func() {
+		n.mu.Lock()
+		n.inflight--
+		n.mu.Unlock()
+		g.signal() // a slot is free again
+	})
 	defer func() {
 		close(p.done)
 		n.mu.Lock()
 		delete(n.pending, reqID)
-		n.inflight-- // reserved by pick
 		n.mu.Unlock()
-		g.signal() // a slot is free again
+		rl.free()
 	}()
 
 	rl.t0 = time.Now()
@@ -139,6 +150,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 					continue
 				default:
 				}
+				rl.free() // the node is gone: nothing runs in its slot
 				rl.partial("failed")
 				err = errors.New("node disconnected")
 			}
@@ -344,6 +356,7 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 
 // onError passes on a node's error. The node ended the request itself: nothing to cancel.
 func (rl *relay) onError(m protocol.Msg) error {
+	rl.free()
 	msg := errCategory(m.Error) // never pass on (or log) free text from a node
 	e := map[string]any{"message": msg}
 	if isContextOverflow(msg) {
@@ -357,6 +370,7 @@ func (rl *relay) onError(m protocol.Msg) error {
 // onDone finishes the answer: final guard checks, the usage record, and the end of the stream
 // or the assembled answer. nil means the client got the answer.
 func (rl *relay) onDone(m protocol.Msg) error {
+	rl.free() // the node is finished with it
 	u := protocol.Usage{}
 	if m.Usage != nil {
 		u = *m.Usage

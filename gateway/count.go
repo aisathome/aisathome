@@ -302,18 +302,25 @@ type meter struct {
 	ready     chan struct{}
 	prompt    string
 	args      templateArgs
-	promptIDs []int32 // with a tokenizer
+	hashes    []uint64 // the prompt's block hashes, when rendered before routing (nil = not)
+	promptIDs []int32  // with a tokenizer
 
 	reasoning, content strings.Builder
 	calls              []*toolCall
 	size               int
 }
 
-func newMeter(nb map[string]any, tok *Tokenizer) *meter {
+// newMeter starts metering nb; cp is its conversation if already rendered (nil = render it).
+func newMeter(nb map[string]any, cp *convPrint, tok *Tokenizer) *meter {
 	m := &meter{ready: make(chan struct{})}
+	if cp != nil {
+		m.prompt, m.args, m.hashes = cp.prompt, cp.args, cp.hashes
+	}
 	go func() {
 		defer close(m.ready)
-		m.prompt, m.args = renderPrompt(nb)
+		if cp == nil {
+			m.prompt, m.args = renderPrompt(nb)
+		}
 		if tok != nil {
 			m.promptIDs = tok.Encode(m.prompt)
 		}

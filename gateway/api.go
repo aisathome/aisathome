@@ -284,8 +284,12 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rendered and hashed once, as a node will get it: routing looks for the node that holds
+	// this conversation (routing.go), credit for what that node had cached (credit_http.go).
+	conv := g.pcache.print(forNode(body))
+	rt.who, rt.conv = keyHash(userKey), conv.hashes
 	req := &chatReq{user: acct.User, who: userKey, charge: charge, self: rt.self, want: want,
-		clientStream: clientStream, body: body, red: red}
+		clientStream: clientStream, body: body, red: red, conv: conv}
 	deadline := time.Now().Add(time.Duration(g.cfg.QueueTimeoutSec) * time.Second)
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)

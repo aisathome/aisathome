@@ -398,34 +398,49 @@ func (g *Gateway) sweepNodes() {
 	}
 }
 
-// The share cap: no untrusted operator gets more than 1/maxShare of the requests placed in
-// the last shareWindow while other nodes are free (a soft cap: when only its nodes are free,
-// they serve rather than let the request wait). It limits what one bad volunteer sees.
+// The share cap: no untrusted operator gets more than 1/maxShare of the conversations placed
+// in the last shareWindow while other nodes are free (a soft cap: when only its nodes are
+// free, they serve rather than let the request wait). It limits how many people's
+// conversations one bad volunteer sees. A conversation counts once per window, not once per
+// request: an agent session's many requests stick to the node holding its prompt cache,
+// and counting each would push that operator over its share and move the session away.
 const (
 	shareWindow     = 10 * time.Minute
 	maxShare        = 3
 	maxShareEntries = 4096
 )
 
+// shareEntry is one conversation placed on an operator's node: when, and its convKey
+// (0 = too short to recognise later; such requests each count).
 type shareEntry struct {
-	at time.Time
-	op string
+	at   time.Time
+	op   string
+	conv uint64
 }
 
-// overShareLocked prunes the window and reports, per operator, whether one more request
-// would put it over its share. Caller holds g.mu.
-func (g *Gateway) overShareLocked(now time.Time) func(op string) bool {
+// overShareLocked prunes the window and reports, per operator, whether one more conversation
+// would put it over its share (over), and whether conversation conv was already counted
+// for it in the window (seen). Caller holds g.mu.
+func (g *Gateway) overShareLocked(now time.Time, conv uint64) (over, seen func(op string) bool) {
 	i := 0
 	for i < len(g.shares) && (now.Sub(g.shares[i].at) > shareWindow || len(g.shares)-i > maxShareEntries) {
 		i++
 	}
 	g.shares = append(g.shares[:0], g.shares[i:]...)
 	count := map[string]int{}
+	var had map[string]bool
 	for _, e := range g.shares {
 		count[e.op]++
+		if conv != 0 && e.conv == conv {
+			if had == nil {
+				had = map[string]bool{}
+			}
+			had[e.op] = true
+		}
 	}
 	total := len(g.shares)
-	return func(op string) bool { return (count[op]+1)*maxShare > total+1 }
+	return func(op string) bool { return (count[op]+1)*maxShare > total+1 },
+		func(op string) bool { return had[op] }
 }
 
 // routeFor builds the placement policy of a chat request.

@@ -51,7 +51,7 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
 - Answers from volunteers' nodes pass simple safety checks. If an answer looks like it
   injects a dangerous command, it is stopped and the node is **held** until we have looked
   at it; the account page shows that.
-- No single volunteer gets more than about a third of the requests while others are free.
+- No single volunteer gets more than about a third of the conversations while others are free.
 - Your node earns [credit](/node/credit/), except for requests you send yourself.
 
 ## What you are responsible for

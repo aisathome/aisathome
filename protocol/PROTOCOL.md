@@ -33,7 +33,9 @@ users, keys or billing.
 
 - **Routing:** users may name a node model or a **role** (`fast`, `deep`, `agent`). The
   gateway picks a node with a free slot, round-robin, and retries once on another node if
-  the first fails before streaming any output.
+  the first fails before streaming any output. Among the nodes a request may use, a free node
+  that recently served a long prefix of the same conversation for the same requester comes
+  first (its engine has that prefix cached); a busy one is not waited for.
 - **Pause:** a node whose last heartbeat said `paused: true` gets no new requests until a
   heartbeat says otherwise. A paused node answers any request that still reaches it (sent
   before the heartbeat arrived, or by a gateway that predates `paused`) with an `error`

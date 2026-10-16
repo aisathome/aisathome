@@ -242,7 +242,8 @@ func TestNodesPerAddress(t *testing.T) {
 }
 
 // No untrusted operator gets more than about a third of the requests while other nodes
-// are free.
+// are free. These are short one-off requests, so each is a conversation of its own
+// (TestStickySessionShareCap covers a session's many turns).
 func TestShareCap(t *testing.T) {
 	var home, stranger atomic.Int32
 	r := trustRig(t, &home, &stranger)
