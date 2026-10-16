@@ -67,7 +67,7 @@ func (g *Gateway) grantCredit(n *nodeConn, c float64, now time.Time) {
 	g.credit.grant(n.id, n.account, operator, c, acctSince, nodeSince, now)
 }
 
-// meterRecord fills in the tokens credit is based on and grants the credit. nodeU is what
+// meterRecord fills in the tokens credit is based on and the credit (relay.commit grants it). nodeU is what
 // the node reported (clamped); it is used only when the gateway has no tokenizer.
 func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, n *nodeConn, who string, nodeU protocol.Usage, maxTokens int, now time.Time) {
 	<-mt.ready
@@ -106,7 +106,6 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, n *nodeConn, who stri
 	rec.Tokens = &t
 	if (rec.Outcome == "ok" || rec.Outcome == "cancelled") && !rec.SelfServed {
 		rec.Credit = math.Round(t.credit()*1e6) / 1e6
-		g.grantCredit(n, rec.Credit, now)
 	}
 }
 

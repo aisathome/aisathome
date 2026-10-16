@@ -444,7 +444,7 @@ func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAc
 	if g.accounts != nil {
 		rt.trustedOnly = g.accounts.Settings().Routing == RoutingTrustedOnly
 		if reqAcct != "" {
-			rt.self = g.pseudonym(reqAcct)
+			rt.self, rt.acct = g.pseudonym(reqAcct), reqAcct
 			switch g.accounts.nodePref(reqAcct) {
 			case NodePrefOnly: // on top of a front end's operator: if they differ, no node fits
 				rt.onlySelf = true

@@ -25,7 +25,9 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   chained hashes of 256-byte blocks are kept, bounded per node (32 conversations of up to
   128k tokens) and in all (256 nodes). The node's cache claim is ignored.
 - **No credit** for self-served answers (an account's own node), failed or blocked answers.
-  Partial answers the client cancelled count.
+  Partial answers the client cancelled count. So does an answer whose end (held tool calls,
+  `[DONE]`, a non-streamed answer) never reached the client: it is recorded as cancelled, not
+  ok, and earns no end-of-turn token.
 - **Ledger** per account, per node and per config-token operator (the maintainer's nodes,
   kept apart from accounts): today (UTC), total and BOINC's `expavg_credit`
   (`update_average` from `lib/util.cpp`, 7-day half-life; the first grant is spread over the

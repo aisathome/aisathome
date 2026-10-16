@@ -55,6 +55,7 @@ type route struct {
 	trustedOnly bool   // the operator's emergency switch: trusted nodes only, not even one's own
 	operator    string // only nodes of this operator ("" = any), e.g. a key's or front end's only_operator
 	self        string // the requesting account's operator name: its own nodes count as trusted for it
+	acct        string // the requesting account ("" = none), to name its own nodes in errors
 	onlySelf    bool   // only the requester's own nodes (its preference), on top of operator
 	preferSelf  bool   // try the requester's own nodes first
 	tools       bool   // the request defines tools (an agent)
@@ -347,6 +348,13 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 			case rt.trusted && rt.why != "":
 				because = rt.why
 			case rt.tools && !rt.trusted:
+				// Name the actual reason: the account's own node being offline is not a key problem.
+				// (Its own node online but busy is counted above and gets the busy answer.)
+				if g.ownNodesOffline(rt) {
+					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
+						"your own node is offline, and no maintainer node serving %q is online. Start your node, or try again later", want))
+					return
+				}
 				which = "trusted node, or volunteer node past its probation,"
 				because = "requests with tools go to volunteer nodes only with an API key that allows them"
 				if !rt.consent {
@@ -362,6 +370,25 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 		w.Header().Set("Retry-After", "10")
 		apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("all nodes serving %q are busy; try again shortly", want))
 	}
+}
+
+// ownNodesOffline reports whether the requesting account has registered nodes and none of
+// them is connected.
+func (g *Gateway) ownNodesOffline(rt *route) bool {
+	if g.accounts == nil || rt.acct == "" || rt.self == "" {
+		return false
+	}
+	if a, _, ok := g.accounts.Get(rt.acct); !ok || len(a.Nodes) == 0 {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, n := range g.node {
+		if n.operator == rt.self {
+			return false
+		}
+	}
+	return true
 }
 
 func contains(xs []string, s string) bool {

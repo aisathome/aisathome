@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,7 @@ type relay struct {
 	g     *Gateway
 	w     http.ResponseWriter
 	rc    *http.ResponseController
+	ctx   context.Context // the client's request: done when it went away
 	req   *chatReq
 	n     *nodeConn
 	model string
@@ -78,7 +80,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	nb["stream"] = true
 	nb["stream_options"] = map[string]any{"include_usage": true}
 	raw, _ := json.Marshal(nb)
-	rl := &relay{g: g, w: w, req: req, n: n, model: model, gd: gd, reqID: reqID, raw: raw}
+	rl := &relay{g: g, w: w, ctx: r.Context(), req: req, n: n, model: model, gd: gd, reqID: reqID, raw: raw}
 	rl.mt = newMeter(nb, g.tok)
 	rl.maxTokens = requestMaxTokens(nb, g.cfg.DefaultMaxTokens)
 	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
@@ -125,25 +127,47 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		case <-r.Context().Done(): // client went away: tell the node to stop
 			err = rl.fail("cancelled", "", r.Context().Err())
 		case <-n.closed: // nothing left to cancel
-			rl.partial("failed")
-			err = errors.New("node disconnected")
+			// The node may have sent the rest of the answer, even its end, just before it left:
+			// the reader delivered all of it before closing n.closed, so finish with that first.
+			for err == nil {
+				select {
+				case m := <-p.ch:
+					var done bool
+					if done, err = rl.onMsg(m); done {
+						return true, nil
+					}
+					continue
+				default:
+				}
+				rl.partial("failed")
+				err = errors.New("node disconnected")
+			}
 		case m := <-p.ch:
 			stall.Reset(time.Duration(g.cfg.IdleTimeoutSec) * time.Second)
-			switch m.Type {
-			case protocol.TypeChunk:
-				err = rl.onChunk(m)
-			case protocol.TypeError:
-				err = rl.onError(m)
-			case protocol.TypeDone:
-				if err = rl.onDone(m); err == nil {
-					return true, nil
-				}
+			var done bool
+			if done, err = rl.onMsg(m); done {
+				return true, nil
 			}
 		}
 		if err != nil {
 			return rl.started, err
 		}
 	}
+}
+
+// onMsg handles one message from the node. done means the client got the whole answer; a
+// non-nil error ends the attempt.
+func (rl *relay) onMsg(m protocol.Msg) (done bool, err error) {
+	switch m.Type {
+	case protocol.TypeChunk:
+		err = rl.onChunk(m)
+	case protocol.TypeError:
+		err = rl.onError(m)
+	case protocol.TypeDone:
+		err = rl.onDone(m)
+		done = err == nil
+	}
+	return done, err
 }
 
 // fail ends an attempt the gateway gives up on: the node is told to stop, the work it did is
@@ -167,21 +191,51 @@ func (rl *relay) sseError(e map[string]any) {
 }
 
 func (rl *relay) record(outcome string, u protocol.Usage, estimated bool) {
-	g, n, req := rl.g, rl.n, rl.req
+	rl.commit(rl.meter(outcome, u, estimated))
+}
+
+// meter builds the usage record of the attempt: tokens and credit as the gateway counts them.
+// It also remembers the prompt (and for an ok answer the answer) as served by the node, for
+// cache credit and routing, so onDone runs it before the end of the answer goes out.
+func (rl *relay) meter(outcome string, u protocol.Usage, estimated bool) *usageRecord {
+	n, req := rl.n, rl.req
 	u, clamped := clampUsage(u, len(rl.raw), rl.maxTokens, rl.relayed)
 	u.DurationMs = time.Since(rl.t0).Milliseconds()
-	rec := usageRecord{Time: time.Now().UTC(), User: req.user, Node: n.id, Operator: n.operator,
+	rec := &usageRecord{Time: time.Now().UTC(), User: req.user, Node: n.id, Operator: n.operator,
 		Model: rl.model, Requested: req.want, Usage: u, ReqID: rl.reqID, Outcome: outcome, Relayed: rl.relayed,
 		Estimated: estimated, Clamped: clamped, SelfServed: req.self != "" && n.operator == req.self, Guard: rl.flag,
 		Tools: hasTools(req.body)}
-	g.meterRecord(&rec, rl.mt, n, req.who, u, rl.maxTokens, rec.Time)
-	g.use.record(rec)
-	g.stats.add(rec) // clamped numbers: a node cannot inflate the public statistics either
-	if outcome == outcomeBlocked || rec.SelfServed {
+	rl.g.meterRecord(rec, rl.mt, n, req.who, u, rl.maxTokens, rec.Time)
+	return rec
+}
+
+// undelivered turns the record of an ok answer whose end never reached the client into that
+// of a cancelled one: without the end-of-turn token meterRecord counts for an ended answer.
+func undelivered(rec *usageRecord) {
+	rec.Outcome = "cancelled"
+	if rec.Tokens != nil && rec.Counted == "gateway" && rec.Tokens.Completion > 0 {
+		t := *rec.Tokens
+		t.Completion--
+		rec.Tokens = &t
+	}
+	if rec.Credit > 0 && rec.Tokens != nil {
+		rec.Credit = math.Round(rec.Tokens.credit()*1e6) / 1e6
+	}
+}
+
+// commit logs the record, grants its credit and charges the budgets.
+func (rl *relay) commit(rec *usageRecord) {
+	g, n, req := rl.g, rl.n, rl.req
+	if (rec.Outcome == "ok" || rec.Outcome == "cancelled") && !rec.SelfServed {
+		g.grantCredit(n, rec.Credit, rec.Time)
+	}
+	g.use.record(*rec)
+	g.stats.add(*rec) // clamped numbers: a node cannot inflate the public statistics either
+	if rec.Outcome == outcomeBlocked || rec.SelfServed {
 		return // the user never got the answer, or it came from the account's own node
 	}
 	// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
-	bu := u
+	bu := rec.Usage
 	bu.PromptTokens = min(bu.PromptTokens, len(rl.raw)/3+256)
 	bu.CachedTokens = min(bu.CachedTokens, bu.PromptTokens)
 	bu.CompletionTokens = min(bu.CompletionTokens, rl.relayedChars/2+16) // by characters, not chunks
@@ -326,23 +380,51 @@ func (rl *relay) onDone(m protocol.Msg) error {
 			}
 		}
 	}
-	if rl.req.clientStream {
-		for _, data := range released {
-			rl.send(data)
-		}
+	// The end must reach the client: one that left before it (or whose connection fails on it)
+	// did not get the answer, so it is recorded as cancelled, not ok.
+	rl.started = true // output is going out: no retry from here on
+	if err := rl.ctx.Err(); err != nil {
+		rl.record("cancelled", u, false)
+		return fmt.Errorf("client gone before the end of the answer: %w", err)
 	}
-	rl.record("ok", u, false)
-	if rl.req.clientStream { // writeSSE also answers an empty stream properly
-		if rl.rest != nil {
-			if f := rl.rest.flush(); f != nil {
-				rl.writeSSE(f)
-			}
-		}
-		rl.writeSSE([]byte("[DONE]"))
-	} else {
-		writeJSON(rl.w, http.StatusOK, restoreAnswer(ans, rl.req.red))
+	// Metered (and the conversation remembered for its node) before the client can see the
+	// end and send its next turn; logged and credited once the outcome is known.
+	rec := rl.meter("ok", u, false)
+	err := rl.deliverEnd(released, ans)
+	if err != nil {
+		undelivered(rec)
+	}
+	rl.commit(rec)
+	if err != nil {
+		return fmt.Errorf("client gone at the end of the answer: %w", err)
 	}
 	return nil
+}
+
+// deliverEnd writes the end of the answer: the tool calls the guard released and [DONE], or
+// the assembled answer.
+func (rl *relay) deliverEnd(released [][]byte, ans map[string]any) error {
+	if !rl.req.clientStream {
+		rl.w.Header().Set("Content-Type", "application/json")
+		rl.w.WriteHeader(http.StatusOK)
+		if _, err := rl.w.Write(append(mustJSON(restoreAnswer(ans, rl.req.red)), '\n')); err != nil {
+			return err
+		}
+		return rl.rc.Flush()
+	}
+	for _, data := range released {
+		if err := rl.send(data); err != nil {
+			return err
+		}
+	}
+	if rl.rest != nil {
+		if f := rl.rest.flush(); f != nil {
+			if err := rl.writeSSE(f); err != nil {
+				return err
+			}
+		}
+	}
+	return rl.writeSSE([]byte("[DONE]")) // also answers an empty stream properly
 }
 
 // maxBufferedTotal bounds all non-streaming answers held at once, and maxBufferedPerToken
