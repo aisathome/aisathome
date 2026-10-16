@@ -26,10 +26,11 @@ Windows is not supported yet.
 
 | GPU | System | Driver | Install | Result |
 |---|---|---|---|---|
-| RTX 4090 | Ubuntu 22.04.5 (desktop) | 530.30.02 | llama.cpp built by hand | The maintainer's node, serving since 2026-10-09 |
+| RTX 4090 | Ubuntu 22.04.5 (desktop) | 530.30.02 | llama.cpp built by hand | Served as a node 2026-10-09 to 2026-10-13; now the maintainer's development machine |
 | RTX 3090 | Ubuntu 22.04 (rented VM) | 535 | llama.cpp built by hand | Install and one chat through the gateway, 2026-10-10 (about 42 tokens/s) |
 | RTX 3090 | Ubuntu 22.04 (rented VM) | 535.183.01 | prebuilt bundle | Install, download resume, connect, 1 × 128k in 18,302 MiB, about 42 tokens/s (2026-10-11). Needed a build fix: kernels must not be compressed for drivers before 570 |
-| RTX 4090, RTX 5090 | rented | 595 | the bundle's `llama-server` | Runs; used for the model-check measurement (2026-10-11) |
+| RTX 3090 | Ubuntu 22.04.5 (rented VM) | 575.51.03 | prebuilt bundle | 2026-10-18: the installer's GPU rule did not match this driver, so `llama-server` ran on the CPU and the install stopped. With the rule the installer now adds, set by hand: install, connect, requests and a cancel through the gateway, local UI, uninstall; about 41 tokens/s. The fixed installer itself has not run on this driver yet |
+| RTX 4090, RTX 5090 | rented | 595 | the bundle's `llama-server` in containers, not through the installer | Runs; used for the model-check measurement (2026-10-11) |
 
 Other 24 GB NVIDIA cards and distributions may work; the installer checks what it needs and
 says what is missing. Tell us what worked for you: [contact@aisathome.org](mailto:contact@aisathome.org).

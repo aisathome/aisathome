@@ -121,11 +121,13 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
 - Defaults: the network's one setting (1 × 128k, KV `q4_0`; below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot`.
-- `--dry-run` runs the checks (bundle, driver, GPU, disk), prints the generated `node.json`
-  and the `llama-server` command, and exits without installing (no root needed; with
-  `--node-release` it downloads and verifies the binary too). `./install_test.sh` tests
-  presets, overrides, the checks (with a fake `nvidia-smi` and `df`) and the downloads this
-  way; `../../../scripts/bundle_test.sh` tests the bundle's packaging.
+- `--dry-run` runs the checks (bundle, driver, GPU, disk), prints the generated `node.json`,
+  the `llama-server` command and its systemd unit, and exits without installing (no root
+  needed; with `--node-release` it downloads and verifies the binary too).
+  `./install_test.sh` tests presets, overrides, the checks (with a fake `nvidia-smi` and
+  `df`), the downloads and the units' GPU device rules (against `/proc/devices` as drivers
+  530 and 575 list it) this way; `../../../scripts/bundle_test.sh` tests the bundle's
+  packaging.
 
 ## Model settings
 

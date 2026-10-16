@@ -11,7 +11,7 @@ description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home n
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` |
-| Remove | `sudo ./node/packaging/linux/uninstall.sh` (keeps the model; `--purge` removes it too) |
+| Remove | `sudo ./uninstall.sh` in the unpacked bundle, so keep that directory (keeps the model; `--purge` removes it and the `aisathome` user too). From a source checkout: `sudo ./node/packaging/linux/uninstall.sh` |
 
 ## Local UI
 
@@ -41,6 +41,38 @@ ssh -N -L 7381:127.0.0.1:7381 you@node-machine
 
 In a terminal, `aisathome-node status` prints the same; it exits with 0 when the node is
 connected and 1 when it is not, so scripts and monitoring can use it.
+
+## Running BOINC on the same GPU
+
+The model takes the whole GPU while it serves, so BOINC's GPU tasks and the node should not
+run at the same time. BOINC can step aside by itself whenever the node's engine runs: name
+`llama-server` as an exclusive GPU app in `cc_config.xml` in BOINC's data directory
+(`/var/lib/boinc-client/` with the Debian and Ubuntu package):
+
+```xml
+<cc_config>
+  <options>
+    <exclusive_gpu_app>llama-server</exclusive_gpu_app>
+  </options>
+</cc_config>
+```
+
+If the file already exists, add only the `<exclusive_gpu_app>` line inside its `<options>`.
+Then choose **Options → Read config files** in BOINC Manager, or restart the client
+(`sudo systemctl restart boinc-client`).
+
+- BOINC looks at the running processes every 10 seconds. While `llama-server` runs, it
+  suspends all its GPU work ("an exclusive app is running"); CPU work goes on.
+- The model stays loaded as long as the node runs, also while it is paused in the
+  [local UI](#local-ui), so BOINC's GPU work waits all that time. To give the GPU back to
+  BOINC, stop the node (`sudo systemctl stop aisathome-node aisathome-llama`): BOINC resumes
+  within about 15 seconds.
+- Suspending ends BOINC's running GPU task: it starts again from its last checkpoint, and
+  the work since then is lost.
+- On Linux BOINC compares only the first 15 characters of a process name; `llama-server`
+  fits.
+- It has no effect while BOINC's GPU mode is set to **always**; use **based on
+  preferences** (BOINC Manager's Activity menu).
 
 ## Privacy hardening
 
@@ -86,6 +118,14 @@ another GPU generation. Rebuild with `"-DCMAKE_CUDA_ARCHITECTURES=86;89"` (see
 **`no /dev/nvidia-uvm and no nvidia-modprobe`.** The GPU device nodes are missing and the
 helper that creates them is not installed: `sudo apt install nvidia-modprobe`, then start
 the services again.
+
+**`llama-server found no GPU and ran on the CPU`** (older installers: `llama-server is running
+on the CPU, not the GPU`). CUDA saw no GPU inside the service's sandbox. With installers
+before v0.2.0 that happens on NVIDIA driver 545 and newer: the sandbox allowed the GPU only
+under the name older drivers use. Download the newest bundle and run its `install.sh` again;
+it keeps the downloaded model. The installer stops `llama-server` in this case, so nothing
+keeps running on the CPU. If the newest installer still says this while `nvidia-smi` works,
+tell us and include the output of `grep nvidia /proc/devices`.
 
 **`llama-server did not become healthy`.** Check `journalctl -u aisathome-llama`. Out of
 memory usually means another program uses the GPU: close it, or on a desktop whose display

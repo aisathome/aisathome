@@ -29,8 +29,9 @@ or 4090.
 
 ## Can I use it with BOINC at the same time?
 
-Pause one while the other runs: the model uses the GPU fully while it serves. Running both
-side by side automatically is planned.
+Pause one while the other runs: the model uses the GPU fully while it serves. BOINC can do
+the pausing itself: see [Running BOINC on the same GPU](/node/operate/#running-boinc-on-the-same-gpu).
+Running both side by side automatically is planned.
 
 ## Why “AIs@home”?
 

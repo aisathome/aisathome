@@ -33,8 +33,10 @@ release has no bundle yet, use [build it yourself](#build-it-yourself).
 sudo ./install.sh
 ```
 
-Paste the node token when asked (input is hidden). A token from your account page carries
-the node's id; if we gave you a node id with your token, add `--node-id <id>`.
+Paste the node token when asked (input is hidden). On a machine you reach over SSH, you can
+also put the token in a file and pipe it in: `cat token.txt | sudo ./install.sh`, then
+delete the file. A token from your account page carries the node's id; if we gave you a node
+id with your token, add `--node-id <id>`.
 
 The installer then:
 
@@ -56,10 +58,18 @@ first without root: `./install.sh --download-only ~/models`, then install with
 ### 3. Check
 
 ```bash
-journalctl -u aisathome-node -n 5
+aisathome-node status
 ```
 
-You should see `connected to gateway`. Then tell us, and we check that requests reach you.
+You should see `CONNECTED`, the model and your GPU. For details, read the log (it needs
+`sudo` unless you are in the `adm` or `systemd-journal` group):
+
+```bash
+sudo journalctl -u aisathome-node -u aisathome-llama -n 20
+```
+
+Keep the unpacked bundle directory: its `uninstall.sh` removes the node
+([day to day](/node/operate/)). Then tell us, and we check that requests reach you.
 
 ## Build it yourself
 
