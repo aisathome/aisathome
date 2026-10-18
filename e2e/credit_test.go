@@ -18,10 +18,14 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/aisathome/aisathome/gateway"
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // miniTokenizer is Qwen3.8's tokenizer cut down to a few hundred merges (gateway/testdata):
@@ -404,6 +408,109 @@ func TestCreditOnlyForWhatReachedTheClient(t *testing.T) {
 			if completion != want || !near(creditOf(u), wantCredit) {
 				t.Fatalf("completion %d (want %d), credit %v (want %v): %v", completion, want, creditOf(u), wantCredit, u)
 			}
+		})
+	}
+}
+
+// wantDelivered checks a cancelled record's credit: delivered is the answer text that reached
+// the client ("" = none, and then no credit at all).
+func wantDelivered(t *testing.T, u map[string]any, delivered string) {
+	t.Helper()
+	if u["outcome"] != "cancelled" {
+		t.Fatalf("outcome %v, want cancelled: %v", u["outcome"], u)
+	}
+	prompt, _, completion := tokensOf(t, u)
+	want, wantCredit := 0, 0.0
+	if delivered != "" {
+		tok, err := gateway.LoadTokenizer(miniTokenizer, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = tok.Count("\n</think>\n\n" + delivered)
+		wantCredit = float64(prompt)*gateway.CreditPerPromptToken + float64(want)*gateway.CreditPerOutputToken
+	}
+	if completion != want || !near(creditOf(u), wantCredit) {
+		t.Fatalf("completion %d (want %d), credit %v (want %v): %v", completion, want, creditOf(u), wantCredit, u)
+	}
+}
+
+// Text the secret restorer holds back (it could be the start of a placeholder) has not reached
+// the client: a cancelled answer earns nothing for it, and for text it released in part, only
+// for that part, counted as the node wrote it (external review, 2026-10-18).
+func TestCreditOnlyForTextTheRestorerReleased(t *testing.T) {
+	for _, c := range []struct{ name, first, delivered string }{
+		{"all held back", "sk-proj-AI", ""},
+		{"partly released", "Hello sk-proj-AI", "Hello "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRigCfg(t, func(cfg *gateway.Config) { cfg.TokenizerFile = miniTokenizer })
+			scriptNode(t, r, func(_ *websocket.Conn, write func(protocol.Msg), id string) {
+				write(chunkMsg(id, c.first))
+				write(chunkMsg(id, "x, and more"))
+				write(protocol.Msg{Type: protocol.TypeDone, ReqID: id, Usage: &protocol.Usage{PromptTokens: 20, CompletionTokens: 4}})
+			})
+			var writes atomic.Int32 // the client takes the first chunk and is gone at the second
+			cut := cutClient(t, r.g.Handler(), true, func([]byte) bool { return writes.Add(1) == 2 })
+			body, _ := json.Marshal(map[string]any{"model": "deep", "stream": true,
+				"messages": []any{map[string]any{"role": "user", "content": "use " + secret}}})
+			req, _ := http.NewRequest("POST", cut.URL+"/v1/chat/completions", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer restore-key")
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+			wantDelivered(t, waitUsage(t, r, 1)[0], c.delivered)
+		})
+	}
+}
+
+// A client whose request ends while the end of the answer goes out, though the writes still
+// succeed (a closed connection takes them for a while), did not get the answer: it is recorded
+// as cancelled, credited for what was written, without the end of turn (external review,
+// 2026-10-18). With secrets restored, text held back to the end of the stream counts once it
+// was written.
+func TestClientGoneDuringTheEnd(t *testing.T) {
+	stream := `{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	atDone := func(p []byte) bool { return strings.Contains(string(p), "[DONE]") }
+	withSecret, _ := json.Marshal(map[string]any{"model": "deep", "stream": true,
+		"messages": []any{map[string]any{"role": "user", "content": "use " + secret}}})
+	for _, c := range []struct {
+		name      string
+		key, body string
+		gone      func([]byte) bool
+		delivered string
+	}{
+		{"streamed", "user-key", stream, atDone, "Hello, world"},
+		{"not streamed", "user-key", `{"model":"deep","messages":[{"role":"user","content":"hi"}]}`,
+			func([]byte) bool { return true }, "Hello, world"},
+		{"streamed, held-back text flushed at the end", "restore-key", string(withSecret), atDone, "Hello sk-proj-AI"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRigCfg(t, func(cfg *gateway.Config) { cfg.TokenizerFile = miniTokenizer })
+			if c.key == "restore-key" {
+				scriptNode(t, r, func(_ *websocket.Conn, write func(protocol.Msg), id string) {
+					write(chunkMsg(id, "Hello sk-proj-AI")) // and no finish_reason: flushed after the stream
+					write(protocol.Msg{Type: protocol.TypeDone, ReqID: id, Usage: &protocol.Usage{PromptTokens: 20, CompletionTokens: 4}})
+				})
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				r.startNode(ctx, "node-0", "node-token", mockEngine(t, false), 1)
+				r.waitNodes(t, 1)
+			}
+			cut := cutClient(t, r.g.Handler(), false, c.gone)
+			req, _ := http.NewRequest("POST", cut.URL+"/v1/chat/completions", strings.NewReader(c.body))
+			req.Header.Set("Authorization", "Bearer "+c.key)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if !strings.Contains(string(b), "Hello") { // the writes did succeed
+				t.Fatalf("%d %s", resp.StatusCode, b)
+			}
+			wantDelivered(t, waitUsage(t, r, 1)[0], c.delivered)
 		})
 	}
 }

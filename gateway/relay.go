@@ -326,18 +326,23 @@ func (rl *relay) writeSSE(data []byte) error {
 // it was written.
 func (rl *relay) send(data []byte) error {
 	rl.started = true
-	out := data
+	out, orig := data, data
 	if rl.rest != nil {
-		out = rl.rest.chunk(data)
+		out, orig = rl.rest.chunk(data) // orig: only the text the restorer released
 	}
 	if err := rl.writeSSE(out); err != nil {
 		return err
 	}
+	rl.delivered(orig)
+	return nil
+}
+
+// delivered notes a piece of the answer, as the node sent it, as having reached the client.
+func (rl *relay) delivered(data []byte) {
 	rl.sent.chunk(data)
 	if hasText(data) {
 		rl.sent.chunks++
 	}
-	return nil
 }
 
 // block stops an answer a guard flagged: nothing more of it reaches the client, and the
@@ -460,6 +465,13 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	// end and send its next turn; logged and credited once the outcome is known.
 	rec := rl.meter("ok", u, false)
 	err := rl.deliverEnd(released, ans)
+	if err == nil {
+		// Writes into a closed connection can still succeed for a while: a client whose request
+		// ended during metering or delivery is gone all the same.
+		if cerr := rl.ctx.Err(); cerr != nil {
+			err = cerr
+		}
+	}
 	if err != nil {
 		rl.undelivered(rec)
 	}
@@ -479,7 +491,13 @@ func (rl *relay) deliverEnd(released [][]byte, ans map[string]any) error {
 		if _, err := rl.w.Write(append(mustJSON(restoreAnswer(ans, rl.req.red)), '\n')); err != nil {
 			return err
 		}
-		return rl.rc.Flush()
+		if err := rl.rc.Flush(); err != nil {
+			return err
+		}
+		for _, data := range rl.collected { // written whole: all of it reached the client
+			rl.delivered(data)
+		}
+		return nil
 	}
 	for _, data := range released {
 		if err := rl.send(data); err != nil {
@@ -487,10 +505,11 @@ func (rl *relay) deliverEnd(released [][]byte, ans map[string]any) error {
 		}
 	}
 	if rl.rest != nil {
-		if f := rl.rest.flush(); f != nil {
+		if f, orig := rl.rest.flush(); f != nil {
 			if err := rl.writeSSE(f); err != nil {
 				return err
 			}
+			rl.delivered(orig)
 		}
 	}
 	return rl.writeSSE([]byte("[DONE]")) // also answers an empty stream properly

@@ -65,8 +65,27 @@ func TestRestorerSplitPlaceholders(t *testing.T) {
 		text := "Set OPENAI_API_KEY=" + ph + " in the env file, then restart it."
 		args := `{"path":".env","text":"KEY=` + ph + `"}`
 		s := newRestorer(r)
-		var gotText, gotArgs strings.Builder
-		emit := func(raw []byte) {
+		var gotText, gotArgs, nodeText strings.Builder
+		text1 := func(raw []byte) string {
+			var c struct {
+				Choices []struct {
+					Delta struct{ Content string } `json:"delta"`
+				} `json:"choices"`
+			}
+			json.Unmarshal(raw, &c)
+			t := ""
+			for _, ch := range c.Choices {
+				t += ch.Delta.Content
+			}
+			return t
+		}
+		// emit takes a chunk as the client gets it (out) and as the node wrote it, cut to what
+		// was released (orig).
+		emit := func(raw, orig []byte) {
+			nodeText.WriteString(text1(orig))
+			if strings.Contains(string(orig), fakeKey) {
+				t.Fatalf("size %d: the released node text holds the secret: %s", size, orig)
+			}
 			var c struct {
 				Choices []struct {
 					Delta struct {
@@ -95,10 +114,13 @@ func TestRestorerSplitPlaceholders(t *testing.T) {
 				"tool_calls": []any{map[string]any{"index": 0, "function": map[string]any{"arguments": piece}}}}}}})))
 		}
 		emit(s.chunk(mustJSON(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}})))
-		if f := s.flush(); f != nil {
-			emit(f)
+		if f, orig := s.flush(); f != nil {
+			emit(f, orig)
 		}
 		want := strings.ReplaceAll(text, ph, fakeKey)
+		if nodeText.String() != text { // credit counts the node's own text, all of it released
+			t.Fatalf("size %d: released node text\n got %q\nwant %q", size, nodeText.String(), text)
+		}
 		if gotText.String() != want {
 			t.Fatalf("size %d: text\n got %q\nwant %q", size, gotText.String(), want)
 		}

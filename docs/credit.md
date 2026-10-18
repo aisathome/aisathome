@@ -31,8 +31,12 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   - `cancelled` (the client left, was too slow, or a write to it failed): the prompt and the
     output that was written to the client, as the node sent it (`tokens.completion` counts
     only that part; no end-of-turn token, and no end of thinking if the answer broke off in
-    its reasoning). An answer whose end (held tool calls, `[DONE]`) never reached the client
-    is cancelled too, and its undelivered tool calls earn nothing.
+    its reasoning). Text the secret restorer still holds back (it could be the start of a
+    placeholder) has not been written, and counts as the node wrote it once it is, never as
+    the restored secret. An answer whose end (held tool calls, `[DONE]`) never reached the
+    client is cancelled too, and its undelivered tool calls earn nothing; so is one whose
+    client's request ended while the end went out, even if the writes still succeeded (a
+    closed connection takes them for a while).
   - **Nothing at all**, not even for the prompt, when no generated text reached the client:
     a cancel before the first relayed token, or a non-streamed answer whose write failed or
     whose client left before it was sent.

@@ -253,12 +253,21 @@ func newRestorer(r *redactor) *restorer {
 	return &restorer{r: r, pending: map[string]string{}, seen: map[string]bool{}, tail: map[string]string{}}
 }
 
-// chunk rewrites one streamed chunk. Unparseable chunks pass through unchanged.
-func (s *restorer) chunk(raw []byte) []byte {
+// chunk rewrites one streamed chunk: out goes to the client, and orig is the same chunk as
+// the node wrote it (placeholders, not secrets), cut to the text out releases. Text held back
+// is in neither: orig is what of the node's answer reached the client (credit). Unparseable
+// chunks pass through unchanged.
+func (s *restorer) chunk(raw []byte) (out, orig []byte) {
 	var c map[string]any
 	if json.Unmarshal(raw, &c) != nil {
-		return raw
+		return raw, raw
 	}
+	type field struct {
+		delta          map[string]any
+		name           string
+		node, restored string
+	}
+	var set []field
 	choices, _ := c["choices"].([]any)
 	kept := choices[:0]
 	for _, ch := range choices {
@@ -285,8 +294,8 @@ func (s *restorer) chunk(raw []byte) []byte {
 		for _, f := range []string{"content", "reasoning_content"} {
 			key := idx + "/" + f
 			if v, ok := delta[f].(string); ok || (final && s.pending[key] != "") {
-				if out := s.take(key, v, final); out != "" || ok {
-					delta[f] = out
+				if node, restored := s.take(key, v, final); restored != "" || ok {
+					set = append(set, field{delta, f, node, restored})
 				}
 			}
 		}
@@ -294,21 +303,31 @@ func (s *restorer) chunk(raw []byte) []byte {
 	if c["choices"] != nil {
 		c["choices"] = kept
 	}
+	for _, f := range set {
+		f.delta[f.name] = f.restored
+	}
 	out, err := json.Marshal(c)
 	if err != nil {
-		return raw
+		return raw, raw
 	}
-	return out
+	for _, f := range set {
+		f.delta[f.name] = f.node
+	}
+	if orig, err = json.Marshal(c); err != nil {
+		return raw, raw
+	}
+	return out, orig
 }
 
-// take appends text to the field's held-back text and returns what can be released now.
-// Once a placeholder appears, the rest of the field is held until it ends (or exceeds
-// maxHeld): whether it may be restored depends on what follows it too.
-func (s *restorer) take(key, text string, final bool) string {
+// take appends text to the field's held-back text and returns what can be released now, as
+// the node wrote it and restored. Once a placeholder appears, the rest of the field is held
+// until it ends (or exceeds maxHeld): whether it may be restored depends on what follows it
+// too.
+func (s *restorer) take(key, text string, final bool) (node, restored string) {
 	raw := s.pending[key] + text
 	if final {
 		delete(s.pending, key)
-		return s.r.restoreField(s.seen[key], s.tail[key], raw)
+		return raw, s.r.restoreField(s.seen[key], s.tail[key], raw)
 	}
 	cut := s.r.partialStart(raw) // hold back a possible placeholder start
 	if m := s.r.matcher().FindStringIndex(raw); m != nil && m[0] < cut {
@@ -325,33 +344,39 @@ func (s *restorer) take(key, text string, final bool) string {
 	} else {
 		s.tail[key] = tail
 	}
-	return out
+	return out, out // before a placeholder (or with them all kept): nothing to restore
 }
 
-// flush returns a chunk carrying all held-back text, or nil (for the end of a stream
-// without a finish_reason).
-func (s *restorer) flush() []byte {
+// flush returns a chunk carrying all held-back text, restored and as the node wrote it, or
+// nil (for the end of a stream without a finish_reason).
+func (s *restorer) flush() (out, orig []byte) {
 	if len(s.pending) == 0 {
-		return nil
+		return nil, nil
 	}
 	deltas := map[string]map[string]any{}
+	nodeDeltas := map[string]map[string]any{}
 	for key, rest := range s.pending {
 		parts := strings.SplitN(key, "/", 2)
 		d := deltas[parts[0]]
 		if d == nil {
 			d = map[string]any{}
 			deltas[parts[0]] = d
+			nodeDeltas[parts[0]] = map[string]any{}
 		}
 		d[parts[1]] = s.r.restoreField(s.seen[key], s.tail[key], rest)
+		nodeDeltas[parts[0]][parts[1]] = rest
 	}
 	s.pending = map[string]string{}
-	var choices []any
-	for idx, d := range deltas {
-		i, _ := strconv.Atoi(idx)
-		choices = append(choices, map[string]any{"index": i, "delta": d})
+	build := func(ds map[string]map[string]any) []byte {
+		var choices []any
+		for idx, d := range ds {
+			i, _ := strconv.Atoi(idx)
+			choices = append(choices, map[string]any{"index": i, "delta": d})
+		}
+		b, _ := json.Marshal(map[string]any{"choices": choices})
+		return b
 	}
-	out, _ := json.Marshal(map[string]any{"choices": choices})
-	return out
+	return build(deltas), build(nodeDeltas)
 }
 
 // ---------------------------------------------------------------- personal data
