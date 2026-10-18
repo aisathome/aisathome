@@ -81,6 +81,9 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if cfg.IdleTimeoutSec == 0 {
 		cfg.IdleTimeoutSec = 150
 	}
+	if cfg.CancelAckTimeoutSec == 0 {
+		cfg.CancelAckTimeoutSec = 120
+	}
 	uw, err := newUsageWriter(cfg.UsageLog)
 	if err != nil {
 		return nil, err

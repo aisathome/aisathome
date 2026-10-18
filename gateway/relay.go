@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -69,6 +68,8 @@ type relay struct {
 	chunks                int
 	collectedBytes        int
 	free                  func()        // frees the node's slot; once, however often called
+	stopping              bool          // the node was told to stop: its slot waits for its confirmation
+	sent                  delivered     // what reached the client, as the node sent it (credit)
 	bufHeld               int64         // this request's share of g.buffered and of tokBuf
 	tokBuf                *atomic.Int64 // what the node token's requests buffer together
 }
@@ -93,13 +94,14 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		rl.rest = newRestorer(req.red)
 	}
 
-	p := &pendingReq{ch: make(chan protocol.Msg, 64), done: make(chan struct{}), slow: make(chan struct{})}
+	p := newPendingReq()
 	n.mu.Lock()
 	n.pending[reqID] = p
 	n.mu.Unlock()
 	// The slot reserved by pick is freed once: as soon as the node is finished with the request
 	// (Done, its error, or it left), before the end goes out to the client, so that the client's
-	// next turn finds the node holding its conversation free; otherwise when run returns.
+	// next turn finds the node holding its conversation free. A request the node was told to
+	// stop keeps its slot until the node confirms (awaitStopped); any other when run returns.
 	rl.free = sync.OnceFunc(func() {
 		n.mu.Lock()
 		n.inflight--
@@ -108,6 +110,10 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	})
 	defer func() {
 		close(p.done)
+		if rl.stopping {
+			g.awaitStopped(n, reqID, p, rl.free)
+			return
+		}
 		n.mu.Lock()
 		delete(n.pending, reqID)
 		n.mu.Unlock()
@@ -186,12 +192,56 @@ func (rl *relay) onMsg(m protocol.Msg) (done bool, err error) {
 // billed as an estimate, and a client whose answer already started gets clientMsg as an
 // error event ("" = none). It returns err for run to return.
 func (rl *relay) fail(outcome, clientMsg string, err error) error {
-	cancelOnNode(rl.n, rl.reqID)
+	rl.stop()
 	rl.partial(outcome)
 	if clientMsg != "" {
 		rl.sseError(map[string]any{"message": clientMsg})
 	}
 	return err
+}
+
+// stop tells the node to stop the request. Its engine may go on for a while (llama-server
+// notices a closed connection within a second and stops at the end of its current batch), so
+// the slot stays reserved until the node ends the request (awaitStopped).
+func (rl *relay) stop() {
+	cancelOnNode(rl.n, rl.reqID)
+	rl.stopping = true
+}
+
+// awaitStopped frees the slot of a request the node was told to stop once the node ended it
+// (done or error: its engine has let go of it), the node left, or CancelAckTimeoutSec passed,
+// for a node that never answers a cancel. Until then no other request is sent to that slot:
+// it would wait behind the cancelled one in the engine (the 300 s first-chunk timeouts of the
+// TauCeti review test, 2026-10-15).
+func (g *Gateway) awaitStopped(n *nodeConn, reqID string, p *pendingReq, free func()) {
+	release := func() {
+		n.mu.Lock()
+		delete(n.pending, reqID)
+		n.mu.Unlock()
+		free()
+	}
+	select {
+	case <-p.ended: // already ended (it finished as it was cancelled)
+		release()
+		return
+	case <-n.closed:
+		release()
+		return
+	default:
+	}
+	go func() {
+		t := time.NewTimer(time.Duration(g.cfg.CancelAckTimeoutSec) * time.Second)
+		defer t.Stop()
+		select {
+		case <-p.ended:
+		case <-n.closed:
+		case <-g.stop:
+		case <-t.C:
+			g.log.Warn("node did not end a cancelled request; freeing its slot anyway", "node", n.id, "req", reqID,
+				"after_s", g.cfg.CancelAckTimeoutSec)
+		}
+		release()
+	}()
 }
 
 // sseError ends a stream that already started with an error event. Before any output the
@@ -217,22 +267,15 @@ func (rl *relay) meter(outcome string, u protocol.Usage, estimated bool) *usageR
 		Model: rl.model, Requested: req.want, Usage: u, ReqID: rl.reqID, Outcome: outcome, Relayed: rl.relayed,
 		Estimated: estimated, Clamped: clamped, SelfServed: req.self != "" && n.operator == req.self, Guard: rl.flag,
 		Tools: hasTools(req.body)}
-	rl.g.meterRecord(rec, rl.mt, n, req.who, u, rl.maxTokens, rec.Time)
+	rl.g.meterRecord(rec, rl.mt, &rl.sent, n, req.who, u, rl.maxTokens, rec.Time)
 	return rec
 }
 
 // undelivered turns the record of an ok answer whose end never reached the client into that
-// of a cancelled one: without the end-of-turn token meterRecord counts for an ended answer.
-func undelivered(rec *usageRecord) {
+// of a cancelled one, credited for what did reach it.
+func (rl *relay) undelivered(rec *usageRecord) {
 	rec.Outcome = "cancelled"
-	if rec.Tokens != nil && rec.Counted == "gateway" && rec.Tokens.Completion > 0 {
-		t := *rec.Tokens
-		t.Completion--
-		rec.Tokens = &t
-	}
-	if rec.Credit > 0 && rec.Tokens != nil {
-		rec.Credit = math.Round(rec.Tokens.credit()*1e6) / 1e6
-	}
+	rl.g.countOutput(rec, rl.mt, &rl.sent, rec.Usage, rl.maxTokens)
 }
 
 // commit logs the record, grants its credit and charges the budgets.
@@ -279,20 +322,29 @@ func (rl *relay) writeSSE(data []byte) error {
 	return rl.rc.Flush()
 }
 
-// send passes a piece of the answer to a streaming client.
+// send passes a piece of the answer to a streaming client, and notes it as delivered once
+// it was written.
 func (rl *relay) send(data []byte) error {
 	rl.started = true
+	out := data
 	if rl.rest != nil {
-		data = rl.rest.chunk(data)
+		out = rl.rest.chunk(data)
 	}
-	return rl.writeSSE(data)
+	if err := rl.writeSSE(out); err != nil {
+		return err
+	}
+	rl.sent.chunk(data)
+	if hasText(data) {
+		rl.sent.chunks++
+	}
+	return nil
 }
 
 // block stops an answer a guard flagged: nothing more of it reaches the client, and the
 // node gets no requests until the operator clears it. Unlike fail it records the attempt
 // even without output, as blocked and with the rule.
 func (rl *relay) block(rule string) error {
-	cancelOnNode(rl.n, rl.reqID)
+	rl.stop()
 	rl.flag = rule
 	rl.record(outcomeBlocked, protocol.Usage{CompletionTokens: rl.relayed}, true)
 	rl.g.holdNode(rl.n, rule, rl.reqID)
@@ -406,7 +458,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	rec := rl.meter("ok", u, false)
 	err := rl.deliverEnd(released, ans)
 	if err != nil {
-		undelivered(rec)
+		rl.undelivered(rec)
 	}
 	rl.commit(rec)
 	if err != nil {

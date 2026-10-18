@@ -35,6 +35,14 @@ your node and the answer it passed on. What a node reports about itself is not u
 prompt counts as cached up to the part your node served the same person within the last ten
 minutes; the node's own claim about its cache is ignored.
 
+Credit is for what reached the person who asked: **no credit if no value is delivered.**
+
+- An answer the person received in full earns credit for its prompt and all of its output.
+- An answer cut off on their side (they stopped it, or their connection dropped) earns
+  credit for its prompt and for the output that reached them, not for the rest.
+- If nothing reached them, it earns nothing, not even for the prompt: an answer they left
+  before its first token, or a whole (not streamed) answer that could not be delivered.
+
 No credit for:
 
 - answers to your own account (your own chats and API keys on your own node);

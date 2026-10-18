@@ -94,9 +94,9 @@ func (c *cutWriter) Write(p []byte) (int, error) {
 func (c *cutWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
 
 // A client that leaves right before the end of an answer (the tool calls the guard held back,
-// or [DONE]) did not get it: the record says cancelled, not ok, and the node's credit is that
-// of a cancelled answer (docs/credit.md), not of a delivered one. Budgets are charged as for
-// any cancelled answer.
+// or [DONE]) did not get it: the record says cancelled, not ok, and the node earns credit only
+// for what reached the client (docs/credit.md): nothing for a non-streamed answer whose write
+// failed. Budgets are charged as for any cancelled answer.
 func TestClientLeavingBeforeTheEnd(t *testing.T) {
 	tools := `"tools":[{"type":"function","function":{"name":"read_file"}}]`
 	call := toolDelta("0", "c1", "read_file", `{"path":"README.md"}`)
@@ -105,15 +105,22 @@ func TestClientLeavingBeforeTheEnd(t *testing.T) {
 		stream bool
 		chunks []string
 		gone   func(p []byte) bool
+		// want is the completion tokens credited, from the delivered answer's (dc)
+		want func(tok *gateway.Tokenizer, dc int) int
 	}{
-		// Tool calls held to the end of the answer, released after the client left.
+		// Tool calls held to the end of the answer, released after the client left: only the
+		// text before them reached the client.
 		{"tool calls released at the end", true, []string{roleChunk, `{"choices":[{"index":0,"delta":{"content":"Let me look."},"finish_reason":null}]}`, call},
-			func(p []byte) bool { return strings.Contains(string(p), "README") }},
-		// Everything but the final [DONE] reached the client.
+			func(p []byte) bool { return strings.Contains(string(p), "README") },
+			func(tok *gateway.Tokenizer, _ int) int { return tok.Count("\n</think>\n\nLet me look.") }},
+		// Everything but the final [DONE] reached the client: all but the end of turn.
 		{"[DONE]", true, []string{roleChunk, call, finishTools},
-			func(p []byte) bool { return strings.Contains(string(p), "[DONE]") }},
+			func(p []byte) bool { return strings.Contains(string(p), "[DONE]") },
+			func(_ *gateway.Tokenizer, dc int) int { return dc - 1 }},
+		// Nothing reached the client.
 		{"not streaming", false, []string{roleChunk, call, finishTools},
-			func([]byte) bool { return true }},
+			func([]byte) bool { return true },
+			func(*gateway.Tokenizer, int) int { return 0 }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := newRigCfg(t, func(cfg *gateway.Config) {
@@ -147,10 +154,18 @@ func TestClientLeavingBeforeTheEnd(t *testing.T) {
 			if delivered["outcome"] != "ok" || got["outcome"] != "cancelled" {
 				t.Fatalf("outcomes %v and %v, want ok and cancelled: %v", delivered["outcome"], got["outcome"], got)
 			}
+			tok, err := gateway.LoadTokenizer(miniTokenizer, "")
+			if err != nil {
+				t.Fatal(err)
+			}
 			_, _, dc := tokensOf(t, delivered)
-			_, _, gc := tokensOf(t, got)
-			if gc != dc-1 || !(creditOf(got) < creditOf(delivered)) {
-				t.Fatalf("credited as delivered: completion %d vs %d, credit %v vs %v", gc, dc, creditOf(got), creditOf(delivered))
+			gp, _, gc := tokensOf(t, got)
+			want := 0.0
+			if wc := c.want(tok, dc); wc > 0 {
+				want = float64(gp)*gateway.CreditPerPromptToken + float64(wc)*gateway.CreditPerOutputToken
+			}
+			if gc != c.want(tok, dc) || !near(creditOf(got), want) {
+				t.Fatalf("completion %d (want %d of the delivered answer's %d), credit %v (want %v)", gc, c.want(tok, dc), dc, creditOf(got), want)
 			}
 		})
 	}

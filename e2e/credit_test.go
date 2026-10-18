@@ -350,3 +350,60 @@ func TestCreditOnlyForDeliveredAnswers(t *testing.T) {
 		t.Fatalf("a failed answer earned %v (completion %d)", creditOf(u), c)
 	}
 }
+
+// No credit if no value is delivered (owner, 2026-10-18): a cancelled answer earns credit only
+// for what reached the client, and nothing at all, not even for its prompt, if nothing did.
+func TestCreditOnlyForWhatReachedTheClient(t *testing.T) {
+	stream := `{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	has := func(s string) func([]byte) bool { return func(p []byte) bool { return strings.Contains(string(p), s) } }
+	for _, c := range []struct {
+		name      string
+		tokenizer bool
+		body      string
+		gone      func([]byte) bool // the client is gone from this write on (it fails)
+		delivered string            // the answer text that reached the client
+		chunks    int               // its text chunks (credit without a tokenizer)
+	}{
+		{"not streamed, the answer's write fails", true, `{"model":"deep","messages":[{"role":"user","content":"hi"}]}`,
+			func([]byte) bool { return true }, "", 0},
+		{"streamed, gone before the first token", true, stream, has(`"Hello"`), "", 0},
+		// (Not cut before "world": "Hello, " and "Hello, world" are the same number of tokens.)
+		{"streamed, gone after part of the answer", true, stream, has(`{"content":", "}`), "Hello", 1},
+		{"streamed, gone after part of the answer, node counts", false, stream, has(`{"content":", "}`), "Hello", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRigCfg(t, func(cfg *gateway.Config) {
+				if c.tokenizer {
+					cfg.TokenizerFile = miniTokenizer
+				}
+			}, mockEngine(t, false))
+			cut := cutClient(t, r.g.Handler(), true, c.gone)
+			req, _ := http.NewRequest("POST", cut.URL+"/v1/chat/completions", strings.NewReader(c.body))
+			req.Header.Set("Authorization", "Bearer user-key")
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+			u := waitUsage(t, r, 1)[0]
+			if u["outcome"] != "cancelled" {
+				t.Fatalf("outcome %v, want cancelled: %v", u["outcome"], u)
+			}
+			prompt, _, completion := tokensOf(t, u)
+			want, wantCredit := 0, 0.0
+			if c.delivered != "" {
+				want = c.chunks
+				if c.tokenizer {
+					tok, err := gateway.LoadTokenizer(miniTokenizer, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					want = tok.Count("\n</think>\n\n" + c.delivered)
+				}
+				wantCredit = float64(prompt)*gateway.CreditPerPromptToken + float64(want)*gateway.CreditPerOutputToken
+			}
+			if completion != want || !near(creditOf(u), wantCredit) {
+				t.Fatalf("completion %d (want %d), credit %v (want %v): %v", completion, want, creditOf(u), wantCredit, u)
+			}
+		})
+	}
+}

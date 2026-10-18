@@ -24,7 +24,7 @@ users, keys or billing.
 | `welcome` | gw → node | `gateway_id`, `protocol` | accepted. A different major protocol version closes the connection |
 | `heartbeat` | node → gw | `active`, `paused` | every ~10 s, and at once when `paused` changes. Gateways drop nodes silent for more than 45 s. `paused` (optional, default `false`): send no new requests; requests in flight finish |
 | `request` | gw → node | `req_id`, `body` | an OpenAI `/v1/chat/completions` body; `model` is a model name from `hello`, and `stream` is always `true` |
-| `cancel` | gw → node | `req_id` | the client went away; stop work |
+| `cancel` | gw → node | `req_id` | the gateway gave up on the request (client gone, stall, too much output, guard); stop work, then end the request with `error` (or `done` if it had finished) once the engine has let go of it |
 | `chunk` | node → gw | `req_id`, `data` | one OpenAI `chat.completion.chunk`, passed through unchanged |
 | `done` | node → gw | `req_id`, `usage` | finished. `usage` = `{prompt_tokens, completion_tokens, cached_tokens, duration_ms}` |
 | `error` | node → gw | `req_id`, `error` | failed. Before any `chunk`, the gateway may retry on another node |
@@ -36,6 +36,15 @@ users, keys or billing.
   the first fails before streaming any output. Among the nodes a request may use, a free node
   that recently served a long prefix of the same conversation for the same requester comes
   first (its engine has that prefix cached); a busy one is not waited for.
+- **Slots:** a node's slot is busy from `request` until the node's `done` or `error`. After a
+  `cancel` it stays busy until that `error` (or `done`) arrives, because the engine may still
+  be working on the request (llama-server notices a closed connection within about a second
+  and stops at the end of its current batch); at most 120 s
+  (`cancel_ack_timeout_seconds`), after which the gateway frees it anyway and logs a warning.
+  The reference node waits for its engine's `/slots` to show no more busy slots than it still
+  has requests open, at most 90 s; with an engine without `/slots` it ends the request as
+  soon as its HTTP request to the engine has ended. Nodes released before this rule (v0.1.0)
+  send the `error` at once; they stay compatible.
 - **Pause:** a node whose last heartbeat said `paused: true` gets no new requests until a
   heartbeat says otherwise. A paused node answers any request that still reaches it (sent
   before the heartbeat arrived, or by a gateway that predates `paused`) with an `error`

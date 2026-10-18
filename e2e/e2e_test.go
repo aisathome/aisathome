@@ -141,12 +141,17 @@ func quiet() *slog.Logger {
 	return slog.New(slog.NewTextHandler(logSink, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-// health answers the engine's /health endpoint; mocks call it first.
+// health answers the engine's /health endpoint; mocks call it first. /slots answers as
+// llama-server --no-slots does (busyEngine has a real one).
 func health(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.Path != "/health" {
+	switch r.URL.Path {
+	case "/health":
+		w.WriteHeader(http.StatusOK)
+	case "/slots":
+		http.Error(w, "This server does not support slots endpoint.", http.StatusNotImplemented)
+	default:
 		return false
 	}
-	w.WriteHeader(http.StatusOK)
 	return true
 }
 

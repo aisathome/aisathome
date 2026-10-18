@@ -46,12 +46,23 @@ type nodeConn struct {
 
 // pendingReq is one request in flight on a node. The reader delivers messages on ch; the
 // request handler closes done when it stops listening, so delivery never blocks forever.
+// ended is closed when the node ends the request itself (done or error), also after the
+// handler stopped listening: after a cancel that is the node saying its engine has stopped.
 type pendingReq struct {
 	ch       chan protocol.Msg
 	done     chan struct{}
 	slow     chan struct{} // closed when the client cannot keep up
 	slowOnce sync.Once
+	ended    chan struct{}
+	endOnce  sync.Once
 }
+
+func newPendingReq() *pendingReq {
+	return &pendingReq{ch: make(chan protocol.Msg, 64), done: make(chan struct{}), slow: make(chan struct{}),
+		ended: make(chan struct{})}
+}
+
+func (p *pendingReq) end() { p.endOnce.Do(func() { close(p.ended) }) }
 
 // deliver never blocks the node's shared reader: if this request's client is not keeping up,
 // the request is dropped rather than stalling the node's other requests and heartbeats.
@@ -268,6 +279,9 @@ func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) {
 		n.mu.Unlock()
 		if resumed {
 			g.signal() // waiting requests may use it again
+		}
+		if p != nil && (m.Type == protocol.TypeDone || m.Type == protocol.TypeError) {
+			p.end()
 		}
 		if p != nil && (m.Type == protocol.TypeChunk || m.Type == protocol.TypeDone || m.Type == protocol.TypeError) {
 			p.deliver(m) // outside the lock: a slow client must not block other requests

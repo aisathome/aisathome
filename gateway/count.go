@@ -305,9 +305,19 @@ type meter struct {
 	hashes    []uint64 // the prompt's block hashes, when rendered before routing (nil = not)
 	promptIDs []int32  // with a tokenizer
 
+	genOut // all the output the node sent
+}
+
+// genOut is generated output (reasoning, answer, tool calls) gathered from streamed chunks.
+type genOut struct {
 	reasoning, content strings.Builder
 	calls              []*toolCall
 	size               int
+}
+
+// empty: no generated text at all.
+func (m *genOut) empty() bool {
+	return m.reasoning.Len() == 0 && m.content.Len() == 0 && len(m.calls) == 0
 }
 
 // newMeter starts metering nb; cp is its conversation if already rendered (nil = render it).
@@ -329,7 +339,7 @@ func newMeter(nb map[string]any, cp *convPrint, tok *Tokenizer) *meter {
 }
 
 // chunk takes the generated text of one streamed chunk.
-func (m *meter) chunk(data []byte) {
+func (m *genOut) chunk(data []byte) {
 	if m.size > maxMetered {
 		return
 	}
@@ -372,16 +382,25 @@ func (m *meter) chunk(data []byte) {
 // answer and its tool calls), and next is how the answer reappears in the next prompt of the
 // conversation (for the cache).
 func (m *meter) output() (gen, next string) {
-	calls := make([]toolCall, len(m.calls))
-	for i, c := range m.calls {
+	return m.render(&m.genOut, true)
+}
+
+// render is o as the model generated it after this prompt. closeThink: the end of thinking
+// was generated (an answer that broke off during its reasoning has none yet).
+func (m *meter) render(o *genOut, closeThink bool) (gen, next string) {
+	calls := make([]toolCall, len(o.calls))
+	for i, c := range o.calls {
 		calls[i] = *c
 	}
-	content := m.content.String()
+	content := o.content.String()
 	tc := renderCalls(content, calls)
 	think, thinkNext := "", ""
 	if m.args.thinking {
-		think = m.reasoning.String() + "\n</think>\n\n"
-		thinkNext = strings.TrimSpace(m.reasoning.String()) + "\n</think>\n\n"
+		think = o.reasoning.String()
+		if closeThink {
+			think += "\n</think>\n\n"
+		}
+		thinkNext = strings.TrimSpace(o.reasoning.String()) + "\n</think>\n\n"
 	}
 	return think + content + tc, thinkNext + strings.TrimSpace(content) + tc + "<|im_end|>\n"
 }

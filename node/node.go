@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -47,6 +48,10 @@ type Config struct {
 	// Defaults 300 s and 120 s.
 	FirstChunkTimeout time.Duration `json:"-"`
 	IdleTimeout       time.Duration `json:"-"`
+	// CancelWait bounds how long a request the gateway cancelled waits for the engine to let go
+	// of it before the node ends it (the gateway keeps its slot until then). Default 90 s,
+	// below the gateway's own limit (120 s).
+	CancelWait time.Duration `json:"-"`
 
 	// Local UI and state (see status.go). StateFile keeps the pause switch, counters and
 	// events across restarts ("" = memory only). RestartTrigger is a file that a root-owned
@@ -63,8 +68,9 @@ type Agent struct {
 	log    *slog.Logger
 	client *http.Client
 
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
+	mu       sync.Mutex
+	cancels  map[string]context.CancelCauseFunc
+	upstream int // requests whose engine request is still open
 
 	// Local status (status.go), guarded by mu.
 	ps          persisted // saved to cfg.StateFile
@@ -95,13 +101,16 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = 120 * time.Second
 	}
+	if cfg.CancelWait == 0 {
+		cfg.CancelWait = 90 * time.Second
+	}
 	if id, ok := TokenNodeID(cfg.Token); ok && cfg.NodeID != id {
 		if cfg.NodeID != "" {
 			log.Warn("the node token belongs to another node id than node_id in the config; using the token's", "node", id)
 		}
 		cfg.NodeID = id
 	}
-	a := &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelFunc{},
+	a := &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelCauseFunc{},
 		engine: EngineUnknown, now: time.Now}
 	a.started = a.now()
 	a.load()
@@ -310,7 +319,7 @@ func (a *Agent) session(ctx context.Context) error {
 				go send(protocol.Msg{Type: protocol.TypeError, ReqID: m.ReqID, Error: ErrPausedMsg})
 				continue
 			}
-			rctx, cancel := context.WithCancel(sctx)
+			rctx, cancel := context.WithCancelCause(sctx)
 			a.cancels[m.ReqID] = cancel
 			a.mu.Unlock()
 			go func(m protocol.Msg) {
@@ -318,24 +327,40 @@ func (a *Agent) session(ctx context.Context) error {
 					a.mu.Lock()
 					delete(a.cancels, m.ReqID)
 					a.mu.Unlock()
-					cancel()
+					cancel(nil)
 				}()
-				a.handle(rctx, m, send)
+				a.handle(sctx, rctx, m, send)
 			}(m)
 		case protocol.TypeCancel:
 			a.mu.Lock()
 			if cancel := a.cancels[m.ReqID]; cancel != nil {
-				cancel()
+				cancel(errCancelled)
 			}
 			a.mu.Unlock()
 		}
 	}
 }
 
-// handle runs one request against the local engine and streams chunks back.
-func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.Msg) error) {
+// errCancelled is the cause of a request the gateway cancelled.
+var errCancelled = errors.New("cancelled")
+
+// handle runs one request against the local engine and streams chunks back (session ends with
+// the connection). It always ends
+// the request with done or error (unless the connection is gone): after a cancel, only once
+// the engine has let go of it, so the gateway knows when the slot is free again.
+func (a *Agent) handle(session, ctx context.Context, m protocol.Msg, send func(protocol.Msg) error) {
 	parent := ctx
+	a.mu.Lock()
+	a.upstream++
+	a.mu.Unlock()
+	upstreamDone := sync.OnceFunc(func() { a.mu.Lock(); a.upstream--; a.mu.Unlock() })
+	defer upstreamDone()
 	fail := func(err error) {
+		if context.Cause(parent) == errCancelled {
+			upstreamDone()
+			a.engineStopped(session)
+			err = errCancelled
+		}
 		_ = send(protocol.Msg{Type: protocol.TypeError, ReqID: m.ReqID, Error: err.Error()})
 		if parent.Err() == nil { // not a cancel by the gateway or the end of the session
 			a.failed(err.Error())
@@ -446,6 +471,71 @@ func (a *Agent) handle(ctx context.Context, m protocol.Msg, send func(protocol.M
 	if send(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &u}) == nil {
 		a.served(u)
 	}
+}
+
+// engineStopped waits, at most CancelWait, until the engine works on no more requests than
+// this node still has open with it: a cancelled request's HTTP request ends at once, but the
+// engine may go on with it for a while. llama-server reports its busy slots at /slots
+// (enabled by default); an engine without it counts as stopped once the request has ended.
+func (a *Agent) engineStopped(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, a.cfg.CancelWait)
+	defer cancel()
+	for {
+		busy, err := a.engineBusy(ctx)
+		if errors.Is(err, errNoSlots) {
+			return
+		}
+		a.mu.Lock()
+		open := a.upstream
+		a.mu.Unlock()
+		if err == nil && busy <= open {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			a.log.Warn("engine still busy after a cancel; ending the request anyway", "busy_slots", busy, "wait", a.cfg.CancelWait)
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// errNoSlots: the engine has no /slots endpoint (another engine, or llama-server --no-slots).
+var errNoSlots = errors.New("engine reports no slots")
+
+// engineBusy returns how many of the engine's slots are processing a request. Another error
+// than errNoSlots (a timeout: llama-server answers between batches) means ask again.
+func (a *Agent) engineBusy(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(a.cfg.Upstream, "/")+"/slots", nil)
+	if err != nil {
+		return 0, errNoSlots
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNotImplemented {
+		return 0, errNoSlots
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("engine /slots returned %d", resp.StatusCode)
+	}
+	var slots []struct {
+		IsProcessing bool `json:"is_processing"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&slots) != nil {
+		return 0, errNoSlots
+	}
+	busy := 0
+	for _, s := range slots {
+		if s.IsProcessing {
+			busy++
+		}
+	}
+	return busy, nil
 }
 
 // errText is an error's message, or "" for nil.

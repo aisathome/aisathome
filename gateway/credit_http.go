@@ -67,24 +67,27 @@ func (g *Gateway) grantCredit(n *nodeConn, c float64, now time.Time) {
 	g.credit.grant(n.id, n.account, operator, c, acctSince, nodeSince, now)
 }
 
+// delivered is the part of an answer that reached the client: what a cancelled answer earns
+// credit for (owner, 2026-10-18: no credit if no value is delivered).
+type delivered struct {
+	genOut
+	chunks int // chunks with generated text, for credit from node-reported counts
+}
+
 // meterRecord fills in the tokens credit is based on and the credit (relay.commit grants it). nodeU is what
-// the node reported (clamped); it is used only when the gateway has no tokenizer.
-func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, n *nodeConn, who string, nodeU protocol.Usage, maxTokens int, now time.Time) {
+// the node reported (clamped); it is used only when the gateway has no tokenizer. sent is what
+// reached the client.
+func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, sent *delivered, n *nodeConn, who string, nodeU protocol.Usage, maxTokens int, now time.Time) {
 	<-mt.ready
-	gen, next := mt.output()
+	_, next := mt.output()
 	ended := rec.Outcome == "ok"
 	var t creditTokens
 	if g.tok != nil {
 		rec.Counted = "gateway"
 		t.Prompt = len(mt.promptIDs)
-		t.Completion = g.tok.Count(gen)
-		if ended {
-			t.Completion++ // <|im_end|>
-		}
-		t.Completion = min(t.Completion, maxTokens+1)
 	} else {
 		rec.Counted = "node"
-		t.Prompt, t.Completion = nodeU.PromptTokens, nodeU.CompletionTokens
+		t.Prompt = nodeU.PromptTokens
 	}
 	tail := ""
 	if ended {
@@ -104,7 +107,37 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, n *nodeConn, who stri
 	}
 	t.Cached = min(t.Cached, t.Prompt)
 	rec.Tokens = &t
-	if (rec.Outcome == "ok" || rec.Outcome == "cancelled") && !rec.SelfServed {
+	g.countOutput(rec, mt, sent, nodeU, maxTokens)
+}
+
+// countOutput sets rec's completion tokens and credit. An answer that ended counts all the
+// node generated and its end of turn. A cancelled one counts only what reached the client, and
+// earns nothing if nothing did (not even for its prompt). Failed and blocked answers are
+// metered in full and earn nothing.
+func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, nodeU protocol.Usage, maxTokens int) {
+	ended, cancelled := rec.Outcome == "ok", rec.Outcome == "cancelled"
+	out, closeThink := &mt.genOut, true
+	if cancelled {
+		out = &sent.genOut
+		closeThink = out.content.Len() > 0 || len(out.calls) > 0
+	}
+	t := *rec.Tokens
+	if g.tok != nil {
+		gen, _ := mt.render(out, closeThink)
+		t.Completion = g.tok.Count(gen)
+		if ended {
+			t.Completion++ // <|im_end|>
+		}
+		t.Completion = min(t.Completion, maxTokens+1)
+	} else {
+		t.Completion = nodeU.CompletionTokens
+		if cancelled {
+			t.Completion = min(t.Completion, sent.chunks) // about a token per chunk
+		}
+	}
+	rec.Tokens = &t
+	rec.Credit = 0
+	if (ended || (cancelled && !sent.empty())) && !rec.SelfServed {
 		rec.Credit = math.Round(t.credit()*1e6) / 1e6
 	}
 }

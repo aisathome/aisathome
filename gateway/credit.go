@@ -5,8 +5,9 @@
 // that much faster per token) and a cached prompt token a hundredth. Nothing is paid for it.
 //
 // Tokens are counted by the gateway (count.go, tokenizer.go) and cache hits decided by it
-// (prefixcache.go). No credit for answers to the node's own account (self_served), for
-// failed or blocked answers. Volunteers' credit is kept per account and per node; nodes from
+// (prefixcache.go). No credit if no value is delivered (owner, 2026-10-18): a cancelled
+// answer earns only for the output that reached the client, and nothing if none did. No credit
+// for answers to the node's own account (self_served), for failed or blocked answers. Volunteers' credit is kept per account and per node; nodes from
 // config tokens (the maintainer's) earn for their operator name, kept apart from accounts.
 // The ledger lives in the state dir (credit.json) like the budgets.
 //

@@ -24,10 +24,22 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   same node served the same requester (account, chat user or key) within 10 minutes. Only
   chained hashes of 256-byte blocks are kept, bounded per node (32 conversations of up to
   128k tokens) and in all (256 nodes). The node's cache claim is ignored.
+- **No credit if no value is delivered** (owner, 2026-10-18). Credit is for what reached the
+  client:
+  - `ok` (the client got the whole answer, end included): the prompt, all output and the
+    end-of-turn token.
+  - `cancelled` (the client left, was too slow, or a write to it failed): the prompt and the
+    output that was written to the client, as the node sent it (`tokens.completion` counts
+    only that part; no end-of-turn token, and no end of thinking if the answer broke off in
+    its reasoning). An answer whose end (held tool calls, `[DONE]`) never reached the client
+    is cancelled too, and its undelivered tool calls earn nothing.
+  - **Nothing at all**, not even for the prompt, when no generated text reached the client:
+    a cancel before the first relayed token, or a non-streamed answer whose write failed or
+    whose client left before it was sent.
+  - Without a tokenizer (`counted: "node"`) a cancelled answer's output is the node's count,
+    at most one token per chunk written to the client.
 - **No credit** for self-served answers (an account's own node), failed or blocked answers.
-  Partial answers the client cancelled count. So does an answer whose end (held tool calls,
-  `[DONE]`, a non-streamed answer) never reached the client: it is recorded as cancelled, not
-  ok, and earns no end-of-turn token.
+  They are metered in full (`tokens`) for the usage log and statistics.
 - **Ledger** per account, per node and per config-token operator (the maintainer's nodes,
   kept apart from accounts): today (UTC), total and BOINC's `expavg_credit`
   (`update_average` from `lib/util.cpp`, 7-day half-life; the first grant is spread over the

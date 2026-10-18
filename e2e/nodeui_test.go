@@ -27,7 +27,7 @@ import (
 func counted(t *testing.T, inner *httptest.Server) (*httptest.Server, *atomic.Int32) {
 	var hits atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if r.URL.Path != "/health" && r.URL.Path != "/slots" {
 			hits.Add(1)
 		}
 		inner.Config.Handler.ServeHTTP(w, r)
