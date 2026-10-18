@@ -422,11 +422,13 @@ func (rl *relay) onError(m protocol.Msg) error {
 // onDone finishes the answer: final guard checks, the usage record, and the end of the stream
 // or the assembled answer. nil means the client got the answer.
 func (rl *relay) onDone(m protocol.Msg) error {
-	rl.free() // the node is finished with it
 	u := protocol.Usage{}
 	if m.Usage != nil {
 		u = *m.Usage
 	}
+	// Every check runs before the slot is freed: a node a check stops is held first (block),
+	// so no waiting request (another user's prompt) can be sent to it in between. Its slot is
+	// freed when run returns.
 	var released [][]byte // tool calls the guard held back until they were complete
 	if gd := rl.gd; gd != nil {
 		if rule := gd.check(); rule != "" {
@@ -446,6 +448,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 			}
 		}
 	}
+	rl.free() // the node is finished with it, and it passed: free before the client sees the end
 	// The end must reach the client: one that left before it (or whose connection fails on it)
 	// did not get the answer, so it is recorded as cancelled, not ok.
 	rl.started = true // output is going out: no retry from here on
