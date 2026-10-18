@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -220,7 +221,8 @@ func (s *AccountStore) ClearNode(nodeID string) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("node %s is not held", nodeID)
+		return fmt.Errorf("node %s is not held in the accounts file (a hold the gateway could not write "+
+			"yet is written within seconds once the file is writable: then clear it)", nodeID)
 	})
 }
 
@@ -328,10 +330,11 @@ func (g *Gateway) nodesFromLocked(ip, id string) int {
 	return c
 }
 
-// nodeHeld reports whether a guard holds node id (accounts file, or memory without one).
+// nodeHeld reports whether a guard holds node id (accounts file, or memory without one). A
+// hold the accounts file has not recorded yet counts too: the file alone would lift it.
 func (g *Gateway) nodeHeld(id string) bool {
 	if g.accounts != nil {
-		return g.accounts.isHeld(id)
+		return g.accounts.isHeld(id) || g.unrec.has(id)
 	}
 	_, p := g.held.Load(id)
 	return p
@@ -341,8 +344,14 @@ func (g *Gateway) nodeHeld(id string) bool {
 func (g *Gateway) holdNode(n *nodeConn, rule, reqID string) {
 	g.log.Warn("guard stopped a node's answer; node held", "node", n.id, "operator", n.operator, "rule", rule, "req", reqID)
 	if g.accounts != nil {
-		if err := g.accounts.HoldNode(NodeHold{Node: n.id, Operator: n.operator, Rule: rule, At: time.Now().UTC()}); err != nil {
-			g.log.Error("holding node in the accounts file failed; it is held only until the next sweep", "node", n.id, "err", err)
+		p := NodeHold{Node: n.id, Operator: n.operator, Rule: rule, At: time.Now().UTC()}
+		if err := g.accounts.HoldNode(p); err != nil {
+			g.log.Error("HOLD NOT RECORDED: writing the node's hold to the accounts file failed; it is held in "+
+				"memory and retried until recorded, and a restart before then lets it serve again", "node", n.id, "err", err)
+			if !g.unrec.add(p) {
+				g.log.Error("HOLD NOT RECORDED: too many unrecorded holds; every node is held until the gateway restarts",
+					"max", maxUnrecorded)
+			}
 		}
 	} else {
 		g.held.Store(n.id, true)
@@ -350,6 +359,92 @@ func (g *Gateway) holdNode(n *nodeConn, rule, reqID string) {
 	g.mu.Lock()
 	n.held = true
 	g.mu.Unlock()
+}
+
+// maxUnrecorded bounds the holds kept in memory while the accounts file cannot be written.
+const maxUnrecorded = 1024
+
+// unrecordedHolds are guard holds whose write to the accounts file failed. They hold their
+// node like recorded ones (sweepNodes ORs them with the file), and recordHolds retries the
+// write; each is dropped only once the file has it. So a write failure never lifts a hold:
+// only the operator does, with `accounts node-clear`, once the hold is in the file. A
+// restart forgets the ones still unrecorded, which is logged loudly until they are recorded.
+type unrecordedHolds struct {
+	mu      sync.Mutex
+	m       map[string]NodeHold
+	full    bool      // more than maxUnrecorded: every node held, until restart (fail closed)
+	lastLog time.Time // of the last failed retry, to log each minute rather than each try
+}
+
+// add keeps p unless its node already has an unrecorded hold; false if the set is full.
+func (u *unrecordedHolds) add(p NodeHold) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if _, ok := u.m[p.Node]; ok {
+		return true
+	}
+	if len(u.m) >= maxUnrecorded {
+		u.full = true
+		return false
+	}
+	if u.m == nil {
+		u.m = map[string]NodeHold{}
+	}
+	u.m[p.Node] = p
+	return true
+}
+
+func (u *unrecordedHolds) has(id string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	_, ok := u.m[id]
+	return ok || u.full
+}
+
+func (u *unrecordedHolds) list() []NodeHold {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	l := make([]NodeHold, 0, len(u.m))
+	for _, p := range u.m {
+		l = append(l, p)
+	}
+	return l
+}
+
+// recorded drops p once the file has it (not a newer hold of the same node).
+func (u *unrecordedHolds) recorded(p NodeHold) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if q, ok := u.m[p.Node]; ok && q.At.Equal(p.At) && q.Rule == p.Rule {
+		delete(u.m, p.Node)
+	}
+}
+
+// failed reports whether a failed retry should be logged now (once a minute).
+func (u *unrecordedHolds) failed(now time.Time) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if now.Sub(u.lastLog) < time.Minute {
+		return false
+	}
+	u.lastLog = now
+	return true
+}
+
+// recordHolds retries writing the unrecorded holds to the accounts file.
+func (g *Gateway) recordHolds() {
+	l := g.unrec.list()
+	for i, p := range l {
+		if err := g.accounts.HoldNode(p); err != nil {
+			if g.unrec.failed(time.Now()) {
+				g.log.Error("HOLD NOT RECORDED: guard holds are still not in the accounts file; they hold in memory "+
+					"only, and a restart now lets those nodes serve again", "holds", len(l)-i, "err", err)
+			}
+			return
+		}
+		g.unrec.recorded(p)
+		g.log.Warn("guard hold recorded in the accounts file", "node", p.Node, "rule", p.Rule)
+	}
 }
 
 // sweepNodes applies the accounts file to connected nodes: nodes whose token was revoked or
@@ -505,7 +600,7 @@ const (
 
 // nodeStatus is the state of an account's node, with a generic reason only.
 func (g *Gateway) nodeStatus(account, id string) string {
-	if g.accounts.isHeld(id) {
+	if g.nodeHeld(id) {
 		return nodeOnHold
 	}
 	g.mu.Lock()

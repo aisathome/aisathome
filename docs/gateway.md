@@ -115,6 +115,11 @@ aisathome-gateway accounts routing trusted-only   # emergency: everything to tru
 aisathome-gateway accounts ban gh:12345           # also deletes the account's node tokens
 ```
 
+A guard's hold is written to the accounts file. If that write fails, the node stays held in
+memory and the gateway retries every few seconds, logging `HOLD NOT RECORDED` each minute
+until it succeeds; `node-clear` works once the hold is in the file. A restart before then
+forgets the hold. More than 1024 unrecorded holds hold every node until a restart.
+
 Beyond `max_nodes` the page says "the network is full for now" (there is no waitlist for
 nodes).
 

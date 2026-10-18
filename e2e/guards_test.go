@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -563,4 +564,79 @@ func TestGuardHoldsNodeBeforeFreeingItsSlot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A hold the accounts file could not record still holds: the sweep that applies the file
+// every few seconds must not lift it (it did, 2026-10-18). The gateway writes it once the
+// file is writable again; only then can the operator clear it.
+func TestGuardHoldSticksWhenTheFileCannotBeWritten(t *testing.T) {
+	logs := &syncBuf{}
+	logSink = logs
+	defer func() { logSink = io.Discard }()
+	var evil atomic.Int32
+	a := nodeRig(t, func(c *gateway.AccountsConfig) { c.NodeProbation = "0s" })
+	s2, _ := a.signIn(t, 2)
+	token, id, _ := a.addNode(t, s2, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.startTokenNode(ctx, token, evilEngine(&evil), 2, 32768)
+	a.waitNodes(t, 1)
+	body := func(stream bool) string {
+		return fmt.Sprintf(`{"model":"deep","stream":%v,"messages":[{"role":"user","content":"fix my build"}],"tools":[{"type":"function","function":{"name":"bash"}}]}`, stream)
+	}
+	// Writes to the accounts file fail: its temporary file cannot be created (also as root).
+	block := a.file + ".tmp"
+	if err := os.Mkdir(block, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := ask(t, a.rig, "agent-key", body(true)); code != 502 || !strings.Contains(out, "safety check") {
+		t.Fatalf("flagged tool call: %d %s", code, out)
+	}
+	if !strings.Contains(logs.String(), "HOLD NOT RECORDED") {
+		t.Fatal("the failed write must be logged")
+	}
+	// Sweeps run (every 2 s) and the operator's clear finds nothing to clear yet: still held.
+	if err := a.store.ClearNode(id); err == nil {
+		t.Fatal("a hold not in the file cannot be cleared yet")
+	}
+	time.Sleep(5 * time.Second)
+	if _, page := a.get(t, "/account", s2); !strings.Contains(page, "badge held") {
+		t.Fatalf("the node should still be held: %s", page)
+	}
+	a.startNode(ctx, "home", "home-token", toolEngine(t), 2)
+	a.waitNodes(t, 2)
+	for i := 0; i < 9; i++ { // enough that the share cap alone would let the volunteer in
+		if code, out := ask(t, a.rig, "agent-key", body(i%2 == 0)); code != 200 || !strings.Contains(out, "get_weather") {
+			t.Fatalf("with a trusted node: %d %s", code, out)
+		}
+	}
+	if evil.Load() != 1 {
+		t.Fatalf("the held node got requests after a sweep (%d)", evil.Load())
+	}
+	// The file is writable again: the retry records the hold, which stays.
+	if err := os.Remove(block); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		a.store.Refresh()
+		for _, p := range a.store.Snapshot().NodeHolds {
+			if p.Node == id && p.Rule == "download-and-execute" {
+				return true
+			}
+		}
+		return false
+	})
+	waitFor(t, func() bool { return strings.Contains(logs.String(), "guard hold recorded") })
+	if _, page := a.get(t, "/account", s2); !strings.Contains(page, "badge held") {
+		t.Fatalf("the recorded hold should hold: %s", page)
+	}
+	// Now the operator's clear releases it.
+	if err := a.store.ClearNode(id); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { _, page := a.get(t, "/account", s2); return !strings.Contains(page, "badge held") })
+	waitFor(t, func() bool {
+		ask(t, a.rig, "agent-key", body(true))
+		return evil.Load() > 1
+	})
 }

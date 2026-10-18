@@ -44,10 +44,11 @@ type Gateway struct {
 	keysCfg  Config     // the config the built-in keys came from; guarded by keysMu
 	keysSum  [32]byte   // hash of the keys file last read; guarded by keysMu
 	lim      *limiter
-	shares   []shareEntry // recent placements, for the share cap; guarded by mu
-	held     sync.Map     // node id → true: held by a guard, without an accounts file
-	tok      *Tokenizer   // the gateway's own token counts; nil = the node's (credit.go)
-	pcache   *prefixCache // what each node served whom lately, for cached prompt tokens
+	shares   []shareEntry    // recent placements, for the share cap; guarded by mu
+	held     sync.Map        // node id → true: held by a guard, without an accounts file
+	unrec    unrecordedHolds // guard holds the accounts file has not recorded yet
+	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
+	pcache   *prefixCache    // what each node served whom lately, for cached prompt tokens
 	credit   *creditLedger
 	statsOut statsCache    // the leaderboard and the BOINC-format exports
 	stop     chan struct{} // closed by Close: ends background work
@@ -114,6 +115,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 			g.every(time.Minute, g.email.prune)
 		}
 		g.every(keysFileCheck, func() { // the operator's CLI changes the file while we run
+			g.recordHolds()
 			if err := g.accounts.Refresh(); err != nil {
 				log.Error("accounts file not applied, keeping the accounts in use", "err", err)
 			}
