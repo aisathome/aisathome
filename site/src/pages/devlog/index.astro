@@ -15,7 +15,9 @@ const list = await posts();
 		Notes from building AIs@home: what we tried, what it cost, what we learned. Follow it with
 		the <a href={feed.path}>RSS feed</a>.
 	</p>
-	{showDrafts && <p class="devlog-draft-note">This build shows unpublished drafts (staging only).</p>}
+	{showDrafts && list.some((p) => !p.data.publish) && (
+		<p class="devlog-draft-note">This build shows unpublished drafts (staging only).</p>
+	)}
 	{list.length === 0 ? (
 		<p data-devlog-empty>No posts yet.</p>
 	) : (
