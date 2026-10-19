@@ -1,12 +1,12 @@
 ---
-title: "Assessment: week of 11–18 October 2026"
+title: "Cases for AI inference at home for science"
 number: 2
 date: 2026-10-18
 summary: "Why selling tokens is hard, Stockfish and Lean proofs (Tau Ceti) as science cases for AI at home, where agentic work should run, the week’s costs, and the 24 GB limit."
 publish: true
 ---
 
-Cases for AI inference at home. I have been thinking quite a bit about whether the AI value
+I have been thinking quite a bit about whether the AI value
 chain will be a winner-takes-all scenario: centralisation in a few megacorps, or
 decentralisation across the many. Setting up a decentralised AI network right now has many
 issues and drawbacks. I outlined a couple of them in my
