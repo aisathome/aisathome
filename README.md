@@ -19,6 +19,7 @@ production-ready.
 | `protocol/` | The gateway ↔ node protocol (`PROTOCOL.md`) and its Go types |
 | `site/` | The website and docs (Astro + Starlight) |
 | `e2e/` | End-to-end tests (user → gateway → node → mock engine) |
+| `tools/sitestats/` | The website's visitor statistics: daily counts from the web server's log, no cookies, no IPs kept (what it counts: `doc.go`) |
 | `docs/` | For operators and maintainers: [running a gateway](docs/gateway.md), [credit](docs/credit.md), [releasing](docs/RELEASING.md) |
 | `scripts/`, `examples/` | Release and bundle builds, test fixtures; example configs |
 
