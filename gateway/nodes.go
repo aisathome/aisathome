@@ -24,7 +24,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-// Limits on self-registered nodes (research/node-registration, NOTES §4).
+// Limits on self-registered nodes.
 const (
 	DefaultMaxNodes      = 10 // node tokens over all accounts, unless the accounts file says otherwise
 	nodeTokensPerAccount = 3

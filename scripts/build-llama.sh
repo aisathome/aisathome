@@ -16,8 +16,7 @@ set -euo pipefail
 
 [[ $# -eq 1 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-# The llama.cpp release the presets were benchmarked with (bench/kvquant/RESULTS.md in the
-# research repo, 2026-10-09). The commit pins the tag: a moved tag fails the build.
+# The llama.cpp release the presets were benchmarked with (2026-10-09). The commit pins the tag: a moved tag fails the build.
 LLAMA_TAG=v0.5.0
 LLAMA_COMMIT=7fe450e19305b828c199d602c23a8337aaa1f03b
 # Real (SASS) code only, no PTX: RTX 30 (8.6), RTX 40 (8.9), RTX 50 (12.0; llama.cpp turns

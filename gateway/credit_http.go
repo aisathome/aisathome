@@ -1,6 +1,6 @@
 // Public credit statistics: the leaderboard (GET /v1/stats/credit, JSON for the website) and
 // BOINC-format exports under /stats/ (tables.xml, user.gz, host.gz, team.gz; the format of
-// BOINC's db_dump, research/boinc-stats/NOTES.md §1). Only accounts with a username appear,
+// BOINC's db_dump). Only accounts with a username appear,
 // by that name and a numeric id; the rest count in totals only. No CPIDs yet: a CPID a user
 // typed in proves nothing, and publishing one next to a verification path would make the
 // project a CPID-theft vector (NOTES §3).

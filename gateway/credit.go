@@ -1,7 +1,7 @@
 // Credit (decision 0007, backlog 18): recognition for the GPU time a node gives, in BOINC's
 // unit. Decided by the owner on 2026-10-11: credit follows GPU time, anchored to BOINC's
 // cobblestone for decode. An output token is 0.125 credit (about 2 × 27e9 FLOPs at 4.32e11
-// FLOPs per credit, research/boinc-stats), a new prompt token a tenth of that (prefill is
+// FLOPs per credit), a new prompt token a tenth of that (prefill is
 // that much faster per token) and a cached prompt token a hundredth. Nothing is paid for it.
 //
 // Tokens are counted by the gateway (count.go, tokenizer.go) and cache hits decided by it

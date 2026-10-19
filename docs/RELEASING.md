@@ -13,8 +13,7 @@ For the maintainer. Volunteers read the site page "About the binaries"
 3. **Test the artifact on a GPU** before tagging: unpack, `./install.sh --dry-run`, a real
    install with a throwaway node token from staging, one chat request through the node, then
    `uninstall.sh --purge`. Do it on at least one RTX 30 with an older driver (535) and one RTX
-   40; add an RTX 50 when its build changed. The test plan with costs is in the research repo
-   (`bench/modelcheck/PLAN.md`, bundle test).
+   40; add an RTX 50 when its build changed.
 
 ## Building locally
 

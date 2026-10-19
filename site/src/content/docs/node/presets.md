@@ -11,7 +11,9 @@ reference. The installer uses it without asking; there is nothing to choose.
 |---|---|
 | 1 × 128k context, KV `q4_0` | 18,306 MiB VRAM; hard needles at 120k: 118/120 (q8: 119/120 at 20,354 MiB); first 120k prompt 82 s; decode 46.6 tokens/s short, 32.5 at 120k |
 
-Source: `bench/kvquant/RESULTS.md` in the research repo (llama.cpp v0.5.0, 2026-10-09).
+Where it is set: the [preset in `install.sh`](https://github.com/aisathome/aisathome/blob/v0.2.0/node/packaging/linux/install.sh#L65-L70) and the
+[`llama-server` command it installs](https://github.com/aisathome/aisathome/blob/v0.2.0/node/packaging/linux/install.sh#L130-L134) (v0.2.0). Measured by the project on
+2026-10-09 with llama.cpp v0.5.0; the benchmark notes behind these numbers are not public yet.
 
 What this means:
 - **One request at a time per GPU.** A long prompt keeps the GPU busy before the first word

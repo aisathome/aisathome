@@ -58,8 +58,8 @@ done
 
 # One setting for the whole network (owner, 2026-10-11): 1 slot x 128k context, q4_0 KV cache,
 # so every node takes the same requests and the model check has one reference. Explicit
-# environment variables (SLOTS, CTX_PER_SLOT, KV_TYPE) override it, for testing only. Numbers: bench/kvquant/RESULTS.md in the
-# research repo (RTX 4090, Qwen3.8 27B UD-Q4_K_M, 2026-10-09). Per-slot context means one
+# environment variables (SLOTS, CTX_PER_SLOT, KV_TYPE) override it, for testing only. Measured on an RTX 4090
+# with Qwen3.8 27B UD-Q4_K_M, 2026-10-09 (the site's node/presets page). Per-slot context means one
 # long request cannot starve the others (a single shared pool can: "Context size has been
 # exceeded" on 2026-10-08).
 case "$preset" in
@@ -88,8 +88,8 @@ release_base="${AISATHOME_RELEASE_URL:-https://github.com/aisathome/aisathome/re
 [[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
 
 # The model the presets were measured with, pinned to a commit of the Hugging Face
-# repository and checked by SHA-256 (the hash bench/kvquant/setup.sh in the research repo
-# verified, 2026-10-09). MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace it, all
+# repository and checked by SHA-256 (the file the presets were measured
+# with, 2026-10-09). MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace it, all
 # three together.
 pin_url=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_M.gguf
 pin_sha=322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482

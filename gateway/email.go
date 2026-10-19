@@ -1,5 +1,4 @@
-// Email sign-in: a one-time code and link by email, no passwords (research addendum
-// 2026-10-10 in research/accounts/NOTES.md). The address is never stored or logged: accounts
+// Email sign-in: a one-time code and link by email, no passwords. The address is never stored or logged: accounts
 // keep a keyed hash of it (HMAC-SHA256 under a key ring) and get a random id. Codes and link
 // tokens live only in memory, as SHA-256 hashes, for 10 minutes, bound to the browser that
 // asked by a "pending" cookie; a restart drops pending sign-ins.

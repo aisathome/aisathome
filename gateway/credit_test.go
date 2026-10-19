@@ -52,7 +52,7 @@ func TestUpdateAverageLikeBOINC(t *testing.T) {
 	if !near(avg, 100, 1e-9) {
 		t.Fatalf("steady 100 a day: avg %v", avg)
 	}
-	// From 0 at a steady rate: about 94% after four weeks (research/boinc-stats NOTES §1).
+	// From 0 at a steady rate: about 94% after four weeks.
 	avg, at = 0, 0
 	updateAverage(day, 0, 1e-9, creditHalfLife, &avg, &at)
 	for d := 2; d <= 29; d++ {
