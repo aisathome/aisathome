@@ -1,7 +1,6 @@
 ---
-// Starlight's hero, except on the home page, which renders its own (src/components/Home.astro),
-// and on its dev-only design previews (src/pages/preview/).
+// Starlight's hero, except on the home page, which renders its own (src/pages/index.astro).
 import Default from '@astrojs/starlight/components/Hero.astro';
-const custom = Astro.url.pathname === '/' || Astro.url.pathname.startsWith('/preview/home-');
+const custom = Astro.url.pathname === '/';
 ---
 {!custom && <Default />}
