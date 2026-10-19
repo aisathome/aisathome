@@ -78,9 +78,9 @@ else {
 	const listed = [...readFileSync(join(dist, 'devlog', 'index.html'), 'utf8').matchAll(/data-devlog-item[^>]*>[\s\S]*?<a href="([^"]+)"/g)].map((m) => m[1]);
 	if (fed.join() !== listed.join()) errors.push(`devlog: the feed (${fed}) and the list page (${listed}) differ`);
 	for (const p of fed) if (!existsSync(join(dist, p, 'index.html'))) errors.push(`devlog/rss.xml: ${p} does not exist`);
-	// The home page shows the newest two of the same posts.
-	const home2 = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/data-home-post[^>]*>\s*<a href="([^"]+)"/g)].map((m) => m[1]);
-	if (home2.join() !== listed.slice(0, 2).join()) errors.push(`index.html: the dev log section (${home2}) is not the newest posts (${listed.slice(0, 2)})`);
+	// The home page's dev log box shows the newest three (or fewer) of the same posts.
+	const home = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<a href="([^"]+)" data-home-post-link/g)].map((m) => m[1]);
+	if (home.join() !== listed.slice(0, 3).join()) errors.push(`index.html: the dev log box (${home}) is not the newest posts (${listed.slice(0, 3)})`);
 }
 
 if (errors.length) {

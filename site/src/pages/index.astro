@@ -1,19 +1,17 @@
 ---
 // The home page ("volunteer science" design, chosen by the owner 2026-10-10): bold condensed
-// headlines, a warm accent and a drawn network of home GPUs (volunteer computing). Its theme tokens live in styles/global.css and brand.css for the whole site.
+// headlines and a warm accent; beside the hero, the dev log box (owner, 2026-10-19: in the way
+// BOINC project sites show their news; it replaced the drawn network of home GPUs). Its
+// theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, steps } from '../data/home';
-import { posts, postURL, label, formatDate, isoDate } from '../data/devlog';
+import { posts, postURL, label, formatDate, isoDate, excerpt, feed } from '../data/devlog';
 
-// The latest two dev log posts, with the dev log's own publish filter (drafts only on staging).
-const latest = (await posts()).slice(0, 2);
+// The dev log box beside the hero: the newest posts, with the dev log's own publish filter
+// (drafts only on staging).
+const latest = (await posts()).slice(0, 3);
 
-// Home GPUs around the gateway: [x, y, scale]. Coordinates in the 560 x 460 viewBox.
-const hub = { x: 280, y: 228 };
-const homes: [number, number, number][] = [
-	[92, 92, 1], [280, 52, 0.9], [468, 96, 1], [500, 300, 0.85], [292, 404, 1], [72, 318, 0.9],
-];
 const icons: Record<string, string> = {
 	'No open ports': 'M4 12h11M11 7l5 5-5 5M20 4v16',
 	Sandboxed: 'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',
@@ -31,7 +29,7 @@ const icons: Record<string, string> = {
 	}}
 >
 	<div class="home vb not-content">
-		<section class="hero grid items-center gap-8 lg:grid-cols-[1.15fr_1fr] lg:gap-12">
+		<section class="hero grid items-start gap-10 lg:grid-cols-[1.2fr_1fr] lg:gap-12">
 			<div>
 				<p class="pill">Early experiment · Non-commercial · Open source</p>
 				<h1 id="_top">Open AI models on <em>volunteers’</em> GPUs</h1>
@@ -46,28 +44,33 @@ const icons: Record<string, string> = {
 				</p>
 			</div>
 
-			<svg class="net" viewBox="0 0 560 460" role="img" aria-labelledby="b-net-title">
-				<title id="b-net-title">Home computers with GPUs, each connected outward to one gateway</title>
-				<defs>
-					<symbol id="b-home" viewBox="0 0 100 100">
-						<rect class="h-chim" x="64" y="14" width="10" height="20" />
-						<path class="h-body" d="M16 46 L50 16 L84 46 V88 H16 Z" />
-						<rect class="h-gpu" x="26" y="54" width="48" height="22" rx="3" />
-						<circle class="h-fan" cx="40" cy="65" r="6.5" />
-						<circle class="h-fan" cx="60" cy="65" r="6.5" />
-					</symbol>
-				</defs>
-				<g class="links">
-					{homes.map(([x, y], i) => <line x1={hub.x} y1={hub.y} x2={x} y2={y} style={`animation-delay:-${i * 0.7}s`} />)}
-				</g>
-				<g class="ring"><circle cx={hub.x} cy={hub.y} r="74" /></g>
-				{homes.map(([x, y, s]) => <use href="#b-home" x={x - 50 * s} y={y - 54 * s} width={100 * s} height={100 * s} />)}
-				<g class="hub">
-					<circle cx={hub.x} cy={hub.y} r="50" />
-					<text x={hub.x} y={hub.y + 15} text-anchor="middle">@</text>
-				</g>
-				<text class="hub-label" x={hub.x + 82} y={hub.y + 5}>gateway</text>
-			</svg>
+			{latest.length > 0 && (
+				<aside class="devlog-box" aria-labelledby="b-log" data-home-devlog>
+					<div class="box-head">
+						<h2 id="b-log">Dev log</h2>
+						<p>Notes from the maintainer on what works, what doesn’t, and what it costs.</p>
+					</div>
+					<ol>
+						{latest.map((p) => (
+							<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
+								<p class="post-meta">
+									<span>{label(p)}</span> · <time datetime={isoDate(p.data.date)}>{formatDate(p.data.date)}</time>
+								</p>
+								<h3><a href={postURL(p)} data-home-post-link>{p.data.title}</a></h3>
+								<p class="post-excerpt">{excerpt(p)}</p>
+								<a class="more" href={postURL(p)} aria-label={`Read more: ${label(p)}`}>Read more <span aria-hidden="true">→</span></a>
+							</li>
+						))}
+					</ol>
+					<div class="box-foot">
+						<a class="all" href="/devlog/">All posts <span aria-hidden="true">→</span></a>
+						<a class="rss" href={feed.path} title="RSS feed">
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19a1 1 0 1 0 0-.01M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16" /></svg>
+							<span>RSS</span>
+						</a>
+					</div>
+				</aside>
+			)}
 		</section>
 
 		<LiveStats class="live" />
@@ -118,25 +121,6 @@ const icons: Record<string, string> = {
 			</ul>
 		</section>
 
-		{latest.length > 0 && (
-			<section class="block" aria-labelledby="b-log" data-home-devlog>
-				<h2 id="b-log">From the dev log</h2>
-				<ul class="cards posts grid gap-5 md:grid-cols-2">
-					{latest.map((p) => (
-						<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
-							<a href={postURL(p)}>
-								<p class="post-meta">
-									<span>{label(p)}</span> · <time datetime={isoDate(p.data.date)}>{formatDate(p.data.date)}</time>
-								</p>
-								<h3>{p.data.title}</h3>
-								<p>{p.data.summary}</p>
-							</a>
-						</li>
-					))}
-				</ul>
-				<p class="all-posts"><a href="/devlog/">All posts <span aria-hidden="true">→</span></a></p>
-			</section>
-		)}
 	</div>
 </StarlightPage>
 
@@ -202,24 +186,49 @@ const icons: Record<string, string> = {
 	.privacy strong { color: var(--sl-color-white); }
 	.privacy a { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
 
-	/* Illustration */
-	.net { width: 100%; max-width: 34rem; justify-self: center; overflow: visible; }
-	.net .links line {
-		stroke: var(--sl-color-accent);
-		stroke-width: 2.5;
-		stroke-dasharray: 2 9;
-		stroke-linecap: round;
-		animation: flow 1.6s linear infinite;
+	/* Dev log box (beside the hero on wide screens, below it otherwise) */
+	.devlog-box {
+		padding: 1.5rem clamp(1.25rem, 3vw, 1.75rem) 1.25rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-top: 5px solid var(--sl-color-accent);
+		border-radius: 0.5rem;
+		background: var(--b-surface);
 	}
-	@keyframes flow { to { stroke-dashoffset: -22; } }
-	.net .ring circle { fill: none; stroke: var(--sl-color-gray-5); stroke-dasharray: 4 6; }
-	.net .h-body { fill: var(--b-surface); stroke: var(--sl-color-white); stroke-width: 3.5; stroke-linejoin: round; }
-	.net .h-chim { fill: var(--sl-color-white); }
-	.net .h-gpu { fill: var(--sl-color-accent); }
-	.net .h-fan { fill: var(--sl-color-black); stroke: var(--sl-color-black); }
-	.net .hub circle { fill: var(--sl-color-accent); }
-	.net .hub text { font: 800 46px var(--font-mono); fill: var(--sl-color-black); }
-	.net .hub-label { font: 600 15px var(--font-mono); fill: var(--sl-color-gray-3); letter-spacing: 0.08em; }
+	.box-head h2 { margin: 0; font-size: 2.2rem; font-weight: 850; }
+	.box-head p { margin-top: 0.4rem !important; font-size: 0.92rem; line-height: 1.5; color: var(--sl-color-gray-3); }
+	.devlog-box li { padding-block: 1.1rem; border-top: 1px dashed var(--sl-color-gray-5); }
+	.devlog-box ol { margin-top: 1rem; }
+	.post-meta {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.post-meta span { color: var(--sl-color-accent-high); }
+	.devlog-box h3 { margin: 0.4rem 0 0.5rem; font-size: 1.45rem; line-height: 1.05; }
+	.devlog-box h3 a { color: inherit; text-decoration: none; }
+	.devlog-box h3 a:hover { color: var(--sl-color-accent); }
+	.post-excerpt { font-size: 0.93rem; line-height: 1.55; }
+	.more, .all, .rss {
+		font: 800 1rem/1 var(--font-display);
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		text-decoration: none;
+		color: var(--sl-color-accent-high);
+	}
+	.more { display: inline-block; margin-top: 0.6rem; }
+	.box-foot {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding-top: 1rem;
+		border-top: 1px dashed var(--sl-color-gray-5);
+	}
+	.all { font-size: 1.15rem; color: var(--sl-color-white); }
+	.rss { display: inline-flex; gap: 0.35rem; align-items: center; color: var(--sl-color-gray-3); }
+	.rss svg { width: 1.1rem; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+	:is(.more, .all, .rss):hover { color: var(--sl-color-accent); }
 
 	/* Live counters */
 	.vb :global(.live) {
@@ -272,25 +281,6 @@ const icons: Record<string, string> = {
 		transition: background-color 0.15s;
 	}
 	.cards a:hover { background: var(--b-band); }
-	.posts h3 { font-size: 1.45rem; line-height: 1.05; }
-	.post-meta {
-		margin-bottom: 0.7rem !important;
-		font-size: 0.8rem;
-		font-weight: 600;
-		letter-spacing: 0.05em;
-		text-transform: uppercase;
-		color: var(--sl-color-gray-3);
-	}
-	.post-meta span { color: var(--sl-color-accent-high); }
-	.all-posts { margin-top: 1.5rem !important; }
-	.all-posts a {
-		font: 800 1.25rem/1 var(--font-display);
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: var(--sl-color-white);
-		text-decoration: none;
-	}
-	.all-posts a:hover { color: var(--sl-color-accent); }
 	.cards a:hover h3 span { color: var(--sl-color-accent); }
 	.guar svg {
 		width: 2.25rem;
@@ -302,7 +292,4 @@ const icons: Record<string, string> = {
 		stroke-linejoin: round;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.net .links line { animation: none; }
-	}
 </style>
