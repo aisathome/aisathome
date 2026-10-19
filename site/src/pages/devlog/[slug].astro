@@ -22,8 +22,8 @@ const draft = !post.data.publish;
 	headings={headings}
 >
 	<p class="devlog-meta" {...(draft ? { 'data-devlog-draft': '' } : {})}>
-		<time datetime={isoDate(post.data.date)}>{formatDate(post.data.date)}</time> ·
-		<a href="/devlog/">Dev log</a> · <a href={feed.path}>RSS</a>
+		<time datetime={isoDate(post.data.date)}>{formatDate(post.data.date)}</time>{' · '}
+		<a href="/devlog/">Dev log</a>{' · '}<a href={feed.path}>RSS</a>
 	</p>
 	<Content />
 </StarlightPage>
