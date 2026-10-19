@@ -1,0 +1,13 @@
+---
+// Home page design candidates for the dev log (owner, 2026-10-19): /preview/home-a/, -b/, -c/.
+// Only the local dev server (`npm run dev`) has these routes; a build makes none
+// (scripts/check-dist.mjs also fails on a data-home-variant attribute in any page).
+import Home from '../../components/Home.astro';
+
+export function getStaticPaths() {
+	return import.meta.env.DEV ? ['a', 'b', 'c'].map((v) => ({ params: { v } })) : [];
+}
+const { v } = Astro.params;
+---
+
+<Home variant={v} />

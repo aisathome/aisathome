@@ -69,6 +69,11 @@ for (const f of html) {
 		errors.push(`${relative(dist, f)}: an unpublished dev log post in a build without DEVLOG_DRAFTS=1`);
 	}
 }
+// The home page's dev log design candidates (/preview/) exist only in the local dev server.
+for (const f of html) {
+	if (/\sdata-home-variant[\s=>]/.test(readFileSync(f, 'utf8'))) errors.push(`${relative(dist, f)}: a dev log design candidate in a build`);
+}
+if (existsSync(join(dist, 'preview'))) errors.push('preview/: dev-only pages in a build');
 const rssFile = join(dist, 'devlog', 'rss.xml');
 if (!existsSync(rssFile)) errors.push('devlog/rss.xml: missing');
 else {
@@ -78,9 +83,6 @@ else {
 	const listed = [...readFileSync(join(dist, 'devlog', 'index.html'), 'utf8').matchAll(/data-devlog-item[^>]*>[\s\S]*?<a href="([^"]+)"/g)].map((m) => m[1]);
 	if (fed.join() !== listed.join()) errors.push(`devlog: the feed (${fed}) and the list page (${listed}) differ`);
 	for (const p of fed) if (!existsSync(join(dist, p, 'index.html'))) errors.push(`devlog/rss.xml: ${p} does not exist`);
-	// The home page's dev log box shows the newest three (or fewer) of the same posts.
-	const home = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<a href="([^"]+)" data-home-post-link/g)].map((m) => m[1]);
-	if (home.join() !== listed.slice(0, 3).join()) errors.push(`index.html: the dev log box (${home}) is not the newest posts (${listed.slice(0, 3)})`);
 }
 
 if (errors.length) {

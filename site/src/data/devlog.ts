@@ -24,32 +24,6 @@ export async function posts(): Promise<Post[]> {
 		.sort((a, b) => b.data.number - a.data.number);
 }
 
-// A short plain-text excerpt for the home page: whole sentences from the start of the post
-// (skipping greetings such as "Hi,"), about `words` words; Markdown links and emphasis
-// are reduced to their text.
-export function excerpt(p: Post, words = 45): string {
-	const text = (p.body ?? '')
-		.split(/\n\s*\n/)
-		.map((para) =>
-			para
-				.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-				.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-				.replace(/[*_`]+/g, '')
-				.replace(/\s+/g, ' ')
-				.trim(),
-		)
-		.filter((para) => para.split(' ').length >= 8 && !/^(#|\||-|\d+\.)/.test(para));
-	let out = '';
-	for (const sentence of text.join(' ').split(/(?<=[.!?])\s+/)) {
-		const next = out ? `${out} ${sentence}` : sentence;
-		if (out && next.split(' ').length > words + 10) break;
-		out = next;
-		if (out.split(' ').length >= words * 0.8) break;
-	}
-	const w = out.split(' ');
-	return w.length > words * 1.5 ? w.slice(0, words).join(' ') + ' …' : out;
-}
-
 // "Dev log #1": the post's label, above its title (never part of the title).
 export const label = (p: Post) => `Dev log #${p.data.number}`;
 
@@ -58,6 +32,10 @@ export const postURL = (p: Post) => `/devlog/${p.id}/`;
 // "12 October 2026"; dates are calendar days (UTC), not times.
 export const formatDate = (d: Date) =>
 	d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+// "18 Oct 2026"
+export const shortDate = (d: Date) =>
+	d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
 export const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
