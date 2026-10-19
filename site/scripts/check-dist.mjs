@@ -1,7 +1,7 @@
 // Checks the built site (dist/) in CI: internal links resolve, nothing loads from a third
 // party, the live network strip and the leaderboard start hidden (they show themselves
 // only with real data), and every page shares the theme choice with the account pages (the
-// theme script runs before Starlight's).
+// theme script runs before Starlight's). Also the dev log: drafts and the feed (below).
 // SPDX-License-Identifier: Apache-2.0
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -56,6 +56,25 @@ const board = network.match(/<section[^>]*data-credit-board[^>]*>/);
 if (!board) errors.push('network/index.html: no leaderboard');
 else if (!/\shidden(\s|>|=)/.test(board[0])) errors.push('network/index.html: the leaderboard is not hidden before data arrives');
 if (!/<section[^>]*data-live-stats[^>]*\shidden/.test(network)) errors.push('network/index.html: the live strip is not hidden before data arrives');
+
+// The dev log: unpublished posts only in a build with DEVLOG_DRAFTS=1 (staging), and the feed
+// lists exactly the posts of the list page, each of which exists.
+const drafts = process.env.DEVLOG_DRAFTS === '1';
+for (const f of html) {
+	if (!drafts && /\sdata-devlog-draft[\s=>]/.test(readFileSync(f, 'utf8'))) {
+		errors.push(`${relative(dist, f)}: an unpublished dev log post in a build without DEVLOG_DRAFTS=1`);
+	}
+}
+const rssFile = join(dist, 'devlog', 'rss.xml');
+if (!existsSync(rssFile)) errors.push('devlog/rss.xml: missing');
+else {
+	const rss = readFileSync(rssFile, 'utf8');
+	if (!rss.startsWith('<?xml') || !rss.includes('<rss version="2.0"')) errors.push('devlog/rss.xml: not an RSS 2.0 document');
+	const fed = [...rss.matchAll(/<item>[\s\S]*?<link>([^<]+)<\/link>/g)].map((m) => new URL(m[1]).pathname);
+	const listed = [...readFileSync(join(dist, 'devlog', 'index.html'), 'utf8').matchAll(/data-devlog-item[^>]*>[\s\S]*?<a href="([^"]+)"/g)].map((m) => m[1]);
+	if (fed.join() !== listed.join()) errors.push(`devlog: the feed (${fed}) and the list page (${listed}) differ`);
+	for (const p of fed) if (!existsSync(join(dist, p, 'index.html'))) errors.push(`devlog/rss.xml: ${p} does not exist`);
+}
 
 if (errors.length) {
 	console.error(errors.join('\n'));

@@ -185,7 +185,7 @@ func TestHeaderNavMatchesSite(t *testing.T) {
 		want = append(want, l.Label+" "+resolve(l.Href))
 	}
 	if got := strings.Join(want, ", "); got != "Chat https://chat.site.test, Account https://site.test/account, Docs https://site.test/docs/, "+
-		"Run a node https://site.test/node/, Network https://site.test/network/, About https://site.test/about/" {
+		"Run a node https://site.test/node/, Network https://site.test/network/, Dev log https://site.test/devlog/, About https://site.test/about/" {
 		t.Fatalf("site nav changed: %s", got)
 	}
 	g := threeWayRig(t)

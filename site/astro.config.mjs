@@ -23,7 +23,13 @@ export default defineConfig({
 				'Open AI models on volunteers’ GPUs, in the spirit of BOINC. Non-commercial and open source.',
 			logo: { src: './src/assets/logo.svg', alt: 'AIs@home' },
 			favicon: '/favicon.svg',
-			head: [{ tag: 'script', content: themeSync }],
+			head: [
+				{ tag: 'script', content: themeSync },
+				{
+					tag: 'link',
+					attrs: { rel: 'alternate', type: 'application/rss+xml', title: 'AIs@home dev log', href: '/devlog/rss.xml' },
+				},
+			],
 			// global.css wires Tailwind 4 and Starlight to one theme (fonts, accent, grays).
 			customCss: ['./src/styles/global.css', './src/styles/brand.css'],
 			components: {

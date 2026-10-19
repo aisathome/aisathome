@@ -112,7 +112,8 @@ func headerNav(chatURL string) []navLink {
 		nav = append(nav, navLink{Label: "Chat", Href: chatURL})
 	}
 	return append(nav, navLink{"Account", "/account", true}, navLink{"Docs", "/docs/", false},
-		navLink{"Run a node", "/node/", false}, navLink{"Network", "/network/", false}, navLink{"About", "/about/", false})
+		navLink{"Run a node", "/node/", false}, navLink{"Network", "/network/", false}, navLink{"Dev log", "/devlog/", false},
+		navLink{"About", "/about/", false})
 }
 
 // newPage parses a page that uses the shared shell (the data embeds shell):

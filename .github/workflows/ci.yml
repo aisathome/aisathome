@@ -28,7 +28,10 @@ jobs:
           if [ -n "$unformatted" ]; then echo "not gofmt-formatted:"; echo "$unformatted"; exit 1; fi
       - name: no references to the internal notes
         # The project's research notes are internal: public code and pages cite public sources.
-        run: "! git grep -n -i -E 'research repo|bench/kvquant|research/[a-z]' -- ':!.github'"
+        # Web addresses are removed first (a public page may well live under /research/).
+        run: |
+          pat='research repo|bench/kvquant|research/[a-z]'
+          if git grep -n -i -E "$pat" -- ':!.github' | sed -E 's#[a-z]+://[^ )>"]*##g' | grep -i -E "$pat"; then exit 1; fi
       - name: go vet
         run: go vet ./...
       - name: go test -race

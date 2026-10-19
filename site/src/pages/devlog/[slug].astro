@@ -1,0 +1,33 @@
+---
+// One dev log post. No author line: posts are by the project's maintainer.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { render } from 'astro:content';
+import { posts, formatDate, isoDate, feed, type Post } from '../../data/devlog';
+
+export async function getStaticPaths() {
+	return (await posts()).map((post) => ({ params: { slug: post.id }, props: { post } }));
+}
+
+const { post } = Astro.props as { post: Post };
+const { Content, headings } = await render(post);
+const draft = !post.data.publish;
+---
+
+<StarlightPage
+	frontmatter={{
+		title: post.data.title,
+		description: post.data.summary,
+		...(draft ? { banner: { content: 'Draft: not published. Only staging builds show it.' } } : {}),
+	}}
+	headings={headings}
+>
+	<p class="devlog-meta" {...(draft ? { 'data-devlog-draft': '' } : {})}>
+		<time datetime={isoDate(post.data.date)}>{formatDate(post.data.date)}</time> ·
+		<a href="/devlog/">Dev log</a> · <a href={feed.path}>RSS</a>
+	</p>
+	<Content />
+</StarlightPage>
+
+<style>
+	.devlog-meta { font-size: var(--sl-text-sm); color: var(--sl-color-gray-3); }
+</style>

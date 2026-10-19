@@ -4,5 +4,6 @@
 	{ "label": "Docs", "href": "/docs/" },
 	{ "label": "Run a node", "href": "/node/" },
 	{ "label": "Network", "href": "/network/" },
+	{ "label": "Dev log", "href": "/devlog/" },
 	{ "label": "About", "href": "/about/" }
 ]

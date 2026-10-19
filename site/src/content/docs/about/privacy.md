@@ -37,14 +37,32 @@ and sends the answer back the same way.
 - **Your username, if you set one, is public**, together with your credit: on the
   [leaderboard](/network/) and in our statistics files in BOINC's format, which other sites
   can copy. Without a username you appear in totals only.
-- Your IP address is used in memory for rate limits and to limit nodes per address; we do
-  not log it.
+- Your IP address is used in memory for rate limits and to limit nodes per address, and
+  for a minute or so for the visitor statistics below; we do not store it.
+
+**Visitor statistics (this website only).** To know whether anyone reads the site, the
+server counts visits to its pages from its own web server log: no cookies, no JavaScript,
+no outside service. The chat, the API and the account pages are not counted.
+- The log lines, which contain your IP address and your browser's name (user agent), are
+  kept only in the server's memory, never on disk or in backups. About once a minute they
+  are counted and deleted.
+- What we keep, per day: views per page (without anything after a `?`), the domain of the
+  site that linked here (for example `reddit.com`, never the full address), how many 404s,
+  how many requests came from known bots and from our own tests, and an estimate of unique
+  visitors.
+- For that estimate the server makes a hash of your IP address and browser name together
+  with a random value that exists only in memory and is replaced at the end of each day
+  (UTC). Only the day's count is kept, so visits on different days cannot be linked, not
+  even by us.
+- No IP addresses, hashes or browser names are stored. The code that does the counting is
+  public: [`tools/sitestats`](https://github.com/aisathome/aisathome/tree/main/tools/sitestats).
 
 **Cookies.** A sign-in cookie (only once you sign in), and `aisathome_theme`, which remembers
 whether you chose light or dark. No tracking or advertising cookies.
 
 **What we never do.** We don't sell data, don't show ads, don't train models on your
-chats, and run no analytics or tracking.
+chats, and run no tracking: no analytics scripts, no outside analytics service, no
+tracking cookies. The visitor statistics above are counts, made on our own server.
 
 **A safety net, not a guarantee.** We automatically hide well-known secret formats (API
 keys, private keys) from nodes, and messages containing things like email addresses or

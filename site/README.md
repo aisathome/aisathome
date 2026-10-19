@@ -20,3 +20,12 @@ from `@fontsource-variable/*` packages; nothing loads from a CDN. `/design/a|b|c
 home-page design previews (noindex) sharing copy from `src/data/home.ts`; the live network
 strip (`src/components/LiveStats.astro`) reads the gateway's public `/v1/stats` and stays
 hidden when that fails.
+
+Dev log (`/devlog/`, feed `/devlog/rss.xml`): one Markdown file per post in
+`src/content/devlog/`, named `YYYY-MM-DD-slug.md` (the slug is the URL), with frontmatter
+`title`, `date`, `summary` (one line for the list and the feed) and `publish`. Only
+`publish: true` posts are built; `DEVLOG_DRAFTS=1` builds the drafts too, marked as drafts
+(the staging deploy sets it, so a post can be reviewed there before it is published;
+`npm run check` fails if a build without the flag contains a draft). Images go in
+`src/content/devlog/img/` and are referenced as `![alt](./img/name.svg)`. Posts carry no
+author name.

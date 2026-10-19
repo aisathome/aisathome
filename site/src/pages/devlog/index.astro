@@ -1,0 +1,56 @@
+---
+// The dev log: posts newest first (src/content/devlog/, src/data/devlog.ts).
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { posts, postURL, formatDate, isoDate, feed, showDrafts } from '../../data/devlog';
+const list = await posts();
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Dev log',
+		description: 'Notes from building AIs@home: what we tried, what it cost, what we learned.',
+	}}
+>
+	<p>
+		Notes from building AIs@home: what we tried, what it cost, what we learned. Follow it with
+		the <a href={feed.path}>RSS feed</a>.
+	</p>
+	{showDrafts && <p class="devlog-draft-note">This build shows unpublished drafts (staging only).</p>}
+	{list.length === 0 ? (
+		<p data-devlog-empty>No posts yet.</p>
+	) : (
+		<ol class="devlog-list not-content" data-devlog-list>
+			{list.map((p) => (
+				<li data-devlog-item {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
+					<time datetime={isoDate(p.data.date)}>{formatDate(p.data.date)}</time>
+					<a href={postURL(p)}>{p.data.title}</a>
+					{!p.data.publish && <span class="devlog-badge">Draft</span>}
+					<p>{p.data.summary}</p>
+				</li>
+			))}
+		</ol>
+	)}
+</StarlightPage>
+
+<style>
+	.devlog-list { list-style: none; padding: 0; margin: 2rem 0 0; display: grid; gap: 1.75rem; }
+	.devlog-list li { margin: 0; }
+	.devlog-list time { display: block; font-size: var(--sl-text-sm); color: var(--sl-color-gray-3); }
+	.devlog-list a {
+		font-family: var(--font-display);
+		font-size: var(--sl-text-xl);
+		font-weight: 700;
+		color: var(--sl-color-white);
+		text-decoration: none;
+	}
+	.devlog-list a:hover { color: var(--sl-color-accent-high); text-decoration: underline; text-underline-offset: 3px; }
+	.devlog-list p { margin: 0.25rem 0 0; color: var(--sl-color-gray-2); max-width: 40rem; }
+	.devlog-badge, .devlog-draft-note { font-size: var(--sl-text-xs); color: var(--sl-color-orange-high); }
+	.devlog-badge {
+		margin-inline-start: 0.5rem;
+		padding: 0.1rem 0.4rem;
+		border: 1px solid currentColor;
+		border-radius: 0.25rem;
+		vertical-align: middle;
+	}
+</style>
