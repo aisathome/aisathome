@@ -4,6 +4,10 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, steps } from '../data/home';
+import { posts, postURL, label, formatDate, isoDate } from '../data/devlog';
+
+// The latest two dev log posts, with the dev log's own publish filter (drafts only on staging).
+const latest = (await posts()).slice(0, 2);
 
 // Home GPUs around the gateway: [x, y, scale]. Coordinates in the 560 x 460 viewBox.
 const hub = { x: 280, y: 228 };
@@ -113,6 +117,26 @@ const icons: Record<string, string> = {
 				}
 			</ul>
 		</section>
+
+		{latest.length > 0 && (
+			<section class="block" aria-labelledby="b-log" data-home-devlog>
+				<h2 id="b-log">From the dev log</h2>
+				<ul class="cards posts grid gap-5 md:grid-cols-2">
+					{latest.map((p) => (
+						<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
+							<a href={postURL(p)}>
+								<p class="post-meta">
+									<span>{label(p)}</span> · <time datetime={isoDate(p.data.date)}>{formatDate(p.data.date)}</time>
+								</p>
+								<h3>{p.data.title}</h3>
+								<p>{p.data.summary}</p>
+							</a>
+						</li>
+					))}
+				</ul>
+				<p class="all-posts"><a href="/devlog/">All posts <span aria-hidden="true">→</span></a></p>
+			</section>
+		)}
 	</div>
 </StarlightPage>
 
@@ -248,6 +272,25 @@ const icons: Record<string, string> = {
 		transition: background-color 0.15s;
 	}
 	.cards a:hover { background: var(--b-band); }
+	.posts h3 { font-size: 1.45rem; line-height: 1.05; }
+	.post-meta {
+		margin-bottom: 0.7rem !important;
+		font-size: 0.8rem;
+		font-weight: 600;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.post-meta span { color: var(--sl-color-accent-high); }
+	.all-posts { margin-top: 1.5rem !important; }
+	.all-posts a {
+		font: 800 1.25rem/1 var(--font-display);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--sl-color-white);
+		text-decoration: none;
+	}
+	.all-posts a:hover { color: var(--sl-color-accent); }
 	.cards a:hover h3 span { color: var(--sl-color-accent); }
 	.guar svg {
 		width: 2.25rem;

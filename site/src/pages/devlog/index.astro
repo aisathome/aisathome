@@ -1,7 +1,7 @@
 ---
 // The dev log: posts newest first (src/content/devlog/, src/data/devlog.ts).
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
-import { posts, postURL, formatDate, isoDate, feed, showDrafts } from '../../data/devlog';
+import { posts, postURL, formatDate, isoDate, feed, showDrafts, label } from '../../data/devlog';
 const list = await posts();
 ---
 
@@ -24,8 +24,9 @@ const list = await posts();
 		<ol class="devlog-list not-content" data-devlog-list>
 			{list.map((p) => (
 				<li data-devlog-item {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
-					<time datetime={isoDate(p.data.date)}>{formatDate(p.data.date)}</time>
+					<span class="devlog-label" data-devlog-label>{label(p)}</span>
 					<a href={postURL(p)}>{p.data.title}</a>
+					<time datetime={isoDate(p.data.date)}>{formatDate(p.data.date)}</time>
 					{!p.data.publish && <span class="devlog-badge">Draft</span>}
 					<p>{p.data.summary}</p>
 				</li>
@@ -37,7 +38,14 @@ const list = await posts();
 <style>
 	.devlog-list { list-style: none; padding: 0; margin: 2rem 0 0; display: grid; gap: 1.75rem; }
 	.devlog-list li { margin: 0; }
-	.devlog-list time { display: block; font-size: var(--sl-text-sm); color: var(--sl-color-gray-3); }
+	.devlog-list time { display: block; margin-top: 0.15rem; font-size: var(--sl-text-sm); color: var(--sl-color-gray-3); }
+	.devlog-label {
+		display: block;
+		font: 700 var(--sl-text-xs) / 1.6 var(--font-display);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--sl-color-accent-high);
+	}
 	.devlog-list a {
 		font-family: var(--font-display);
 		font-size: var(--sl-text-xl);

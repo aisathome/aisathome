@@ -1,11 +1,10 @@
 ---
 title: "AIs@home: Bringing AI into the BOINC/Gridcoin environment?"
+number: 1
 date: 2026-10-12
 summary: "The first public post: a proof of concept for running open AI models on volunteers’ GPUs, its limits, and a request for feedback from the BOINC/Gridcoin community."
 publish: true
 ---
-
-*Originally posted on [r/gridcoin](https://www.reddit.com/r/gridcoin/) on 12 October 2026.*
 
 Hi,
 

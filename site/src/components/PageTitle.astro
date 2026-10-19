@@ -1,0 +1,18 @@
+---
+// Starlight's page title. Dev log posts (/devlog/<number>-<slug>/) get a small "Dev log #N"
+// label above it; the title itself stays the post's title.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+const m = Astro.url.pathname.match(/^\/devlog\/(\d+)-[^/]+\/?$/);
+---
+{m && <p class="devlog-label" data-devlog-label>Dev log #{m[1]}</p>}
+<Default />
+
+<style>
+	.devlog-label {
+		margin: 1rem 0 -0.5rem;
+		font: 700 var(--sl-text-sm) / 1 var(--font-display);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--sl-color-accent-high);
+	}
+</style>

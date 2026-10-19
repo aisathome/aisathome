@@ -21,9 +21,11 @@ home-page design previews (noindex) sharing copy from `src/data/home.ts`; the li
 strip (`src/components/LiveStats.astro`) reads the gateway's public `/v1/stats` and stays
 hidden when that fails.
 
-Dev log (`/devlog/`, feed `/devlog/rss.xml`): one Markdown file per post in
-`src/content/devlog/`, named `YYYY-MM-DD-slug.md` (the slug is the URL), with frontmatter
-`title`, `date`, `summary` (one line for the list and the feed) and `publish`. Only
+Dev log (`/devlog/`, feed `/devlog/rss.xml`, the newest two also on the home page): one
+Markdown file per post in `src/content/devlog/`, named `<number>-<slug from the title>.md`
+(the file name is the URL), with frontmatter `title`, `number` (1, 2, 3, ...: shown as
+"Dev log #N" above the title; the build fails on a reused number or a file name that does
+not start with it), `date`, `summary` (one line for the list and the feed) and `publish`. Only
 `publish: true` posts are built; `DEVLOG_DRAFTS=1` builds the drafts too, marked as drafts
 (the staging deploy sets it, so a post can be reviewed there before it is published;
 `npm run check` fails if a build without the flag contains a draft). Images go in

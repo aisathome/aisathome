@@ -1,5 +1,6 @@
 ---
 title: "Assessment: week of 11–18 October 2026"
+number: 2
 date: 2026-10-18
 summary: "Why selling tokens is hard, Stockfish and Lean proofs (Tau Ceti) as science cases for AI at home, where agentic work should run, the week’s costs, and the 24 GB limit."
 publish: true
@@ -9,7 +10,7 @@ Cases for AI inference at home. I have been thinking quite a bit about whether t
 chain will be a winner-takes-all scenario: centralisation in a few megacorps, or
 decentralisation across the many. Setting up a decentralised AI network right now has many
 issues and drawbacks. I outlined a couple of them in my
-[previous post](/devlog/2026-10-12-r-gridcoin/).
+[previous post](/devlog/1-bringing-ai-into-the-boinc-gridcoin-environment/).
 
 One obvious use case is selling tokens and listing AIs@home on
 [OpenRouter](https://openrouter.ai/) or something similar. A machine with a high-end GPU could then generate tokens when the operator does not need it.
