@@ -13,6 +13,7 @@
 	const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 	const big = (n) => (n >= 100000 ? compact.format(n) : num.format(n));
 	const dur = (ms) => {
+		if (ms > 0 && ms < 1000) return '<1s'; // served, but less than a second in total
 		const s = Math.floor(ms / 1000);
 		if (s < 60) return `${s}s`;
 		if (s < 3600) return `${Math.floor(s / 60)}m`;

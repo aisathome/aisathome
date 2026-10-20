@@ -20,11 +20,12 @@ type Gateway struct {
 	cfg      Config
 	log      *slog.Logger
 	mu       sync.Mutex
-	node     map[string]*nodeConn // by node id
-	rr       int                  // round-robin cursor
-	tokens   map[string]NodeToken // guarded by mu; replaced by Reload
-	known    map[string]time.Time // model or role → last time a node offered it; guarded by mu
-	wake     chan struct{}        // closed and replaced whenever capacity may have changed
+	node     map[string]*nodeConn  // by node id
+	rr       int                   // round-robin cursor
+	tokens   map[string]NodeToken  // guarded by mu; replaced by Reload
+	known    map[string]time.Time  // model or role → last time a node offered it; guarded by mu
+	flaps    map[string]*flapState // node id → connections replaced soon after connecting; guarded by mu
+	wake     chan struct{}         // closed and replaced whenever capacity may have changed
 	queued   atomic.Int32
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
 	bodies   atomic.Int64 // bytes reserved for request bodies, across all requests
@@ -90,7 +91,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger()}
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {

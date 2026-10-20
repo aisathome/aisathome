@@ -4,10 +4,12 @@
 package gateway
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,8 @@ type nodeConn struct {
 	ip       string    // client address it connected from (account nodes: maxNodesPerIP)
 	held     bool      // stopped by a guard until the operator clears it; guarded by g.mu
 	probEnd  time.Time // account nodes: no agents (requests with tools) before; guarded by g.mu
+	agent    string    // the node software's version from its hello ("aisathome-node/0.2.0"), "" if none or invalid
+	since    time.Time // when it connected
 	models   []protocol.ModelInfo
 	conn     *websocket.Conn
 	wmu      sync.Mutex // serialises writes
@@ -158,7 +162,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", account: account, ip: ip,
-		models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
+		agent: cleanAgent(hello.Agent), since: time.Now(), models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
 	if err := n.send(ctx, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: g.cfg.GatewayID, Protocol: protocol.Version}); err != nil {
 		return
 	}
@@ -203,6 +207,10 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	n.held = g.nodeHeld(n.id)
 	g.node[n.id] = n
 	now := time.Now()
+	flaps := 0
+	if old != nil {
+		flaps = g.noteReplaceLocked(n.id, old.since, now)
+	}
 	for name, last := range g.known { // forget models nobody has offered for a long time
 		if now.Sub(last) > knownFor {
 			delete(g.known, name)
@@ -214,12 +222,17 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}
 	g.signal() // waiting requests may now find a slot
-	g.log.Info("node connected", "node", n.id, "operator", n.operator, "models", len(n.models))
+	g.log.Info("node connected", "node", n.id, "operator", n.operator, "models", len(n.models), "version", cmp.Or(n.agent, "unknown"))
+	if flaps > 0 {
+		g.log.Warn("node connections keep replacing each other: two clients may be running with the same node token and id",
+			"node", n.id, "operator", n.operator, "replaced", flaps, "same_address", old.ip == n.ip)
+	}
 
 	defer func() {
 		g.mu.Lock()
 		if g.node[n.id] == n {
 			delete(g.node, n.id)
+			delete(g.flaps, n.id)
 		}
 		g.rememberLocked(n.models, time.Now()) // "known" for a while after its last node leaves
 		g.mu.Unlock()
@@ -229,6 +242,55 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		g.log.Info("node disconnected", "node", n.id)
 	}()
 	g.readLoop(ctx, n)
+}
+
+// Two clients with one node token and id replace each other's connection in turn, each
+// reconnecting after it is replaced (staging, 2026-10-20). A connection replaced within
+// flapWindow of connecting counts as quick; flapCount quick replacements in a row log a
+// warning, at most once per flapQuiet per node id.
+const (
+	flapWindow = 2 * time.Minute
+	flapCount  = 3
+	flapQuiet  = 10 * time.Minute
+)
+
+type flapState struct {
+	quick  int       // quick replacements since the last warning
+	warned time.Time // last warning
+}
+
+// noteReplaceLocked records that node id's connection from oldSince was replaced now, and
+// returns how many quick replacements to warn about (0: no warning). Caller holds g.mu.
+func (g *Gateway) noteReplaceLocked(id string, oldSince, now time.Time) int {
+	f := g.flaps[id]
+	if now.Sub(oldSince) >= flapWindow { // it had lasted: an ordinary reconnect
+		if f != nil {
+			f.quick = 0
+		}
+		return 0
+	}
+	if f == nil {
+		f = &flapState{}
+		g.flaps[id] = f
+	}
+	f.quick++
+	if f.quick < flapCount || (!f.warned.IsZero() && now.Sub(f.warned) < flapQuiet) {
+		return 0
+	}
+	n := f.quick
+	f.quick, f.warned = 0, now
+	return n
+}
+
+// agentRe is what a node's software version may look like ("aisathome-node/0.2.0",
+// "aisathome-node/dev"); anything else is not recorded.
+var agentRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+/-]{0,63}$`)
+
+func cleanAgent(s string) string {
+	if agentRe.MatchString(s) {
+		return s
+	}
+	return ""
 }
 
 // idReservedLocked reports whether node id is bound to a token other than token: such an id

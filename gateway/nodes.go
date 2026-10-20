@@ -598,6 +598,18 @@ const (
 	nodePaused    = "paused" // paused by the volunteer (local node UI)
 )
 
+// nodeVersion is the software version that account's node id reported when it connected,
+// without the "aisathome-node/" prefix; "" while it is offline or reported none.
+func (g *Gateway) nodeVersion(account, id string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n := g.node[id]
+	if n == nil || n.account != account {
+		return ""
+	}
+	return strings.TrimPrefix(n.agent, "aisathome-node/")
+}
+
 // nodeStatus is the state of an account's node, with a generic reason only.
 func (g *Gateway) nodeStatus(account, id string) string {
 	if g.nodeHeld(id) {

@@ -480,3 +480,76 @@ func TestSquatterIsToldIDIsReserved(t *testing.T) {
 		t.Fatalf("got %v, want a close with \"node id is reserved\"", err)
 	}
 }
+
+// The gateway records the version a node reports: it logs it on connect and shows it on the
+// account page while the node is connected. A version that is not a plain name is not kept.
+func TestNodeVersionLoggedAndShown(t *testing.T) {
+	logs := &syncBuf{}
+	logSink = logs
+	defer func() { logSink = io.Discard }()
+	a := nodeRig(t, nil)
+	s, _ := a.signIn(t, 1)
+	token, id, _ := a.addNode(t, s, "")
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, "<th>Version</th>") || strings.Contains(page, "<code>dev</code>") {
+		t.Fatalf("an offline node shows no version: %s", page)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.startTokenNode(ctx, token, mockEngine(t, false), 2, 32768) // a test build reports aisathome-node/dev
+	a.waitNodes(t, 1)
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, "<code>dev</code>") {
+		t.Fatalf("the connected node's version is not shown: %s", page)
+	}
+	if !regexp.MustCompile(`msg="node connected" node=` + id + ` .*version=aisathome-node/dev`).MatchString(logs.String()) {
+		t.Fatalf("version not logged:\n%s", logs.String())
+	}
+	cancel()
+	a.waitNodes(t, 0)
+
+	// A raw node announcing markup as its version: logged as unknown, not shown.
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+token)
+	c, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(a.gw.URL, "http")+"/v1/node/connect",
+		&websocket.DialOptions{HTTPHeader: h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.Version, Agent: "<b>x</b>",
+		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 1}}})
+	c.Write(context.Background(), websocket.MessageText, b)
+	a.waitNodes(t, 1)
+	if _, page := a.get(t, "/account", s); strings.Contains(page, "<b>x</b>") || strings.Contains(page, "&lt;b&gt;") {
+		t.Fatalf("an invalid version was shown: %s", page)
+	}
+	waitFor(t, func() bool { return strings.Contains(logs.String(), "version=unknown") })
+}
+
+// Two clients running with one node token and id replace each other's connection in turn.
+// The gateway warns once it has happened a few times in a row; an ordinary reconnect does not.
+func TestReplacingConnectionsWarn(t *testing.T) {
+	logs := &syncBuf{}
+	logSink = logs
+	defer func() { logSink = io.Discard }()
+	r := newRig(t)
+	const warning = "node connections keep replacing each other"
+	connect := func(n int) {
+		rawNodeAll(t, r, "twice", "node-token", func(func(protocol.Msg), func([]byte), protocol.Msg) {})
+		waitFor(t, func() bool { return strings.Count(logs.String(), `msg="node connected" node=twice `) == n })
+	}
+	connect(1)
+	connect(2) // one replacement: an ordinary reconnect
+	connect(3)
+	if strings.Contains(logs.String(), warning) {
+		t.Fatalf("warned after 2 replacements:\n%s", logs.String())
+	}
+	connect(4)
+	if strings.Count(logs.String(), warning) != 1 || !strings.Contains(logs.String(), "replaced=3 same_address=true") {
+		t.Fatalf("want one warning after 3 quick replacements:\n%s", logs.String())
+	}
+	connect(5)
+	connect(6)
+	connect(7)
+	if strings.Count(logs.String(), warning) != 1 {
+		t.Fatalf("the warning is not rate-limited:\n%s", logs.String())
+	}
+}

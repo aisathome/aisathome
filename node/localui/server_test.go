@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -467,5 +468,44 @@ func TestPortFromEnv(t *testing.T) {
 		if _, err := PortFromEnv(DefaultPort); err == nil {
 			t.Fatalf("%q accepted", v)
 		}
+	}
+}
+
+// Durations: a total under a second that is not zero shows "<1s", not "0s" (2026-10-20), in the
+// status command and on the page; the page's lifetime counters are headed "Total".
+func TestShortDurations(t *testing.T) {
+	for d, want := range map[time.Duration]string{0: "0s", time.Millisecond: "<1s", 999 * time.Millisecond: "<1s",
+		time.Second: "1s", 59 * time.Second: "59s", time.Minute: "1m", 3 * time.Hour: "3h 0m"} {
+		if got := ago(d); got != want {
+			t.Errorf("ago(%v) = %q, want %q", d, got, want)
+		}
+	}
+	if got := counters(node.Counters{Requests: 1, BusyMs: 400}); !strings.Contains(got, "<1s serving") {
+		t.Errorf("counters: %q", got)
+	}
+	if got := counters(node.Counters{}); strings.Contains(got, "serving") {
+		t.Errorf("counters without serving time: %q", got)
+	}
+	page, _ := assets.ReadFile("assets/index.html")
+	if !strings.Contains(string(page), "<h2>Total</h2>") || strings.Contains(string(page), "Since install") {
+		t.Error(`the lifetime counters are not headed "Total"`)
+	}
+	// The page's own dur() in app.js, run with Node.js where it is installed (CI's runner has it).
+	nodejs, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node on PATH: app.js dur() not checked")
+	}
+	js, _ := assets.ReadFile("assets/app.js")
+	fn := regexp.MustCompile(`(?s)const dur = \(ms\) => \{.*?\n\t\};`).Find(js)
+	if fn == nil {
+		t.Fatal("dur() not found in app.js")
+	}
+	out, err := exec.Command(nodejs, "-e", string(fn)+`
+for (const ms of [0, 1, 400, 999, 1000, 59999, 60000]) console.log(dur(ms));`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, out)
+	}
+	if got := strings.Fields(string(out)); strings.Join(got, " ") != "0s <1s <1s <1s 1s 59s 1m" {
+		t.Errorf("app.js dur: %q", got)
 	}
 }

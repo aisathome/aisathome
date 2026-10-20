@@ -160,8 +160,12 @@ func eventLine(e node.Event) string {
 	return s
 }
 
+// ago is a short duration as the local UI writes it (app.js, dur): "<1s" for a moment that
+// is not zero, so a node that served briefly does not show "0s".
 func ago(d time.Duration) string {
 	switch {
+	case d > 0 && d < time.Second:
+		return "<1s"
 	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	case d < time.Hour:

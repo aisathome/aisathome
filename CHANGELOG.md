@@ -21,6 +21,12 @@ and **(site)** are live on aisathome.org once deployed.
   token prompt) and it keeps the installed token, node id and gateway; before, a rerun asked
   for the token again and reset the gateway and, for tokens from a gateway's config, the node
   id. New docs page: [Update your node](https://aisathome.org/node/update/). (node, docs)
+- **Your nodes shows each node's version** while it is connected, and the gateway logs it.
+  (gateway)
+- **The gateway warns** when two clients keep replacing each other's connection on one node
+  token and id. (gateway)
+- **Local UI:** "Time serving" shows "<1s" instead of "0s" for less than a second, and the
+  lifetime counters are headed "Total" instead of "Since install". (node)
 
 ## [v0.2.0] — 2026-10-20
 
