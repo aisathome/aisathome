@@ -90,6 +90,13 @@ Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. To
   model can take right now. A request larger than any node can take fails at once with
   `400 context_length_exceeded`, naming the largest available. Answers are capped at
   32,768 tokens; without `max_tokens`, at 16,384.
+- **Thinking.** The model thinks before it answers. `reasoning_effort` set to `"medium"` or
+  `"low"` asks for less thinking than the default. Nodes stop thinking after 8,192 tokens per
+  answer and make the model answer. A request can set its own limit with
+  `thinking_budget_tokens` (0 to 32,768; `reasoning_budget_tokens` is the same setting), and
+  with `reasoning_budget_message`, the text the model is given at that point (plain text, at
+  most 512 bytes, no `<`), for example
+  `"\n\nI have thought enough. I will act now.\n"`. Other values are refused with `400`.
 - Limits: a daily token budget, requests per minute and concurrent requests per key. Over
   the limit you get `429` with a `Retry-After` header. Answers from your own nodes don't
   count against the daily budget, and once it is used up your requests still go to your own

@@ -25,6 +25,8 @@ var nodeParams = map[string]bool{
 	"repeat_last_n": true, "logit_bias": true, "logprobs": true, "top_logprobs": true, "n": true,
 	"tools": true, "tool_choice": true, "parallel_tool_calls": true, "response_format": true,
 	"chat_template_kwargs": true, "reasoning_effort": true, "grammar": true, "json_schema": true,
+	// thinking limits, checked by checkReasoningBudget before a request is routed
+	"thinking_budget_tokens": true, "reasoning_budget_tokens": true, "reasoning_budget_message": true,
 }
 
 // messageFields are the per-message fields a node may see. "name" is kept only for tool
@@ -196,7 +198,8 @@ func (r *redactor) restoreField(seen bool, tail, s string) string {
 }
 
 // bodyTextFields are the request fields whose strings a node sees.
-var bodyTextFields = []string{"messages", "tools", "stop", "response_format", "grammar", "json_schema", "chat_template_kwargs"}
+var bodyTextFields = []string{"messages", "tools", "stop", "response_format", "grammar", "json_schema", "chat_template_kwargs",
+	"reasoning_budget_message"}
 
 // redactBody replaces secrets in every string a node will see: all message fields
 // (content, earlier reasoning, tool calls and results), tool definitions, stop sequences and

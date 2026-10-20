@@ -14,6 +14,9 @@ and **(site)** are live on aisathome.org once deployed.
   described in `tools/sitestats/doc.go`. (site)
 - **Node settings explained:** the preset docs link to the exact lines in `install.sh` that set
   each value. (docs)
+- **Per-request thinking limits:** an API request can set `thinking_budget_tokens` (or
+  `reasoning_budget_tokens`, 0 to 32,768) and `reasoning_budget_message`, the text the model
+  is given when the limit is reached. Invalid values get `400`. (gateway)
 
 ## [v0.2.0] — 2026-10-20
 

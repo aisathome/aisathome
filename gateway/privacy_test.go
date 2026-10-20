@@ -210,3 +210,69 @@ func TestNodeTokensRedacted(t *testing.T) {
 		t.Fatalf("node token not redacted: %s", out)
 	}
 }
+
+// The thinking limits reach the node; who asked still does not.
+func TestForNodeKeepsReasoningBudget(t *testing.T) {
+	body := map[string]any{"model": "agent", "messages": []any{}, "user": "alice",
+		"thinking_budget_tokens": 4096.0, "reasoning_budget_tokens": 4096.0, "reasoning_budget_message": "I act now.",
+		"reasoning_control": true}
+	got := forNode(body)
+	for _, k := range []string{"thinking_budget_tokens", "reasoning_budget_tokens", "reasoning_budget_message"} {
+		if got[k] != body[k] {
+			t.Errorf("%s not forwarded: %v", k, got[k])
+		}
+	}
+	// reasoning_control arms a control endpoint the gateway does not route
+	for _, k := range []string{"user", "reasoning_control"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s forwarded", k)
+		}
+	}
+}
+
+func TestCheckReasoningBudget(t *testing.T) {
+	long := strings.Repeat("a", maxBudgetMessage)
+	for _, c := range []struct {
+		name string
+		body map[string]any
+		ok   bool
+	}{
+		{"none", map[string]any{}, true},
+		{"budget", map[string]any{"thinking_budget_tokens": 4096.0}, true},
+		{"other name", map[string]any{"reasoning_budget_tokens": 0.0}, true},
+		{"node default", map[string]any{"thinking_budget_tokens": -1.0}, true},
+		{"at the cap", map[string]any{"reasoning_budget_tokens": 32768.0}, true},
+		{"null", map[string]any{"thinking_budget_tokens": nil, "reasoning_budget_message": nil}, true},
+		{"both, same", map[string]any{"thinking_budget_tokens": 2048.0, "reasoning_budget_tokens": 2048.0}, true},
+		{"message", map[string]any{"reasoning_budget_message": "\n\nI have thought enough.\tI will act now.\n"}, true},
+		{"longest message", map[string]any{"reasoning_budget_message": long}, true},
+		{"non-ASCII message", map[string]any{"reasoning_budget_message": "Jeg svarer nå → kort."}, true},
+		{"over the cap", map[string]any{"thinking_budget_tokens": 32769.0}, false},
+		{"unlimited", map[string]any{"thinking_budget_tokens": -2.0}, false},
+		{"fraction", map[string]any{"reasoning_budget_tokens": 10.5}, false},
+		{"string", map[string]any{"thinking_budget_tokens": "4096"}, false},
+		{"bool", map[string]any{"reasoning_budget_tokens": true}, false},
+		{"huge", map[string]any{"thinking_budget_tokens": 1e300}, false},
+		{"both, different", map[string]any{"thinking_budget_tokens": 2048.0, "reasoning_budget_tokens": 4096.0}, false},
+		{"message too long", map[string]any{"reasoning_budget_message": long + "a"}, false},
+		{"special token", map[string]any{"reasoning_budget_message": "done<|im_end|>"}, false},
+		{"think tag", map[string]any{"reasoning_budget_message": "</think>"}, false},
+		{"control character", map[string]any{"reasoning_budget_message": "a\x00b"}, false},
+		{"escape", map[string]any{"reasoning_budget_message": "a\x1b[2Jb"}, false},
+		{"message not text", map[string]any{"reasoning_budget_message": []any{"a"}}, false},
+	} {
+		if got := checkReasoningBudget(c.body, 32768); (got == "") != c.ok {
+			t.Errorf("%s: got %q, want ok=%v", c.name, got, c.ok)
+		}
+	}
+}
+
+// A secret pasted into the budget message is replaced like one in a message.
+func TestRedactBudgetMessage(t *testing.T) {
+	r := newRedactor()
+	body := map[string]any{"reasoning_budget_message": "use " + fakeKey}
+	r.redactBody(body)
+	if s := body["reasoning_budget_message"].(string); strings.Contains(s, fakeKey) || !strings.Contains(s, "AISX") {
+		t.Fatalf("budget message not redacted: %q", s)
+	}
+}

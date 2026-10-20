@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Request bodies: at most maxBody each, bodyBudget reserved across all requests at once
@@ -250,6 +252,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "n must be 1")
 		return
 	}
+	if msg := checkReasoningBudget(body, g.cfg.MaxMaxTokens); msg != "" {
+		apiError(w, http.StatusBadRequest, msg)
+		return
+	}
 	want, _ := body["model"].(string)
 	clientStream, _ := body["stream"].(bool)
 	if body["max_tokens"] == nil && body["max_completion_tokens"] == nil && g.cfg.DefaultMaxTokens > 0 {
@@ -367,4 +373,49 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func hasTools(body map[string]any) bool {
 	tools, _ := body["tools"].([]any)
 	return len(tools) > 0
+}
+
+// maxBudgetMessage bounds reasoning_budget_message, in bytes. The node forces the message
+// into the answer token by token when the budget runs out, so it costs decode time and
+// context; the longest message in use is about 140 bytes.
+const maxBudgetMessage = 512
+
+// checkReasoningBudget validates the thinking limits a request may set (llama.cpp v0.5.0,
+// tools/server/server-common.cpp): thinking_budget_tokens or reasoning_budget_tokens (one
+// setting under two names; llama.cpp prefers the second) replaces the node's
+// --reasoning-budget for this request, and -1 keeps it; reasoning_budget_message is the text
+// forced before </think> when the budget runs out. It returns why the request is refused, or
+// "". A budget is bounded by the largest max_tokens (more means nothing). The message is
+// tokenized with special tokens recognised, so "<|im_end|>" in it would end the answer:
+// it must be plain text without '<'.
+func checkReasoningBudget(body map[string]any, maxTokens int) string {
+	var set []float64
+	for _, k := range []string{"thinking_budget_tokens", "reasoning_budget_tokens"} {
+		v, ok := body[k]
+		if !ok || v == nil {
+			continue
+		}
+		f, isNum := v.(float64)
+		if !isNum || f != math.Trunc(f) || f < -1 || f > float64(maxTokens) {
+			return fmt.Sprintf("%s must be an integer from 0 to %d, or -1 for the node's default", k, maxTokens)
+		}
+		set = append(set, f)
+	}
+	if len(set) == 2 && set[0] != set[1] {
+		return "thinking_budget_tokens and reasoning_budget_tokens are one setting; set only one"
+	}
+	if v, ok := body["reasoning_budget_message"]; ok && v != nil {
+		s, isStr := v.(string)
+		plain := isStr && len(s) <= maxBudgetMessage && !strings.ContainsRune(s, '<')
+		for _, r := range s {
+			if plain && unicode.IsControl(r) && r != '\n' && r != '\t' {
+				plain = false
+			}
+		}
+		if !plain {
+			return fmt.Sprintf("reasoning_budget_message must be plain text of at most %d bytes, "+
+				"without '<' or control characters other than newline and tab", maxBudgetMessage)
+		}
+	}
+	return ""
 }

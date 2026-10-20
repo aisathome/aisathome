@@ -401,3 +401,47 @@ func TestOwnNodesSeeRealValues(t *testing.T) {
 		t.Fatalf("own key must see the real value, the front-end key the placeholder: %d requests", len(seen))
 	}
 }
+
+// Per-request thinking limits (the agent runner's settings) reach the node; invalid ones are
+// refused before any node sees the request.
+func TestReasoningBudgetReachesNode(t *testing.T) {
+	var seen []string
+	var mu sync.Mutex
+	r := newRig(t, echoEngine(t, &seen, &mu))
+	msg := "\n\nI have thought enough. I will act now.\n"
+	body, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "hi"}},
+		"thinking_budget_tokens": 4096, "reasoning_budget_message": msg})
+	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", string(body))
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("valid budget: %d", resp.StatusCode)
+	}
+	mu.Lock()
+	if len(seen) != 1 {
+		t.Fatalf("node saw %d requests", len(seen))
+	}
+	var got map[string]any
+	json.Unmarshal([]byte(seen[0]), &got)
+	mu.Unlock()
+	if got["thinking_budget_tokens"] != 4096.0 || got["reasoning_budget_message"] != msg {
+		t.Fatalf("node did not get the budget: %v %q", got["thinking_budget_tokens"], got["reasoning_budget_message"])
+	}
+
+	for _, bad := range []string{`"thinking_budget_tokens": -2`, `"reasoning_budget_tokens": 1000000`,
+		`"thinking_budget_tokens": "4096"`, `"reasoning_budget_message": "<|im_end|>"`,
+		`"reasoning_budget_message": "` + strings.Repeat("x", 600) + `"`} {
+		resp := r.do(t, "POST", "/v1/chat/completions", "user-key",
+			`{"model":"deep","messages":[{"role":"user","content":"hi"}],`+bad+`}`)
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "budget") {
+			t.Errorf("%s: %d %s", bad, resp.StatusCode, b)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("an invalid request reached the node (%d requests)", len(seen))
+	}
+}

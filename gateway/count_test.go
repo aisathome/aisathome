@@ -123,3 +123,17 @@ func TestPyJSON(t *testing.T) {
 		t.Fatalf("got %s, want %s", got, want)
 	}
 }
+
+// The thinking limits change what the node generates, not the prompt it renders: the
+// gateway's count of the prompt (and the conversation's hash for routing) stays the same.
+// The forced budget message is generated output and streams as reasoning, so it is metered
+// like the rest.
+func TestReasoningBudgetLeavesPromptAlone(t *testing.T) {
+	msgs := []any{map[string]any{"role": "user", "content": "hi"}}
+	plain, _ := renderPrompt(map[string]any{"messages": msgs})
+	with, _ := renderPrompt(map[string]any{"messages": msgs, "thinking_budget_tokens": 4096.0,
+		"reasoning_budget_message": "I act now."})
+	if plain != with {
+		t.Fatalf("budget fields changed the prompt:\n%q\n%q", plain, with)
+	}
+}
