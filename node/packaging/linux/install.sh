@@ -8,7 +8,7 @@
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --preset <name>, --enable-at-boot, --dry-run, --download-only <dir>.
+#   --preset <name>, --enable-at-boot, --keep-token, --dry-run, --download-only <dir>.
 #
 # Without --model, the pinned model is downloaded from Hugging Face, resumed if interrupted
 # and checked against its SHA-256. --download-only <dir> only does that (no root needed).
@@ -20,6 +20,9 @@
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
 # without installing (no root needed). The node token is read from stdin (never from argv):
 # paste it when asked, or: cat token.txt | sudo ./install.sh ...
+# Updating: run the new bundle's install.sh. At a terminal, Enter on an empty line keeps the
+# installed token (--keep-token does so without asking), and a generated node.json keeps the
+# installed node id and gateway URL unless --node-id or --gateway-url is given.
 #
 # What it touches:
 #   /opt/aisathome-node/            binaries and llama.cpp shared libraries (root-owned)
@@ -33,11 +36,12 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
-node_id="" gateway_url="" download_only=""
+node_id="" gateway_url="" download_only="" keep_token=0
+conf=/etc/aisathome-node
 preset="${PRESET:-long-context}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --download-only) download_only="$2"; shift 2 ;;
     --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
+    --keep-token) keep_token=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) usage ;;
   esac
@@ -107,15 +112,37 @@ model_name="${model_url##*/}"; model_name="${model_name%%\?*}"
 # Disk space kept free beyond the model: the binaries (about 1.5 GB) and some slack.
 reserve=$((2 * 1024 * 1024 * 1024))
 
-# node.json is written by the installer unless --node-config is given.
+# installed_value <node.json> <key>: a string field of an earlier install's node.json, or ""
+# (no file, not readable, or no such field).
+installed_value() {
+  [[ -r "$1" ]] || return 0
+  python3 -c 'import json,sys
+try: v=json.load(open(sys.argv[1])).get(sys.argv[2], "")
+except Exception: v=""
+print(v if isinstance(v, str) else "")' "$1" "$2"
+}
+
+# pick_gateway_url <installed>: --gateway-url, else the installed node.json's, else the
+# network's gateway.
+pick_gateway_url() {
+  local from="--gateway-url"
+  if [[ -z "$gateway_url" && -n "$1" ]]; then gateway_url="$1" from="the installed gateway_url"; fi
+  gateway_url="${gateway_url:-wss://api.aisathome.org/v1/node/connect}"
+  [[ "$gateway_url" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] ||
+    die "$from '$gateway_url' must look like wss://host/v1/node/connect (pass --gateway-url)" 2
+}
+
+# node.json is written by the installer unless --node-config is given. A rerun keeps the
+# installed node id and gateway URL (not readable without root: a dry run may not see them).
+old_id="" old_gw=""
 if [[ -n "$node_config" ]]; then
   [[ -z "$node_id$gateway_url" ]] || die "--node-id and --gateway-url are for a generated node.json; edit your --node-config instead" 2
 else
   [[ -z "$node_id" || "$node_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
     die "--node-id '$node_id': use letters, digits, '.', '_' and '-' (up to 64)" 2
-  gateway_url="${gateway_url:-wss://api.aisathome.org/v1/node/connect}"
-  [[ "$gateway_url" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] ||
-    die "--gateway-url must look like wss://host/v1/node/connect" 2
+  old_id="$(installed_value "$conf/node.json" node_id)"
+  old_gw="$(installed_value "$conf/node.json" gateway_url)"
+  pick_gateway_url "$old_gw"
 fi
 
 # The prebuilt bundle: this script next to bin/llama-server, lib/ and BUILD-INFO. An explicit
@@ -451,15 +478,47 @@ install_libs() {
   find "$2" -type f -exec chmod u=rwX,go=rX {} +
 }
 
-# The node id for a generated node.json: --node-id, else the id that a token from the
-# account page carries ("nt-<id>.<secret>", as node.TokenNodeID reads it), else the host
-# name. (The node also takes an account token's id over node_id, with a warning.)
+# pick_node_id <token> [installed id]: the node id for a generated node.json: --node-id,
+# else the id that a token from the account page carries ("nt-<id>.<secret>", as
+# node.TokenNodeID reads it), else the installed node.json's, else the host name. (The node
+# also takes an account token's id over node_id, with a warning.)
 pick_node_id() {
   [[ -z "$node_id" ]] || return 0
   if [[ "$1" =~ ^nt-(n-[0-9a-f]{8})\. ]]; then node_id="${BASH_REMATCH[1]}"; return 0; fi
+  if [[ -n "${2:-}" ]]; then
+    node_id="$2"
+    [[ "$node_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+      die "the installed node id '$node_id' is not valid; pass --node-id" 2
+    return 0
+  fi
   node_id="$(hostname -s 2>/dev/null || true)"
   [[ "$node_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
     die "the host name '$node_id' is not a valid node id; pass --node-id" 2
+}
+
+# interactive: stdin is a terminal (a person answers the token prompt).
+interactive() { [[ -t 0 ]]; }
+
+# read_token <token.env>: the node token from stdin, never from argv. An installed token is
+# kept with --keep-token, or when a person at a terminal presses Enter on an empty line; piped
+# empty input is still an error, so a script never keeps a token by accident.
+read_token() {
+  local old=""
+  [[ -r "$1" ]] && old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1" | head -n 1)"
+  if [[ $keep_token = 1 ]]; then
+    [[ -n "$old" ]] || die "--keep-token: no installed token in $1" 2
+    token="$old"; echo "token: keeping the installed one" >&2; return 0
+  fi
+  if interactive; then
+    if [[ -n "$old" ]]; then echo "Paste the node token (input hidden), or press Enter to keep the installed one:" >&2
+    else echo "Paste the node token (input hidden), then Enter:" >&2; fi
+  fi
+  token=""
+  IFS= read -rs token || true
+  if [[ -z "$token" && -n "$old" ]] && interactive; then
+    token="$old"; echo "token: keeping the installed one" >&2
+  fi
+  [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}"
 }
 
 # node.json for the preset, when no --node-config is given (inputs validated above).
@@ -491,8 +550,10 @@ fi
 
 if [[ $dry_run = 1 ]]; then
   if [[ -z "$node_config" ]]; then
-    [[ -n "$node_id" ]] || echo "node id: the one an account-page token carries, else the host name" >&2
-    pick_node_id ""
+    [[ -n "$node_id$old_id" ]] || echo "node id: the one an account-page token carries, else the host name" >&2
+    [[ -r "$conf/node.json" || ! -e "$conf/node.json" ]] ||
+      echo "node.json: $conf/node.json is not readable without sudo; the install keeps its node id and gateway URL" >&2
+    pick_node_id "" "$old_id"
     echo "node.json (generated):"; gen_node_config
   fi
   echo "preset: $preset"
@@ -507,11 +568,10 @@ fi
 [[ -x "$node_bin" ]] || usage
 [[ -z "$node_config" ]] || python3 -m json.tool "$node_config" >/dev/null || die "invalid JSON: $node_config"
 
-[[ -t 0 ]] && echo "Paste the node token (input hidden), then Enter:" >&2
-IFS= read -rs token || true
-[[ -n "$token" ]] || die "no token on stdin"
+read_token "$conf/token.env"
 if [[ -z "$node_config" ]]; then
-  pick_node_id "$token"
+  pick_node_id "$token" "$old_id"
+  [[ -z "$old_id$old_gw" ]] || echo "node.json: node id $node_id, gateway $gateway_url" >&2
   workdir; node_config="$work/node.json"; gen_node_config > "$node_config"
 fi
 
@@ -732,7 +792,7 @@ cat <<MSG
 Installed. Pause the node and free the GPU:  sudo systemctl stop aisathome-node aisathome-llama
 Resume:                                      sudo systemctl start aisathome-llama aisathome-node
 Logs:                                        journalctl -u aisathome-node -u aisathome-llama -f
-Start at boot: $([[ $at_boot = 1 ]] && echo yes || echo "no (re-run with --enable-at-boot, or: sudo systemctl enable aisathome-llama aisathome-node)")
+Start at boot: $(systemctl is-enabled --quiet aisathome-node 2>/dev/null && echo yes || echo "no (re-run with --enable-at-boot, or: sudo systemctl enable aisathome-llama aisathome-node)")
 Remove:                                      sudo ./uninstall.sh
 MSG
 node_ui_message

@@ -219,6 +219,63 @@ check_id "" "nt-n-0123ABCD.secret" "$(hostname -s)"
 check_id "" "nt-n-0123abcd" "$(hostname -s)"
 unset -f die check_id pick_node_id
 
+# Rerunning on an installed node (an update): the installed token, node id and gateway URL
+# are kept unless the operator gives new ones. The functions on their own, with a fake
+# /etc/aisathome-node, then a dry run of a copy of the installer that reads it.
+etc="$tmp/etc"; mkdir "$etc"
+eval "$(sed -n '/^installed_value() {/,/^}/p;/^pick_gateway_url() {/,/^}/p;/^pick_node_id() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
+die() { echo "$1" >&2; exit "${2:-1}"; }
+printf '{"node_id": "box-1", "gateway_url": "wss://staging.example.org/v1/node/connect", "slots": 2}\n' > "$etc/node.json"
+secret="nt-n-0123abcd.$(printf 'S%.0s' {1..43})"
+printf 'AISATHOME_NODE_TOKEN=%s\n' "$secret" > "$etc/token.env"; chmod 600 "$etc/token.env"
+[[ "$(installed_value "$etc/node.json" node_id)" = box-1 ]] || fail "installed node_id"
+[[ "$(installed_value "$etc/node.json" gateway_url)" = wss://staging.example.org/v1/node/connect ]] || fail "installed gateway_url"
+[[ -z "$(installed_value "$etc/node.json" slots)" && -z "$(installed_value "$etc/none.json" node_id)" ]] || fail "installed_value: not a string, or no file"
+echo '{broken' > "$etc/bad.json"
+[[ -z "$(installed_value "$etc/bad.json" node_id 2>&1)" ]] || fail "installed_value: invalid JSON"
+# gw <flag> <installed>: the gateway URL picked, or the error.
+gw() { (gateway_url="$1"; pick_gateway_url "$2"; echo "$gateway_url") 2>&1; }
+[[ "$(gw "" wss://staging.example.org/v1/node/connect)" = wss://staging.example.org/v1/node/connect ]] || fail "gateway: installed kept"
+[[ "$(gw wss://gw.example.org/v1/node/connect wss://staging.example.org/v1/node/connect)" = wss://gw.example.org/v1/node/connect ]] || fail "gateway: flag wins"
+[[ "$(gw "" "")" = wss://api.aisathome.org/v1/node/connect ]] || fail "gateway: default"
+[[ "$(gw "" 'http://x;y')" = *"installed gateway_url"* ]] || fail "gateway: an invalid installed URL is refused"
+check_id() { local got; got="$( (node_id="$1"; pick_node_id "$2" "$3"; echo "$node_id") 2>&1)"
+  [[ "$got" = "$4" ]] || fail "node id (--node-id '$1', token '$2', installed '$3'): got '$got', want '$4'"; }
+check_id "" config-token box-1 box-1
+check_id mine config-token box-1 mine
+check_id "" "nt-n-0123abcd.x" box-1 n-0123abcd
+check_id "" config-token "" "$(hostname -s)"
+check_id "" config-token 'a b' "the installed node id 'a b' is not valid; pass --node-id"
+# tok <tty 0|1> <keep 0|1> <token.env> <stdin>: sets out (stderr, then token=...) and code.
+tok() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=$2; read_token "$3"; echo "token=$token") <<<"$4" 2>&1)"; code=$?; }
+tok 1 0 "$etc/token.env" ""
+ok "Enter keeps the token"; has "Enter keeps the token" "token=$secret"; has "Enter keeps the token" "or press Enter to keep the installed one"
+tok 1 0 "$etc/token.env" "nt-new"
+ok "a pasted token replaces it"; has "a pasted token replaces it" "token=nt-new"
+tok 0 1 "$etc/token.env" "nt-ignored"
+ok "--keep-token"; has "--keep-token" "token=$secret"; lacks "--keep-token" "nt-ignored"
+tok 0 0 "$etc/token.env" "nt-piped"
+ok "piped token"; has "piped token" "token=nt-piped"
+tok 0 0 "$etc/token.env" ""
+[[ $code -ne 0 ]] || fail "empty piped input kept the token"; has "empty piped input" "--keep-token"
+tok 1 0 "$etc/none.env" ""
+[[ $code -ne 0 ]] || fail "Enter without an installed token"; has "Enter without an installed token" "no token on stdin"
+tok 0 1 "$etc/none.env" ""
+usage_err "--keep-token without an installed token"
+# The secret appears only where the test prints it: never in a message.
+for t in "1 0" "0 1"; do
+  tok $t "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed"
+done
+unset -f die gw check_id tok installed_value pick_gateway_url pick_node_id read_token interactive
+# A dry run reads the installed node.json (a copy of the installer pointed at the fake one).
+sed "s|^conf=/etc/aisathome-node\$|conf=$etc|" "$installer" > "$tmp/install-conf.sh"
+grep -q "^conf=$etc\$" "$tmp/install-conf.sh" || fail "no conf= line to point at the fake install"
+out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run 2>&1)"; code=$?
+ok "rerun keeps node.json"; has "rerun keeps node.json" '"node_id": "box-1"'
+has "rerun keeps node.json" '"gateway_url": "wss://staging.example.org/v1/node/connect"'
+out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --node-id n2 --gateway-url wss://gw.example.org/v1/node/connect 2>&1)"; code=$?
+ok "flags over installed"; has "flags over installed" '"node_id": "n2"'; has "flags over installed" '"gateway_url": "wss://gw.example.org/v1/node/connect"'
+
 # install_libs on its own: a bundle unpacked under umask 077 (owner-only files) must still give
 # libraries the aisathome service user can read, and keep the version symlinks.
 eval "$(sed -n '/^install_libs() {/,/^}/p' "$installer")"

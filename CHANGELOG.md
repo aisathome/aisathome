@@ -17,6 +17,10 @@ and **(site)** are live on aisathome.org once deployed.
 - **Per-request thinking limits:** an API request can set `thinking_budget_tokens` (or
   `reasoning_budget_tokens`, 0 to 32,768) and `reasoning_budget_message`, the text the model
   is given when the limit is reached. Invalid values get `400`. (gateway)
+- **Easier updates:** run the new bundle's `install.sh --keep-token` (or press Enter at the
+  token prompt) and it keeps the installed token, node id and gateway; before, a rerun asked
+  for the token again and reset the gateway and, for tokens from a gateway's config, the node
+  id. New docs page: [Update your node](https://aisathome.org/node/update/). (node, docs)
 
 ## [v0.2.0] — 2026-10-20
 

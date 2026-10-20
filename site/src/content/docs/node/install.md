@@ -69,7 +69,8 @@ sudo journalctl -u aisathome-node -u aisathome-llama -n 20
 ```
 
 Keep the unpacked bundle directory: its `uninstall.sh` removes the node
-([day to day](/node/operate/)). Then tell us, and we check that requests reach you.
+([day to day](/node/operate/)). Then tell us, and we check that requests reach you. For a
+new release, see [Update your node](/node/update/).
 
 ## Build it yourself
 

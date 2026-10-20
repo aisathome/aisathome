@@ -73,7 +73,9 @@ Without `--node-config`, the installer writes `node.json` with the gateway
 (`--gateway-url`, default `wss://api.aisathome.org/v1/node/connect`), the preset's slots and
 context, and the roles `deep` and `agent`. The node id comes from `--node-id`, else from a
 token made on the account page (`nt-<node id>.<secret>`), else from the host name. Only a
-token from a gateway's config needs `--node-id`.
+token from a gateway's config needs `--node-id`. When the installer runs again on an
+installed node, the node id and gateway come from the installed `node.json` unless
+`--node-id` or `--gateway-url` is given.
 
 ## Install with your own llama.cpp build
 
@@ -116,7 +118,9 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   install a known version; `latest` skips pre-releases.
 - `--node-bin ./aisathome-node` installs your own build instead.
 - An explicit `--llama-build` wins over the bundle's `llama-server` and skips its checks.
-- The node token is read from stdin (hidden), never from the command line.
+- The node token is read from stdin (hidden), never from the command line. On an installed
+  node, Enter on an empty line at the prompt keeps the installed token, and `--keep-token`
+  keeps it without asking (for scripts; empty piped input is still an error).
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the network's one setting (1 × 128k, KV `q4_0`; below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
@@ -186,7 +190,14 @@ prompts from RAM or VRAM while they are being served.
 | Pause and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` |
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
+| Update | `sudo ./install.sh --keep-token` from the new bundle (below) |
 | Remove | `sudo ./uninstall.sh` (keeps the model; `--purge` removes it too) |
+
+**Update:** unpack the new release's bundle and run its `install.sh` with `--keep-token` (or
+press Enter at the token prompt). It keeps the token, the node id, the gateway and the
+model (checked again, about a minute), replaces the binaries and units and restarts the
+node. Without systemd (a container), stop the two processes, swap the bundle directory for
+the new one and start them again: `node.json` and the token live outside the bundle.
 
 **Suspend and resume:** the node stops before the computer sleeps and starts again after
 resume, if it was running. The sleep hook waits until llama-server has released the GPU,
@@ -200,7 +211,7 @@ again to get this.
 The agent serves a status page at **http://127.0.0.1:7381/** (on desktops there is also an
 "AIs@home node" menu entry). It shows whether the node is connected, paused or serving, the
 gateway, node id, model and preset, slots in use, the GPU (name, memory, temperature, through
-`nvidia-smi`), requests and tokens served today and since install, and recent events
+`nvidia-smi`), requests and tokens served today and in total (kept across reinstalls), and recent events
 (connections, pauses, errors). It never shows prompts or answers. **Your nodes** links to
 your account page.
 

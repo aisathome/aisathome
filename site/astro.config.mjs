@@ -58,6 +58,7 @@ export default defineConfig({
 						{ label: 'Install on Linux', slug: 'node/install' },
 						{ label: 'Model settings', slug: 'node/presets' },
 						{ label: 'Day to day', slug: 'node/operate' },
+						{ label: 'Update your node', slug: 'node/update' },
 						{ label: 'About the binaries', slug: 'node/binaries' },
 						{ label: 'Credit', slug: 'node/credit' },
 					],

@@ -11,6 +11,7 @@ description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home n
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` |
+| Update | `sudo ./install.sh --keep-token` from the new release's bundle: see [Update your node](/node/update/) |
 | Remove | `sudo ./uninstall.sh` in the unpacked bundle, so keep that directory (keeps the model; `--purge` removes it and the `aisathome` user too). From a source checkout: `sudo ./node/packaging/linux/uninstall.sh` |
 
 ## Local UI
@@ -19,7 +20,7 @@ Nodes installed from release `v0.1.0` or later serve a status page on your compu
 **http://127.0.0.1:7381/**; an older node gets it when you run the new installer (desktops also
 get an "AIs@home node" menu entry). It shows whether the node is connected, paused or
 serving, the model, slots in use, the GPU's memory and temperature, requests and tokens
-served today and since install, and recent connections and errors. It never shows prompts
+served today and in total (kept across reinstalls), and recent connections and errors. It never shows prompts
 or answers. **Your nodes** opens your [account page](https://aisathome.org/account).
 
 Pause, resume and restarting the engine need the local password the installer created:
