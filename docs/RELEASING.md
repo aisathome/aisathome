@@ -3,6 +3,11 @@
 For the maintainer. Volunteers read the site page "About the binaries"
 (`site/src/content/docs/node/binaries.md`).
 
+## With every change
+
+Every user-visible change adds an entry under **Unreleased** in `CHANGELOG.md`, in the same
+commit, tagged with where it applies: (node), (gateway), (site) or (docs).
+
 ## Before a release
 
 1. `main` is green in CI, and the changes are on prod or reviewed on staging.
@@ -30,8 +35,12 @@ git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
 
 The workflow runs the CI checks, builds the Go binaries, `llama-server` with CUDA and the
 bundle, writes `SHA256SUMS`, and attaches everything to a **draft** release. Review the
-draft (files, sizes, `BUILD-INFO`, generated notes), then publish it. Tags with a `-` (for
-example `v0.2.0-rc1`) become pre-releases.
+draft (files, sizes, `BUILD-INFO`, generated notes). Tags with a `-` (for example
+`v0.2.0-rc1`) become pre-releases.
+
+**Release notes:** move `CHANGELOG.md`'s Unreleased entries into a new section for the
+version (with the date and the update commands for a node), and use that text as the
+release's notes. The owner approves the text before the draft is published; then publish it.
 
 ## Changing what is built
 
