@@ -75,7 +75,60 @@ The last line reuses your existing node token; the model already on disk is reus
 
 ## [v0.1.0] — 2026-10-13
 
-The first release. Notes to follow.
+The first release: a volunteer node you can install on a Linux PC with an NVIDIA GPU, and
+the gateway that runs aisathome.org.
+
+#### Node
+- **Prebuilt bundle:** the node agent and `llama-server` (llama.cpp v0.5.0, CUDA 12.8,
+  RTX 30, 40 and 50 series with 24 GB) with the CUDA libraries it needs. Only the NVIDIA
+  driver is required (525.60.13 or newer; 570.26 for an RTX 50). Or build llama.cpp
+  yourself and install from a release.
+- **Installer** (`install.sh`): checks the driver, GPU and disk first (`--dry-run` installs
+  nothing), downloads the pinned model (Qwen3.8 27B `UD-Q4_K_M`, 16.5 GB, one exact file,
+  checked against its SHA-256, resumes if interrupted) and installs two systemd services
+  under their own unprivileged, sandboxed user. `uninstall.sh` removes it (`--purge` the
+  model too).
+- **One setting for the whole network:** one request at a time with a 128k context
+  (KV cache `q4_0`).
+- **Outbound only:** the node dials the gateway; nothing listens on a public port.
+- **Local status page** at http://127.0.0.1:7381/ and `aisathome-node status`: connection,
+  model, GPU memory and temperature, requests and tokens served. Never prompts or answers.
+  **Pause** stops new requests while the model stays loaded.
+- **Looks after itself:** a watchdog restarts a hung engine, the node stops before suspend
+  and starts again after resume. The installer stops with a message if the engine started
+  on the CPU instead of the GPU.
+- **Privacy hardening:** no core dumps, no swap, a smaller prompt cache in RAM, no prompt
+  logging.
+
+#### Gateway (live on aisathome.org)
+- **Chat and API:** the chat at chat.aisathome.org and an OpenAI-compatible API at
+  `https://api.aisathome.org/v1` (models `deep` and `agent`), with streaming, tool calls,
+  a queue when all nodes are busy and failover between nodes.
+- **Accounts:** sign in with GitHub, Google or an email code; up to three API keys per
+  account; daily limits per account; a waitlist when the network is full.
+- **Volunteer nodes:** get a node token on your account page and the node registers itself.
+- **Credit and statistics:** credit for the GPU time a node gives, counted by the gateway
+  with the model's own tokenizer (BOINC's unit, not money, no token); an opt-in
+  leaderboard; statistics files in BOINC's format at `/stats/`.
+- **Privacy:** no prompts or answers stored; identities stripped before a node sees a
+  request; well-known secret formats replaced by placeholders; requests that look like
+  personal data stay on trusted nodes or your own.
+- **Safety:** requests with tools reach volunteer nodes only with the key's consent, and
+  their answers are checked for crude attacks (download-and-execute, credential paths,
+  unknown addresses); a node that trips a check is held.
+
+#### Installing a node
+```
+base=https://github.com/aisathome/aisathome/releases/download/v0.1.0
+curl -LO $base/aisathome-node-bundle-linux-amd64.tar.xz -LO $base/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
+./install.sh --dry-run && sudo ./install.sh
+```
+Paste the node token from your account page when asked. Step by step:
+https://aisathome.org/node/
+
+**Full changelog:** https://github.com/aisathome/aisathome/commits/v0.1.0
 
 [Unreleased]: https://github.com/aisathome/aisathome/compare/v0.2.0...main
 [v0.2.0]: https://github.com/aisathome/aisathome/compare/v0.1.0...v0.2.0
