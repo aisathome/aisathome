@@ -616,7 +616,8 @@ appears; come back to this page to check.</p></div>
 {{if lt (len .Account.Keys) .MaxKeys}}<form class="form" method="post" action="/account/keys"><input type="hidden" name="once" value="{{.Once}}">
 <label class="check"><input type="checkbox" name="agents" value="1" checked><span><strong>Run requests through nodes operated by
 other people.</strong> If you untick this, you need your own node to use opencode or other tools.</span></label>
-<div class="actions"><button class="btn">Create a key</button></div></form>{{end}}
+<div class="actions"><button class="btn">Create a key</button></div></form>
+{{else}}<p>You have {{len .Account.Keys}} of {{.MaxKeys}} keys. Revoke one to create another.</p>{{end}}
 <p class="mut small">Volunteers' answers are not checked yet: run opencode with approval of commands, and isolated.
 See <a href="/use/api/">API and opencode</a>.</p></div>
 <div class="card"><h2>Username</h2>

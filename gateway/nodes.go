@@ -27,12 +27,12 @@ import (
 // Limits on self-registered nodes.
 const (
 	// DefaultMaxNodes and DefaultMaxNodesPerAccount apply unless the accounts file says
-	// otherwise (owner, 2026-10-22: 25 and 10, up from 10 and 3). The share cap
-	// (overShareLocked) limits how much of the traffic one operator sees, however many nodes
-	// it has; a low per-account limit only kept volunteers with several GPUs out.
+	// otherwise. Owner, 2026-10-22: 25, 10 and 10 per address, up from 10, 3 and 3. The share
+	// cap (overShareLocked) limits how much of the traffic one operator sees, however many
+	// nodes it has; low node limits only kept volunteers with several GPUs out.
 	DefaultMaxNodes           = 25 // node tokens over all accounts
 	DefaultMaxNodesPerAccount = 10 // node tokens per account
-	maxNodesPerIP             = 3  // connected account nodes per client address (IPv6: per /64)
+	maxNodesPerIP             = 10 // connected account nodes per client address (IPv6: per /64)
 	maxNodeName               = 40
 )
 

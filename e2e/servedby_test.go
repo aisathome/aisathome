@@ -118,19 +118,27 @@ func TestServedByAfterFailover(t *testing.T) {
 	}
 }
 
-// Accounts' own keys (ordinary users) never learn the node.
-func TestServedByNotForAccountKeys(t *testing.T) {
-	a := newAcctRig(t, 100, nil)
-	s, _ := a.signIn(t, 7)
-	_, page := a.createKey(t, s)
-	key := keyRe.FindString(page)
-	if key == "" {
-		t.Fatal("no key created")
-	}
-	for _, stream := range []bool{false, true} {
-		h := chatHeaders(t, a.rig, key, stream, "hi")
-		if h.Get(servedByHeader) != "" || h.Get(requestIDHeader) != "" {
-			t.Fatalf("account key learned the node, stream=%t: %v", stream, h)
+// Accounts' own keys (ordinary users) never learn the node; admin accounts' keys (the
+// operator's runner and dogfooding) do.
+func TestServedByForAdminAccountKeysOnly(t *testing.T) {
+	a := newAcctRig(t, 100, nil) // gh:1 is the admin
+	for _, c := range []struct {
+		id    int
+		admin bool
+	}{{1, true}, {7, false}} {
+		s, _ := a.signIn(t, c.id)
+		_, page := a.createKey(t, s)
+		key := keyRe.FindString(page)
+		if key == "" {
+			t.Fatal("no key created")
+		}
+		for _, stream := range []bool{false, true} {
+			h := chatHeaders(t, a.rig, key, stream, "hi")
+			if got := h.Get(servedByHeader); c.admin && (got != "node-0" || h.Get(requestIDHeader) == "") {
+				t.Fatalf("admin account key, stream=%t: %s = %q", stream, servedByHeader, got)
+			} else if !c.admin && (got != "" || h.Get(requestIDHeader) != "") {
+				t.Fatalf("account key learned the node, stream=%t: %v", stream, h)
+			}
 		}
 	}
 }

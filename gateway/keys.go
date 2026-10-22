@@ -43,8 +43,8 @@ type KeyInfo struct {
 	// ServedBy marks the operator's own keys (a test runner, dogfooding): their chat answers
 	// carry the headers X-AIsAtHome-Served-By (the node that answered) and
 	// X-AIsAtHome-Request-Id. Never for anyone else: users must not learn which volunteer
-	// served them. Ignored for forward_users keys, never carried over to end users, and never
-	// set on accounts' keys.
+	// served them. Ignored for forward_users keys and never carried over to end users. Among
+	// accounts' keys only those of admin accounts get the headers (Gateway.servedBy).
 	ServedBy bool `json:"served_by,omitempty"`
 }
 

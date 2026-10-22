@@ -260,6 +260,11 @@ func TestSelfServiceKeys(t *testing.T) {
 		}
 		keys = append(keys, k)
 	}
+	// At the limit the form gives way to a message that says why.
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, "You have 3 of 3 keys. Revoke one to create another.") ||
+		strings.Contains(page, `action="/account/keys"`) {
+		t.Fatalf("no key limit message at 3 of 3: %s", page)
+	}
 	if _, page := a.createKey(t, s); keyRe.MatchString(page) {
 		t.Fatal("a fourth key was created")
 	}
@@ -292,6 +297,9 @@ func TestSelfServiceKeys(t *testing.T) {
 	a.post(t, "/account/keys/revoke", s, "prefix="+keys[0][:11])
 	if c := ask(keys[0]); c != 401 {
 		t.Fatalf("revoked key: %d", c)
+	}
+	if _, page := a.get(t, "/account", s); strings.Contains(page, "You have") || !strings.Contains(page, `action="/account/keys"`) {
+		t.Fatalf("below the key limit the form must be back: %s", page)
 	}
 	// A banned account's keys stop working.
 	a.store.SetStatus("gh:7", gateway.StatusBanned)

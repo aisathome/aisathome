@@ -225,24 +225,24 @@ func dialNode(t *testing.T, r *rig, id, token, xff string) {
 func TestNodesPerAddress(t *testing.T) {
 	a := nodeRig(t, nil)
 	var tokens, ids []string
-	for _, acct := range []int{1, 2} {
+	for _, acct := range []int{1, 2} { // one volunteer's GPUs may span accounts
 		s, _ := a.signIn(t, acct)
-		for i := 0; i < 2; i++ {
+		for i := 0; i < 6; i++ {
 			tok, id, _ := a.addNode(t, s, "")
 			tokens, ids = append(tokens, tok), append(ids, id)
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 10; i++ { // 10 connected nodes per address (owner, 2026-10-22; was 3)
 		dialNode(t, a.rig, ids[i], tokens[i], "203.0.113.7")
 	}
-	a.waitNodes(t, 3)
-	dialNode(t, a.rig, ids[3], tokens[3], "203.0.113.7") // a fourth from the same address
+	a.waitNodes(t, 10)
+	dialNode(t, a.rig, ids[10], tokens[10], "203.0.113.7") // an eleventh from the same address
 	time.Sleep(300 * time.Millisecond)
-	if n := a.g.NodeCount(); n != 3 {
-		t.Fatalf("a fourth node from one address was accepted (%d nodes)", n)
+	if n := a.g.NodeCount(); n != 10 {
+		t.Fatalf("an eleventh node from one address was accepted (%d nodes)", n)
 	}
-	dialNode(t, a.rig, ids[3], tokens[3], "198.51.100.9")
-	a.waitNodes(t, 4)
+	dialNode(t, a.rig, ids[10], tokens[10], "198.51.100.9")
+	a.waitNodes(t, 11)
 }
 
 // No untrusted operator gets more than about a third of the requests while other nodes

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -296,7 +297,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	rt.who, rt.conv = keyHash(userKey), conv.hashes
 	req := &chatReq{user: acct.User, who: userKey, charge: charge, self: rt.self, want: want,
 		clientStream: clientStream, body: body, red: red, conv: conv,
-		servedBy: info.ServedBy && !info.ForwardUsers && accountID == ""}
+		servedBy: g.servedBy(info, accountID)}
 	deadline := time.Now().Add(time.Duration(g.cfg.QueueTimeoutSec) * time.Second)
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)
@@ -345,6 +346,16 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		g.log.Warn("node failed before output, retrying", "node", n.id, "err", errCategory(err.Error()))
 	}
 	apiError(w, http.StatusBadGateway, "request failed on all available nodes")
+}
+
+// servedBy reports whether a request's answer may name the node that served it: only for the
+// operator's own keys, config keys marked served_by or keys of admin accounts (the runner and
+// dogfooding), never for other accounts or the users behind a front end (KeyInfo.ServedBy).
+func (g *Gateway) servedBy(info KeyInfo, accountID string) bool {
+	if accountID != "" { // an account's own API key
+		return slices.Contains(g.acfg.Admins, accountID)
+	}
+	return info.ServedBy && !info.ForwardUsers
 }
 
 // contextError answers as OpenAI does, so clients can compact and retry.

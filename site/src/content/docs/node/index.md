@@ -17,7 +17,7 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
 - About 20 GB of disk for the model. With the prebuilt bundle, the install is mostly the
   17 GB download; building llama.cpp yourself takes about an hour.
 - A **node token**: sign in on [your account page](/account) and choose **Add a node**
-  (up to 10 per account; at most 3 of them connected from one internet address). The network
+  (up to 10 per account; at most 10 of them connected from one internet address). The network
   takes 25 nodes for now; when it is full, the page says so.
 
 Windows is not supported yet.

@@ -34,13 +34,15 @@ Users point any OpenAI-compatible client (opencode, Open WebUI, `curl`) at
 
 ### Which node served a request (operator keys only)
 
-A key with `"served_by": true` (in `keys` in the config, or edited into the keys file) gets
+A key with `"served_by": true` (in `keys` in the config, or edited into the keys file), and
+every API key that an **admin account** (`accounts.admins`) created on its account page, gets
 two headers on every chat answer, streamed or not: `X-AIsAtHome-Served-By` (the node id that
 answered; after a failover, the node that actually answered) and `X-AIsAtHome-Request-Id`
 (the gateway's id for that attempt). Use it only for your own test runners and dogfooding:
 ordinary users must not learn which volunteer served them (it would let them target or map
-volunteers). The flag is ignored on `forward_users` keys (the front end's users never see it)
-and accounts' keys can't have it. A key in `api_keys` has no flags; move it to `keys` as
+volunteers). The flag is ignored on `forward_users` keys (the front end's users never see it,
+admins included), and other accounts' keys never get the headers. Keep `accounts.admins` to
+the operator's own accounts: it also makes them admins in the chat. A key in `api_keys` has no flags; move it to `keys` as
 `{"user": "...", "served_by": true}`.
 
 Every attempt is also logged, for every key, as `msg="chat request" req=<request id>
@@ -96,9 +98,9 @@ Signed-in active accounts add nodes on the account page ("Your nodes"): up to 10
 per account (`max_nodes_per_account`), shown once on their own page with a Copy button
 (as new API keys are), stored as SHA-256 hashes in the accounts file, revocable there. At
 the limit the page says "You have 10 of 10 nodes. Revoke one to add another." The limits
-were raised on 2026-10-22 (from 3 per account and 10 over all): the share cap below is what
-limits how much of the traffic one operator sees, however many nodes it runs, and a low
-per-account limit only kept volunteers with several GPUs out. A
+were raised on 2026-10-22 (from 3 per account, 3 connected per address and 10 over all): the
+share cap below is what limits how much of the traffic one operator sees, however many nodes it
+runs, and low node limits only kept volunteers with several GPUs out. A
 token looks like `nt-<node id>.<secret>`; the gateway assigns the node id (`n-<8 hex>`), and
 the node agent takes it from the token, so a node needs only its token. Config tokens keep
 working; ids of the form `n-<8 hex>` are reserved for account nodes. In the usage log an
@@ -113,7 +115,7 @@ Routing and protections:
 | Requests with `tools` (agents) | trusted nodes and the requester's own, unless the API key was created with "allow volunteer nodes for agents" (`agents` on the key; `volunteer_agents` for config keys) **and** the node's account is past probation. The chat (Open WebUI) never carries consent |
 | Probation | `accounts.node_probation` (Go duration, default `0`: none) from the account's first node token; revoking and recreating does not reset it |
 | Share cap | no untrusted operator gets more than about a third of the conversations placed in the last 10 minutes while other nodes are free (soft: if only its nodes are free, they serve). A conversation counts once per window, however many turns go to the node that holds it |
-| Per address | at most 3 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from Caddy) |
+| Per address | at most 10 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from Caddy) |
 | Own nodes | per account: "my own nodes first" (default), "only my own nodes" or "any node", for its chat and API requests; "only my own nodes" applies on top of a front-end key's `only_operator` (if they differ, no node serves) |
 | Cut-off | revoking a token, `accounts ban` or `accounts node-revoke` drops the node within ~2 s (no restart); requests in flight on it fail over to another node if no output was sent yet |
 | Guards | answers from untrusted nodes (not the requester's own): tool-call arguments are held back until the call is complete and checked for download-and-execute (`curl … \| sh`), credential paths (`~/.ssh`, `~/.aws`, `.env`, `id_rsa`; excused if the request names them), encoded commands, file uploads and web addresses that appear nowhere in the request. The stream itself must be well-formed: tool-call pieces after the calls were completed (`tool-call-after-finish`) or keys that differ from the stream's only in case (`malformed-chunk`) stop the answer as well, and non-streaming answers are checked again as assembled. A flagged call is never released: the request is retried on a free trusted node (keeping all of its restrictions: `only_operator`, only my own nodes) or fails with 502, the node is **held** (no requests until `accounts node-clear`), and the event is logged without content (usage log `outcome: blocked`, `guard: <rule>`). Unknown addresses in plain text are only flagged (`guard: unknown-address-in-text`). These are tripwires for crude attacks, not answer checking |
