@@ -40,6 +40,12 @@ type KeyInfo struct {
 	// their probation; without it they go only to trusted nodes (decision 0007 addendum).
 	// Never carried over to end users behind a front end.
 	VolunteerAgents bool `json:"volunteer_agents,omitempty"`
+	// ServedBy marks the operator's own keys (a test runner, dogfooding): their chat answers
+	// carry the headers X-AIsAtHome-Served-By (the node that answered) and
+	// X-AIsAtHome-Request-Id. Never for anyone else: users must not learn which volunteer
+	// served them. Ignored for forward_users keys, never carried over to end users, and never
+	// set on accounts' keys.
+	ServedBy bool `json:"served_by,omitempty"`
 }
 
 // UserLimits apply to each end user behind a ForwardUsers key.

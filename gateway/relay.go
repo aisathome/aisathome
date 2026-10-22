@@ -27,6 +27,7 @@ type chatReq struct {
 	self         string         // the requesting account's operator name, to record answers an account served itself
 	want         string         // the model or role the client asked for
 	clientStream bool           // the client asked for a stream (nodes always stream)
+	servedBy     bool           // an operator key: the answer names the node that served it (KeyInfo.ServedBy)
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
@@ -109,6 +110,9 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		g.signal() // a slot is free again
 	})
 	defer func() {
+		// One line per attempt, also failed ones: which node a request went to, for the
+		// operator (the usage log has only metered attempts). No user, no request content.
+		g.log.Info("chat request", "req", reqID, "node", n.id, "ok", err == nil)
 		close(p.done)
 		if rl.stopping {
 			g.awaitStopped(n, reqID, p, rl.free)
@@ -309,6 +313,7 @@ func (rl *relay) partial(outcome string) {
 // writeSSE sends one event; a client that does not take it within 30 s is treated as gone.
 func (rl *relay) writeSSE(data []byte) error {
 	if rl.sse == nil {
+		rl.servedByHeaders()
 		rl.w.Header().Set("Content-Type", "text/event-stream")
 		rl.w.Header().Set("Cache-Control", "no-cache")
 		rl.w.WriteHeader(http.StatusOK)
@@ -320,6 +325,21 @@ func (rl *relay) writeSSE(data []byte) error {
 		return err
 	}
 	return rl.rc.Flush()
+}
+
+// Headers that name the node and the gateway's request id, for operator keys only (KeyInfo.ServedBy).
+const (
+	servedByHeader  = "X-AIsAtHome-Served-By"
+	requestIDHeader = "X-AIsAtHome-Request-Id"
+)
+
+// servedByHeaders names the node that answers, set just before the answer's headers go out:
+// after a retry it is the node that actually answered, not the one that failed.
+func (rl *relay) servedByHeaders() {
+	if rl.req.servedBy {
+		rl.w.Header().Set(servedByHeader, rl.n.id)
+		rl.w.Header().Set(requestIDHeader, rl.reqID)
+	}
 }
 
 // send passes a piece of the answer to a streaming client, and notes it as delivered once
@@ -486,6 +506,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 // the assembled answer.
 func (rl *relay) deliverEnd(released [][]byte, ans map[string]any) error {
 	if !rl.req.clientStream {
+		rl.servedByHeaders()
 		rl.w.Header().Set("Content-Type", "application/json")
 		rl.w.WriteHeader(http.StatusOK)
 		if _, err := rl.w.Write(append(mustJSON(restoreAnswer(ans, rl.req.red)), '\n')); err != nil {

@@ -25,6 +25,9 @@ and **(site)** are live on aisathome.org once deployed.
   (gateway)
 - **The gateway warns** when two clients keep replacing each other's connection on one node
   token and id. (gateway)
+- **Which node served a request, for the operator only:** keys marked `served_by` (the
+  operator's test runners) get `X-AIsAtHome-Served-By` and `X-AIsAtHome-Request-Id` on chat
+  answers; other keys never do. The gateway logs the node of every request attempt. (gateway)
 - **Local UI:** "Time serving" shows "<1s" instead of "0s" for less than a second, and the
   lifetime counters are headed "Total" instead of "Since install". (node)
 

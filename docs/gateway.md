@@ -32,6 +32,20 @@ Users point any OpenAI-compatible client (opencode, Open WebUI, `curl`) at
 `https://<gateway>/v1` with the key as the bearer token, and use a model or role name from
 `/v1/models`.
 
+### Which node served a request (operator keys only)
+
+A key with `"served_by": true` (in `keys` in the config, or edited into the keys file) gets
+two headers on every chat answer, streamed or not: `X-AIsAtHome-Served-By` (the node id that
+answered; after a failover, the node that actually answered) and `X-AIsAtHome-Request-Id`
+(the gateway's id for that attempt). Use it only for your own test runners and dogfooding:
+ordinary users must not learn which volunteer served them (it would let them target or map
+volunteers). The flag is ignored on `forward_users` keys (the front end's users never see it)
+and accounts' keys can't have it. A key in `api_keys` has no flags; move it to `keys` as
+`{"user": "...", "served_by": true}`.
+
+Every attempt is also logged, for every key, as `msg="chat request" req=<request id>
+node=<node id> ok=<true|false>` (no user, no content); a failover shows as two lines.
+
 ## A chat front end (Open WebUI)
 
 A key with `"forward_users": true` lets a trusted front end speak for its users: the gateway
