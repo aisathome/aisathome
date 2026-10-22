@@ -139,9 +139,10 @@ type AccountSettings struct {
 	MaxActive int  `json:"max_active"`       // active accounts at most; the rest wait
 	Closed    bool `json:"closed,omitempty"` // no new accounts at all ("raid mode")
 	// Self-registered nodes (decision 0007, nodes.go).
-	MaxNodes    int    `json:"max_nodes,omitempty"`    // node tokens over all accounts; 0 = DefaultMaxNodes
-	NodesClosed bool   `json:"nodes_closed,omitempty"` // no new node tokens (existing ones keep working)
-	Routing     string `json:"routing,omitempty"`      // RoutingTrustedOnly sends every request to trusted nodes; "" or "any" = normal
+	MaxNodes           int    `json:"max_nodes,omitempty"`             // node tokens over all accounts; 0 = DefaultMaxNodes
+	MaxNodesPerAccount int    `json:"max_nodes_per_account,omitempty"` // node tokens per account; 0 = DefaultMaxNodesPerAccount
+	NodesClosed        bool   `json:"nodes_closed,omitempty"`          // no new node tokens (existing ones keep working)
+	Routing            string `json:"routing,omitempty"`               // RoutingTrustedOnly sends every request to trusted nodes; "" or "any" = normal
 }
 
 // Account is one user.

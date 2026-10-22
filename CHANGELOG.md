@@ -25,6 +25,12 @@ and **(site)** are live on aisathome.org once deployed.
   (gateway)
 - **The gateway warns** when two clients keep replacing each other's connection on one node
   token and id. (gateway)
+- **More nodes per volunteer:** up to 10 nodes per account (was 3), and the network takes 25
+  (was 10). The per-account limit is now a setting in the accounts file. (gateway)
+- **Account page:** a new API key or node token gets its own page with a Copy button, "You
+  will not see this again" and Done, instead of a block above the table that was easy to miss.
+  At the node limit the page says "You have 10 of 10 nodes. Revoke one to add another."
+  instead of hiding the form without a word. (gateway)
 - **Which node served a request, for the operator only:** keys marked `served_by` (the
   operator's test runners) get `X-AIsAtHome-Served-By` and `X-AIsAtHome-Request-Id` on chat
   answers; other keys never do. The gateway logs the node of every request attempt. (gateway)

@@ -32,7 +32,9 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
 
   nodes                node tokens of all accounts, held nodes and the node settings
   nodes close | open   stop or allow new node tokens (existing nodes keep working)
-  nodes limit <n>      at most n node tokens over all accounts (default 10)
+  nodes limit <n>      at most n node tokens over all accounts (default 25)
+  nodes per-account <n> | default
+                       at most n node tokens per account (default 10)
   node-revoke <node>   delete a node token (e.g. n-1a2b3c4d); the node is dropped
   node-clear <node>    let a node that a guard held serve again
   routing trusted-only | any
@@ -159,6 +161,18 @@ func runAccounts(args []string, out, msg io.Writer) error {
 				return fmt.Errorf("the node limit must be a number ≥ 1 (use nodes close for none)")
 			}
 			return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodes = n; return nil })
+		case "per-account":
+			if len(a) != 3 {
+				return errors.New("nodes per-account takes one argument")
+			}
+			n := 0 // "default": the gateway's default, which may change with a release
+			if a[2] != "default" {
+				var err error
+				if n, err = strconv.Atoi(a[2]); err != nil || n < 1 {
+					return fmt.Errorf("the per-account node limit must be a number ≥ 1, or default")
+				}
+			}
+			return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = n; return nil })
 		}
 		fs.Usage()
 		return fmt.Errorf("unknown nodes command %q", a[1])
@@ -233,6 +247,11 @@ func listNodes(out io.Writer, f gateway.AccountsFile) error {
 	if f.Settings.Routing != "" {
 		routing = f.Settings.Routing
 	}
-	fmt.Fprintf(out, "\n%d of %d node tokens; new nodes are %s; routing %s\n", total, f.Settings.MaxNodesOrDefault(), state, routing)
+	perAccount := strconv.Itoa(f.Settings.MaxNodesPerAccountOrDefault())
+	if f.Settings.MaxNodesPerAccount == 0 {
+		perAccount += " (default)"
+	}
+	fmt.Fprintf(out, "\n%d of %d node tokens; up to %s per account; new nodes are %s; routing %s\n", total,
+		f.Settings.MaxNodesOrDefault(), perAccount, state, routing)
 	return nil
 }

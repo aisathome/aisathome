@@ -26,10 +26,14 @@ import (
 
 // Limits on self-registered nodes.
 const (
-	DefaultMaxNodes      = 10 // node tokens over all accounts, unless the accounts file says otherwise
-	nodeTokensPerAccount = 3
-	maxNodesPerIP        = 3 // connected account nodes per client address (IPv6: per /64)
-	maxNodeName          = 40
+	// DefaultMaxNodes and DefaultMaxNodesPerAccount apply unless the accounts file says
+	// otherwise (owner, 2026-10-22: 25 and 10, up from 10 and 3). The share cap
+	// (overShareLocked) limits how much of the traffic one operator sees, however many nodes
+	// it has; a low per-account limit only kept volunteers with several GPUs out.
+	DefaultMaxNodes           = 25 // node tokens over all accounts
+	DefaultMaxNodesPerAccount = 10 // node tokens per account
+	maxNodesPerIP             = 3  // connected account nodes per client address (IPv6: per /64)
+	maxNodeName               = 40
 )
 
 // RoutingTrustedOnly is the emergency setting: every request goes to trusted nodes only.
@@ -125,6 +129,14 @@ func (s AccountSettings) MaxNodesOrDefault() int {
 	return DefaultMaxNodes
 }
 
+// MaxNodesPerAccountOrDefault is the limit on node tokens per account.
+func (s AccountSettings) MaxNodesPerAccountOrDefault() int {
+	if s.MaxNodesPerAccount > 0 {
+		return s.MaxNodesPerAccount
+	}
+	return DefaultMaxNodesPerAccount
+}
+
 // nodeIDUsed reports whether id belongs, or belonged, to a node (ids are never reused, so
 // a pause record or log line always means one node).
 func (f *AccountsFile) nodeIDUsed(id string) bool {
@@ -155,8 +167,8 @@ func (s *AccountStore) AddNode(id, name string, now time.Time, valid func(seq in
 			return errStaleForm
 		case f.Settings.NodesClosed:
 			return errNodesClosed
-		case len(a.Nodes) >= nodeTokensPerAccount:
-			return fmt.Errorf("at most %d nodes per account; revoke one first", nodeTokensPerAccount)
+		case len(a.Nodes) >= f.Settings.MaxNodesPerAccountOrDefault():
+			return fmt.Errorf("at most %d nodes per account; revoke one first", f.Settings.MaxNodesPerAccountOrDefault())
 		case f.nodeCount() >= f.Settings.MaxNodesOrDefault():
 			return errNetworkFull
 		}

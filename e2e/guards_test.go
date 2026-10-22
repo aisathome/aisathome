@@ -33,8 +33,8 @@ func (a *acctRig) createKeyAgents(t *testing.T, session string) string {
 	const mark = "tools: your own nodes only"
 	_, before := a.get(t, "/account", session)
 	_, page := a.post(t, "/account/keys", session, "agents=1&once="+onceRe.FindStringSubmatch(before)[1])
-	if strings.Count(page, mark) != strings.Count(before, mark) {
-		t.Fatalf("a key with consent is marked as own nodes only: %s", page)
+	if _, after := a.get(t, "/account", session); strings.Count(after, mark) != strings.Count(before, mark) {
+		t.Fatalf("a key with consent is marked as own nodes only: %s", after)
 	}
 	return keyRe.FindString(page)
 }
@@ -331,8 +331,8 @@ func TestConsentBoxTickedByDefault(t *testing.T) {
 	if !strings.Contains(page, `name="agents" value="1" checked`) {
 		t.Fatalf("the consent box is not ticked by default: %s", page)
 	}
-	_, page = a.createKey(t, s) // the helper posts the form without the box: unticked
-	if !strings.Contains(page, "tools: your own nodes only") {
+	a.createKey(t, s) // the helper posts the form without the box: unticked
+	if _, page = a.get(t, "/account", s); !strings.Contains(page, "tools: your own nodes only") {
 		t.Fatalf("a key without consent is not marked: %s", page)
 	}
 }

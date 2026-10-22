@@ -75,7 +75,7 @@ func TestNodeTokensOnAccountPage(t *testing.T) {
 	a := nodeRig(t, nil)
 	s, _ := a.signIn(t, 1)
 	token, id, page := a.addNode(t, s, "my 3090")
-	if token == "" || !strings.Contains(page, "shown only once") {
+	if token == "" || !strings.Contains(page, "You will not see this again") {
 		t.Fatalf("no node token shown: %s", page)
 	}
 	a.store.Refresh()
@@ -101,12 +101,16 @@ func TestNodeTokensOnAccountPage(t *testing.T) {
 	if a.g.NodeCount() != 1 {
 		t.Fatal("a config reload dropped an account node")
 	}
-	// At most 3 per account: the form disappears, and the store refuses a fourth.
+	// At most max_nodes_per_account (3 here): the form gives way to a message that says why,
+	// and the store refuses a fourth.
+	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = 3; return nil })
 	a.addNode(t, s, "")
 	a.addNode(t, s, "")
-	if _, page := a.get(t, "/account", s); strings.Contains(page, `action="/account/nodes"`) {
-		t.Fatal("the add form is still shown with 3 nodes")
-	}
+	waitFor(t, func() bool {
+		_, page := a.get(t, "/account", s)
+		return strings.Contains(page, "You have 3 of 3 nodes. Revoke one to add another.") &&
+			!strings.Contains(page, `action="/account/nodes"`)
+	})
 	if _, _, err := a.store.AddNode("gh:1", "", time.Now(), nil); err == nil {
 		t.Fatal("a fourth node token was created")
 	}
@@ -551,5 +555,43 @@ func TestReplacingConnectionsWarn(t *testing.T) {
 	connect(7)
 	if strings.Count(logs.String(), warning) != 1 {
 		t.Fatalf("the warning is not rate-limited:\n%s", logs.String())
+	}
+}
+
+// Without settings in the accounts file: 10 node tokens per account, 25 over all accounts
+// (owner, 2026-10-22); the page counts against the actual limit.
+func TestNodeLimitDefaults(t *testing.T) {
+	a := nodeRig(t, nil)
+	s, _ := a.signIn(t, 1)
+	for i := 0; i < 9; i++ {
+		if _, _, err := a.store.AddNode("gh:1", "", time.Now(), nil); err != nil {
+			t.Fatalf("node %d of an account: %v", i+1, err)
+		}
+	}
+	waitFor(t, func() bool { _, page := a.get(t, "/account", s); return strings.Count(page, "badge offline") == 9 })
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, `action="/account/nodes"`) || strings.Contains(page, "You have") {
+		t.Fatalf("the add form must stay with 9 of 10 nodes: %s", page)
+	}
+	if token, _, _ := a.addNode(t, s, ""); token == "" {
+		t.Fatal("the tenth node of an account was refused")
+	}
+	waitFor(t, func() bool {
+		_, page := a.get(t, "/account", s)
+		return strings.Contains(page, "You have 10 of 10 nodes. Revoke one to add another.")
+	})
+	if _, _, err := a.store.AddNode("gh:1", "", time.Now(), nil); err == nil {
+		t.Fatal("an eleventh node token was created")
+	}
+	for id, n := range map[string]int{"gh:2": 10, "gh:3": 5} {
+		a.store.SignIn(id, time.Now())
+		for i := 0; i < n; i++ {
+			if _, _, err := a.store.AddNode(id, "", time.Now(), nil); err != nil {
+				t.Fatalf("%s node %d (network total under 25): %v", id, i+1, err)
+			}
+		}
+	}
+	a.store.SignIn("gh:4", time.Now())
+	if _, _, err := a.store.AddNode("gh:4", "", time.Now(), nil); err == nil || !strings.Contains(err.Error(), "network is full") {
+		t.Fatalf("a 26th node token over all accounts: %v", err)
 	}
 }

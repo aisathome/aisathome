@@ -84,11 +84,23 @@ func TestAccountsNodeCommands(t *testing.T) {
 	run("nodes", "close")
 	run("nodes", "limit", "5")
 	run("routing", "trusted-only")
+	if out := run("nodes"); !strings.Contains(out, "up to 10 (default) per account") {
+		t.Fatalf("nodes lacks the default per-account limit:\n%s", out)
+	}
+	run("nodes", "per-account", "2")
 	out := run("nodes")
-	for _, want := range []string{id + " gh:1 rig", "download-and-execute", "1 of 5 node tokens", "new nodes are closed", "routing trusted-only"} {
+	for _, want := range []string{id + " gh:1 rig", "download-and-execute", "1 of 5 node tokens", "up to 2 per account", "new nodes are closed", "routing trusted-only"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("nodes lacks %q:\n%s", want, out)
 		}
+	}
+	store.Refresh()
+	if store.Settings().MaxNodesPerAccountOrDefault() != 2 {
+		t.Fatal("nodes per-account 2 was not saved")
+	}
+	run("nodes", "per-account", "default")
+	if out := run("nodes"); !strings.Contains(out, "up to 10 (default) per account") {
+		t.Fatalf("per-account default did not reset the limit:\n%s", out)
 	}
 	run("node-clear", id)
 	run("routing", "any")
@@ -100,7 +112,8 @@ func TestAccountsNodeCommands(t *testing.T) {
 	if out := run("nodes"); strings.Contains(out, id) {
 		t.Fatalf("revoked node still listed:\n%s", out)
 	}
-	for _, bad := range [][]string{{"routing", "maybe"}, {"nodes", "limit", "0"}, {"node-clear", id}} {
+	for _, bad := range [][]string{{"routing", "maybe"}, {"nodes", "limit", "0"}, {"nodes", "per-account", "0"},
+		{"nodes", "per-account", "x"}, {"nodes", "per-account"}, {"node-clear", id}} {
 		if err := runAccounts(append([]string{"-file", file}, bad...), &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 			t.Fatalf("%v accepted", bad)
 		}

@@ -331,7 +331,7 @@ func (g *Gateway) accountData(id string) pageData {
 	used := g.budget.used1("acct:"+id, time.Now())
 	d := pageData{SignedIn: true, Account: a, Position: pos, API: g.acfg.PublicURL,
 		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq),
-		NodeOnce: g.nodeFormToken(id, a.NodeSeq), MaxNodes: nodeTokensPerAccount}
+		NodeOnce: g.nodeFormToken(id, a.NodeSeq)}
 	now := time.Now()
 	for _, n := range a.Nodes {
 		c := g.credit.node(n.ID)
@@ -348,6 +348,7 @@ func (g *Gateway) accountData(id string) pageData {
 		d.Probation = probationText(g.acfg.probation)
 	}
 	st := g.accounts.Settings()
+	d.MaxNodes = st.MaxNodesPerAccountOrDefault()
 	d.NodesClosed = st.NodesClosed
 	d.NetworkFull = g.accounts.nodeTotal() >= st.MaxNodesOrDefault()
 	return d
@@ -550,7 +551,11 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
-	w.Header().Set("Content-Security-Policy", pageCSP+"; form-action 'self' https://github.com; frame-ancestors 'none'")
+	csp := pageCSP + "; form-action 'self' https://github.com; frame-ancestors 'none'"
+	if d.NewKey != "" || d.NewNode != "" {
+		csp += secretScriptSrc // the Copy button; every other account page runs no script
+	}
+	w.Header().Set("Content-Security-Policy", csp)
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(status)
 	if err := accountTmpl.Execute(w, d); err != nil {
@@ -560,6 +565,9 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 
 var accountTmpl = newPage("account", template.FuncMap{
 	"day": func(t time.Time) string { return t.Format("2006-01-02") },
+	"secretView": func(title, secret string) map[string]string {
+		return map[string]string{"Title": title, "Secret": secret}
+	},
 }, `{{template "head" .}}{{template "top" .}}
 {{if .Error}}<div class="card err" role="alert">{{.Error}}</div>{{end}}
 {{if not .SignedIn}}
@@ -589,14 +597,19 @@ appears; come back to this page to check.</p></div>
 {{else if eq .Account.Status "banned"}}
 <h1>Account closed</h1>
 <div class="card"><p>This account can no longer use AIs@home.</p></div>
+{{else if .NewKey}}<section aria-labelledby="secret-title">
+{{template "secret" (secretView "Your new API key" .NewKey)}}
+<p>Use it with any OpenAI-compatible client at <code>{{.API}}/v1</code> (Authorization: Bearer).</p>
+<form method="get" action="/account#keys"><button class="btn">Done</button></form></section>
+{{else if .NewNode}}<section aria-labelledby="secret-title">
+{{template "secret" (secretView "Your new node token" .NewNode)}}
+<p>Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p>
+<form method="get" action="/account#nodes"><button class="btn">Done</button></form></section>
 {{else}}
 <h1>Your account</h1>
 <div class="card"><p><a class="btn" href="{{.ChatURL}}">Open the chat</a></p>
 <p class="mut">Today: {{.Used}}{{if .Budget}} of {{.Budget}}{{end}} tokens (resets 00:00 UTC; chat and API share it).</p></div>
-{{if .NewKey}}<div class="card"><p><strong>Your new API key.</strong> Copy it now: it is shown only once.</p>
-<code class="key">{{.NewKey}}</code>
-<p class="mut">Use it with any OpenAI-compatible client at <code>{{.API}}/v1</code> (Authorization: Bearer).</p></div>{{end}}
-<div class="card"><h2>API keys</h2>
+<div class="card" id="keys"><h2>API keys</h2>
 {{if .Account.Keys}}<div class="table-wrap"><table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code>{{if not .Agents}} <span class="mut small">tools: your own nodes only</span>{{end}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/keys/revoke"><input type="hidden" name="prefix" value="{{.Prefix}}">
 <button class="btn ghost">Revoke</button></form></td></tr>{{end}}</table></div>{{else}}<p class="mut">No keys yet.</p>{{end}}
@@ -613,10 +626,7 @@ See <a href="/use/api/">API and opencode</a>.</p></div>
 <p class="hint">Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit. Leave it empty to stay anonymous.</p></div></form>
 {{if .Account.Username}}<p class="mut small">You appear as <strong>{{.Account.Username}}</strong> on the <a href="/network/">leaderboard</a>.</p>
 {{else}}<p class="mut small">You are anonymous: your credit counts in the totals only.</p>{{end}}</div>
-{{if .NewNode}}<div class="card accent"><p><strong>Your new node token.</strong> Copy it now: it is shown only once.</p>
-<code class="key">{{.NewNode}}</code>
-<p class="mut">Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p></div>{{end}}
-<div class="card"><h2>Your nodes</h2>
+<div class="card" id="nodes"><h2>Your nodes</h2>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
 strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that{{if .Probation}},
 and only after a probation of {{.Probation}}{{end}}.</p>
@@ -631,8 +641,9 @@ and only after a probation of {{.Probation}}{{end}}.</p>
 {{if not .ProbationEnd.IsZero}}<p class="hint">Probation (chats only, no agents) until {{day .ProbationEnd}}.</p>{{end}}
 {{else}}<p class="mut">No nodes yet.</p>{{end}}
 {{if .NodesClosed}}<p class="mut">New nodes are not being accepted right now.</p>
+{{else if ge (len .Nodes) .MaxNodes}}<p>You have {{len .Nodes}} of {{.MaxNodes}} nodes. Revoke one to add another.</p>
 {{else if .NetworkFull}}<p class="mut">The network is full for now: no new nodes are being added.</p>
-{{else if lt (len .Nodes) .MaxNodes}}<form class="form" method="post" action="/account/nodes"><input type="hidden" name="once" value="{{.NodeOnce}}">
+{{else}}<form class="form" method="post" action="/account/nodes"><input type="hidden" name="once" value="{{.NodeOnce}}">
 <div class="field"><label for="nodename">Name (optional, only you see it)</label>
 <div class="row"><input id="nodename" name="name" maxlength="40"><button class="btn secondary">Add a node</button></div></div></form>{{end}}
 {{if or .Nodes .Account.NodePref}}<form class="form" method="post" action="/account/nodes/pref"><div class="field"><label for="pref">Your own chats and API requests go to</label>
@@ -642,8 +653,33 @@ and only after a probation of {{.Probation}}{{end}}.</p>
 <button class="btn ghost">Save</button></div></div></form>{{end}}
 <p class="mut small">See <a href="/node/">Run a node</a>.</p></div>
 {{end}}
-{{if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
-{{template "bottom" .}}`)
+{{if or .NewKey .NewNode}}<script>`+secretScript+`</script>
+{{else if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
+{{template "bottom" .}}
+{{define "secret"}}<h1 id="secret-title">{{.Title}}</h1>
+<div class="card accent"><p><strong>You will not see this again.</strong> Copy it now and keep it somewhere safe: only a hash
+of it is stored, so nobody can show it to you later.</p>
+<code class="key" id="secret">{{.Secret}}</code>
+<div class="actions"><button type="button" class="btn secondary" id="copy" hidden>Copy</button>
+<span id="copied" class="mut small" role="status" aria-live="polite"></span></div>
+<noscript><p class="mut small">Select the text above and copy it.</p></noscript></div>{{end}}`)
+
+// secretScript runs the Copy button of a new key or node token. Only the page that shows one
+// has it, and its CSP allows it by hash. Without a script the button stays hidden and the token is selectable
+// text; without the clipboard API (or permission) it selects the token and tries the older
+// copy command, else asks the user to press Ctrl+C.
+const secretScript = `(function(){var b=document.getElementById("copy"),k=document.getElementById("secret"),s=document.getElementById("copied");` +
+	`if(!b||!k)return;b.hidden=false;b.focus();` +
+	`function sel(){var r=document.createRange();r.selectNodeContents(k);var w=getSelection();w.removeAllRanges();w.addRange(r)}` +
+	`function manual(){sel();var ok=false;try{ok=document.execCommand("copy")}catch(e){}s.textContent=ok?"Copied.":"Selected: press Ctrl+C to copy."}` +
+	`b.addEventListener("click",function(){s.textContent="";if(navigator.clipboard&&window.isSecureContext){` +
+	`navigator.clipboard.writeText(k.textContent.trim()).then(function(){s.textContent="Copied."},manual)}else{manual()}})})()`
+
+// secretScriptSrc allows secretScript, and no other script, on the page that shows a secret.
+var secretScriptSrc = func() string {
+	sum := sha256.Sum256([]byte(secretScript))
+	return "; script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+}()
 
 // navigation reports whether a request is a page load in a browser (rather than a script's
 // fetch or a websocket). Browsers send Sec-Fetch-Mode; without it, Accept decides.

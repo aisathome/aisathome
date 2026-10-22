@@ -92,8 +92,13 @@ and whoever controls a machine can read what it serves. Every other node is an u
 volunteer. Nothing here is confidential; the measures below make keeping or misusing data
 harder and more visible ("hardened, not confidential").
 
-Signed-in active accounts add nodes on the account page ("Your nodes"): up to 3 node tokens
-per account, shown once, stored as SHA-256 hashes in the accounts file, revocable there. A
+Signed-in active accounts add nodes on the account page ("Your nodes"): up to 10 node tokens
+per account (`max_nodes_per_account`), shown once on their own page with a Copy button
+(as new API keys are), stored as SHA-256 hashes in the accounts file, revocable there. At
+the limit the page says "You have 10 of 10 nodes. Revoke one to add another." The limits
+were raised on 2026-10-22 (from 3 per account and 10 over all): the share cap below is what
+limits how much of the traffic one operator sees, however many nodes it runs, and a low
+per-account limit only kept volunteers with several GPUs out. A
 token looks like `nt-<node id>.<secret>`; the gateway assigns the node id (`n-<8 hex>`), and
 the node agent takes it from the token, so a node needs only its token. Config tokens keep
 working; ids of the form `n-<8 hex>` are reserved for account nodes. In the usage log an
@@ -122,7 +127,8 @@ Operator commands (the gateway applies them within seconds):
 ```bash
 aisathome-gateway accounts nodes                  # node tokens, held nodes, settings
 aisathome-gateway accounts nodes close|open       # stop or allow new node tokens
-aisathome-gateway accounts nodes limit 10         # node tokens over all accounts (max_nodes, default 10)
+aisathome-gateway accounts nodes limit 25         # node tokens over all accounts (max_nodes, default 25)
+aisathome-gateway accounts nodes per-account 10   # node tokens per account (max_nodes_per_account, default 10; "default" unsets it)
 aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token
 aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
 aisathome-gateway accounts routing trusted-only   # emergency: everything to trusted nodes; "any" to undo
