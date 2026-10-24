@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -210,7 +211,7 @@ func dialNode(t *testing.T, r *rig, id, token, xff string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.Version,
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 1}}})
 	c.Write(ctx, websocket.MessageText, b)
 	go func() {
@@ -374,7 +375,7 @@ func TestRevokedWhileConnecting(t *testing.T) {
 	defer c.CloseNow()
 	time.Sleep(100 * time.Millisecond) // the gateway has read the token and waits for hello
 	r.g.Reload(gateway.Config{APIKeys: map[string]string{"user-key": "alice"}, NodeTokens: map[string]gateway.NodeToken{}})
-	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "late", Protocol: protocol.Version,
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "late", Protocol: protocol.LegacyVersion,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
 	c.Write(ctx, websocket.MessageText, b)
 	time.Sleep(300 * time.Millisecond)
@@ -395,7 +396,7 @@ func TestStalledReconnectDoesNotBlockGateway(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "same", Protocol: protocol.Version,
+		b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "same", Protocol: protocol.LegacyVersion,
 			Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
 		c.Write(ctx, websocket.MessageText, b)
 		return c, cancel
@@ -475,7 +476,7 @@ func TestSquatterIsToldIDIsReserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "home-1", Protocol: protocol.Version,
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: "home-1", Protocol: protocol.LegacyVersion,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Slots: 1}}})
 	c.Write(ctx, websocket.MessageText, b)
 	_, _, err = c.Read(ctx)
@@ -500,10 +501,10 @@ func TestNodeVersionLoggedAndShown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.startTokenNode(ctx, token, mockEngine(t, false), 2, 32768) // a test build reports aisathome-node/dev
 	a.waitNodes(t, 1)
-	if _, page := a.get(t, "/account", s); !strings.Contains(page, "<code>dev</code>") {
-		t.Fatalf("the connected node's version is not shown: %s", page)
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, "<code>dev</code><br>protocol "+fmt.Sprint(protocol.Version)) {
+		t.Fatalf("the connected node's version and protocol are not shown: %s", page)
 	}
-	if !regexp.MustCompile(`msg="node connected" node=` + id + ` .*version=aisathome-node/dev`).MatchString(logs.String()) {
+	if !regexp.MustCompile(`msg="node connected" node=` + id + ` .*version=aisathome-node/dev protocol=` + fmt.Sprint(protocol.Version)).MatchString(logs.String()) {
 		t.Fatalf("version not logged:\n%s", logs.String())
 	}
 	cancel()
@@ -518,12 +519,13 @@ func TestNodeVersionLoggedAndShown(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
-	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.Version, Agent: "<b>x</b>",
+	b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion, Agent: "<b>x</b>",
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 1}}})
 	c.Write(context.Background(), websocket.MessageText, b)
 	a.waitNodes(t, 1)
-	if _, page := a.get(t, "/account", s); strings.Contains(page, "<b>x</b>") || strings.Contains(page, "&lt;b&gt;") {
-		t.Fatalf("an invalid version was shown: %s", page)
+	if _, page := a.get(t, "/account", s); strings.Contains(page, "<b>x</b>") || strings.Contains(page, "&lt;b&gt;") ||
+		!strings.Contains(page, "unknown<br>protocol 1") { // no protocol_version: version 1
+		t.Fatalf("an invalid version was shown, or the protocol not: %s", page)
 	}
 	waitFor(t, func() bool { return strings.Contains(logs.String(), "version=unknown") })
 }

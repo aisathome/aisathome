@@ -43,6 +43,7 @@ func (f *fakeAgent) Status() node.Status {
 	st.State = node.StateConnected
 	if !f.connected {
 		st.State = node.StateDisconnected
+		st.Refused = "node protocol version 2 not supported (gateway supports 3-4): update the node agent"
 	}
 	if f.paused {
 		st.State = node.StatePaused
@@ -440,8 +441,9 @@ func TestStatusCommand(t *testing.T) {
 	e.agent.connected = false
 	e.agent.mu.Unlock()
 	out.Reset()
-	if code := RunStatus([]string{"-port", itoa(port)}, &out, &errb); code != ExitNotConnected || !strings.Contains(out.String(), "not connected") {
-		t.Fatalf("disconnected: exit %d\n%s", code, out.String())
+	if code := RunStatus([]string{"-port", itoa(port)}, &out, &errb); code != ExitNotConnected || !strings.Contains(out.String(), "not connected") ||
+		!strings.Contains(out.String(), "refused    node protocol version 2 not supported (gateway supports 3-4): update the node agent") {
+		t.Fatalf("disconnected (refused by the gateway): exit %d\n%s", code, out.String())
 	}
 	out.Reset()
 	if code := RunStatus([]string{"-port", itoa(port), "-json"}, &out, &errb); code != ExitNotConnected || !json.Valid(out.Bytes()) {

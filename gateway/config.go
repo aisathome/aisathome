@@ -36,6 +36,13 @@ type Config struct {
 	MaxQueued int `json:"max_queued"`
 	// MaxNodesPerToken caps simultaneous node connections per node token. Default 8.
 	MaxNodesPerToken int `json:"max_nodes_per_token"`
+	// NodeProtocolMin and NodeProtocolMax are the node protocol versions the gateway accepts
+	// (protocol.Version; a node that announces none speaks version 1). Others are refused at
+	// connect with a message the node shows its volunteer. Defaults: the gateway's own version
+	// and the one before it, so the current and the previous node release both work. Max
+	// cannot exceed the gateway's own version; raising min retires old nodes.
+	NodeProtocolMin int `json:"node_protocol_min"`
+	NodeProtocolMax int `json:"node_protocol_max"`
 	// DefaultMaxTokens is applied when a request sets no max_tokens/max_completion_tokens,
 	// so one request cannot generate (or think) until a volunteer's context is full.
 	// Default 16384; -1 disables it.

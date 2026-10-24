@@ -360,7 +360,7 @@ func rawNodeAll(t *testing.T, r *rig, id, token string, onMsg func(write func(pr
 	c.SetReadLimit(16 << 20)
 	raw := func(b []byte) { c.Write(ctx, websocket.MessageText, b) }
 	write := func(m protocol.Msg) { b, _ := json.Marshal(m); raw(b) }
-	write(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.Version,
+	write(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
 	go func() {
 		for {

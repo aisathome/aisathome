@@ -8,9 +8,35 @@ package protocol
 
 import "encoding/json"
 
-// Version is the protocol version spoken by this build. A gateway rejects nodes whose
-// major version differs.
-const Version = "0.1"
+// Version is the protocol version this build speaks: a small integer, raised by one when
+// the messages change in a way the other side must know about. A node sends it in hello as
+// protocol_version; a gateway accepts a configured range (by default this version and the
+// one before it) and refuses others (CloseUnsupportedProtocol). PROTOCOL.md lists the
+// versions.
+const Version = 2
+
+// Unversioned is the version of a hello without protocol_version: nodes released before
+// protocol versions existed (v0.1.0 to v0.3.0) speak version 1.
+const Unversioned = 1
+
+// LegacyVersion is what the "protocol" field of hello and welcome has carried since v0.1. It
+// is frozen: gateways before protocol versions refuse a node whose major differs from "0",
+// so nodes keep sending it, and gateways keep sending it to old nodes. Versions are compared
+// with protocol_version only.
+const LegacyVersion = "0.1"
+
+// CloseUnsupportedProtocol is the WebSocket close code a gateway refuses a node's protocol
+// version with (instead of welcome). The close reason is a short text for the volunteer that
+// names the versions the gateway supports. A private-use code (4000-4999, RFC 6455).
+const CloseUnsupportedProtocol = 4001
+
+// HelloVersion is the protocol version a hello announces (Unversioned if none).
+func (m Msg) HelloVersion() int {
+	if m.ProtocolVersion == 0 {
+		return Unversioned
+	}
+	return m.ProtocolVersion
+}
 
 // Message types.
 const (
@@ -30,13 +56,19 @@ type Msg struct {
 	ReqID string `json:"req_id,omitempty"`
 
 	// hello
-	NodeID   string      `json:"node_id,omitempty"`
-	Protocol string      `json:"protocol,omitempty"`
-	Agent    string      `json:"agent,omitempty"`  // node software version
-	Models   []ModelInfo `json:"models,omitempty"` // what this node can serve
+	NodeID   string `json:"node_id,omitempty"`
+	Protocol string `json:"protocol,omitempty"` // LegacyVersion (hello and welcome)
+	// ProtocolVersion (hello: the version the node speaks, absent = Unversioned; welcome: the
+	// version the gateway speaks with this node). Added in protocol version 2.
+	ProtocolVersion int         `json:"protocol_version,omitempty"`
+	Agent           string      `json:"agent,omitempty"`  // node software version
+	Models          []ModelInfo `json:"models,omitempty"` // what this node can serve
 
 	// welcome
 	GatewayID string `json:"gateway_id,omitempty"`
+	// ProtocolMin and ProtocolMax: the protocol versions this gateway accepts (version 2).
+	ProtocolMin int `json:"protocol_min,omitempty"`
+	ProtocolMax int `json:"protocol_max,omitempty"`
 
 	// heartbeat
 	Active int `json:"active,omitempty"` // requests in flight on this node

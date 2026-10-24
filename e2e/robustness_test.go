@@ -146,7 +146,7 @@ func rawNode(t *testing.T, r *rig, id string) {
 		t.Fatal(err)
 	}
 	write := func(m protocol.Msg) { b, _ := json.Marshal(m); c.Write(ctx, websocket.MessageText, b) }
-	write(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.Version,
+	write(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
 	go func() {
 		for {

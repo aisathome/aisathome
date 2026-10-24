@@ -21,7 +21,7 @@
 		return `${Math.floor(s / 86400)}d`;
 	};
 	const words = { serving: 'Serving', connected: 'Connected', paused: 'Paused', disconnected: 'Disconnected', offline: 'No agent' };
-	const badKinds = new Set(['disconnected', 'engine_unhealthy', 'request_failed']);
+	const badKinds = new Set(['disconnected', 'refused', 'engine_unhealthy', 'request_failed']);
 
 	let last = null;
 	let timer = null;
@@ -59,6 +59,7 @@
 			add('Not connected to ', 'bad');
 			out.push(el('strong', '', s.gateway || 'the gateway'));
 			add('. ');
+			if (s.refused) add(`The gateway refused this node agent: ${s.refused}. `, 'bad');
 		}
 		if (s.paused) add(s.slots_in_use > 0 ? `Paused: finishing ${s.slots_in_use} request(s), taking no new ones. ` : 'Paused: taking no new requests. ');
 		if (s.engine === 'unhealthy') add('The engine does not answer its health check. ', 'bad');
@@ -151,7 +152,7 @@
 		last = s;
 		setState(s.state, stateLine(s));
 		$('node-id').textContent = s.node_id || 'node';
-		$('agent-version').textContent = s.agent || '';
+		$('agent-version').textContent = s.agent ? `${s.agent}${s.protocol ? ` · protocol ${s.protocol}` : ''}` : '';
 		if (s.account_url) $('account').href = s.account_url;
 		$('slots-used').textContent = s.slots_in_use;
 		$('slots-total').textContent = s.slots_total;

@@ -92,6 +92,9 @@ func PrintStatus(w io.Writer, st StatusResponse, port int, now time.Time) {
 		conn += "; paused (takes no new requests)"
 	}
 	row("gateway", "%s, %s", orDash(st.Gateway), conn)
+	if !st.Connected && st.Refused != "" {
+		row("refused", "%s", st.Refused)
+	}
 	row("engine", "%s", st.Engine)
 	for _, m := range st.Models {
 		row("model", "%s, %d slot(s) x %d tokens", m.Name, m.Slots, m.Ctx)

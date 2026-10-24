@@ -35,6 +35,7 @@ type nodeConn struct {
 	held     bool      // stopped by a guard until the operator clears it; guarded by g.mu
 	probEnd  time.Time // account nodes: no agents (requests with tools) before; guarded by g.mu
 	agent    string    // the node software's version from its hello ("aisathome-node/0.2.0"), "" if none or invalid
+	proto    int       // the protocol version it speaks (hello's protocol_version; 1 if none)
 	since    time.Time // when it connected
 	models   []protocol.ModelInfo
 	conn     *websocket.Conn
@@ -143,8 +144,13 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, reason)
 		return
 	}
-	if major(hello.Protocol) != major(protocol.Version) {
-		c.Close(websocket.StatusPolicyViolation, "protocol version "+hello.Protocol+" not supported")
+	proto := hello.HelloVersion()
+	if proto < g.cfg.NodeProtocolMin || proto > g.cfg.NodeProtocolMax {
+		// After authentication: only a node with a valid token learns the range. The reason
+		// fits a close frame (at most 123 bytes).
+		g.log.Warn("node refused: unsupported protocol version", "node", hello.NodeID, "operator", operator,
+			"protocol", proto, "supported", protoRange(g.cfg.NodeProtocolMin, g.cfg.NodeProtocolMax), "version", cmp.Or(cleanAgent(hello.Agent), "unknown"))
+		c.Close(protocol.CloseUnsupportedProtocol, unsupportedReason(proto, g.cfg.NodeProtocolMin, g.cfg.NodeProtocolMax))
 		return
 	}
 	if tok.NodeID != "" && tok.NodeID != hello.NodeID {
@@ -163,8 +169,9 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", account: account, ip: ip,
-		agent: cleanAgent(hello.Agent), since: time.Now(), models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
-	if err := n.send(ctx, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: g.cfg.GatewayID, Protocol: protocol.Version}); err != nil {
+		agent: cleanAgent(hello.Agent), proto: proto, since: time.Now(), models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
+	if err := n.send(ctx, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: g.cfg.GatewayID, Protocol: protocol.LegacyVersion,
+		ProtocolVersion: proto, ProtocolMin: g.cfg.NodeProtocolMin, ProtocolMax: g.cfg.NodeProtocolMax}); err != nil {
 		return
 	}
 	var first time.Time
@@ -223,7 +230,8 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}
 	g.signal() // waiting requests may now find a slot
-	g.log.Info("node connected", "node", n.id, "operator", n.operator, "models", len(n.models), "version", cmp.Or(n.agent, "unknown"))
+	g.log.Info("node connected", "node", n.id, "operator", n.operator, "models", len(n.models), "version", cmp.Or(n.agent, "unknown"),
+		"protocol", n.proto)
 	if flaps > 0 {
 		g.log.Warn("node connections keep replacing each other: two clients may be running with the same node token and id",
 			"node", n.id, "operator", n.operator, "replaced", flaps, "same_address", old.ip == n.ip)
@@ -406,4 +414,30 @@ func readMsg(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {
 	return json.Unmarshal(b, m)
 }
 
-func major(v string) string { return strings.SplitN(v, ".", 2)[0] }
+// unsupportedReason is the close reason for a node whose protocol version the gateway does
+// not accept: what the volunteer should do, in at most 123 bytes.
+func unsupportedReason(proto, lo, hi int) string {
+	what := "update the node agent"
+	if proto > hi {
+		what = "this gateway does not speak it yet"
+	}
+	return fmt.Sprintf("node protocol version %d not supported (gateway supports %s): %s", proto, protoRange(lo, hi), what)
+}
+
+func protoRange(lo, hi int) string {
+	if lo == hi {
+		return fmt.Sprint(lo)
+	}
+	return fmt.Sprintf("%d-%d", lo, hi)
+}
+
+// NodeProtocol returns the protocol version a connected node speaks (false: not connected).
+func (g *Gateway) NodeProtocol(id string) (int, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n := g.node[id]
+	if n == nil {
+		return 0, false
+	}
+	return n.proto, true
+}

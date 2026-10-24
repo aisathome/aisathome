@@ -10,6 +10,7 @@ Config fields beyond the example (`examples/gateway.json`):
 |---|---|
 | `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown). Without it a restart gives every key a fresh day and forgets credit. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
 | `tokenizer_file`, `tokenizer_sha256` | The model's `tokenizer.json`, so the gateway counts tokens for credit itself (see [credit.md](credit.md)); the gateway refuses to start if the file does not match the SHA-256. |
+| `node_protocol_min`, `node_protocol_max` | The node protocol versions the gateway accepts (`protocol/PROTOCOL.md`, "Protocol versions"). Default: the gateway's own version and the one before it, so nodes of the current and the previous release connect. A node outside the range is refused with close code 4001 and a reason its volunteer sees, logged as `msg="node refused: unsupported protocol version"`. Every connect logs `protocol=<version>`; the account page shows it next to the node's software version. Max cannot exceed the gateway's own version; raise min only on a published retirement date. |
 | `keys_file` | Per-user API keys, managed with `aisathome-gateway keys` (use absolute paths: relative ones resolve from the working directory). The gateway rereads it every 2 s, so no restart or reload is needed. |
 
 Keys in `api_keys` and `keys` (in the config, in clear) still work and reload on SIGHUP.

@@ -19,6 +19,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          # The release tags: e2e/compat_test.go builds the latest two node releases and runs
+          # the basic chat through them (decision 0013); without tags it fails in CI.
+          fetch-depth: 0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod

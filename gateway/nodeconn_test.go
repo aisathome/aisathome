@@ -3,9 +3,38 @@
 package gateway
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/aisathome/aisathome/protocol"
 )
+
+// The node protocol range defaults to the gateway's version and the one before it (the
+// current and the previous node release); a range the gateway cannot serve is a config error.
+func TestNodeProtocolRange(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	g, err := New(Config{}, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.cfg.NodeProtocolMin != protocol.Version-1 || g.cfg.NodeProtocolMax != protocol.Version {
+		t.Fatalf("default range %d-%d", g.cfg.NodeProtocolMin, g.cfg.NodeProtocolMax)
+	}
+	g.Close()
+	for _, c := range [][2]int{{-1, 0}, {0, protocol.Version + 1}, {2, 1}, {1, -3}} {
+		if g, err := New(Config{NodeProtocolMin: c[0], NodeProtocolMax: c[1]}, quiet); err == nil {
+			g.Close()
+			t.Errorf("range %v accepted", c)
+		}
+	}
+	if g, err := New(Config{NodeProtocolMin: 1, NodeProtocolMax: 1}, quiet); err != nil {
+		t.Errorf("only version 1: %v", err)
+	} else {
+		g.Close()
+	}
+}
 
 // Only connections replaced soon after connecting count towards the warning, in a row.
 func TestNoteReplace(t *testing.T) {

@@ -51,7 +51,7 @@ const (
 // Event is one entry in the agent's recent history: what happened, never request content.
 type Event struct {
 	Time  time.Time `json:"time"`
-	Kind  string    `json:"kind"` // started, connected, disconnected, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested
+	Kind  string    `json:"kind"` // started, connected, disconnected, refused, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested
 	Text  string    `json:"text,omitempty"`
 	Count int       `json:"count,omitempty"` // repeats folded into this entry (e.g. failed reconnects)
 }
@@ -86,6 +86,8 @@ type Status struct {
 	ConnectedSince *time.Time           `json:"connected_since,omitempty"`
 	StartedAt      time.Time            `json:"started_at"`
 	Agent          string               `json:"agent"`
+	Protocol       int                  `json:"protocol"`          // the protocol version this agent speaks
+	Refused        string               `json:"refused,omitempty"` // the gateway refused that version: its reason (until the node connects again)
 	Models         []protocol.ModelInfo `json:"models"`
 	Preset         string               `json:"preset,omitempty"`
 	SlotsInUse     int                  `json:"slots_in_use"`
@@ -291,6 +293,8 @@ func (a *Agent) Status() Status {
 		GatewayID:  a.gatewayID,
 		StartedAt:  a.started,
 		Agent:      AgentVersion(),
+		Protocol:   protocol.Version,
+		Refused:    a.refused,
 		Models:     append([]protocol.ModelInfo(nil), a.cfg.Models...),
 		Preset:     a.cfg.Preset,
 		SlotsInUse: len(a.cancels),

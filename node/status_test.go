@@ -52,7 +52,7 @@ func fakeGateway(t *testing.T) (url string, conns chan *websocket.Conn) {
 		if read(r.Context(), c, &hello) != nil || hello.Type != protocol.TypeHello {
 			return
 		}
-		b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeWelcome, GatewayID: "fake-gw", Protocol: protocol.Version})
+		b, _ := json.Marshal(protocol.Msg{Type: protocol.TypeWelcome, GatewayID: "fake-gw", Protocol: protocol.LegacyVersion})
 		c.Write(r.Context(), websocket.MessageText, b)
 		conns <- c
 		<-r.Context().Done()

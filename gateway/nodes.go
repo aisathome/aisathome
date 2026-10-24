@@ -611,15 +611,16 @@ const (
 )
 
 // nodeVersion is the software version that account's node id reported when it connected,
-// without the "aisathome-node/" prefix; "" while it is offline or reported none.
-func (g *Gateway) nodeVersion(account, id string) string {
+// without the "aisathome-node/" prefix ("" if it reported none), and the protocol version
+// it speaks; "" and 0 while it is offline.
+func (g *Gateway) nodeVersion(account, id string) (string, int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	n := g.node[id]
 	if n == nil || n.account != account {
-		return ""
+		return "", 0
 	}
-	return strings.TrimPrefix(n.agent, "aisathome-node/")
+	return strings.TrimPrefix(n.agent, "aisathome-node/"), n.proto
 }
 
 // nodeStatus is the state of an account's node, with a generic reason only.

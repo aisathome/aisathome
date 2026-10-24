@@ -8,6 +8,7 @@ package node
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,10 @@ type Config struct {
 	// of it before the node ends it (the gateway keeps its slot until then). Default 90 s,
 	// below the gateway's own limit (120 s).
 	CancelWait time.Duration `json:"-"`
+	// RefusedRetry is how long the node waits before it tries again after the gateway refused
+	// its protocol version (the volunteer has to update the agent, or the gateway its range).
+	// Default 10 min.
+	RefusedRetry time.Duration `json:"-"`
 
 	// Local UI and state (see status.go). StateFile keeps the pause switch, counters and
 	// events across restarts ("" = memory only). RestartTrigger is a file that a root-owned
@@ -83,6 +88,7 @@ type Agent struct {
 	connected   bool
 	gatewayID   string
 	connectedAt time.Time
+	refused     string // the gateway's reason when it last refused this node's protocol version; "" once connected
 	engine      string
 	started     time.Time
 	lastRestart time.Time
@@ -109,6 +115,9 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	}
 	if cfg.CancelWait == 0 {
 		cfg.CancelWait = 90 * time.Second
+	}
+	if cfg.RefusedRetry == 0 {
+		cfg.RefusedRetry = 10 * time.Minute
 	}
 	if id, ok := TokenNodeID(cfg.Token); ok && cfg.NodeID != id {
 		if cfg.NodeID != "" {
@@ -161,8 +170,20 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		// Jitter (±20%) so many nodes do not reconnect in lockstep after a gateway restart.
 		wait := time.Duration(float64(backoff) * (0.8 + 0.4*rand.Float64()))
-		a.log.Warn("disconnected from gateway, reconnecting", "err", err, "in", wait)
-		a.event("disconnected", errText(err))
+		var refused *RefusedError
+		if errors.As(err, &refused) {
+			wait = a.cfg.RefusedRetry
+			a.log.Error("the gateway refused this node agent's protocol version",
+				"reason", refused.Reason, "protocol", protocol.Version, "agent", AgentVersion(), "retry_in", wait)
+			a.mu.Lock()
+			a.refused = refused.Reason
+			a.eventLocked("refused", refused.Reason)
+			a.mu.Unlock()
+			a.save()
+		} else {
+			a.log.Warn("disconnected from gateway, reconnecting", "err", err, "in", wait)
+			a.event("disconnected", errText(err))
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -240,15 +261,20 @@ func (a *Agent) session(ctx context.Context) error {
 		return c.Write(wctx, websocket.MessageText, b)
 	}
 
-	if err := send(protocol.Msg{Type: protocol.TypeHello, NodeID: a.cfg.NodeID, Protocol: protocol.Version,
-		Agent: AgentVersion(), Models: a.cfg.Models}); err != nil {
+	if err := send(protocol.Msg{Type: protocol.TypeHello, NodeID: a.cfg.NodeID, Protocol: protocol.LegacyVersion,
+		ProtocolVersion: protocol.Version, Agent: AgentVersion(), Models: a.cfg.Models}); err != nil {
 		return err
 	}
 	var welcome protocol.Msg
 	if err := read(ctx, c, &welcome); err != nil || welcome.Type != protocol.TypeWelcome {
+		var ce websocket.CloseError
+		if errors.As(err, &ce) && ce.Code == protocol.CloseUnsupportedProtocol {
+			return &RefusedError{Reason: ce.Reason}
+		}
 		return fmt.Errorf("no welcome from gateway: %v", err)
 	}
-	a.log.Info("connected to gateway", "gateway", welcome.GatewayID)
+	// A gateway from before protocol versions sends none: it speaks version 1 with everyone.
+	a.log.Info("connected to gateway", "gateway", welcome.GatewayID, "protocol", cmp.Or(welcome.ProtocolVersion, protocol.Unversioned))
 
 	sctx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -259,7 +285,7 @@ func (a *Agent) session(ctx context.Context) error {
 		return send(m)
 	}
 	a.mu.Lock()
-	a.connected, a.gatewayID, a.connectedAt = true, welcome.GatewayID, a.now()
+	a.connected, a.gatewayID, a.connectedAt, a.refused = true, welcome.GatewayID, a.now(), ""
 	a.push = func() { _ = heartbeat() }
 	a.eventLocked("connected", welcome.GatewayID)
 	paused := a.ps.Paused
@@ -346,6 +372,12 @@ func (a *Agent) session(ctx context.Context) error {
 		}
 	}
 }
+
+// RefusedError: the gateway does not accept this agent's protocol version. Reason is the
+// gateway's text for the volunteer (untrusted; shown as text only).
+type RefusedError struct{ Reason string }
+
+func (e *RefusedError) Error() string { return "refused by the gateway: " + e.Reason }
 
 // errCancelled is the cause of a request the gateway cancelled.
 var errCancelled = errors.New("cancelled")

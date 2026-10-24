@@ -335,8 +335,9 @@ func (g *Gateway) accountData(id string) pageData {
 	now := time.Now()
 	for _, n := range a.Nodes {
 		c := g.credit.node(n.ID)
+		version, proto := g.nodeVersion(id, n.ID)
 		d.Nodes = append(d.Nodes, nodeRow{ID: n.ID, Name: n.Name, Created: n.Created, Status: g.nodeStatus(id, n.ID),
-			Version: g.nodeVersion(id, n.ID), CreditToday: fmtCredit(c.TodayAt(now)), CreditTotal: fmtCredit(c.total())})
+			Version: version, Protocol: proto, CreditToday: fmtCredit(c.TodayAt(now)), CreditTotal: fmtCredit(c.total())})
 	}
 	if c := g.credit.account(id); c != nil {
 		d.CreditToday, d.CreditTotal, d.CreditRAC = fmtCredit(c.TodayAt(now)), fmtCredit(c.Total), fmtCredit(c.RAC(now))
@@ -502,6 +503,7 @@ type pageData struct {
 type nodeRow struct {
 	ID, Name, Status         string
 	Version                  string // the node software's version while it is connected, "" otherwise
+	Protocol                 int    // the protocol version it speaks while connected, 0 otherwise
 	Created                  time.Time
 	CreditToday, CreditTotal string
 }
@@ -635,7 +637,7 @@ and only after a probation of {{.Probation}}{{end}}.</p>
 (recent average {{.CreditRAC}} a day). <a href="/node/credit/">How credit works</a>.</p>{{end}}
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th>Version</th><th class="num">Credit today</th><th class="num">Credit total</th><th>Created</th><th></th></tr>
 {{range .Nodes}}<tr><td>{{if .Name}}{{.Name}}<br>{{end}}<code>{{.ID}}</code></td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
-<td class="mut">{{if .Version}}<code>{{.Version}}</code>{{else}}–{{end}}</td>
+<td class="mut">{{if .Version}}<code>{{.Version}}</code>{{else if .Protocol}}unknown{{else}}–{{end}}{{if .Protocol}}<br>protocol {{.Protocol}}{{end}}</td>
 <td class="num">{{.CreditToday}}</td><td class="num">{{.CreditTotal}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/nodes/revoke"><input type="hidden" name="id" value="{{.ID}}">
 <button class="btn danger">Revoke</button></form></td></tr>{{end}}</table></div>

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // Gateway routes user requests to connected nodes.
@@ -78,6 +80,16 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	if cfg.DefaultMaxTokens == 0 {
 		cfg.DefaultMaxTokens = 16384
+	}
+	if cfg.NodeProtocolMax == 0 {
+		cfg.NodeProtocolMax = protocol.Version
+	}
+	if cfg.NodeProtocolMin == 0 {
+		cfg.NodeProtocolMin = max(protocol.Unversioned, protocol.Version-1)
+	}
+	if cfg.NodeProtocolMin < protocol.Unversioned || cfg.NodeProtocolMin > cfg.NodeProtocolMax || cfg.NodeProtocolMax > protocol.Version {
+		return nil, fmt.Errorf("node_protocol_min %d and node_protocol_max %d: need %d <= min <= max <= %d (this gateway's protocol version)",
+			cfg.NodeProtocolMin, cfg.NodeProtocolMax, protocol.Unversioned, protocol.Version)
 	}
 	if cfg.MaxMaxTokens == 0 {
 		cfg.MaxMaxTokens = 32768

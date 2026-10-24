@@ -7,6 +7,19 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+### Added
+
+- **Protocol versions between node and gateway.** A node says which protocol version it speaks
+  when it connects; nodes up to v0.3.0 send none and count as version 1. The gateway accepts
+  its own version and the one before it (`node_protocol_min`, `node_protocol_max`), so the
+  current and the previous node release keep working, logs each node's version and shows it on
+  the account page, and refuses other versions with a message that says what to do.
+  (gateway, live since YYYY-MM-DD)
+- **The node agent speaks protocol version 2.** If a gateway refuses its version, the agent
+  shows the gateway's reason in its local UI and in `aisathome-node status`, and tries again
+  after 10 minutes instead of every few seconds. It still connects to gateways from before
+  protocol versions. (node)
+
 ## [v0.3.0] — 2026-10-24
 
 One model for every node, 16 GB cards can join, and the network starts doing science.
