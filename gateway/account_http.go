@@ -332,7 +332,7 @@ func (g *Gateway) accountData(id string) pageData {
 	used := g.budget.used1("acct:"+id, time.Now())
 	d := pageData{SignedIn: true, Account: a, Position: pos, API: g.acfg.PublicURL,
 		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq),
-		NodeOnce: g.nodeFormToken(id, a.NodeSeq)}
+		NodeOnce: g.nodeFormToken(id, a.NodeSeq), Admin: slices.Contains(g.acfg.Admins, id) && g.accounts.active(id)}
 	now := time.Now()
 	for _, n := range a.Nodes {
 		c := g.credit.node(n.ID)
@@ -476,6 +476,7 @@ type pageData struct {
 	Email    bool
 	Separate string // "GitHub, Google and email" when more than one way is on offer
 	SignedIn bool
+	Admin    bool // the account is one of accounts.admins: the page links to /account/ops
 	Next     bool
 	Account  Account
 	Position int
@@ -612,6 +613,7 @@ appears; come back to this page to check.</p></div>
 <h1>Your account</h1>
 <div class="card"><p><a class="btn" href="{{.ChatURL}}">Open the chat</a></p>
 <p class="mut">Today: {{.Used}}{{if .Budget}} of {{.Budget}}{{end}} tokens (resets 00:00 UTC; chat and API share it).</p></div>
+{{if .Admin}}<div class="card" id="ops"><h2>Operations</h2><p><a href="/account/ops">Operations page</a>: the runner, its tasks, the nodes and health warnings (admins only).</p></div>{{end}}
 <div class="card" id="keys"><h2>API keys</h2>
 {{if .Account.Keys}}<div class="table-wrap"><table>{{range .Account.Keys}}<tr><td><code>{{.Prefix}}…</code>{{if not .Agents}} <span class="mut small">tools: your own nodes only</span>{{end}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/keys/revoke"><input type="hidden" name="prefix" value="{{.Prefix}}">
