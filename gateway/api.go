@@ -58,6 +58,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/node/connect", g.handleNodeConnect)
 	mux.HandleFunc("GET /v1/stats", g.handleStats)
 	mux.HandleFunc("GET /v1/stats/credit", g.handleCreditStats)
+	mux.HandleFunc("GET /v1/stats/history", g.handleHistory)
 	mux.HandleFunc("GET /stats/{$}", handleExportIndex)
 	mux.HandleFunc("GET /stats/{file}", g.handleExport)
 	if g.accounts != nil {
@@ -88,6 +89,11 @@ func (g *Gateway) user(r *http.Request) (string, bool) {
 // the same everywhere.
 func (g *Gateway) authenticate(r *http.Request) (info KeyInfo, accountID string, ok bool) {
 	key := bearer(r)
+	if p := g.project(key); p != nil { // a science project's key (project.go)
+		info = p.info()
+		info.Project = p.ID
+		return info, "", true
+	}
 	if info, ok = g.keys.Load().Lookup(r.Context(), key); ok {
 		if info.ForwardUsers && r.Context().Value(frontendCtx{}) == nil {
 			return KeyInfo{}, "", false // front-end keys work only on the private listener
@@ -174,6 +180,18 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	// accounts arrive as gh-<id>@users.invalid, google-<sub>@users.invalid or
 	// em-<hex>@users.invalid and share one budget with their API keys.
 	acct, userKey, reqAcct := info, key, accountID // reqAcct: the account behind the request, API key or chat
+	// The workload class (project.go): the chat front end's users, people's own API keys, or
+	// a science project.
+	class, proj := ClassAgent, (*Project)(nil)
+	if info.Project != "" {
+		if proj = g.projects.Load().byID[info.Project]; proj == nil { // removed by a reload just now
+			apiError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+		class, userKey = ClassScience, projectUser(proj.ID) // one budget for all its keys
+	} else if info.ForwardUsers {
+		class = ClassChat
+	}
 	if accountID != "" {
 		userKey = "acct:" + accountID
 	} else if info.ForwardUsers {
@@ -190,7 +208,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	charge := []string{key}
 	limits := []keyLimit{{key, info}}
-	if accountID != "" { // an account key: limits and budget belong to the account
+	if accountID != "" || proj != nil { // an account's or a project's key: limits and budget belong to it
 		charge, limits[0].k = []string{userKey}, userKey
 	} else if userKey != key {
 		// Only the end user is charged: a node inflating usage must not drain the shared
@@ -270,6 +288,14 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Privacy: personal data goes only to trusted nodes (and the requester's own); secrets
 	// never reach a node at all (replaced by placeholders, restored in the answer).
 	rt := g.routeFor(want, body, acct, reqAcct, acct.VolunteerAgents && !info.ForwardUsers)
+	rt.class = class
+	queueWait := g.cfg.QueueTimeoutSec
+	if proj != nil {
+		rt.project, rt.share = proj.ID, proj.MaxNodeShare
+		if proj.QueueTimeoutSec > 0 {
+			queueWait = proj.QueueTimeoutSec
+		}
+	}
 	if overWait > 0 {
 		rt.onlySelf = true
 		if g.servesFor(rt) == 0 {
@@ -297,8 +323,8 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	rt.who, rt.conv = keyHash(userKey), conv.hashes
 	req := &chatReq{user: acct.User, who: userKey, charge: charge, self: rt.self, want: want,
 		clientStream: clientStream, body: body, red: red, conv: conv,
-		servedBy: g.servedBy(info, accountID)}
-	deadline := time.Now().Add(time.Duration(g.cfg.QueueTimeoutSec) * time.Second)
+		servedBy: g.servedBy(info, accountID), class: class, project: rt.project}
+	deadline := time.Now().Add(time.Duration(queueWait) * time.Second)
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)
 		if n == nil {

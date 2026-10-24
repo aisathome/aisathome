@@ -1,5 +1,6 @@
 // Command aisathome-gateway runs an AIs@home project gateway. "aisathome-gateway keys"
-// manages per-user API keys in the keys file.
+// manages per-user API keys in the keys file; "aisathome-gateway project-key" makes a key for
+// a science project.
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -29,6 +30,13 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "keys" { // operator tool, not the server
 		if err := runKeys(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "project-key" { // operator tool, not the server
+		if err := runProjectKey(os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}

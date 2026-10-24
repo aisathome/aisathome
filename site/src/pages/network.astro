@@ -1,7 +1,8 @@
 ---
-// The network page: the live strip and the credit leaderboard. Both read the gateway's public
-// statistics (same origin: /v1/stats and /v1/stats/credit) and stay hidden until real numbers
-// arrive; on any failure they hide again: never dashes, zeros-by-default or error text.
+// The network page: the live strip, the daily history and the credit leaderboard. All read the
+// gateway's public statistics (same origin: /v1/stats, /v1/stats/history and /v1/stats/credit)
+// and stay hidden until real numbers arrive; on any failure they hide again: never dashes,
+// zeros-by-default or error text. A history chart needs at least two days with its numbers.
 // Names come only from volunteers who set a username (their consent to appear); they are
 // written with textContent, never as HTML.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
@@ -21,6 +22,53 @@ import LiveStats from '../components/LiveStats.astro';
 	</p>
 
 	<LiveStats class="net-live" />
+
+	<section class="history not-content" data-history hidden aria-labelledby="history-title">
+		<h2 id="history-title">Day by day</h2>
+		<p class="history-note">Per UTC day<span data-history-range></span>; today so far.</p>
+		<figure class="chart" data-chart="requests" hidden>
+			<figcaption>Requests a day</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch" style="background: var(--h-chat)"></span>Chat</li>
+				<li><span class="swatch" style="background: var(--h-agent)"></span>API and agents</li>
+				<li><span class="swatch" style="background: var(--h-science)"></span>Science</li>
+				<li data-legend-earlier hidden><span class="swatch" style="background: var(--h-other)"></span>Before classes were counted</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-chart="tokens" hidden>
+			<figcaption>Tokens a day (prompt and answer)</figcaption>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-chart="nodes" hidden>
+			<figcaption>Nodes online</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-peak)"></span>Peak</li>
+				<li><span class="swatch line" style="background: var(--h-avg)"></span>Average</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<details class="history-table">
+			<summary>The numbers</summary>
+			<div class="board-wrap">
+				<table>
+					<thead>
+						<tr>
+							<th scope="col">Day (UTC)</th>
+							<th scope="col" class="num">Requests</th>
+							<th scope="col" class="num">Chat</th>
+							<th scope="col" class="num">API and agents</th>
+							<th scope="col" class="num">Science</th>
+							<th scope="col" class="num">Tokens</th>
+							<th scope="col" class="num">Nodes peak</th>
+							<th scope="col" class="num">Nodes average</th>
+						</tr>
+					</thead>
+					<tbody data-history-rows></tbody>
+				</table>
+			</div>
+		</details>
+	</section>
 
 	<section class="board not-content" data-credit-board hidden aria-labelledby="board-title">
 		<dl class="board-sums">
@@ -59,6 +107,167 @@ import LiveStats from '../components/LiveStats.astro';
 		only. There are no cross-project ids (CPIDs) yet, so Gridcoin cannot use it.
 	</p>
 </StarlightPage>
+
+<script is:inline>
+	(() => {
+		// Daily history: three small charts (inline SVG) and a table, from /v1/stats/history.
+		const box = document.querySelector('[data-history]');
+		if (!box || !window.fetch) return;
+		const SHOW = 90; // days on the charts; the table has the same days
+		const H = 200, L = 44, R = 8, T = 10, B = 24; // plot area inside the viewBox; its width is the chart's own
+		let W = 640;
+		const NS = 'http://www.w3.org/2000/svg';
+		const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+		const full = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
+		const ok = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+		const hide = () => (box.hidden = true);
+		const el = (name, attrs, parent) => {
+			const e = document.createElementNS(NS, name);
+			for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+			if (parent) parent.append(e);
+			return e;
+		};
+		const title = (parent, text) => (el('title', {}, parent).textContent = text);
+		const nice = (max) => { // a round top for the axis, just above the highest value
+			if (max <= 0) return 1;
+			const p = 10 ** Math.floor(Math.log10(max));
+			return [1, 1.5, 2, 3, 4, 5, 6, 8, 10].map((m) => m * p).find((v) => v >= max);
+		};
+		// Axes: gridlines at 0, half and the top, the first and last day under the plot.
+		const frame = (svg, days, top, label) => {
+			svg.replaceChildren();
+			W = Math.max(Math.round(svg.getBoundingClientRect().width), 240); // drawn at its size: text is never stretched
+			svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+			svg.setAttribute('aria-label', label);
+			for (const f of [0, 0.5, 1]) {
+				const y = T + (H - T - B) * (1 - f);
+				el('line', { x1: L, x2: W - R, y1: y, y2: y, class: f ? 'grid' : 'base' }, svg);
+				el('text', { x: L - 6, y: y + 4, class: 'tick', 'text-anchor': 'end' }, svg).textContent = compact.format(top * f);
+			}
+			el('text', { x: L, y: H - 6, class: 'tick' }, svg).textContent = days[0].date;
+			el('text', { x: W - R, y: H - 6, class: 'tick', 'text-anchor': 'end' }, svg).textContent = days[days.length - 1].date;
+		};
+		const yOf = (v, top) => T + (H - T - B) * (1 - v / top);
+		// Bars: one per day, stacked by series bottom to top, 2px apart.
+		const bars = (fig, days, series, label) => {
+			const svg = fig.querySelector('svg');
+			const totals = days.map((d) => series.reduce((s, k) => s + d.parts[k], 0));
+			const top = nice(Math.max(...totals));
+			frame(svg, days, top, label);
+			const step = (W - L - R) / days.length, w = Math.max(step - 2, 1);
+			days.forEach((d, i) => {
+				const g = el('g', { class: 'day' }, svg);
+				let base = 0;
+				for (const k of series) {
+					const v = d.parts[k];
+					if (v <= 0) continue;
+					const y0 = yOf(base, top), y1 = yOf(base + v, top);
+					el('rect', { x: L + i * step + 1, y: y1, width: w, height: Math.max(y0 - y1 - (base > 0 ? 1 : 0), 0.5), class: 'bar s-' + k }, g);
+					base += v;
+				}
+				el('rect', { x: L + i * step, y: T, width: step, height: H - T - B, class: 'hit' }, g); // a hover target the height of the plot
+				title(g, d.tip);
+			});
+		};
+		const lines = (fig, days, series, label) => {
+			const svg = fig.querySelector('svg');
+			const top = nice(Math.max(...days.flatMap((d) => series.map((k) => d.parts[k]))));
+			frame(svg, days, top, label);
+			const step = (W - L - R) / days.length;
+			const x = (i) => L + step * (i + 0.5);
+			for (const k of series) {
+				el('polyline', { points: days.map((d, i) => `${x(i)},${yOf(d.parts[k], top)}`).join(' '), class: 'line s-' + k }, svg);
+			}
+			days.forEach((d, i) => {
+				const g = el('g', { class: 'day' }, svg);
+				for (const k of series) el('circle', { cx: x(i), cy: yOf(d.parts[k], top), r: 4, class: 'dot s-' + k }, g);
+				el('rect', { x: L + i * step, y: T, width: step, height: H - T - B, class: 'hit' }, g);
+				title(g, d.tip);
+			});
+		};
+		const show = (name, on) => (box.querySelector(`[data-chart="${name}"]`).hidden = !on);
+		let last = null; // the last good answer, redrawn when the width changes
+		const load = async () => {
+			try {
+				const ctl = new AbortController();
+				const timer = setTimeout(() => ctl.abort(), 8000);
+				const res = await fetch('/v1/stats/history', { signal: ctl.signal, headers: { accept: 'application/json' } });
+				clearTimeout(timer);
+				if (!res.ok) return hide();
+				draw(await res.json());
+			} catch {
+				hide();
+			}
+		};
+		const draw = (d) => {
+			try {
+				if (!Array.isArray(d?.days)) return hide();
+				const days = d.days
+					.filter((x) => typeof x?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x.date) &&
+						[x.requests, x.prompt_tokens, x.completion_tokens].every(ok))
+					.slice(-SHOW);
+				const cls = (x, k) => (ok(x.classes?.[k]?.requests) ? x.classes[k].requests : 0);
+				const req = days.map((x) => {
+					const parts = { chat: cls(x, 'chat'), agent: cls(x, 'agent'), science: cls(x, 'science') };
+					parts.other = Math.max(x.requests - parts.chat - parts.agent - parts.science, 0);
+					const tip = `${x.date}: ${full.format(x.requests)} requests` + (x.classes ? ` (chat ${full.format(parts.chat)}, API and agents ${full.format(parts.agent)}, science ${full.format(parts.science)})` : '');
+					return { date: x.date, parts, tip };
+				});
+				const tok = days.map((x) => {
+					const n = x.prompt_tokens + x.completion_tokens;
+					return { date: x.date, parts: { all: n }, tip: `${x.date}: ${full.format(n)} tokens` };
+				});
+				const nodes = days.filter((x) => ok(x.nodes_peak) && ok(x.nodes_avg)).map((x) => ({
+					date: x.date, parts: { peak: x.nodes_peak, avg: x.nodes_avg },
+					tip: `${x.date}: peak ${full.format(x.nodes_peak)}, average ${full.format(x.nodes_avg)} nodes online`,
+				}));
+				const range = (xs) => `${xs.length} days, ${xs[0].date} to ${xs[xs.length - 1].date}`;
+				const hasReq = req.length >= 2 && req.some((x) => x.parts.chat + x.parts.agent + x.parts.science + x.parts.other > 0);
+				const hasTok = tok.length >= 2 && tok.some((x) => x.parts.all > 0);
+				const hasNodes = nodes.length >= 2;
+				if (!hasReq && !hasTok && !hasNodes) return hide();
+				box.hidden = false; // shown before drawing: the charts are drawn at their width
+				show('requests', hasReq);
+				show('tokens', hasTok);
+				show('nodes', hasNodes);
+				if (hasReq) {
+					bars(box.querySelector('[data-chart="requests"]'), req, ['other', 'chat', 'agent', 'science'], `Requests a day, ${range(req)}`);
+					box.querySelector('[data-legend-earlier]').hidden = !req.some((x) => x.parts.other > 0);
+				}
+				if (hasTok) bars(box.querySelector('[data-chart="tokens"]'), tok, ['all'], `Tokens a day, ${range(tok)}`);
+				if (hasNodes) lines(box.querySelector('[data-chart="nodes"]'), nodes, ['peak', 'avg'], `Nodes online, peak and average, ${range(nodes)}`);
+				box.querySelector('[data-history-range]').textContent = `, the last ${range(days)}`;
+				const cell = (v) => (ok(v) ? full.format(v) : '');
+				box.querySelector('[data-history-rows]').replaceChildren(
+					...days.slice().reverse().map((x, i) => {
+						const tr = document.createElement('tr');
+						const r = req[days.length - 1 - i].parts;
+						const vals = [x.date, x.requests, x.classes ? r.chat : null, x.classes ? r.agent : null, x.classes ? r.science : null,
+							x.prompt_tokens + x.completion_tokens, x.nodes_peak, x.nodes_avg];
+						vals.forEach((v, j) => {
+							const td = document.createElement(j === 0 ? 'th' : 'td');
+							if (j === 0) td.scope = 'row';
+							else td.className = 'num';
+							td.textContent = j === 0 ? v : cell(v);
+							tr.append(td);
+						});
+						return tr;
+					}),
+				);
+				last = d;
+			} catch {
+				hide();
+			}
+		};
+		load();
+		setInterval(() => document.visibilityState === 'visible' && load(), 300000);
+		let resized;
+		window.addEventListener('resize', () => {
+			clearTimeout(resized);
+			resized = setTimeout(() => last && draw(last), 200);
+		});
+	})();
+</script>
 
 <script is:inline>
 	(() => {
@@ -120,6 +329,49 @@ import LiveStats from '../components/LiveStats.astro';
 </script>
 
 <style>
+	.history[hidden], .history .chart[hidden], .history [data-legend-earlier][hidden] { display: none !important; }
+	/* Series colours: the data-viz reference palette (blue, orange, aqua), validated for both
+	   themes; "before classes were counted" is a neutral, not a fourth hue. */
+	.history {
+		--h-chat: #3987e5; --h-agent: #d95926; --h-science: #199e70; --h-other: #8a7d70;
+		--h-peak: #3987e5; --h-avg: #d95926;
+		margin-block: 2rem;
+	}
+	:global(:root[data-theme='light']) .history {
+		--h-chat: #2a78d6; --h-agent: #eb6834; --h-science: #1baf7a; --h-other: #a99d91;
+		--h-peak: #2a78d6; --h-avg: #eb6834;
+	}
+	.history h2 { font-family: var(--font-display); text-transform: uppercase; color: var(--sl-color-white); margin: 0 0 0.25rem; }
+	.history-note { margin: 0 0 1rem; font-size: 0.9rem; color: var(--sl-color-gray-3); }
+	.chart { margin: 0 0 1.5rem; }
+	.chart figcaption { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); margin-bottom: 0.4rem; }
+	.chart svg { display: block; width: 100%; height: 12rem; overflow: visible; }
+	.legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0 0 0.5rem; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.legend li { display: flex; align-items: center; gap: 0.4rem; margin: 0; }
+	.swatch { width: 0.75rem; height: 0.75rem; border-radius: 2px; }
+	.swatch.line { height: 2px; width: 1rem; }
+	.chart :global(.grid) { stroke: var(--sl-color-gray-5); stroke-width: 1; vector-effect: non-scaling-stroke; }
+	.chart :global(.base) { stroke: var(--sl-color-gray-4); stroke-width: 1; vector-effect: non-scaling-stroke; }
+	.chart :global(.tick) { fill: var(--sl-color-gray-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+	.chart :global(.s-chat) { fill: var(--h-chat); }
+	.chart :global(.s-agent) { fill: var(--h-agent); }
+	.chart :global(.s-science) { fill: var(--h-science); }
+	.chart :global(.s-other) { fill: var(--h-other); }
+	.chart :global(.s-all) { fill: var(--h-chat); }
+	.chart :global(.line) { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+	.chart :global(.line.s-peak) { stroke: var(--h-peak); }
+	.chart :global(.line.s-avg) { stroke: var(--h-avg); }
+	.chart :global(.dot) { stroke: var(--sl-color-black); stroke-width: 2; vector-effect: non-scaling-stroke; opacity: 0; }
+	.chart :global(.dot.s-peak) { fill: var(--h-peak); }
+	.chart :global(.dot.s-avg) { fill: var(--h-avg); }
+	.chart :global(.hit) { fill: transparent; }
+	.chart :global(.day:hover .bar) { opacity: 0.8; }
+	.chart :global(.day:hover .dot) { opacity: 1; }
+	.history-table summary { cursor: pointer; font-size: 0.9rem; color: var(--sl-color-gray-2); }
+	.history-table table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 0.5rem; }
+	.history-table :global(:is(th, td)) { padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; white-space: nowrap; }
+	.history-table thead th { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.history-table :global(.num) { text-align: right; font-variant-numeric: tabular-nums; }
 	.board[hidden] { display: none !important; }
 	:global(.net-live) {
 		display: flex;

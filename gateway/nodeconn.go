@@ -41,7 +41,8 @@ type nodeConn struct {
 	wmu      sync.Mutex // serialises writes
 	mu       sync.Mutex
 	pending  map[string]*pendingReq
-	inflight int // slots reserved by pick, freed once the node is finished with the request (relay.free); guarded by mu
+	inflight int            // slots reserved by pick, freed once the node is finished with the request (relay.free); guarded by mu
+	projects map[string]int // of inflight, the science projects' requests (share cap); guarded by mu
 	active   int
 	paused   bool // from the last heartbeat: take no new requests; guarded by mu
 	lastSeen time.Time

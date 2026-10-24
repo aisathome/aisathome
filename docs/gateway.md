@@ -8,7 +8,7 @@ Config fields beyond the example (`examples/gateway.json`):
 
 | Field | What |
 |---|---|
-| `state_dir` | Directory for state that survives restarts (daily token budgets and the credit ledger `credit.json`, saved every 5 s and on shutdown). Without it a restart gives every key a fresh day and forgets credit. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
+| `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown). Without it a restart gives every key a fresh day and forgets credit. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
 | `tokenizer_file`, `tokenizer_sha256` | The model's `tokenizer.json`, so the gateway counts tokens for credit itself (see [credit.md](credit.md)); the gateway refuses to start if the file does not match the SHA-256. |
 | `keys_file` | Per-user API keys, managed with `aisathome-gateway keys` (use absolute paths: relative ones resolve from the working directory). The gateway rereads it every 2 s, so no restart or reload is needed. |
 
@@ -47,6 +47,70 @@ the operator's own accounts: it also makes them admins in the chat. A key in `ap
 
 Every attempt is also logged, for every key, as `msg="chat request" req=<request id>
 node=<node id> ok=<true|false>` (no user, no content); a failover shows as two lines.
+
+## Workload classes and science projects
+
+Every chat request has a **class**: `chat` (people in the chat front end, through a
+`forward_users` key), `agent` (people's own API keys: config keys, keys-file keys and accounts'
+keys) or `science` (a project's key, below). When nodes are busy, waiting requests are served
+in that order: chat, then agent, then science. A request never takes a node that a waiting
+request of a higher class could use, so a science request never delays a person's; within a
+class the order is as before. Running requests are never stopped for a higher class. Science
+requests wait in their own queue, so they never fill the queue of people's requests
+(`max_queued` applies to each). The usage log records `class` (and `project`) for each request.
+
+A **project** is a workload the operator runs (decision 0011; TauCeti first), for example an
+agent runner. It exists only in the config, has its own keys, its own daily quota instead of
+an account's budget, the lowest priority, and a cap on its share of the nodes:
+
+```json
+"projects": [{
+  "id": "tauceti",
+  "key_sha256": ["<64 hex characters>"],
+  "daily_tokens": 0,
+  "max_node_share": 0.7,
+  "agent_ok": true,
+  "queue_timeout_seconds": 300
+}]
+```
+
+| Field | What |
+|---|---|
+| `id` | Lower-case letters, digits and dashes. It is public: `/v1/stats` counts requests, tokens and node time per project. |
+| `key_sha256` | SHA-256 (hex) of each of the project's keys. Keys are never in the config. |
+| `daily_tokens` | The project's budget in weighted tokens per UTC day, shared by all its keys; `0` = no limit. Accounts' budgets never apply to it. Over it, requests get 429 with `Retry-After`. |
+| `max_node_share` | At most this share of the nodes that may serve a request work for the project at once (rounded down, at least one node, so a small network still does science when people leave it idle); `0` = no cap. |
+| `agent_ok` | The project's requests with tools (agents) may go to volunteer nodes past their probation, as an account key with consent may; without it they go to trusted nodes only. Requests that look like personal data still go only to trusted nodes, and secrets are redacted, as for everyone. |
+| `min_trust` | `"trusted"` keeps all its requests on trusted nodes. |
+| `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
+| `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
+
+Make a key with:
+
+```bash
+aisathome-gateway project-key /path/to/tauceti.key   # writes the key (mode 600), prints its SHA-256
+```
+
+The key goes only into the file (an existing file is never overwritten); put the printed hash
+into `key_sha256` and give the file to the project's runner. Project keys are the operator's:
+their answers carry the served-by headers (above). Projects are read at start and on SIGHUP;
+removing a hash revokes the key. A config with an invalid project does not start (on SIGHUP the
+old config stays).
+
+## Public statistics
+
+Without authentication, for the website (aggregates only: never users, keys, nodes or
+operators):
+
+- `GET /v1/stats`: nodes online, slots, busy and paused now; today's (UTC) requests and tokens,
+  in all, per class (`today.classes`) and per project (`today.projects`, with `node_seconds`);
+  totals since the usage log began (`total`, with `total.projects`).
+- `GET /v1/stats/history`: one entry per UTC day (oldest first, at most 400 days, today
+  included so far): `requests`, `completed`, `prompt_tokens`, `completion_tokens`, `classes`
+  (per class: `requests` and tokens), and `nodes_peak` / `nodes_avg` (nodes online, sampled
+  every minute; missing for days before the gateway kept samples). Kept in
+  `state_dir/history.json`; on start the days the usage log still covers are recounted from it.
+- `GET /v1/stats/credit` and `/stats/`: credit (see [credit.md](credit.md)).
 
 ## A chat front end (Open WebUI)
 

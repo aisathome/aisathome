@@ -59,6 +59,12 @@ type Config struct {
 	TokenizerSHA256 string `json:"tokenizer_sha256"`
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
+	// Projects are operator-run workloads (science, decision 0011) with their own keys, quota
+	// and the lowest priority (project.go).
+	Projects []Project `json:"projects,omitempty"`
+	// HistorySample, if set, replaces how often the number of nodes online is sampled for the
+	// daily history (a minute). For tests.
+	HistorySample time.Duration `json:"-"`
 	// StatsRefresh, if set, replaces how often the leaderboard (a minute) and the BOINC-format
 	// exports (an hour) are rebuilt. For tests.
 	StatsRefresh time.Duration `json:"-"`

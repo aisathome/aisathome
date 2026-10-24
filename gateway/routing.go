@@ -67,6 +67,90 @@ type route struct {
 	// the rendered conversation. Empty: no preference.
 	who  string
 	conv []uint64
+	// Priority (project.go): the workload class, and for science the project and its cap on
+	// the share of nodes.
+	class   string
+	project string
+	share   float64
+}
+
+// usable reports whether n could serve rt now if it had a free slot: allowed, not paused,
+// offering the model with at least threshold context (needMin: the request's smallest; the
+// placement uses thresholdLocked). Caller holds g.mu.
+func (rt *route) usable(n *nodeConn, now time.Time, threshold int) bool {
+	if !rt.allows(n, now) {
+		return false
+	}
+	n.mu.Lock()
+	paused := n.paused
+	n.mu.Unlock()
+	if paused {
+		return false
+	}
+	for _, m := range n.models {
+		if serves(m, rt.want) && fits(m, threshold) {
+			return true
+		}
+	}
+	return false
+}
+
+// yieldsLocked returns whether rt must leave n to a request of a higher class that is looking
+// for a node now (registered by pickWait) and could use it: a lower class never takes a node
+// that a waiting higher class could have. "Could use" is judged at the waiting request's own
+// placement threshold (thresholdLocked): a chat that waits for a node with its full context
+// does not hold back a smaller node it would not take. Caller holds g.mu.
+func (g *Gateway) yieldsLocked(rt *route, now time.Time) func(*nodeConn) bool {
+	rank := classRank(rt.class)
+	type waiter struct {
+		rt        *route
+		threshold int
+	}
+	var higher []waiter
+	for w := range g.waiting {
+		if classRank(w.class) > rank {
+			higher = append(higher, waiter{w, g.thresholdLocked(w, now)})
+		}
+	}
+	if len(higher) == 0 {
+		return func(*nodeConn) bool { return false }
+	}
+	return func(n *nodeConn) bool {
+		for _, w := range higher {
+			if w.rt.usable(n, now, w.threshold) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// shareOKLocked returns whether a science request may take n under its project's cap on the
+// share of nodes: a node already serving the project adds nothing; another one only while the
+// project occupies fewer than its cap of the nodes that may serve the request. Caller holds g.mu.
+func (g *Gateway) shareOKLocked(rt *route, now time.Time) func(*nodeConn) bool {
+	if rt.project == "" || rt.share <= 0 || rt.share >= 1 {
+		return func(*nodeConn) bool { return true }
+	}
+	pool, mine := 0, 0
+	for _, n := range g.node {
+		busy := n.projectLoad(rt.project) > 0
+		if busy {
+			mine++ // counted even if the route no longer allows it (excluded after a failure)
+		}
+		if busy || rt.usable(n, now, rt.needMin) {
+			pool++
+		}
+	}
+	limit := shareCap(rt.share, pool)
+	return func(n *nodeConn) bool { return n.projectLoad(rt.project) > 0 || mine < limit }
+}
+
+// projectLoad is the number of the project's requests on n.
+func (n *nodeConn) projectLoad(project string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.projects[project]
 }
 
 // allows reports whether n may see the request, ignoring context and free slots. Caller
@@ -165,6 +249,12 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 			free := n.inflight < m.Slots && !n.paused // the volunteer paused it
 			if free {
 				n.inflight++
+				if rt.project != "" { // freed with the slot (relay.free)
+					if n.projects == nil {
+						n.projects = map[string]int{}
+					}
+					n.projects[rt.project]++
+				}
 			}
 			n.mu.Unlock()
 			if free {
@@ -173,8 +263,11 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 		}
 		return "", false
 	}
+	yields, shareOK := g.yieldsLocked(rt, now), g.shareOKLocked(rt, now)
 	try := func(ok func(*nodeConn) bool) (*nodeConn, string) {
-		allowed := func(n *nodeConn) bool { return rt.allows(n, now) && (ok == nil || ok(n)) }
+		allowed := func(n *nodeConn) bool {
+			return rt.allows(n, now) && !yields(n) && shareOK(n) && (ok == nil || ok(n))
+		}
 		for _, n := range sticky {
 			if !allowed(n) {
 				continue
@@ -261,11 +354,32 @@ const (
 
 // pickWait is pick, but waits until deadline for capacity: a free slot, or a node serving a
 // recently seen model (re)connecting. Unknown models fail at once.
+//
+// While it looks for a node, the request is registered for priority: requests of lower
+// classes leave it every node it could use (yieldsLocked). Science waits in its own queue, so
+// it never fills the queue of people's requests.
 func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (*nodeConn, string, string) {
+	queue := &g.queued
+	if rt.class == ClassScience {
+		queue = &g.queuedSc
+	}
+	g.mu.Lock()
+	g.waiting[rt] = struct{}{}
+	g.mu.Unlock()
 	waiting := false
 	defer func() {
 		if waiting {
-			g.queued.Add(-1)
+			queue.Add(-1)
+		}
+		g.mu.Lock()
+		delete(g.waiting, rt)
+		lower := false // a lower class may have left a node to this request: let it look again
+		for w := range g.waiting {
+			lower = lower || classRank(w.class) < classRank(rt.class)
+		}
+		g.mu.Unlock()
+		if lower {
+			g.signal()
 		}
 	}()
 	for {
@@ -296,8 +410,8 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 			return nil, "", timedOut
 		}
 		if !waiting {
-			if int(g.queued.Add(1)) > g.cfg.MaxQueued {
-				g.queued.Add(-1)
+			if int(queue.Add(1)) > g.cfg.MaxQueued {
+				queue.Add(-1)
 				return nil, "", queueFull
 			}
 			waiting = true

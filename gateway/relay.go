@@ -28,6 +28,8 @@ type chatReq struct {
 	want         string         // the model or role the client asked for
 	clientStream bool           // the client asked for a stream (nodes always stream)
 	servedBy     bool           // an operator key: the answer names the node that served it (KeyInfo.ServedBy)
+	class        string         // workload class: chat, agent or science (project.go)
+	project      string         // the science project, or ""
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
@@ -106,6 +108,9 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	rl.free = sync.OnceFunc(func() {
 		n.mu.Lock()
 		n.inflight--
+		if req.project != "" {
+			n.projects[req.project]--
+		}
 		n.mu.Unlock()
 		g.signal() // a slot is free again
 	})
@@ -270,7 +275,7 @@ func (rl *relay) meter(outcome string, u protocol.Usage, estimated bool) *usageR
 	rec := &usageRecord{Time: time.Now().UTC(), User: req.user, Node: n.id, Operator: n.operator,
 		Model: rl.model, Requested: req.want, Usage: u, ReqID: rl.reqID, Outcome: outcome, Relayed: rl.relayed,
 		Estimated: estimated, Clamped: clamped, SelfServed: req.self != "" && n.operator == req.self, Guard: rl.flag,
-		Tools: hasTools(req.body)}
+		Tools: hasTools(req.body), Class: req.class, Project: req.project}
 	rl.g.meterRecord(rec, rl.mt, &rl.sent, n, req.who, u, rl.maxTokens, rec.Time)
 	return rec
 }
@@ -290,6 +295,7 @@ func (rl *relay) commit(rec *usageRecord) {
 	}
 	g.use.record(*rec)
 	g.stats.add(*rec) // clamped numbers: a node cannot inflate the public statistics either
+	g.hist.add(*rec)
 	if rec.Outcome == outcomeBlocked || rec.SelfServed {
 		return // the user never got the answer, or it came from the account's own node
 	}

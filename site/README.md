@@ -19,7 +19,8 @@ theme (fonts, accent, grays) that both Tailwind and Starlight read. Web fonts ar
 from `@fontsource-variable/*` packages; nothing loads from a CDN. `/design/a|b|c/` are
 home-page design previews (noindex) sharing copy from `src/data/home.ts`; the live network
 strip (`src/components/LiveStats.astro`) reads the gateway's public `/v1/stats` and stays
-hidden when that fails.
+hidden when that fails. The network page's daily charts (`src/pages/network.astro`) read
+`/v1/stats/history` and stay hidden the same way, and until there are two days with numbers.
 
 Dev log (`/devlog/`, feed `/devlog/rss.xml`, the newest two also on the home page): one
 Markdown file per post in `src/content/devlog/`, named `<number>-<slug from the title>.md`

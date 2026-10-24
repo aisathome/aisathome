@@ -26,7 +26,11 @@ type Gateway struct {
 	known    map[string]time.Time  // model or role → last time a node offered it; guarded by mu
 	flaps    map[string]*flapState // node id → connections replaced soon after connecting; guarded by mu
 	wake     chan struct{}         // closed and replaced whenever capacity may have changed
-	queued   atomic.Int32
+	queued   atomic.Int32          // people's requests waiting for a node (chat and agent)
+	queuedSc atomic.Int32          // science requests waiting for a node: they never fill people's queue
+	waiting  map[*route]struct{}   // requests looking for a node, for priority (routing.go); guarded by mu
+	projects atomic.Pointer[projectTable]
+	hist     *history     // daily snapshots for the network page (history.go)
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
 	bodies   atomic.Int64 // bytes reserved for request bodies, across all requests
 	bodyMu   sync.Mutex
@@ -91,7 +95,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger()}
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {
@@ -99,7 +103,6 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		}
 		log.Info("counting tokens with the gateway's tokenizer", "sha256", g.tok.SHA256)
 	}
-	g.stats.replay(cfg.UsageLog, time.Now())
 	if cfg.Accounts != nil {
 		g.acfg = *cfg.Accounts
 		if err := g.acfg.defaults(); err != nil {
@@ -136,6 +139,8 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		g.budget.load(time.Now(), log)
 		g.credit.path = filepath.Join(cfg.StateDir, "credit.json")
 		g.credit.load(log)
+		g.hist.path = filepath.Join(cfg.StateDir, "history.json")
+		g.hist.load(log)
 		g.every(saveEvery, func() {
 			if err := g.budget.save(); err != nil {
 				log.Warn("saving budgets failed", "err", err)
@@ -143,8 +148,24 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 			if err := g.credit.save(); err != nil {
 				log.Warn("saving credit failed", "err", err)
 			}
+			if err := g.hist.save(); err != nil {
+				log.Warn("saving history failed", "err", err)
+			}
 		})
 	}
+	// The usage log rebuilds today's and all-time statistics, and the history's request and
+	// token counts of the days it still covers.
+	fromLog := newHistory()
+	replayUsage(cfg.UsageLog, func(r usageRecord) {
+		g.stats.add(r)
+		fromLog.add(r)
+	})
+	g.hist.merge(fromLog)
+	sample := cfg.HistorySample
+	if sample == 0 {
+		sample = time.Minute
+	}
+	g.every(sample, func() { g.hist.sample(g.NodeCount(), time.Now()) })
 	return g, nil
 }
 
@@ -174,5 +195,5 @@ func (g *Gateway) every(d time.Duration, f func()) {
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
 	g.bg.Wait()
-	return errors.Join(g.budget.save(), g.credit.save())
+	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save())
 }

@@ -50,6 +50,10 @@ func (g *Gateway) loadKeys(cfg Config) error {
 }
 
 func (g *Gateway) loadKeysLocked(cfg Config) error {
+	projects, err := newProjectTable(cfg.Projects)
+	if err != nil {
+		return err
+	}
 	var hashed map[string]KeyInfo
 	var sum [32]byte
 	if cfg.KeysFile != "" {
@@ -67,6 +71,7 @@ func (g *Gateway) loadKeysLocked(cfg Config) error {
 			hashed[r.Hash] = r.KeyInfo
 		}
 	}
+	g.projects.Store(projects)
 	if _, builtin := g.keys.Load().KeyStore.(*configKeys); builtin {
 		g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg), hashed: hashed}})
 	}

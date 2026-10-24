@@ -50,8 +50,11 @@ type usageRecord struct {
 	// SelfServed: the node's operator is the requesting account (no credit for serving oneself).
 	SelfServed bool `json:"self_served,omitempty"`
 	// Tools: the request carried tool definitions (an agent request); never which ones.
-	Tools bool   `json:"tools,omitempty"`
-	Guard string `json:"guard,omitempty"` // a guard's rule: the answer was stopped, or (text) flagged
+	Tools bool `json:"tools,omitempty"`
+	// Class is the workload class (chat, agent or science) and Project the science project.
+	Class   string `json:"class,omitempty"`
+	Project string `json:"project,omitempty"`
+	Guard   string `json:"guard,omitempty"` // a guard's rule: the answer was stopped, or (text) flagged
 	// Counted says who counted Tokens: "gateway" (its tokenizer) or "node" (reported counts,
 	// clamped). Cached tokens are always the gateway's decision. Credit is what the node earned.
 	Counted string        `json:"counted,omitempty"`

@@ -46,6 +46,8 @@ type KeyInfo struct {
 	// served them. Ignored for forward_users keys and never carried over to end users. Among
 	// accounts' keys only those of admin accounts get the headers (Gateway.servedBy).
 	ServedBy bool `json:"served_by,omitempty"`
+	// Project is set for a project's key (project.go); never read from a file.
+	Project string `json:"-"`
 }
 
 // UserLimits apply to each end user behind a ForwardUsers key.
