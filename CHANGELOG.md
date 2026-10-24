@@ -7,37 +7,78 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
-- **Dev log** at [aisathome.org/devlog/](https://aisathome.org/devlog/), with numbered posts,
-  an RSS feed and the latest posts on the home page. (site, live on aisathome.org)
-- **Visitor statistics without cookies:** daily page views and an estimate of visitors, counted
-  from the web server's log; no IP addresses or browser names are kept. What is counted is
-  described in `tools/sitestats/doc.go`. (site)
-- **Node settings explained:** the preset docs link to the exact lines in `install.sh` that set
-  each value. (docs)
+## [v0.3.0] — 2026-10-24
+
+One model for every node, 16 GB cards can join, and the network starts doing science.
+
+### Added
+
+- **16 GB cards can join.** Nodes now run Qwen3.8 27B `UD-IQ4_XS` (14.3 GB) instead of
+  `UD-Q4_K_M` (16.5 GB), with no measurable loss in our tests. The context follows the card:
+  **80k on 16 GB cards** (RTX 4080, 5070 Ti, 5080 class), which must be **headless** (no screen
+  on that card, or under about 650 MB of desktop), and **192k on 24 GB and more** (was 128k).
+  (node)
+- **Science on the network:** [aisathome.org/science/tauceti/](https://aisathome.org/science/tauceti/)
+  lists every pull request Qwen3.8 27B has made to [Tau Ceti](https://taucetiproject.org/), an
+  open library of formal mathematics, grouped by type, with Tau Ceti's review as the judge,
+  tokens and GPU time per PR, failures included, and the data as JSON. The home page shows the
+  merged count. (site)
+- **Workload classes:** every request is `chat`, `agent` (your API key) or `science` (an
+  operator-run project). When the network is busy, waiting chat requests go first, then agents,
+  then science; science never takes a node a waiting person could use, and running requests
+  are never stopped. **Under load, API requests now wait behind chat requests.** (gateway)
+- **Science projects:** operator-configured projects with their own keys, their own daily
+  quota instead of an account's, a cap on their share of nodes, and their own counts in
+  `/v1/stats`. (gateway)
+- **Daily history** at `/v1/stats/history` (requests, tokens, per class, nodes online), shown
+  as charts on [the network page](https://aisathome.org/network/). (gateway, site)
+- **Speed test at install:** after a 32,000-token prompt the card must write at least 20
+  tokens/s, or the installer stops the node and says why. Slow 16 GB cards (RTX 4060 Ti,
+  5060 Ti) don't pass. (node)
 - **Per-request thinking limits:** an API request can set `thinking_budget_tokens` (or
-  `reasoning_budget_tokens`, 0 to 32,768) and `reasoning_budget_message`, the text the model
-  is given when the limit is reached. Invalid values get `400`. (gateway)
-- **Easier updates:** run the new bundle's `install.sh --keep-token` (or press Enter at the
-  token prompt) and it keeps the installed token, node id and gateway; before, a rerun asked
-  for the token again and reset the gateway and, for tokens from a gateway's config, the node
-  id. New docs page: [Update your node](https://aisathome.org/node/update/). (node, docs)
-- **Your nodes shows each node's version** while it is connected, and the gateway logs it.
-  (gateway)
-- **The gateway warns** when two clients keep replacing each other's connection on one node
-  token and id. (gateway)
-- **More nodes per volunteer:** up to 10 nodes per account (was 3), up to 10 connected from one
-  internet address (was 3), and the network takes 25 (was 10). The per-account limit is now a
-  setting in the accounts file. (gateway)
-- **Account page:** a new API key or node token gets its own page with a Copy button, "You
-  will not see this again" and Done, instead of a block above the table that was easy to miss.
-  At the node limit the page says "You have 10 of 10 nodes. Revoke one to add another.", and
-  at the key limit "You have 3 of 3 keys. Revoke one to create another.", instead of hiding
-  the form without a word. (gateway)
-- **Which node served a request, for the operator only:** keys marked `served_by` and admin
-  accounts' API keys (the operator's test runners) get `X-AIsAtHome-Served-By` and `X-AIsAtHome-Request-Id` on chat
-  answers; other keys never do. The gateway logs the node of every request attempt. (gateway)
-- **Local UI:** "Time serving" shows "<1s" instead of "0s" for less than a second, and the
-  lifetime counters are headed "Total" instead of "Since install". (node)
+  `reasoning_budget_tokens`, 0 to 32,768) and `reasoning_budget_message`. Invalid values get
+  `400`. (gateway)
+- **Community:** [r/aisathome](https://www.reddit.com/r/aisathome/), linked from the footer,
+  the About page and every dev log post. (site)
+- **Dev log** at [aisathome.org/devlog/](https://aisathome.org/devlog/), with an RSS feed, and
+  visitor statistics without cookies (counted from the web server's log; no IP addresses or
+  browser names kept). (site)
+
+### Changed
+
+- **The installer checks free GPU memory for the tier** and stops with a clear message if a
+  screen or programs use too much; it never shrinks the context. `--model` accepts only the
+  network's pinned file. (node)
+- **Easier updates:** `install.sh --keep-token` (or Enter at the token prompt) keeps the token,
+  node id and gateway. The update to this release downloads the new 14.3 GB model while the
+  node keeps serving (about 16 GB free in `/var/lib` needed), then restarts. (node)
+- **More nodes per volunteer:** up to 10 per account (was 3), 10 connected from one address
+  (was 3), 25 in the network (was 10). (gateway)
+- **Account page:** a new key or node token gets its own page with Copy and Done; at a limit
+  the page says so instead of hiding the form. Your nodes show their version. (gateway)
+
+### Fixed
+
+- **The installer's checks for "ran on the CPU" and "out of GPU memory"** could pass silently
+  when the service log was long. (node)
+- **Updates on machines with two GPUs** could pick the wrong card and refuse the update. (node)
+- **The gateway warns** when two clients keep replacing each other on one node token. (gateway)
+
+### Updating a node
+
+**Every node must update:** the network does not mix model files, and nodes on the old model
+fail the model check.
+
+```
+curl -LO https://github.com/aisathome/aisathome/releases/download/v0.3.0/aisathome-node-bundle-linux-amd64.tar.xz
+curl -LO https://github.com/aisathome/aisathome/releases/download/v0.3.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
+sudo ./install.sh --keep-token
+```
+
+The update keeps your token and node id, downloads the new model while the node keeps serving,
+and then restarts. Step by step: [Update your node](https://aisathome.org/node/update/).
 
 ## [v0.2.0] — 2026-10-20
 
