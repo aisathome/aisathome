@@ -14,7 +14,7 @@ and **(site)** are live on aisathome.org once deployed.
   its own version and the one before it (`node_protocol_min`, `node_protocol_max`), so the
   current and the previous node release keep working, logs each node's version and shows it on
   the account page, and refuses other versions with a message that says what to do.
-  (gateway, live since YYYY-MM-DD)
+  (gateway, live since 2026-10-24)
 - **The node agent speaks protocol version 2.** If a gateway refuses its version, the agent
   shows the gateway's reason in its local UI and in `aisathome-node status`, and tries again
   after 10 minutes instead of every few seconds. It still connects to gateways from before
@@ -22,12 +22,20 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A chat no longer fails while the network does science.** A chat or agent request that has
+  waited 8 seconds for a node now stops the most recent science request on a node it can use and
+  takes its place; before, a chat could fail with "all nodes serving deep are busy" while the
+  only node ran a long science step. People's requests are never stopped. A preempted science
+  request without output yet is sent again by the gateway; otherwise its stream ends with a
+  retryable error (`code` 503, `reason` "preempted"). `/v1/stats` counts `preempted` per class
+  and project. Setting `preempt_after_seconds` (default 8, `-1` off). (gateway, live since
+  2026-10-24)
 - **`logprobs` in non-streaming answers.** A request with `"logprobs": true` now gets them in
   `choices[0].logprobs.content`, as OpenAI returns them; the gateway used to drop them
   (streamed answers already carried them). Answers to requests that did not ask for logprobs
-  no longer carry any a node sent anyway. (gateway, live since YYYY-MM-DD)
+  no longer carry any a node sent anyway. (gateway, live since 2026-10-24)
 - The gateway's own token count of an answer (for credit) no longer stops early when the
-  answer carries logprobs. (gateway, live since YYYY-MM-DD)
+  answer carries logprobs. (gateway, live since 2026-10-24)
 
 ## [v0.3.0] — 2026-10-24
 
