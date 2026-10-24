@@ -9,6 +9,16 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Hourly usage in `/v1/stats/history`.** An `hours` list gives requests and tokens per UTC hour,
+  in all and per class (chat, agent, science), for the last two weeks; aggregates only, public like
+  the daily numbers. (gateway, live since 2026-10-24)
+- **Operations page for the maintainers.** A science project's runner posts its status every minute
+  to `POST /v1/projects/<id>/status` with its project key (strict schema, status only, never keys;
+  a key reports only for its own project). Admin accounts see it at `/account/ops`, linked from
+  their account page: the tasks, the nodes online with versions, and health warnings (a stalled or
+  slow attempt, a time budget running out, repeated interruptions, a long CI back-off, a node
+  contract ending, no node online, a candidate waiting over a day). Everyone else gets 403.
+  (gateway, live since 2026-10-24)
 - **Protocol versions between node and gateway.** A node says which protocol version it speaks
   when it connects; nodes up to v0.3.0 send none and count as version 1. The gateway accepts
   its own version and the one before it (`node_protocol_min`, `node_protocol_max`), so the
