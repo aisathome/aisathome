@@ -112,8 +112,8 @@ func headerNav(chatURL string) []navLink {
 		nav = append(nav, navLink{Label: "Chat", Href: chatURL})
 	}
 	return append(nav, navLink{"Account", "/account", true}, navLink{"Docs", "/docs/", false},
-		navLink{"Run a node", "/node/", false}, navLink{"Network", "/network/", false}, navLink{"Dev log", "/devlog/", false},
-		navLink{"About", "/about/", false})
+		navLink{"Run a node", "/node/", false}, navLink{"Network", "/network/", false},
+		navLink{"Science", "/science/tauceti/", false}, navLink{"Dev log", "/devlog/", false}, navLink{"About", "/about/", false})
 }
 
 // newPage parses a page that uses the shared shell (the data embeds shell):
@@ -155,6 +155,7 @@ var pageShell = `{{define "head"}}<!doctype html>
 <div><p class="foot-name">AIs@home</p><p>Open AI models on volunteers’ GPUs. Non-commercial, open source, run by volunteers.</p></div>
 <nav aria-label="Footer"><ul><li><a href="/use/chat/">Docs</a></li><li><a href="/about/privacy/">Privacy</a></li>
 <li><a href="/about/terms/">Terms</a></li><li><a href="https://github.com/aisathome/aisathome">Source code</a></li>
+<li><a href="https://www.reddit.com/r/aisathome/">r/aisathome</a></li>
 <li><a href="mailto:contact@aisathome.org">contact@aisathome.org</a></li></ul></nav>
 </div></footer></body></html>{{end}}`
 

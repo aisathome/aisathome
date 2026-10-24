@@ -3,6 +3,7 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { render } from 'astro:content';
 import { posts, formatDate, isoDate, feed, type Post } from '../../data/devlog';
+import { links } from '../../data/home';
 
 export async function getStaticPaths() {
 	return (await posts()).map((post) => ({ params: { slug: post.id }, props: { post } }));
@@ -26,8 +27,10 @@ const draft = !post.data.publish;
 		<a href="/devlog/">Dev log</a>{' · '}<a href={feed.path}>RSS</a>
 	</p>
 	<Content />
+	<p class="devlog-discuss" data-devlog-discuss>Discuss on <a href={links.reddit}>r/aisathome</a></p>
 </StarlightPage>
 
 <style>
 	.devlog-meta { font-size: var(--sl-text-sm); color: var(--sl-color-gray-3); }
+	.devlog-discuss { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--sl-color-hairline-light); color: var(--sl-color-gray-2); }
 </style>

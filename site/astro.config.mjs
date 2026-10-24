@@ -64,6 +64,10 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Science',
+					items: [{ label: 'Tau Ceti', link: '/science/tauceti/' }],
+				},
+				{
 					label: 'About',
 					items: [
 						{ label: 'Mission', slug: 'about' },

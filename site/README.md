@@ -31,3 +31,10 @@ not start with it), `date`, `summary` (one line for the list and the feed) and `
 `npm run check` fails if a build without the flag contains a draft). Images go in
 `src/content/devlog/img/` and are referenced as `![alt](./img/name.svg)`. Posts carry no
 author name.
+
+Science (`/science/tauceti/`, data at `/science/tauceti.json`): built from
+`src/data/science/tauceti.json`, exported from our run records by an export script in the
+research notes (public fields only) and committed here; refresh it by rerunning the export and
+rebuilding.
+`npm run check` fails if the JSON gains a field outside the public list. The home page's science
+section and the chart are left out while nothing is merged.

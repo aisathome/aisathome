@@ -66,9 +66,9 @@ func TestPagesLoadNothingFromOtherOrigins(t *testing.T) {
 		}
 		for _, abs := range absURLRe.FindAllString(page, -1) {
 			u, err := url.Parse(abs)
-			if err != nil || u.Host != "chat.site.test" && u.Host != "github.com" ||
+			if err != nil || u.Host != "chat.site.test" && u.Host != "github.com" && u.Host != "www.reddit.com" ||
 				!regexp.MustCompile(`<a [^>]*href="`+regexp.QuoteMeta(abs)+`"`).MatchString(page) {
-				t.Fatalf("%s: absolute URL %q is not a link to the chat or the source code", p.path, abs)
+				t.Fatalf("%s: absolute URL %q is not a link to the chat, the source code or the subreddit", p.path, abs)
 			}
 		}
 	}

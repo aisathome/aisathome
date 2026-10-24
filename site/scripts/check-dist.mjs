@@ -2,6 +2,7 @@
 // party, the live network strip and the leaderboard start hidden (they show themselves
 // only with real data), and every page shares the theme choice with the account pages (the
 // theme script runs before Starlight's). Also the dev log: drafts and the feed (below).
+// And the science data: public fields only, matching the page and the home page.
 // SPDX-License-Identifier: Apache-2.0
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -86,6 +87,37 @@ else {
 	// The home page's dev log section shows the newest three (or fewer) of the same posts.
 	const home = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<a href="([^"]+)" data-home-post-link/g)].map((m) => m[1]);
 	if (home.join() !== listed.slice(0, 3).join()) errors.push(`index.html: the dev log section (${home}) is not the newest posts (${listed.slice(0, 3)})`);
+}
+
+// Science (/science/tauceti/): the published JSON holds public fields only (the research ledger it
+// comes from has internal notes), and the page and the home page agree with it.
+const sciFile = join(dist, 'science', 'tauceti.json');
+if (!existsSync(sciFile)) errors.push('science/tauceti.json: missing');
+else {
+	const sci = JSON.parse(readFileSync(sciFile, 'utf8'));
+	const allowed = {
+		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'totals', 'prs'],
+		pr: ['number', 'url', 'title', 'type', 'state', 'opened', 'merged', 'closed', 'fix_rounds', 'first_review_approved',
+			'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts_without_tokens', 'attempts_without_gpu_time'],
+	};
+	for (const k of Object.keys(sci)) if (!allowed.top.includes(k)) errors.push(`science/tauceti.json: unexpected field ${k}`);
+	for (const p of sci.prs ?? []) for (const k of Object.keys(p)) if (!allowed.pr.includes(k)) errors.push(`science/tauceti.json: unexpected PR field ${k}`);
+	for (const [k, v] of Object.entries(sci.totals ?? {})) if (v !== null && typeof v !== 'number') errors.push(`science/tauceti.json: totals.${k} is not a number`);
+	if (/claude|opus|anthropic|\/home\/|raw\/|prompts?\//i.test(JSON.stringify(sci))) errors.push('science/tauceti.json: mentions internal tooling or paths');
+	const page = readFileSync(join(dist, 'science', 'tauceti', 'index.html'), 'utf8');
+	for (const p of sci.prs ?? []) {
+		for (const k of ['qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts']) {
+			if (p[k] !== null && p[k] !== undefined && (typeof p[k] !== 'number' || p[k] < 0)) errors.push(`science/tauceti.json: #${p.number} ${k} is not a number`);
+		}
+		if (p.qwen_tokens === 0 || p.gpu_minutes === 0) errors.push(`science/tauceti.json: #${p.number} shows 0 for a value (unknown must be null)`);
+	}
+	const rows = [...page.matchAll(/<tr data-pr="(\d+)"/g)].map((m) => Number(m[1])).sort();
+	if (rows.join() !== sci.prs.map((p) => p.number).sort().join()) errors.push(`science/tauceti/: the table (${rows}) is not the JSON's PRs`);
+	const tokenSum = sci.prs.reduce((a, p) => a + (p.qwen_tokens ?? 0), 0);
+	if (sci.totals?.qwen_tokens !== undefined && tokenSum !== sci.totals.qwen_tokens) errors.push(`science/tauceti.json: PR tokens sum to ${tokenSum}, totals say ${sci.totals.qwen_tokens}`);
+	const merged = sci.prs.filter((p) => p.state === 'merged').length;
+	const shown = readFileSync(join(dist, 'index.html'), 'utf8').match(/data-home-science-merged[^>]*>(\d+)</);
+	if (merged > 0 && Number(shown?.[1]) !== merged) errors.push(`index.html: the science section shows ${shown?.[1]} merged, the JSON ${merged}`);
 }
 
 if (errors.length) {

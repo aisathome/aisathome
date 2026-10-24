@@ -185,7 +185,7 @@ func TestHeaderNavMatchesSite(t *testing.T) {
 		want = append(want, l.Label+" "+resolve(l.Href))
 	}
 	if got := strings.Join(want, ", "); got != "Chat https://chat.site.test, Account https://site.test/account, Docs https://site.test/docs/, "+
-		"Run a node https://site.test/node/, Network https://site.test/network/, Dev log https://site.test/devlog/, About https://site.test/about/" {
+		"Run a node https://site.test/node/, Network https://site.test/network/, Science https://site.test/science/tauceti/, Dev log https://site.test/devlog/, About https://site.test/about/" {
 		t.Fatalf("site nav changed: %s", got)
 	}
 	g := threeWayRig(t)
@@ -210,6 +210,9 @@ func TestHeaderNavMatchesSite(t *testing.T) {
 		}
 		if !strings.Contains(page, `<a class="head-src" href="https://github.com/aisathome/aisathome">`) {
 			t.Fatalf("%s: no source code link in the header", p.path)
+		}
+		if !strings.Contains(page, `<li><a href="https://www.reddit.com/r/aisathome/">r/aisathome</a></li>`) {
+			t.Fatalf("%s: no r/aisathome link in the footer (as the site's footer)", p.path)
 		}
 	}
 }

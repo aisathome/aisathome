@@ -22,6 +22,7 @@ no token, no ads. The software is open source under Apache-2.0; the name
 
 ## Contact and community
 
+- Discuss: [r/aisathome](https://www.reddit.com/r/aisathome/)
 - Questions, ideas and bug reports:
   [GitHub Discussions](https://github.com/aisathome/aisathome/discussions)
 - Code: [github.com/aisathome/aisathome](https://github.com/aisathome/aisathome)

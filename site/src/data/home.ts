@@ -9,6 +9,7 @@ export const links = {
 	docs: '/use/chat/',
 	github: 'https://github.com/aisathome/aisathome',
 	discussions: 'https://github.com/aisathome/aisathome/discussions',
+	reddit: 'https://www.reddit.com/r/aisathome/',
 	contact: 'contact@aisathome.org',
 };
 

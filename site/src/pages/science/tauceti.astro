@@ -1,0 +1,329 @@
+---
+// Science: the model's pull requests to Tau Ceti (taucetiproject.org), with every attempt
+// counted. Built from src/data/science/tauceti.json at build time (no live fetch); sections
+// whose numbers are missing are left out rather than shown as dashes or zeros.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { compact, dayLabel, exact, isoDay, science as s, shortDay } from '../../data/science';
+
+const pct = (a: number, b: number) => `${Math.round((100 * a) / b)}%`;
+const tiles = [
+	{ key: 'opened', value: String(s.prs.length), label: 'PRs opened' },
+	{ key: 'merged', value: String(s.merged), label: 'Merged by Tau Ceti' },
+	{ key: 'closed', value: String(s.closed), label: 'Closed without merging' },
+	{
+		key: 'first-review',
+		value: s.prs.length ? `${s.firstReviewApproved} of ${s.prs.length}` : null,
+		label: 'Approved at the first review',
+	},
+	{ key: 'gpu-hours', value: s.gpuHours !== null ? s.gpuHours.toFixed(1) : null, label: 'GPU hours' },
+	{
+		key: 'tokens-per-merged',
+		value: s.qwenTokens !== null && s.merged > 0 ? compact(s.qwenTokens / s.merged) : null,
+		label: 'Qwen tokens per merged PR',
+	},
+].filter((t) => t.value !== null && s.prs.length > 0);
+
+// Merged PRs over time: a cumulative step line from the first PR to the snapshot date.
+const day = 86400000;
+const merges = s.prs.flatMap((p) => (p.merged ? [p] : [])).sort((a, b) => +a.merged! - +b.merged!);
+const W = 640, H = 220, L = 40, R = 16, T = 16, B = 34;
+let chart: null | {
+	path: string;
+	points: { x: number; y: number; label: string }[];
+	yTicks: { y: number; v: number }[];
+	xTicks: { x: number; label: string; anchor: string; minor: boolean }[];
+} = null;
+if (merges.length > 0 && s.prs.length > 0) {
+	const start = Math.floor(Math.min(...s.prs.map((p) => +p.opened)) / day) * day;
+	const last = Math.max(+merges[merges.length - 1].merged!, s.asOf ? +s.asOf + day : 0);
+	const end = Math.max(Math.ceil(last / day) * day, start + day);
+	const top = Math.max(merges.length, 2);
+	const x = (t: number) => L + ((t - start) / (end - start)) * (W - L - R);
+	const y = (v: number) => T + (1 - v / top) * (H - T - B);
+	let d = `M${x(start).toFixed(1)},${y(0).toFixed(1)}`;
+	const points = merges.map((p, i) => {
+		const px = x(+p.merged!);
+		d += ` H${px.toFixed(1)} V${y(i + 1).toFixed(1)}`;
+		return { x: px, y: y(i + 1), label: `#${p.number} merged ${dayLabel(p.merged!)} (${i + 1} in total)` };
+	});
+	d += ` H${x(end).toFixed(1)}`;
+	const step = Math.max(1, Math.ceil(top / 4));
+	const yTicks = Array.from({ length: Math.floor(top / step) + 1 }, (_, i) => ({ v: i * step, y: y(i * step) }));
+	const days = Math.round((end - start) / day);
+	const every = Math.max(1, Math.ceil(days / 6));
+	const count = Math.floor(days / every) + 1;
+	const xTicks = Array.from({ length: count }, (_, i) => {
+		const t = start + i * every * day;
+		return { x: x(t), label: shortDay(new Date(t)), anchor: i === 0 ? 'start' : i === count - 1 ? 'end' : 'middle', minor: i % 2 === 1 };
+	});
+	chart = { path: d, points, yTicks, xTicks };
+}
+const notRecorded = (n: number) => (n > 0 ? `; ${n} attempt${n === 1 ? '' : 's'} not recorded` : '');
+const tokAttrs = (v: number | null, out: number | null, missing: number) =>
+	v === null
+		? { 'data-unknown': '' }
+		: { 'data-tokens': v, title: `${exact(v)} Qwen tokens${out !== null ? `, ${exact(out)} of them written` : ''}${notRecorded(missing)}` };
+const minAttrs = (v: number | null, missing: number) =>
+	v === null ? { 'data-unknown': '' } : { 'data-minutes': v, title: `${v.toFixed(1)} GPU minutes${notRecorded(missing)}` };
+const status = (p: (typeof s.prs)[number]) =>
+	p.state === 'merged' ? `Merged ${shortDay(p.merged!)}` : p.state === 'closed' ? 'Closed, not merged' : 'Open, in review';
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Science: Tau Ceti',
+		description: `Pull requests that ${s.model}, an open model on the AIs@home network, opened on Tau Ceti, a library of formal mathematics written by AIs. Every attempt counts.`,
+	}}
+	headings={[
+		{ depth: 2, slug: 'every-pr', text: 'Every pull request' },
+		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
+	]}
+>
+	<p>
+		<a href={s.projectURL}>Tau Ceti</a> is an open library of formal mathematics in Lean, written by AI
+		contributors and checked by Tau Ceti’s own review before anything is merged. {s.model}, an
+		open-weight model running on the AIs@home network, contributes to it: small refactors, clean-ups and
+		new lemmas, each sent as a pull request like anyone else’s.
+	</p>
+
+	{
+		tiles.length > 0 && (
+			<dl class="sci-tiles not-content" data-science-totals>
+				{tiles.map((t) => (
+					<div data-total={t.key}>
+						<dt>{t.label}</dt>
+						<dd>{t.value}</dd>
+					</div>
+				))}
+			</dl>
+		)
+	}
+
+	{
+		chart && (
+			<figure class="sci-chart not-content" data-science-chart>
+				<figcaption>Merged PRs over time (cumulative)</figcaption>
+				<svg viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby="sci-chart-desc">
+					<desc id="sci-chart-desc">
+						{`${s.merged} pull request${s.merged === 1 ? '' : 's'} merged into Tau Ceti: ${merges.map((p) => `#${p.number} on ${dayLabel(p.merged!)}`).join(', ')}.`}
+					</desc>
+					<g class="grid">
+						{chart.yTicks.map((t) => (
+							<>
+								<line x1={L} x2={W - R} y1={t.y} y2={t.y} />
+								<text x={L - 8} y={t.y + 4} text-anchor="end">{t.v}</text>
+							</>
+						))}
+						{chart.xTicks.map((t) => (
+							<text x={t.x} y={H - 10} text-anchor={t.anchor} class:list={[{ minor: t.minor }]}>{t.label}</text>
+						))}
+					</g>
+					<path class="line" d={chart.path} />
+					{chart.points.map((p) => (
+						<g class="pt" tabindex="0" data-merge-point>
+							<title>{p.label}</title>
+							<circle class="hit" cx={p.x} cy={p.y} r="14" />
+							<circle class="dot" cx={p.x} cy={p.y} r="5" />
+						</g>
+					))}
+				</svg>
+			</figure>
+		)
+	}
+
+	{
+		s.prs.length > 0 && (
+			<>
+				<h2 id="every-pr">Every pull request</h2>
+				<p>
+					Successes and failures alike, grouped by type of task, oldest first within each group. Each
+					links to the pull request on GitHub, where Tau Ceti’s review is public. A fix round is a revision
+					pushed after review asked for changes.
+				</p>
+				<div class="sci-wrap not-content">
+					<table class="sci-table" data-science-prs>
+						<thead>
+							<tr>
+								<th scope="col">PR</th>
+								<th scope="col">What it does</th>
+								<th scope="col">Status</th>
+								<th scope="col" class="num">Qwen tokens</th>
+								<th scope="col" class="num">GPU minutes</th>
+							</tr>
+						</thead>
+						{s.groups.map((g) => (
+							<tbody data-group={g.type}>
+								<tr class="group-head" data-group-head>
+									<th scope="rowgroup" colspan="3">
+										{g.type}
+										<span class="group-sub" data-group-sub>
+											{g.prs.length} PR{g.prs.length === 1 ? '' : 's'} · {g.merged} merged
+										</span>
+									</th>
+									<td class="num tok" data-label="Qwen tokens" {...tokAttrs(g.qwenTokens, null, g.attemptsWithoutTokens)}>
+										{g.qwenTokens === null ? 'not recorded' : compact(g.qwenTokens)}
+										{g.qwenTokens !== null && g.attemptsWithoutTokens > 0 && <span class="meta">+{g.attemptsWithoutTokens} not recorded</span>}
+									</td>
+									<td class="num min" data-label="GPU minutes" {...minAttrs(g.gpuMinutes, g.attemptsWithoutGpuTime)}>
+										{g.gpuMinutes === null ? 'not recorded' : g.gpuMinutes.toFixed(1)}
+										{g.gpuMinutes !== null && g.attemptsWithoutGpuTime > 0 && <span class="meta">+{g.attemptsWithoutGpuTime} not recorded</span>}
+									</td>
+								</tr>
+								{g.prs.map((p) => (
+									<tr data-pr={p.number} data-state={p.state}>
+										<th scope="row">
+											<a href={p.url}>#{p.number}</a>
+										</th>
+										<td class="title">
+											{p.title}
+											<span class="meta">
+												opened <time datetime={isoDay(p.opened)}>{shortDay(p.opened)}</time>
+												{p.attempts !== null && <> · {p.attempts} attempt{p.attempts === 1 ? '' : 's'}</>}
+											</span>
+										</td>
+										<td class="status">
+											<span class={`state state-${p.state}`}>{status(p)}</span>
+											<span class="meta">
+												<span class="first" data-first-review={p.firstReviewApproved ? 'approved' : 'changes'}>
+													{p.firstReviewApproved ? 'Approved' : 'Changes asked'} at first review
+												</span>
+												<span class="fix" data-fix-rounds={p.fixRounds}>
+													{p.fixRounds} fix round{p.fixRounds === 1 ? '' : 's'}
+												</span>
+											</span>
+										</td>
+										<td class="num tok" data-label="Qwen tokens" {...tokAttrs(p.qwenTokens, p.qwenOutputTokens, p.attemptsWithoutTokens)}>
+											{p.qwenTokens === null ? 'not recorded' : compact(p.qwenTokens)}
+											{p.qwenTokens !== null && p.attemptsWithoutTokens > 0 && <span class="meta">+{p.attemptsWithoutTokens} not recorded</span>}
+										</td>
+										<td class="num min" data-label="GPU minutes" {...minAttrs(p.gpuMinutes, p.attemptsWithoutGpuTime)}>
+											{p.gpuMinutes === null ? 'not recorded' : p.gpuMinutes.toFixed(1)}
+											{p.gpuMinutes !== null && p.attemptsWithoutGpuTime > 0 && <span class="meta">+{p.attemptsWithoutGpuTime} not recorded</span>}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						))}
+					</table>
+				</div>
+				<p class="sci-note">
+					Tokens and minutes cover every attempt at a pull request’s task, failed attempts and fix rounds
+					included. Most prompt tokens are the same files re-read from the cache; hover a token count for the
+					exact number and how many tokens the model wrote.
+				</p>
+			</>
+		)
+	}
+
+	<h2 id="how-to-read-this">How to read this</h2>
+	<ul>
+		<li>
+			<strong>Tau Ceti’s review is the judge.</strong> A pull request counts as merged only when Tau Ceti
+			merged it. We do not grade our own work.
+		</li>
+		<li>
+			<strong>Everything counts.</strong> Closed pull requests stay in the table, and failed attempts count
+			in their task’s row and in the totals.{' '}
+			{
+				s.attempts !== null && s.attemptsPassing !== null && s.attempts > 0 && (
+					<span data-science-attempts>
+						So far {s.attempts} attempts, of which {s.attemptsPassing} ({pct(s.attemptsPassing, s.attempts)})
+						passed every local check (build and lints) before anything was sent.
+					</span>
+				)
+			}
+		</li>
+		<li>
+			<strong>Fix rounds</strong> are revisions pushed after review asked for changes.{' '}
+			<strong>Approved at the first review</strong> means every one of Tau Ceti’s review criteria passed on
+			the first try.
+		</li>
+		<li>
+			<strong>GPU hours</strong> are the time the model was working, summed over every attempt,
+			failures included{s.attemptsWithoutGpuTime > 0 && <> (the time of {s.attemptsWithoutGpuTime} early attempt{s.attemptsWithoutGpuTime === 1 ? ' was' : 's were'} not recorded)</>}.{' '}
+			<strong>Qwen tokens</strong> are everything the model read and wrote{s.qwenTokens !== null && <>: {compact(s.qwenTokens)} in all</>}{s.qwenOutputTokens !== null && <>, of which {compact(s.qwenOutputTokens)} written</>}{s.attemptsWithoutTokens > 0 && <> (the tokens of {s.attemptsWithoutTokens} early attempt{s.attemptsWithoutTokens === 1 ? ' were' : 's were'} not recorded)</>}.{' '}
+			Most of what it reads is the same files again, served from a cache.
+		</li>
+		<li>
+			<strong>These are our own measurements,</strong> from the records of each run, not estimates. The
+			model runs on the AIs@home network, which today is mostly the maintainer’s own GPUs, some of them
+			rented.
+		</li>
+		<li>
+			{s.asOf && <>Pull request states as of <time datetime={isoDay(s.asOf)} data-science-asof>{dayLabel(s.asOf)}</time>. </>}
+			The data is published as JSON: <a href={s.jsonPath} data-science-json><code>{s.jsonPath}</code></a>.
+		</li>
+	</ul>
+</StarlightPage>
+
+<style>
+	.sci-tiles {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+		gap: 1rem;
+		margin: 2rem 0;
+	}
+	.sci-tiles div {
+		display: flex;
+		flex-direction: column-reverse;
+		padding: 1rem 1.25rem;
+		border-top: 4px solid var(--sl-color-accent);
+		border-radius: 0.4rem;
+		background: var(--b-surface);
+	}
+	.sci-tiles dd { margin: 0; font: 900 clamp(1.8rem, 4vw, 2.6rem)/1 var(--font-display); color: var(--sl-color-white); }
+	.sci-tiles dt { margin-top: 0.35rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+
+	.sci-chart { margin: 2rem 0; padding: 1rem 1.25rem 0.5rem; border-radius: 0.5rem; background: var(--b-band); }
+	.sci-chart figcaption { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+	.sci-chart svg { display: block; width: 100%; height: auto; margin-top: 0.5rem; overflow: visible; }
+	.sci-chart .grid line { stroke: var(--sl-color-gray-5); stroke-width: 1; }
+	.sci-chart .grid text { font: 12px var(--font-mono, monospace); fill: var(--sl-color-gray-3); }
+	.sci-chart .line { fill: none; stroke: var(--sl-color-accent); stroke-width: 2; stroke-linejoin: round; }
+	.sci-chart .dot { fill: var(--sl-color-accent); stroke: var(--b-band); stroke-width: 2; }
+	.sci-chart .hit { fill: transparent; }
+	.sci-chart .pt { cursor: default; outline: none; }
+	.sci-chart .pt:is(:hover, :focus-visible) .dot { r: 7; fill: var(--sl-color-accent-high); }
+
+	.sci-wrap { overflow-x: auto; margin-top: 1rem; }
+	.sci-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+	.sci-table :is(th, td) { padding: 0.5rem 0.75rem 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+	.sci-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.sci-table tbody th { white-space: nowrap; font-weight: 600; }
+	.sci-table tbody th a { color: var(--sl-color-accent-high); }
+	.sci-table .title { min-width: 13rem; color: var(--sl-color-white); }
+	.sci-table .group-head :is(th, td) { padding-top: 1.25rem; font-weight: 700; color: var(--sl-color-white); border-bottom-color: var(--sl-color-gray-4); }
+	.sci-table .group-head th { font-family: var(--font-display); font-size: 1.1rem; letter-spacing: 0.02em; text-transform: uppercase; }
+	.sci-table .group-sub { margin-left: 0.6rem; font: 400 0.85rem var(--sl-font, inherit); text-transform: none; letter-spacing: 0; color: var(--sl-color-gray-3); }
+	.sci-table [title] { cursor: help; }
+	.sci-table [data-unknown] { color: var(--sl-color-gray-3); font-style: italic; }
+	.sci-table .status .meta > span { display: block; }
+	.sci-table td.num .meta { white-space: normal; }
+	.sci-note { font-size: 0.85rem; color: var(--sl-color-gray-3); }
+	.sci-table .meta { display: block; margin-top: 0.15rem; font-size: 0.8rem; font-weight: 400; color: var(--sl-color-gray-3); }
+	.sci-table td:not(.title) { white-space: nowrap; }
+	.sci-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+	.sci-table :is(th, td):last-child { padding-right: 0; }
+	.state { font-weight: 600; }
+	/* Phones: each PR as a small card instead of a wide table. */
+	@media (max-width: 40rem) {
+		.sci-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+		.sci-table tr { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+		.sci-table :is(th, td) { padding: 0; border: 0; }
+		.sci-table .title { grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
+		.sci-table td:not(.title) { grid-column: 2; white-space: normal; }
+		.sci-table .num { text-align: left; }
+		.sci-table :is(.tok, .min)::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+		.sci-table .group-head { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; padding-top: 1.5rem; }
+		.sci-table .group-head th { flex-basis: 100%; }
+		.sci-table .group-head :is(th, td) { padding: 0; }
+		.sci-table .group-head td { font-size: 0.85rem; }
+		.sci-table td.num .meta { display: inline; margin-left: 0.4rem; }
+		.sci-table .status .meta > span { display: inline; }
+		.sci-table .status .meta > span + span::before { content: ' · '; }
+		.sci-chart .grid text { font-size: 22px; }
+		.sci-chart .grid text.minor { display: none; }
+	}
+	.state-merged { color: var(--sl-color-accent-high); }
+	.state-closed { color: var(--sl-color-gray-3); }
+</style>
