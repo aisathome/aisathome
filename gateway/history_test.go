@@ -143,3 +143,87 @@ func TestHistoryCorruptFile(t *testing.T) {
 		t.Fatal("corrupt history not set aside")
 	}
 }
+
+func recAt(t time.Time, class, outcome string, prompt, completion int) usageRecord {
+	r := rec("2026-10-01", class, outcome, prompt, completion)
+	r.Time = t
+	return r
+}
+
+func hoursOf(t *testing.T, g *Gateway) []map[string]any {
+	t.Helper()
+	historyOf(t, g) // the privacy check on the whole answer
+	w := httptest.NewRecorder()
+	g.handleHistory(w, httptest.NewRequest("GET", "/v1/stats/history", nil))
+	var out struct {
+		Hours []map[string]any `json:"hours"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Hours
+}
+
+// Requests and tokens are counted per UTC hour and class in /v1/stats/history; hours without
+// requests are left out; the hours survive a restart, and hours the usage log still covers are
+// rebuilt from it without counting them twice.
+func TestHistoryHours(t *testing.T) {
+	dir := t.TempDir()
+	usage := filepath.Join(dir, "usage.jsonl")
+	cfg := Config{StateDir: dir, UsageLog: usage, HistorySample: time.Hour}
+	g := newTestGateway(t, cfg)
+	h13, _ := time.Parse(time.RFC3339, "2026-10-24T13:05:00Z")
+	g.hist.add(recAt(h13, ClassChat, "ok", 100, 10))
+	g.hist.add(recAt(h13.Add(50*time.Minute), ClassScience, "ok", 1000, 50)) // 13:55, same hour
+	g.hist.add(recAt(h13.Add(2*time.Hour), ClassAgent, "failed", 7, 0))      // 15:05; 14:00 had none
+	g.Close()
+
+	// The usage log now holds one more record in 16:00 only.
+	f, _ := os.Create(usage)
+	b, _ := json.Marshal(recAt(h13.Add(3*time.Hour), ClassChat, "ok", 5, 5))
+	f.Write(append(b, '\n'))
+	f.Close()
+	g = newTestGateway(t, cfg)
+	defer g.Close()
+	hours := hoursOf(t, g)
+	if len(hours) != 3 {
+		t.Fatalf("hours: %v", hours)
+	}
+	a, c, d := hours[0], hours[1], hours[2]
+	if a["hour"] != "2026-10-24T13:00Z" || a["requests"] != 2.0 || a["completed"] != 2.0 || a["prompt_tokens"] != 1100.0 ||
+		a["completion_tokens"] != 60.0 {
+		t.Fatalf("13:00: %v", a)
+	}
+	cls := a["classes"].(map[string]any)
+	if cls[ClassChat].(map[string]any)["requests"] != 1.0 || cls[ClassScience].(map[string]any)["prompt_tokens"] != 1000.0 {
+		t.Fatalf("13:00 classes: %v", cls)
+	}
+	if c["hour"] != "2026-10-24T15:00Z" || c["requests"] != 1.0 || c["completed"] != 0.0 {
+		t.Fatalf("15:00: %v", c)
+	}
+	if d["hour"] != "2026-10-24T16:00Z" || d["requests"] != 1.0 {
+		t.Fatalf("16:00 (from the usage log): %v", d)
+	}
+	g.Close()
+	g = newTestGateway(t, cfg)
+	defer g.Close()
+	if h := hoursOf(t, g); len(h) != 3 || h[2]["requests"] != 1.0 || h[0]["requests"] != 2.0 {
+		t.Fatalf("after another restart: %v", h)
+	}
+}
+
+// The hourly part keeps at most historyHours hours, dropping the oldest.
+func TestHistoryHoursBounded(t *testing.T) {
+	h := newHistory()
+	start, _ := time.Parse(time.RFC3339, "2026-01-01T00:30:00Z")
+	for i := 0; i < historyHours+5; i++ {
+		h.add(recAt(start.Add(time.Duration(i)*time.Hour), ClassChat, "ok", 1, 1))
+	}
+	hours := h.publicHours()
+	if len(hours) != historyHours {
+		t.Fatalf("%d hours kept", len(hours))
+	}
+	if hours[0]["hour"] != start.Add(5*time.Hour).Format(hourFormat) {
+		t.Fatalf("oldest kept: %v", hours[0]["hour"])
+	}
+}
