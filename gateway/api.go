@@ -322,7 +322,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	conv := g.pcache.print(forNode(body))
 	rt.who, rt.conv = keyHash(userKey), conv.hashes
 	req := &chatReq{user: acct.User, who: userKey, charge: charge, self: rt.self, want: want,
-		clientStream: clientStream, body: body, red: red, conv: conv,
+		clientStream: clientStream, logprobs: wantsLogprobs(body), body: body, red: red, conv: conv,
 		servedBy: g.servedBy(info, accountID), class: class, project: rt.project}
 	deadline := time.Now().Add(time.Duration(queueWait) * time.Second)
 	preempted := 0

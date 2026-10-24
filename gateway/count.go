@@ -343,7 +343,6 @@ func (m *genOut) chunk(data []byte) {
 	if m.size > maxMetered {
 		return
 	}
-	m.size += len(data)
 	var c struct {
 		Choices []struct {
 			Delta struct {
@@ -362,9 +361,12 @@ func (m *genOut) chunk(data []byte) {
 	if json.Unmarshal(data, &c) != nil {
 		return
 	}
+	// The bound counts the text kept, not the chunk: logprobs (top_logprobs 20 is about 1.5 kB
+	// a token) stopped the count of a long answer after some 700 tokens.
 	for _, ch := range c.Choices {
 		m.content.WriteString(ch.Delta.Content)
 		m.reasoning.WriteString(ch.Delta.ReasoningContent)
+		m.size += len(ch.Delta.Content) + len(ch.Delta.ReasoningContent)
 		for _, tc := range ch.Delta.ToolCalls {
 			if tc.Index < 0 || tc.Index > 255 {
 				continue
@@ -374,6 +376,7 @@ func (m *genOut) chunk(data []byte) {
 			}
 			m.calls[tc.Index].name += tc.Function.Name
 			m.calls[tc.Index].args += tc.Function.Arguments
+			m.size += len(tc.Function.Name) + len(tc.Function.Arguments)
 		}
 	}
 }

@@ -20,6 +20,15 @@ and **(site)** are live on aisathome.org once deployed.
   after 10 minutes instead of every few seconds. It still connects to gateways from before
   protocol versions. (node)
 
+### Fixed
+
+- **`logprobs` in non-streaming answers.** A request with `"logprobs": true` now gets them in
+  `choices[0].logprobs.content`, as OpenAI returns them; the gateway used to drop them
+  (streamed answers already carried them). Answers to requests that did not ask for logprobs
+  no longer carry any a node sent anyway. (gateway, live since YYYY-MM-DD)
+- The gateway's own token count of an answer (for credit) no longer stops early when the
+  answer carries logprobs. (gateway, live since YYYY-MM-DD)
+
 ## [v0.3.0] — 2026-10-24
 
 One model for every node, 16 GB cards can join, and the network starts doing science.

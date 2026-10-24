@@ -27,6 +27,7 @@ type chatReq struct {
 	self         string         // the requesting account's operator name, to record answers an account served itself
 	want         string         // the model or role the client asked for
 	clientStream bool           // the client asked for a stream (nodes always stream)
+	logprobs     bool           // the client asked for logprobs: passed on (streamed, or joined in the assembled answer)
 	servedBy     bool           // an operator key: the answer names the node that served it (KeyInfo.ServedBy)
 	class        string         // workload class: chat, agent or science (project.go)
 	project      string         // the science project, or ""
@@ -419,10 +420,14 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		g.log.Warn("node sent more output than requested", "node", rl.n.id, "chunks", rl.chunks)
 		return rl.fail("failed", "the node sent more output than requested", errTooMuchOutput)
 	}
-	outs := [][]byte{[]byte(m.Data)}
+	data := []byte(m.Data)
+	if !rl.req.logprobs { // not asked for: a node that sends them anyway does not reach the client with them
+		data = dropLogprobs(data)
+	}
+	outs := [][]byte{data}
 	if gd := rl.gd; gd != nil {
 		var big bool
-		outs, big = gd.filter(m.Data)
+		outs, big = gd.filter(data)
 		if gd.violation != "" {
 			return rl.block(gd.violation)
 		}
@@ -437,7 +442,7 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		}
 	}
 	if !rl.req.clientStream {
-		rl.collected = append(rl.collected, m.Data)
+		rl.collected = append(rl.collected, data)
 		return nil
 	}
 	for _, data := range outs {
@@ -483,7 +488,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	}
 	var ans map[string]any
 	if !rl.req.clientStream {
-		ans = assemble(rl.reqID, rl.model, rl.collected, u)
+		ans = assemble(rl.reqID, rl.model, rl.collected, u, rl.req.logprobs)
 		if rl.gd != nil { // what the client gets, not the pieces the guard saw
 			if rule := checkAssembled(ans, rl.gd.req); rule != "" {
 				return rl.block(rule)

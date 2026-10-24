@@ -115,6 +115,16 @@ func TestMeterOutput(t *testing.T) {
 	if m.content.Len() > maxMetered+len(big) {
 		t.Fatalf("kept %d bytes", m.content.Len())
 	}
+	// Logprobs do not count towards the bound: only the text kept does.
+	m = &meter{}
+	lp := `,"logprobs":{"content":[{"token":"x","logprob":-0.1,"top_logprobs":[` +
+		strings.TrimSuffix(strings.Repeat(`{"token":"y","logprob":-2.5,"bytes":[121]},`, 20), ",") + `]}]}`
+	for i := 0; i < 2000; i++ { // 2000 tokens with top_logprobs 20: about 2 MB of chunks
+		m.chunk([]byte(`{"choices":[{"delta":{"content":"x"}` + lp + `}]}`))
+	}
+	if m.content.Len() != 2000 {
+		t.Fatalf("with logprobs, %d of 2000 tokens metered", m.content.Len())
+	}
 }
 
 func TestPyJSON(t *testing.T) {

@@ -76,7 +76,10 @@ The `protocol` field (`"0.1"`) is frozen: gateways before versions refuse a node
 - **Metering:** one usage record per completed request (user, node, operator, model,
   tokens, duration), with tokens as reported by the node. Verification of reported usage
   comes later.
-- Users get OpenAI-compatible streaming (SSE) or non-streaming responses.
+- Users get OpenAI-compatible streaming (SSE) or non-streaming responses. A request with
+  `"logprobs": true` (and `top_logprobs`) gets the node's logprobs: in each streamed chunk as
+  the node sent it, or joined into `choices[0].logprobs.content` of a non-streaming answer.
+  Without it, logprobs a node sends anyway are removed.
 
 ## Not yet (planned)
 

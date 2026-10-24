@@ -33,6 +33,14 @@ Users point any OpenAI-compatible client (opencode, Open WebUI, `curl`) at
 `https://<gateway>/v1` with the key as the bearer token, and use a model or role name from
 `/v1/models`.
 
+**Logprobs.** `"logprobs": true` with `top_logprobs` (llama-server takes up to 20) returns
+the node's token logprobs in OpenAI's shape: per streamed chunk, or joined into
+`choices[0].logprobs.content` of a non-streaming answer. Without `"logprobs": true` the
+gateway removes logprobs a node sends anyway. They come from the node, unverified, like the
+answer. With `restore_secrets` the answer text gets the secrets back but the logprobs keep the
+placeholders the node saw. A non-streaming answer is buffered up to 2 MB, about 1,300 tokens
+with `top_logprobs` 20: stream longer ones.
+
 ### Which node served a request (operator keys only)
 
 A key with `"served_by": true` (in `keys` in the config, or edited into the keys file), and
