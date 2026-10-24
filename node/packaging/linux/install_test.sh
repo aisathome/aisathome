@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for install.sh that need no root, GPU or network: presets, overrides, input
-# validation, the prebuilt bundle's driver and GPU checks (fake nvidia-smi), free disk space
+# Tests for install.sh that need no root, GPU or network: tiers, overrides, input
+# validation, the prebuilt bundle's driver and GPU checks (fake nvidia-smi), the tier's free
+# GPU memory check, the speed test (fake llama-server), free disk space
 # (fake df), the model download (file:// URLs), through --dry-run and --download-only, and
 # the suspend hook (fake cgroups and systemctl, real processes).
 #
@@ -15,8 +16,10 @@ fails=0 out="" code=0
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 # Fakes first on PATH, so no test depends on this machine's GPU or disk.
-# df: FAKE_DF_KB KiB free (default 100 GB). nvidia-smi: FAKE_GPUS lines (\n-separated), or
-# fails like a broken driver with FAKE_SMI_FAIL=1.
+# df: FAKE_DF_KB KiB free (default 100 GB). nvidia-smi: FAKE_GPUS lines (\n-separated) for the
+# driver check, FAKE_MEM lines (index, uuid, name, total MiB, free MiB) for the tier, FAKE_APPS
+# lines (gpu uuid, pid, MiB) for compute processes, or fails like a broken driver with
+# FAKE_SMI_FAIL=1. systemctl: only "show -p MainPID" (FAKE_MAINPID, default 0: not running).
 mkdir "$tmp/fake"
 cat > "$tmp/fake/df" <<'FAKE'
 #!/bin/sh
@@ -26,9 +29,17 @@ FAKE
 cat > "$tmp/fake/nvidia-smi" <<'FAKE'
 #!/bin/sh
 if [ -n "$FAKE_SMI_FAIL" ]; then echo "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver."; exit 9; fi
-printf '%b\n' "${FAKE_GPUS-0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6}"
+case "$*" in
+  *memory.total*) printf '%b\n' "${FAKE_MEM-0, GPU-fake-0, NVIDIA GeForce RTX 3090, 24576, 24126}" ;;
+  *query-compute-apps*) [ -z "$FAKE_APPS" ] || printf '%b\n' "$FAKE_APPS" ;;
+  *) printf '%b\n' "${FAKE_GPUS-0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6}" ;;
+esac
 FAKE
-chmod +x "$tmp/fake/df" "$tmp/fake/nvidia-smi"
+cat > "$tmp/fake/systemctl" <<'FAKE'
+#!/bin/sh
+case "$*" in *MainPID*) echo "${FAKE_MAINPID:-0}" ;; *) exit 1 ;; esac
+FAKE
+chmod +x "$tmp/fake/df" "$tmp/fake/nvidia-smi" "$tmp/fake/systemctl"
 PATH="$tmp/fake:$PATH"
 
 # run VAR=value... -- args...: runs the installer in a clean environment, sets out and code.
@@ -44,54 +55,91 @@ lacks() { [[ "$out" != *"$2"* ]] || fail "$1: unexpected '$2'"; }
 ok() { [[ $code -eq 0 ]] || fail "$1: exit $code, want 0"; }
 usage_err() { [[ $code -eq 2 ]] || fail "$1: exit $code, want 2"; }
 
-# preset name, then the slots, context per slot and KV type it must produce.
-check_preset() {
-  local name="$1" np="$2" ctx="$3" kv="$4"
-  run -- --dry-run --preset "$name"
-  ok "$name"
-  has "$name" "-np $np --kv-unified-per-slot $ctx "
-  has "$name" "-ctk $kv -ctv $kv "
-  has "$name" "--reasoning-budget 8192 "
-  has "$name" "--cache-ram 2048 "
-  has "$name" "--host 127.0.0.1 "
+# The tier follows the card's size: big (192k) on 24 GB and more, standard (80k) on 16 GB.
+# card <total MiB> <free MiB> [name]: one fake GPU.
+card() { echo "0, GPU-fake-0, ${3:-NVIDIA GeForce RTX 3090}, $1, $2"; }
+check_tier() {  # check_tier <FAKE_MEM> <tier> <ctx>
+  run FAKE_MEM="$1" -- --dry-run
+  ok "tier $2 ($1)"
+  has "tier $2 ($1)" "tier: $2: 1 x $3 tokens, KV q4_0"
+  has "tier $2 ($1)" "-np 1 --kv-unified-per-slot $3 "
+  has "tier $2 ($1)" "-ctk q4_0 -ctv q4_0 "
+  has "tier $2 ($1)" '"slots": 1, "ctx": '"$3"
+  has "tier $2 ($1)" "--reasoning-budget 8192 "; has "tier $2 ($1)" "--cache-ram 2048 "; has "tier $2 ($1)" "--host 127.0.0.1 "
+  has "tier $2 ($1)" "at least 20 tokens/s after a 32000-token prompt"
 }
-
-# Defaults: no preset given means the network's one setting, long-context.
 run -- --dry-run
-ok default; has default "preset: long-context"; has default "-np 1 --kv-unified-per-slot 131072 "
-has default "-ctk q4_0 -ctv q4_0 "
+ok default; has default "GPU 0: NVIDIA GeForce RTX 3090, 24576 MiB: the big tier (192k context)"
+has default "memory: 24126 MiB free, the big tier needs 18500: fits"
+check_tier "$(card 24576 24126)" big 196608
+check_tier "$(card 24564 21979 'NVIDIA GeForce RTX 4090')" big 196608
+check_tier "$(card 32607 32100 'NVIDIA GeForce RTX 5090')" big 196608
+check_tier "$(card 16303 15841 'NVIDIA GeForce RTX 5070 Ti')" standard 81920
+check_tier "$(card 16376 15900 'NVIDIA GeForce RTX 4080')" standard 81920
+check_tier "$(card 20475 20000 'NVIDIA RTX 4000 Ada Generation')" standard 81920
+# Too small a card, or too little free memory for the tier: a clear stop, never a smaller tier.
+run FAKE_MEM="$(card 12282 11900 'NVIDIA GeForce RTX 4070')" -- --dry-run
+[[ $code -eq 1 ]] || fail "12 GB card: exit $code, want 1"; has "12 GB card" "has 12282 MiB of memory; the network needs a card with 16 GB or more"
+run FAKE_MEM="$(card 16303 15199 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
+[[ $code -eq 1 ]] || fail "16 GB with a display: exit $code, want 1"
+has "16 GB with a display" "has 15199 MiB free; the standard tier (80k context) needs 15200 MiB free"
+has "16 GB with a display" "Connect the monitor to the motherboard's graphics"; lacks "16 GB with a display" "tier: big"
+run FAKE_MEM="$(card 16303 15200 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
+ok "16 GB at the limit"; has "16 GB at the limit" "the standard tier needs 15200: fits"
+run FAKE_MEM="$(card 24576 17000)" -- --dry-run
+[[ $code -eq 1 ]] || fail "24 GB, busy desktop: exit $code, want 1"
+has "24 GB, busy desktop" "has 17000 MiB free; the big tier (192k context) needs 18500 MiB free"; lacks "24 GB, busy desktop" "standard tier"
+# An update: the memory this node's own running llama-server holds counts as free.
+run FAKE_MEM="$(card 24576 5000)" FAKE_MAINPID=4242 FAKE_APPS="GPU-fake-0, 4242, 18300\nGPU-fake-0, 999, 700" -- --dry-run
+ok "update frees own memory"; has "update frees own memory" "memory: 23300 MiB free (incl. 18300 MiB of this node's running llama-server)"
+run FAKE_MEM="$(card 24576 5000)" FAKE_MAINPID=4242 FAKE_APPS="GPU-fake-1, 4242, 18300" -- --dry-run
+[[ $code -eq 1 ]] || fail "own memory on another GPU: exit $code, want 1"
+# Several GPUs: the largest card is used (on a tie, the freer one), and llama-server is pinned to it.
+run FAKE_MEM="0, GPU-aaa, NVIDIA GeForce RTX 4080, 16376, 15000\n1, GPU-bbb, NVIDIA GeForce RTX 3090, 24576, 24000" -- --dry-run
+ok "two GPUs"; has "two GPUs" "GPU 1: NVIDIA GeForce RTX 3090, 24576 MiB: the big tier (192k context); llama-server uses only this GPU"
+has "two GPUs" "Environment=CUDA_VISIBLE_DEVICES=GPU-bbb"
+run FAKE_MEM="0, GPU-aaa, NVIDIA GeForce RTX 3090, 24576, 20000\n1, GPU-bbb, NVIDIA GeForce RTX 3090, 24576, 24000" -- --dry-run
+ok "two equal GPUs"; has "two equal GPUs" "CUDA_VISIBLE_DEVICES=GPU-bbb"
+# An update on two equal cards: the node's own card has little free memory because its running
+# llama-server holds it; the other card has a busy desktop. Counted before the cards are
+# compared, the node's card is the freer one (23300 MiB against 17000) and is kept.
+run FAKE_MEM="0, GPU-aaa, NVIDIA GeForce RTX 3090, 24576, 5000\n1, GPU-bbb, NVIDIA GeForce RTX 3090, 24576, 17000" FAKE_MAINPID=4242 FAKE_APPS="GPU-aaa, 4242, 18300\nGPU-bbb, 777, 7000" -- --dry-run
+ok "update, two equal GPUs"; has "update, two equal GPUs" "CUDA_VISIBLE_DEVICES=GPU-aaa"
+has "update, two equal GPUs" "memory: 23300 MiB free (incl. 18300 MiB of this node's running llama-server)"
+run -- --dry-run
+lacks "one GPU, no pin" "CUDA_VISIBLE_DEVICES"
+run FAKE_MEM="Field \"uuid\" is not a valid field to query." -- --dry-run
+[[ $code -eq 1 ]] || fail "unreadable memory: exit $code, want 1"; has "unreadable memory" "cannot read the GPU memory from nvidia-smi"
 
-check_preset long-context 1 131072 q4_0
-for gone in balanced low-vram long-context-dual; do
+# The old presets: long-context (the v0.2.0 setting) is accepted and ignored; others are errors.
+run -- --dry-run --preset long-context
+ok "--preset long-context"; has "--preset long-context" "tier: big: 1 x 196608 tokens"
+run PRESET=long-context -- --dry-run
+ok "PRESET env"; has "PRESET env" "-np 1 --kv-unified-per-slot 196608 "
+for gone in balanced low-vram long-context-dual turbo; do
   run -- --dry-run --preset "$gone"
-  usage_err "removed preset $gone"; has "removed preset $gone" "unknown preset '$gone'"
+  usage_err "removed preset $gone"; has "removed preset $gone" "unknown preset '$gone'; presets are gone"
 done
 
-# PRESET from the environment, and --preset winning over it.
-run PRESET=long-context -- --dry-run
-ok "PRESET env"; has "PRESET env" "-np 1 --kv-unified-per-slot 131072 "
-run PRESET=turbo -- --dry-run --preset long-context
-ok "--preset over PRESET"; has "--preset over PRESET" "preset: long-context"
-
-# Explicit variables override a preset, one at a time.
-run SLOTS=3 -- --dry-run --preset long-context
-ok "SLOTS override"; has "SLOTS override" "-np 3 --kv-unified-per-slot 131072 "
+# Explicit variables override the tier, one at a time (testing); the free-memory check is skipped.
+run SLOTS=3 -- --dry-run
+ok "SLOTS override"; has "SLOTS override" "-np 3 --kv-unified-per-slot 196608 "; has "SLOTS override" "check is skipped"
 run CTX_PER_SLOT=65536 -- --dry-run
 ok "CTX override"; has "CTX override" "-np 1 --kv-unified-per-slot 65536 "
-run KV_TYPE=q8_0 -- --dry-run --preset long-context
+run CTX_PER_SLOT=65536 FAKE_MEM="$(card 16303 14000)" -- --dry-run
+ok "CTX override, busy card"; has "CTX override, busy card" "tier: test settings (card: standard): 1 x 65536 tokens"
+run KV_TYPE=q8_0 -- --dry-run
 ok "KV override"; has "KV override" "-ctk q8_0 -ctv q8_0 "; lacks "KV override" "q4_0"
-run REASONING_BUDGET=-1 CACHE_RAM_MIB=0 MODEL_ALIAS=my-model -- --dry-run
+run REASONING_BUDGET=-1 CACHE_RAM_MIB=0 MODEL_ALIAS=my-model MIN_DECODE_TPS=12.5 -- --dry-run
 ok "other overrides"; has "other overrides" "--reasoning-budget -1 "
-has "other overrides" "--cache-ram 0 "; has "other overrides" "--alias my-model "
+has "other overrides" "--cache-ram 0 "; has "other overrides" "--alias my-model "; has "other overrides" "at least 12.5 tokens/s"
 
 # Invalid input is rejected with a usage error before anything is installed.
-run -- --dry-run --preset turbo
-usage_err "unknown preset"; has "unknown preset" "unknown preset 'turbo'"
 run PRESET=Balanced -- --dry-run
 usage_err "preset is case-sensitive"
 run KV_TYPE=q5_1 -- --dry-run
 usage_err "bad KV_TYPE"; has "bad KV_TYPE" "KV_TYPE must be"
-for bad in SLOTS=0 SLOTS=two CTX_PER_SLOT=-5 REASONING_BUDGET=-2 CACHE_RAM_MIB=1.5 "MODEL_ALIAS=a b" "MODEL_ALIAS=x;y"; do
+for bad in SLOTS=0 SLOTS=two CTX_PER_SLOT=-5 REASONING_BUDGET=-2 CACHE_RAM_MIB=1.5 "MODEL_ALIAS=a b" "MODEL_ALIAS=x;y" MIN_DECODE_TPS=-1 MIN_DECODE_TPS=fast; do
   run "$bad" -- --dry-run
   usage_err "$bad"
 done
@@ -104,7 +152,7 @@ ok "UI default"; has "UI default" "local UI: 7381"; has "UI default" "Environmen
 has "UI default" "Environment=AISATHOME_UI_PASSWORD_FILE=/etc/aisathome-node/ui-password"
 has "UI default" "Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json"
 has "UI default" "Environment=AISATHOME_RESTART_TRIGGER=/var/lib/aisathome-node/restart-engine"
-has "UI default" 'Environment="AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"'
+has "UI default" 'Environment="AISATHOME_PRESET=big: 1 x 196608 tokens, KV q4_0"'
 # GPU access in the rendered units: major 195 is "nvidia-frontend" in /proc/devices up to driver
 # 535 and "nvidia" from 545 on; with only the old name, driver 575 ran on the CPU (2026-10-18).
 # device_rules <name> <unit text> <rule>...: each rule is a line of the unit.
@@ -120,8 +168,8 @@ device_rules "llama unit" "$llama" "DeviceAllow=char-nvidia-frontend rw" "Device
   "After=nvidia-resume.service" "Environment=GGML_NO_BACKTRACE=1"
 grep -q '^ExecStart=/opt/aisathome-node/bin/llama-server -m /var/lib/aisathome-node/models/model.gguf ' <<<"$llama" ||
   fail "llama unit: no ExecStart"
-run UI_PORT=8123 SLOTS=1 -- --dry-run --preset long-context
-ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=long-context: 1 x 131072 tokens, KV q4_0"
+run UI_PORT=8123 FAKE_MEM="$(card 16303 15841)" -- --dry-run
+ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=standard: 1 x 81920 tokens, KV q4_0"
 run UI_PORT=off -- --dry-run
 ok "UI off"; has "UI off" "AISATHOME_UI_PORT=off"
 for bad in UI_PORT=80 UI_PORT=8000 UI_PORT=70000 UI_PORT=abc "UI_PORT=7381;x" UI_PORT=07381; do
@@ -149,8 +197,8 @@ if [[ -n "$arch" ]]; then
 
   run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release latest
   ok "release latest"; has "release latest" "$asset from file://$rel/latest/download"
-  has "release latest" "(verified)"; has "release latest" "-np 1 --kv-unified-per-slot 131072 "
-  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.3 --preset long-context
+  has "release latest" "(verified)"; has "release latest" "-np 1 --kv-unified-per-slot 196608 "
+  run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.3
   ok "release tag"; has "release tag" "file://$rel/download/v1.2.3"; has "release tag" "-np 1 "
   run "$base" TMPDIR="$rel/tmp" -- --dry-run --node-release v1.2.4
   [[ $code -eq 1 ]] || fail "tampered binary: exit $code, want 1"; has "tampered binary" "checksum mismatch"
@@ -174,26 +222,39 @@ usage_err "plain http release URL"
 # The pinned model and a generated node.json, from the repository (no bundle): a dry run
 # shows the download plan and checks the free disk space.
 run -- --dry-run --node-id test-node
-ok "model plan"; has "model plan" "model: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_M.gguf"
-has "model plan" "sha256 322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
-has "model plan" "disk: 102.4 GB free"; lacks "model plan" "GPU 0"
+ok "model plan"; has "model plan" "model: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-IQ4_XS.gguf"
+has "model plan" "sha256 40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199, 14.3 GB"
+has "model plan" "disk: 102.4 GB free"; lacks "model plan" "compute capability"
 has "model plan" '"node_id": "test-node"'; has "model plan" '"gateway_url": "wss://api.aisathome.org/v1/node/connect"'
-has "model plan" '"name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 1, "ctx": 131072'
+has "model plan" '"name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 1, "ctx": 196608'
 # Sizes print with a decimal point in any locale (a comma locale gave "16,5 GB").
 comma_locale="$(locale -a 2>/dev/null | grep -m1 -iE '^(nb_NO|de_DE|fr_FR)\.utf-?8$' || true)"
 if [[ -n "$comma_locale" ]]; then
   run LC_ALL="$comma_locale" -- --dry-run
-  ok "comma locale"; has "comma locale" "16.5 GB) to"; lacks "comma locale" "16,5"
+  ok "comma locale"; has "comma locale" "14.3 GB) to"; lacks "comma locale" "14,3"
 fi
 run FAKE_DF_KB=10000000 -- --dry-run
 [[ $code -eq 1 ]] || fail "no disk space: exit $code, want 1"; has "no disk space" "not enough disk space"
-run FAKE_DF_KB=10000000 -- --dry-run --model /etc/hostname
-ok "--model skips the download"; lacks "--model skips the download" "huggingface"
+# --model: only the pinned file (checked by size in a dry run, by SHA-256 when installing).
+head -c 4096 /dev/urandom > "$tmp/own-model.gguf"
+osha="$(sha256sum "$tmp/own-model.gguf" | cut -d' ' -f1)"
+run FAKE_DF_KB=10000000 MODEL_URL=https://example.org/m/own-model.gguf MODEL_SHA256="$osha" MODEL_SIZE=4096 -- --dry-run --model "$tmp/own-model.gguf"
+ok "--model skips the download"; lacks "--model skips the download" "example.org"
+run -- --dry-run --model /etc/hostname
+[[ $code -eq 1 ]] || fail "--model, another file: exit $code, want 1"
+has "--model, another file" "/etc/hostname is not the network's model"; has "--model, another file" "the pinned Qwen3.8-27B-UD-IQ4_XS.gguf has 14252845984"
+eval "$(sed -n '/^check_model_file() {/,/^}/p' "$installer")"
+die() { echo "$1"; exit 1; }
+out="$(model_size=4096 model_sha="$osha" model_name=own-model.gguf check_model_file "$tmp/own-model.gguf" 1 2>&1)"; code=$?
+ok "check_model_file, the pinned file"; has "check_model_file, the pinned file" "(verified)"
+out="$(model_size=4096 model_sha="$(printf 'a%.0s' {1..64})" model_name=own-model.gguf check_model_file "$tmp/own-model.gguf" 1 2>&1)"; code=$?
+[[ $code -ne 0 ]] || fail "check_model_file, same size, other hash: accepted"; has "check_model_file, other hash" "is not the network's model: sha256 $osha"
+unset -f check_model_file die
 run -- --dry-run --model /nonexistent.gguf
 [[ $code -eq 1 ]] || fail "missing model file: exit $code, want 1"; has "missing model file" "no model file"
-run -- --dry-run --preset long-context --gateway-url wss://gw.example.org:8443/v1/node/connect --node-id n1
-ok "node.json follows the preset"; has "node.json follows the preset" '"slots": 1, "ctx": 131072'
-has "node.json follows the preset" '"gateway_url": "wss://gw.example.org:8443/v1/node/connect"'
+run FAKE_MEM="$(card 16303 15841)" -- --dry-run --gateway-url wss://gw.example.org:8443/v1/node/connect --node-id n1
+ok "node.json follows the tier"; has "node.json follows the tier" '"slots": 1, "ctx": 81920'
+has "node.json follows the tier" '"gateway_url": "wss://gw.example.org:8443/v1/node/connect"'
 run -- --dry-run --node-config /etc/hostname
 ok "--node-config"; lacks "--node-config" "node.json (generated)"
 for bad in "--node-id a\ b" "--node-id -x" "--gateway-url http://gw.example.org" "--gateway-url wss://gw/x?y" "--node-config /etc/hostname --node-id n1"; do
@@ -323,7 +384,7 @@ done
 eval "$(sed -n '/^engine_on_gpu() {/,/^}/p' "$installer")"
 die() { echo "$1"; return 1; }
 e="$tmp/engine"; mkdir -p "$e"
-printf '#!/bin/sh\nprintf "%%s\\n" "$FAKE_JOURNAL"\n' > "$e/journalctl"
+printf '#!/bin/sh\nprintf "%%s\\n" "$FAKE_JOURNAL"\nseq "${FAKE_JOURNAL_REPEAT:-0}" | sed "s/^/restarting, line /"\n' > "$e/journalctl"
 printf '#!/bin/sh\necho "systemctl $*" >> "%s/systemctl.log"\n' "$e" > "$e/systemctl"
 chmod +x "$e/journalctl" "$e/systemctl"
 check_engine() {
@@ -338,6 +399,79 @@ check_engine $'E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable devi
 has "engine on the CPU" "ran on the CPU, so the installer stopped it"
 has "engine on the CPU" "systemctl disable --now aisathome-node aisathome-llama"
 unset -f engine_on_gpu die check_engine
+
+# engine_fits on its own: llama-server out of GPU memory at start stops the install with the
+# tier's advice and leaves the engine disabled (systemd would restart it every 5 s).
+eval "$(sed -n '/^engine_fits() {/,/^}/p;/^fit_advice() {/,/^}/p;/^engine_on_gpu() {/,/^}/p' "$installer")"
+die() { echo "$1"; return 1; }
+: > "$e/systemctl.log"
+out="$(export PATH="$e:$PATH" FAKE_JOURNAL=$'llama_kv_cache: CUDA0 KV buffer size = 1440.00 MiB\nggml_backend_cuda_buffer_type_alloc_buffer: allocating 480.00 MiB on device 0: cudaMalloc failed: out of memory'; tier=standard; engine_fits "2026-10-23 10:00:00")"; code=$?
+out+=$'\n'"$(cat "$e/systemctl.log")"
+[[ $code -eq 1 ]] || fail "engine out of memory: exit $code, want 1"
+has "engine out of memory" "ran out of GPU memory while loading the standard tier"; has "engine out of memory" "Connect the monitor to the motherboard"
+has "engine out of memory" "systemctl disable --now aisathome-node aisathome-llama"
+# A long log after the match (systemd restarting the engine for minutes): a "grep -q" would end
+# early, journalctl would get SIGPIPE, and under pipefail the check would pass silently
+# (2026-10-23, RTX 4080 SUPER VM). FAKE_JOURNAL_REPEAT adds that many lines after the log.
+out="$(export PATH="$e:$PATH" FAKE_JOURNAL="cudaMalloc failed: out of memory" FAKE_JOURNAL_REPEAT=50000; tier=standard; engine_fits "2026-10-23 10:00:00")"; code=$?
+[[ $code -eq 1 ]] || fail "engine out of memory, long log: exit $code, want 1"
+out="$(export PATH="$e:$PATH" FAKE_JOURNAL="warning: no usable GPU found, --gpu-layers option will be ignored" FAKE_JOURNAL_REPEAT=50000; engine_on_gpu "2026-10-23 10:00:00" 2>&1)"; code=$?
+[[ $code -eq 1 ]] || fail "engine on the CPU, long log: exit $code, want 1"
+: > "$e/systemctl.log"
+out="$(export PATH="$e:$PATH" FAKE_JOURNAL="main: model loaded"; tier=big; engine_fits "2026-10-23 10:00:00")"; code=$?
+ok "engine not out of memory"; [[ ! -s "$e/systemctl.log" ]] || fail "engine not out of memory: systemctl called"
+unset -f engine_fits fit_advice engine_on_gpu die
+
+# The speed test against a fake llama-server: /tokenize, and /completion with llama-server's
+# timings. FAKE_TPS sets the decode speed it reports; it records the request it got.
+fs="$tmp/fakeserver"; mkdir -p "$fs"
+cat > "$fs/server.py" <<'PY'
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/tokenize":
+            out = {"tokens": list(range(len(body["content"].split())))}
+        else:
+            open(os.path.join(sys.argv[2], "req.json"), "w").write(json.dumps({k: v for k, v in body.items() if k != "prompt"} | {"prompt_len": len(body["prompt"])}))
+            tps = float(open(os.path.join(sys.argv[2], "tps")).read())
+            if tps < 0: self.send_response(500); self.end_headers(); return
+            out = {"timings": {"prompt_n": len(body["prompt"]), "prompt_ms": 23456.0, "predicted_per_second": tps}}
+        data = json.dumps(out).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(data)
+s = HTTPServer(("127.0.0.1", 0), H); open(sys.argv[1], "w").write(str(s.server_port)); s.serve_forever()
+PY
+echo 30 > "$fs/tps"
+python3 "$fs/server.py" "$fs/port" "$fs" & fspid=$!
+for _ in $(seq 50); do [[ -s "$fs/port" ]] && break; sleep 0.1; done
+eval "$(sed -n '/^speed_probe() {/,/^}/p;/^speed_check() {/,/^}/p' "$installer")"
+die() { echo "$1"; return 1; }
+speed() {  # speed <tokens/s the fake reports> [min]: runs speed_check, sets out and code
+  echo "$1" > "$fs/tps"; : > "$e/systemctl.log"
+  out="$(export PATH="$e:$PATH"; engine_url="http://127.0.0.1:$(cat "$fs/port")" speed_ctx=32000 min_tps="${2:-20}" \
+    gpu_idx=0 gpu_name="NVIDIA GeForce RTX 5060 Ti" speed_check 2>&1)"; code=$?
+  out+=$'\n'"$(cat "$e/systemctl.log")"
+}
+speed 28.9
+ok "speed fast enough"; has "speed fast enough" "speed: 28.9 tokens/s after a 32000-token prompt (read in 23 s); the network needs at least 20"
+lacks "speed fast enough" "systemctl disable"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["prompt_len"] == 32000 and r["n_predict"] == 256 and r["ignore_eos"] and r["cache_prompt"] is False else 1)' "$fs/req.json" ||
+  fail "speed test request: $(cat "$fs/req.json")"
+speed 13.8
+[[ $code -eq 1 ]] || fail "speed too slow: exit $code, want 1"
+has "speed too slow" "GPU 0 (NVIDIA GeForce RTX 5060 Ti) writes 13.8 tokens/s after a 32000-token prompt; the network needs at least 20"
+has "speed too slow" "systemctl disable --now aisathome-node aisathome-llama"
+speed 20.0
+ok "speed at the floor"
+speed 13.8 0
+ok "MIN_DECODE_TPS=0 never refuses"
+speed -1
+[[ $code -eq 1 ]] || fail "speed test error: exit $code, want 1"; has "speed test error" "the speed test failed (HTTPError"
+has "speed test error" "systemctl disable --now"
+kill "$fspid" 2>/dev/null; wait "$fspid" 2>/dev/null
+unset -f speed_probe speed_check speed die
 
 # uninstall.sh in a fake root (fake systemctl and userdel): removes the units, their drop-ins
 # (also one made with "systemctl edit"), binaries and config; keeps the model unless --purge.
@@ -436,7 +570,7 @@ if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   ok "bundle"; has "bundle" "llama-server: prebuilt, llama.cpp v0.5.0 (7fe450e19305), CUDA 12.8"
   has "bundle" "GPU 0: NVIDIA GeForce RTX 3090, driver 535.183.01, compute capability 8.6: supported"
   has "bundle" "model: https://huggingface.co/unsloth/"; has "bundle" '"node_id": "test-node"'
-  has "bundle" "-np 1 --kv-unified-per-slot 131072 "
+  has "bundle" "-np 1 --kv-unified-per-slot 196608 "
   # gpu "lines" expect: ok or the error text.
   check_gpus() {
     run FAKE_GPUS="$1" -- --dry-run --node-id t
@@ -458,7 +592,8 @@ if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   run FAKE_DF_KB=1000 -- --dry-run --node-id t
   [[ $code -eq 1 ]] || fail "bundle, no disk space: exit $code, want 1"; has "bundle, no disk space" "not enough disk space"
   # An explicit --llama-build skips the bundle's checks (the manual path is unchanged).
-  run FAKE_SMI_FAIL=1 -- --dry-run --node-id t --llama-build "$b"
+  # (A GPU the bundle was not built for; the tier still needs nvidia-smi.)
+  run FAKE_GPUS="0, NVIDIA GeForce RTX 2080 Ti, 550.54.15, 7.5" -- --dry-run --node-id t --llama-build "$b"
   ok "bundle dir as --llama-build"; lacks "bundle dir as --llama-build" "prebuilt"
   sed -i '/^min_driver=/d' "$b/BUILD-INFO"
   run -- --dry-run --node-id t

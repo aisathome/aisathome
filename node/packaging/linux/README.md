@@ -26,10 +26,12 @@ sudo ./install.sh    # then paste the node token
 Requirements:
 
 - x86_64 with AVX2, systemd, glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer);
-- an NVIDIA GPU with compute capability 8.6, 8.9 or 12.0 (RTX 30, 40, 50 series) and about
-  20 GB free VRAM;
+- an NVIDIA GPU with compute capability 8.6, 8.9 or 12.0 (RTX 30, 40, 50 series) with 16 GB
+  or more, and enough of it free for its tier (below): 15,200 MiB on a 16 GB card (no screen
+  on it), 18,500 MiB on 24 GB and more;
+- a decode speed of at least 20 tokens/s after a 32,000-token prompt (measured at install);
 - NVIDIA driver **525.60.13 or newer**, and **570.26 or newer** on an RTX 50;
-- about 18.5 GB free in `/var/lib` (the 16.5 GB model plus 2 GB).
+- about 16.5 GB free in `/var/lib` (the 14.3 GB model plus 2 GB).
 
 What is in it (`BUILD-INFO` has the exact values):
 
@@ -54,23 +56,26 @@ bundle for a test install.
 
 ### The model
 
-Without `--model`, the installer downloads `Qwen3.8-27B-UD-Q4_K_M.gguf` from
+Without `--model`, the installer downloads `Qwen3.8-27B-UD-IQ4_XS.gguf` from
 `unsloth/Qwen3.8-27B-GGUF`, pinned to commit `4ca720788d1e01f1bff70c033e0d0028fd02e502`, and
-checks it against SHA-256 `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`
-(16,464,440,224 bytes, the file the settings were measured with). It goes
-straight to `/var/lib/aisathome-node/models/model.gguf`:
+checks it against SHA-256 `40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199`
+(14,252,845,984 bytes, the file the tiers were measured with; hash and size are the file's LFS
+pointer at that commit on the Hugging Face Hub). It replaced `UD-Q4_K_M` (16.5 GB) in v0.3.0.
+It goes straight to `/var/lib/aisathome-node/models/model.gguf`:
 
 - an interrupted download resumes from `model.gguf.part` on the next run;
 - a wrong checksum deletes the download, so the next run starts clean;
 - an existing `model.gguf` with the right checksum is kept (checked, about a minute);
 - `--download-only <dir>` only downloads and checks, without root, e.g. on a slow line
-  before installing with `--model <dir>/Qwen3.8-27B-UD-Q4_K_M.gguf`;
+  before installing with `--model <dir>/Qwen3.8-27B-UD-IQ4_XS.gguf`;
+- `--model` accepts only the pinned file (size, then SHA-256): the network never mixes model
+  files, because the model check cannot tell `UD-IQ4_XS` from `UD-Q4_K_M` reliably;
 - `MODEL_URL`, `MODEL_SHA256` and `MODEL_SIZE` (all three) choose another file.
 
 ### node.json
 
 Without `--node-config`, the installer writes `node.json` with the gateway
-(`--gateway-url`, default `wss://api.aisathome.org/v1/node/connect`), the preset's slots and
+(`--gateway-url`, default `wss://api.aisathome.org/v1/node/connect`), the tier's slots and
 context, and the roles `deep` and `agent`. The node id comes from `--node-id`, else from a
 token made on the account page (`nt-<node id>.<secret>`), else from the host name. Only a
 token from a gateway's config needs `--node-id`. When the installer runs again on an
@@ -122,46 +127,47 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   node, Enter on an empty line at the prompt keeps the installed token, and `--keep-token`
   keeps it without asking (for scripts; empty piped input is still an error).
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
-- Defaults: the network's one setting (1 × 128k, KV `q4_0`; below), a thinking budget of 8,192 tokens, and
+- Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot`.
-- `--dry-run` runs the checks (bundle, driver, GPU, disk), prints the generated `node.json`,
+- `--dry-run` runs the checks (bundle, driver, GPU, the tier's free memory, disk), prints the generated `node.json`,
   the `llama-server` command and its systemd unit, and exits without installing (no root
   needed; with `--node-release` it downloads and verifies the binary too).
-  `./install_test.sh` tests presets, overrides, the checks (with a fake `nvidia-smi` and
-  `df`), the downloads and the units' GPU device rules (against `/proc/devices` as drivers
+  `./install_test.sh` tests the tiers, overrides, the checks (with a fake `nvidia-smi`,
+  `systemctl` and `df`), the speed test (against a fake `llama-server`), the downloads and the units' GPU device rules (against `/proc/devices` as drivers
   530 and 575 list it) this way; `../../../scripts/bundle_test.sh` tests the bundle's
   packaging.
 
 ## Model settings
 
-One setting for the whole network: **1 request at a time with a 128k context**, KV cache
-`q4_0`. Every node takes the same requests, and the model check compares against one
-reference. The installer uses it without asking; there is nothing to choose.
+Every node runs the same model file, one request at a time, with a context set by the card's
+size only (two tiers). The installer picks the tier; there is nothing to choose.
 
-| Setting | Measured on an RTX 4090 with Qwen3.8 27B `UD-Q4_K_M` |
-|---|---|
-| 1 × 128k context, KV `q4_0` | 18,306 MiB VRAM; hard needles at 120k: 118/120 (q8: 119/120 at 20,354 MiB); first 120k prompt 82 s; decode 46.6 tokens/s short, 32.5 at 120k |
+| Tier | Cards (nvidia-smi total) | Context | KV | Free GPU memory needed before start |
+|---|---|---|---|---|
+| standard | 15,500 to 22,999 MiB (16 GB class) | 1 × 81,920 | `q4_0` | 15,200 MiB: no screen on the card, or under about 650 MB of desktop |
+| big | 23,000 MiB and more (24 GB+) | 1 × 196,608 | `q4_0` | 18,500 MiB |
 
-Where it is set: the [preset in `install.sh`](https://github.com/aisathome/aisathome/blob/v0.2.0/node/packaging/linux/install.sh#L65-L70) and the
-[`llama-server` command it installs](https://github.com/aisathome/aisathome/blob/v0.2.0/node/packaging/linux/install.sh#L130-L134) (v0.2.0). Measured by the project on
-2026-10-09 with llama.cpp v0.5.0; the benchmark notes behind these numbers are not public yet.
-
-What this means:
-- **One request at a time per GPU.** A long prompt keeps the GPU busy before the first word
-  (about 80 seconds at 120k); short chats are quick. Daily token limits keep very long
-  requests rare.
-- **`q4_0` KV cache:** its mean divergence from full precision is about twice that of `q8_0`
-  (KLD 0.0044 vs 0.0020), with no task loss measured, including at 120k. It is what lets
-  128k fit in 24 GB.
-- **A desktop on the same GPU** needs extra memory; the numbers above are for a card
-  without a display. If the model does not fit, see
-  "Troubleshooting" on the site's Day to day page.
+- **It must fit; it is never shrunk.** The installer reads the card's free memory (the memory
+  of this node's own running `llama-server` counts as free on an update) and stops with a
+  message if the tier does not fit. If `llama-server` still runs out of memory at start, it
+  stops and disables the node with the same advice. With several GPUs, the largest card is
+  used and `llama-server` is pinned to it (`CUDA_VISIBLE_DEVICES=<uuid>`).
+- **Speed test.** After the model has loaded and before the agent connects, the installer
+  sends a 32,000-token prompt to `llama-server` and reads its decode speed for 256 tokens. Below
+  20 tokens/s it stops and disables the node. A short prompt would misrank cards: an RTX 5070
+  Ti writes 47 tokens/s at 200 tokens but 29 at 32k and 17 at 78k with `q4_0` KV.
+- **Measured** with `UD-IQ4_XS` and llama.cpp v0.5.0 (2026-10-22/23): standard on an RTX 5070 Ti,
+  15,070 MiB after load and 15,098 at the peak of a 77k prompt, loads with 640 MiB held by a
+  simulated display and fails at start with 768 MiB; big: 256k on an RTX 3090 used 19,202 MiB
+  at the peak, hard needles 77/80 at ~195k and 62/80 at ~247k (hence 192k). `q8_0` KV does not
+  fit 80k in 16 GB.
 
 For testing only, `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE`, `REASONING_BUDGET` (`-1` =
-unlimited), `CACHE_RAM_MIB` and `MODEL_ALIAS` override the setting, e.g.
-`CTX_PER_SLOT=65536 sudo -E ./install.sh`. A node with a smaller context gets only requests
-that fit it.
+unlimited), `CACHE_RAM_MIB`, `MODEL_ALIAS` and `MIN_DECODE_TPS` (`0`: measure, never refuse)
+override the setting, e.g. `CTX_PER_SLOT=65536 sudo -E ./install.sh`; with any of the first
+three the free-memory check is skipped. A node with a smaller context gets only requests that
+fit it.
 
 ## Privacy hardening
 

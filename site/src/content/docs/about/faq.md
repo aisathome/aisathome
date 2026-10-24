@@ -16,7 +16,8 @@ personal data only to the maintainer's own nodes), but we can’t make it confid
 
 ## Which model runs?
 
-Qwen3.8 27B, an open-weight model, quantised to 4 bits so that it fits a 24 GB GPU.
+Qwen3.8 27B, an open-weight model, quantised to about 4 bits (UD-IQ4_XS, 14.3 GB) so that it fits a
+16 GB GPU with 80k context, or a 24 GB GPU with 192k.
 
 ## Do volunteers get paid?
 
@@ -24,8 +25,9 @@ No. There is no token and no payment; running a node is voluntary.
 
 ## Can I run a node on Windows or a smaller GPU?
 
-Not yet. The node package is Linux only, and the model needs a 24 GB GPU such as an RTX 3090
-or 4090.
+Windows: not yet, the node package is Linux only. Smaller GPUs: a 16 GB card works if no screen is
+connected to it (for example an RTX 4080 or 5070 Ti); cards under 16 GB, and 16 GB cards that are
+too slow (the installer tests the speed), cannot join. [What a node needs](/node/).
 
 ## Can I use it with BOINC at the same time?
 

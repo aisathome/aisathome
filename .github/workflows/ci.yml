@@ -42,10 +42,19 @@ jobs:
         run: ./scripts/bundle_test.sh
       - name: release build, installed from file:// by install.sh
         run: |
+          set -o pipefail
           ./scripts/build-release.sh v0.0.0 "$RUNNER_TEMP/rel/download/v0.0.0"
-          # --model: any existing file, so the dry run does not depend on the runner's free disk.
-          AISATHOME_RELEASE_URL="file://$RUNNER_TEMP/rel" \
-            ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0 --model go.mod
+          # The runner has no GPU: a fake nvidia-smi reports one 24 GB card, as in install_test.sh.
+          mkdir -p "$RUNNER_TEMP/fake"
+          printf '%s\n' '#!/bin/sh' 'case "$*" in *memory.total*) echo "0, GPU-ci-0, NVIDIA GeForce RTX 3090, 24576, 24126" ;; esac' \
+            > "$RUNNER_TEMP/fake/nvidia-smi"
+          chmod +x "$RUNNER_TEMP/fake/nvidia-smi"
+          # --model: a small file pinned as the model (MODEL_URL, MODEL_SHA256 and MODEL_SIZE go
+          # together), so the dry run does not depend on the runner's free disk.
+          PATH="$RUNNER_TEMP/fake:$PATH" AISATHOME_RELEASE_URL="file://$RUNNER_TEMP/rel" \
+            MODEL_URL="file://$PWD/go.mod" MODEL_SHA256="$(sha256sum go.mod | cut -d' ' -f1)" MODEL_SIZE="$(stat -c %s go.mod)" \
+            ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0 --model go.mod | tee "$RUNNER_TEMP/dry-run.txt"
+          grep -q '^tier: big: 1 x 196608 tokens' "$RUNNER_TEMP/dry-run.txt"
 
   site:
     runs-on: ubuntu-24.04

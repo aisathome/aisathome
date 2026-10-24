@@ -50,7 +50,13 @@ release's notes. The owner approves the text before the draft is published; then
 - **CUDA image:** update the digest in `release.yml` and the driver minimums in
   `install.sh`, the packaging README and the site page if the CUDA version changes.
 - **Model:** the pin (repository, revision, file, SHA-256, size) lives in `install.sh`; keep
-  the gateway's tokenizer pin (ops) on the same model.
+  the gateway's tokenizer pin (ops) on the same model. A new model file (even another quant of
+  the same model) needs the tiers re-measured (`tier_min_free`, the speed floor) and a new
+  model-check reference, and every node switches in the same release: the network never mixes
+  model files.
+- **Tiers:** a change to a tier's context or KV type, or to llama.cpp, needs `tier_min_free`
+  re-measured on a 16 GB and a 24 GB card (memory after load and at the peak of a prompt near
+  the full context).
 
 ## Not done yet
 

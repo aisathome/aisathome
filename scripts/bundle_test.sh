@@ -50,12 +50,12 @@ fi
 
 # The unpacked installer finds the bundle by itself.
 mkdir "$tmp/fake"
-printf '#!/bin/sh\necho "0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6"\n' > "$tmp/fake/nvidia-smi"
+printf '#!/bin/sh\ncase "$*" in *memory.total*) echo "0, GPU-fake-0, NVIDIA GeForce RTX 3090, 24576, 24126" ;; *query-compute-apps*) ;; *) echo "0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6" ;; esac\n' > "$tmp/fake/nvidia-smi"
 printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "/dev/fake 1 1 100000000 1%% /"\n' > "$tmp/fake/df"
 chmod +x "$tmp/fake/"*
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   out="$(PATH="$tmp/fake:$PATH" "$d/install.sh" --dry-run --node-id ci 2>&1)" || fail "dry run: $out"
-  for want in "llama-server: prebuilt, llama.cpp v0.5.0" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "preset: long-context"; do
+  for want in "llama-server: prebuilt, llama.cpp v0.5.0" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "tier: big: 1 x 196608 tokens"; do
     [[ "$out" == *"$want"* ]] || fail "dry run lacks '$want': $out"
   done
 fi

@@ -3,20 +3,21 @@
 # running as the unprivileged system user "aisathome", sandboxed by systemd.
 #
 # From the prebuilt bundle (this script next to bin/llama-server, lib/ and aisathome-node):
-#   sudo ./install.sh [--preset <name>] [--node-id <id>] [--enable-at-boot] [--dry-run]
+#   sudo ./install.sh [--node-id <id>] [--enable-at-boot] [--dry-run]
 # With your own llama.cpp build:
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --preset <name>, --enable-at-boot, --keep-token, --dry-run, --download-only <dir>.
+#   --enable-at-boot, --keep-token, --dry-run, --download-only <dir>.
 #
 # Without --model, the pinned model is downloaded from Hugging Face, resumed if interrupted
-# and checked against its SHA-256. --download-only <dir> only does that (no root needed).
-# Without --node-config, node.json is written from --node-id (default: the host name),
-# --gateway-url and the preset. The bundle checks the NVIDIA driver and GPU first.
-# --node-release downloads aisathome-node for this machine's architecture from a GitHub
-# release of aisathome/aisathome and checks it against that release's SHA256SUMS.
-# Preset: long-context, the network's one setting (see README.md).
+# and checked against its SHA-256 (a --model file must be that same file). --download-only <dir>
+# only does that (no root needed). Without --node-config, node.json is written from --node-id
+# (default: the host name), --gateway-url and the tier. The bundle checks the NVIDIA driver and
+# GPU first. --node-release downloads aisathome-node for this machine's architecture from a
+# GitHub release of aisathome/aisathome and checks it against that release's SHA256SUMS.
+# Tier, from the card's size: standard (16 GB cards, 80k context, needs a nearly free card:
+# headless) or big (24 GB+, 192k); see README.md. A short speed test runs after the install.
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
 # without installing (no root needed). The node token is read from stdin (never from argv):
 # paste it when asked, or: cat token.txt | sudo ./install.sh ...
@@ -36,13 +37,13 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
 node_id="" gateway_url="" download_only="" keep_token=0
 conf=/etc/aisathome-node
-preset="${PRESET:-long-context}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
+preset="${PRESET:-}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
@@ -61,27 +62,55 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# One setting for the whole network (owner, 2026-10-11): 1 slot x 128k context, q4_0 KV cache,
-# so every node takes the same requests and the model check has one reference. Explicit
-# environment variables (SLOTS, CTX_PER_SLOT, KV_TYPE) override it, for testing only. Measured on an RTX 4090
-# with Qwen3.8 27B UD-Q4_K_M, 2026-10-09 (the site's node/presets page). Per-slot context means one
-# long request cannot starve the others (a single shared pool can: "Context size has been
-# exceeded" on 2026-10-08).
+# Two tiers, chosen by the size of the card only (owner, 2026-10-22/23): one model for every
+# node, 1 request at a time, and a context set by the card, never by the machine's other load.
+#   standard  cards with 15.5 to 23 GB (16 GB class): 1 x 80k  (81,920),  KV q4_0
+#   big       cards with 23 GB or more (24 GB+):      1 x 192k (196,608), KV q4_0
+# When the tier does not fit in the card's free memory, the installer stops with a message; it
+# never picks a smaller context. Per-slot context means one long request cannot starve the
+# others (a single shared pool can: "Context size has been exceeded" on 2026-10-08).
+# Measured with UD-IQ4_XS and llama.cpp v0.5.0 (research notes, tiers, 2026-10-22/23):
+#   standard: RTX 5070 Ti, 15,070 MiB after load and 15,098 at the peak of a 77k prompt; loads
+#     and serves a 78k prompt with 15,090 MiB free, failed at start (CUDA out of memory) with
+#     15,066. RTX 4080 SUPER: llama-server holds 15,110 MiB; served a 78k prompt with 15,162
+#     free (47 left). q8_0 KV does not fit 80k (nor 72k) in 16 GB. Hard needles at 75k: 24/24.
+#   big: RTX 4090, 1 x 192k: llama-server holds 18,060 MiB after load, 18,246 at the peak of
+#     a 190k prompt. 256k on an RTX 3090 fit in 19,202 MiB; hard needles 77/80 at ~195k
+#     (62/80 at ~247k, hence 192k), decode 16.7 tokens/s at 195k.
+# tier_min_free (MiB): what nvidia-smi must report free on the card before llama-server starts
+# (the peaks above plus a margin; more SMs take a little more memory).
+# Explicit environment variables (SLOTS, CTX_PER_SLOT, KV_TYPE) override the tier, for
+# testing only; the free-memory check is then skipped.
+# --preset / PRESET: the old single setting (long-context); accepted and ignored.
 case "$preset" in
-  # 1 x 128k q4: 18,306 MiB, hard needles at 120k 118/120 (q8: 119/120, 20,354 MiB).
-  long-context) p_slots=1 p_ctx=131072 p_kv=q4_0 ;;
-  *) die "unknown preset '$preset'; the network uses one setting: long-context (1 x 128k, KV q4_0)" 2 ;;
+  ""|long-context|auto) ;;
+  *) die "unknown preset '$preset'; presets are gone: the tier follows the card (standard: 80k on 16 GB cards, big: 192k on 24 GB+)" 2 ;;
 esac
-slots="${SLOTS:-$p_slots}" ctx_per_slot="${CTX_PER_SLOT:-$p_ctx}" kv_type="${KV_TYPE:-$p_kv}"
+tier_ctx() { case "$1" in standard) echo 81920 ;; big) echo 196608 ;; esac; }
+tier_kv() { echo q4_0; }
+tier_min_free() { case "$1" in standard) echo 15200 ;; big) echo 18500 ;; esac; }
+# tier_for_total <MiB>: the tier for a card with this much memory, or "" (too small).
+tier_for_total() {
+  if (( $1 >= 23000 )); then echo big; elif (( $1 >= 15500 )); then echo standard; fi
+}
+custom=0
+[[ -z "${SLOTS:-}${CTX_PER_SLOT:-}${KV_TYPE:-}" ]] || custom=1
+slots="${SLOTS:-1}" ctx_per_slot="${CTX_PER_SLOT:-}" kv_type="${KV_TYPE:-}"
+# Minimum decode speed (tokens/s) after a ~32k-token prompt, measured at install. A short
+# prompt misranks cards (an RTX 5070 Ti is the fastest 16 GB card at 200 tokens and slow at
+# 64k with q4_0 KV). Measured at 32k: RTX 4080 35.6, RTX 3090 35.1, RTX 5070 Ti 28.9,
+# RTX 5060 Ti 13.8. MIN_DECODE_TPS overrides it, for testing only (0: measure, never refuse).
+min_tps="${MIN_DECODE_TPS:-20}" speed_ctx=32000
 # Thinking budget in tokens (-1 = unlimited). Unlimited thinking ran for 8 minutes and filled
 # the context; after the budget the model is told to answer.
 reasoning_budget="${REASONING_BUDGET:-8192}"
 # Host-RAM prompt cache in MiB (llama-server --cache-ram; default there 8192, 0 = off). It
 # bounds how much conversation data stays warm in RAM; llama-server has no idle-time limit.
 cache_ram="${CACHE_RAM_MIB:-2048}"
-case "$kv_type" in q8_0|q4_0|f16) ;; *) die "KV_TYPE must be q8_0, q4_0 or f16" 2 ;; esac
+case "$kv_type" in ""|q8_0|q4_0|f16) ;; *) die "KV_TYPE must be q8_0, q4_0 or f16" 2 ;; esac
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || die "SLOTS must be a positive integer" 2
-[[ "$ctx_per_slot" =~ ^[1-9][0-9]*$ ]] || die "CTX_PER_SLOT must be a positive integer" 2
+[[ -z "$ctx_per_slot" || "$ctx_per_slot" =~ ^[1-9][0-9]*$ ]] || die "CTX_PER_SLOT must be a positive integer" 2
+[[ "$min_tps" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "MIN_DECODE_TPS must be a non-negative number" 2
 [[ "$reasoning_budget" =~ ^(-1|[0-9]+)$ ]] || die "REASONING_BUDGET must be -1 or a non-negative integer" 2
 [[ "$cache_ram" =~ ^[0-9]+$ ]] || die "CACHE_RAM_MIB must be a non-negative integer" 2
 [[ -z "$node_bin" || -z "$node_release" ]] || die "use --node-bin or --node-release, not both" 2
@@ -92,13 +121,17 @@ release_base="${AISATHOME_RELEASE_URL:-https://github.com/aisathome/aisathome/re
 [[ "$release_base" =~ ^(https|file):// ]] || die "AISATHOME_RELEASE_URL must start with https:// or file://" 2
 [[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
 
-# The model the presets were measured with, pinned to a commit of the Hugging Face
-# repository and checked by SHA-256 (the file the presets were measured
-# with, 2026-10-09). MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace it, all
-# three together.
-pin_url=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-Q4_K_M.gguf
-pin_sha=322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482
-pin_size=16464440224
+# The network's one model (owner, 2026-10-22): Qwen3.8 27B UD-IQ4_XS from unsloth, pinned to a
+# commit of the Hugging Face repository and checked by SHA-256. Sha256 and size are the file's
+# LFS pointer at that commit (Checked 2026-10-23: the Hub API's paths-info and the resolve
+# URL's x-linked-etag / x-linked-size headers), the same file the tiers were measured with.
+# It replaced UD-Q4_K_M (16.5 GB, sha256 322e194f...) in v0.3.0. The model check cannot tell
+# the two apart reliably (IQ4_XS against the Q4_K_M reference was caught on 71-84% of checks),
+# so the network never mixes them: one file, one reference (recorded 2026-10-23 for this file).
+# MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace it, all three together (testing).
+pin_url=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-IQ4_XS.gguf
+pin_sha=40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199
+pin_size=14252845984
 if [[ -n "${MODEL_URL:-}${MODEL_SHA256:-}${MODEL_SIZE:-}" ]] &&
    [[ -z "${MODEL_URL:-}" || -z "${MODEL_SHA256:-}" || -z "${MODEL_SIZE:-}" ]]; then
   die "set MODEL_URL, MODEL_SHA256 and MODEL_SIZE together" 2
@@ -154,11 +187,17 @@ if [[ -z "$llama_build" && -x "$here/bin/llama-server" && -f "$here/BUILD-INFO" 
 fi
 
 target=/var/lib/aisathome-node/models/model.gguf
-llama_exec="/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
+# set_engine: llama-server's command for the tier (after pick_tier).
+llama_exec="" tier_label=""
+set_engine() {
+  ctx_per_slot="${ctx_per_slot:-$(tier_ctx "$tier")}" kv_type="${kv_type:-$(tier_kv "$tier")}"
+  tier_label="$tier"; [[ $custom = 0 ]] || tier_label="test settings (card: $tier)"
+  llama_exec="/opt/aisathome-node/bin/llama-server -m $target --alias $alias \\
   --host 127.0.0.1 --port 8000 -ngl all -fa on -np $slots --kv-unified-per-slot $ctx_per_slot \\
   --reasoning-budget $reasoning_budget \\
   --reasoning-budget-message \"(Thinking budget reached; answering now.)\" --no-reasoning-preserve \\
   -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics"
+}
 
 # GPU access for the sandboxed services. Their device allowlist (implied by ProtectClock=)
 # would otherwise hide the GPU, and CUDA would silently fall back to the CPU. systemd matches
@@ -209,7 +248,9 @@ Environment=LD_LIBRARY_PATH=/opt/aisathome-node/lib
 # the process instead of ending it (CUDA MMU fault, 2026-10-09). Exit at once so systemd
 # restarts it.
 Environment=GGML_NO_BACKTRACE=1
-# GPU access: the GPU under its old and new driver names, then CUDA's memory manager.
+${gpu_pin:+# Several GPUs: llama-server uses only the card the tier was chosen for.
+$gpu_pin
+}# GPU access: the GPU under its old and new driver names, then CUDA's memory manager.
 $gpu_devices
 DeviceAllow=char-nvidia-uvm rw
 DeviceAllow=char-nvidia-caps r
@@ -230,12 +271,143 @@ UNIT
 # no GPU (in the sandbox, most likely device rules that do not match the driver), llama-server
 # carries on on the CPU: stop it then and leave it disabled, so nothing runs on the CPU.
 engine_on_gpu() {
-  journalctl -u aisathome-llama --since "$1" -o cat | grep -q "no usable GPU found" || return 0
+  # grep without -q reads the whole log: with -q, an early match ends grep, journalctl gets
+  # SIGPIPE, and under pipefail the pipeline reports failure (the check passed silently).
+  journalctl -u aisathome-llama --since "$1" -o cat | grep "no usable GPU found" >/dev/null || return 0
   systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
   local names
   names="$(grep -i nvidia /proc/devices 2>/dev/null | paste -sd, - || true)"
   die "llama-server found no GPU and ran on the CPU, so the installer stopped it. If nvidia-smi works, the service's device rules probably do not match this driver: get the newest installer and run it again, or tell us (NVIDIA devices in /proc/devices: ${names:-none}). Details: journalctl -u aisathome-llama"
 }
+
+# engine_fits <since>: llama-server, started at <since>, did not become healthy. If it ran out
+# of GPU memory (it fails at start, cleanly, when the tier does not fit), stop it, leave it
+# disabled (systemd would restart it every 5 s) and say why. Otherwise return.
+engine_fits() {
+  journalctl -u aisathome-llama --since "$1" -o cat |
+    grep -iE "out of memory|failed to allocate|unable to allocate|cudaMalloc failed" >/dev/null || return 0
+  systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
+  die "llama-server ran out of GPU memory while loading the $tier tier, so the installer stopped the node. $(fit_advice) Details: journalctl -u aisathome-llama"
+}
+
+# ---- Tier: the card, its free memory and a speed test -------------------------------------
+gpu_idx="" gpu_uuid="" gpu_name="" gpu_total=0 gpu_free=0 gpu_own=0 gpu_count=0 tier="" gpu_pin=""
+
+# pick_tier: the card llama-server will use (the largest; on a tie, the one with more free
+# memory), its total and free memory (MiB), and the tier for its size. On an update, the memory
+# this node's own running llama-server holds counts as free on its card, before the cards are
+# compared: it is released at the restart (two equal cards: the node's own card, not the other).
+# With several GPUs, llama-server is pinned to that card (CUDA_VISIBLE_DEVICES=<uuid>).
+pick_tier() {
+  local out idx uuid name total free pid apps="" own
+  command -v nvidia-smi >/dev/null || die "nvidia-smi not found: install the NVIDIA driver and reboot"
+  out="$(nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.free --format=csv,noheader,nounits 2>&1)" ||
+    die "nvidia-smi failed, so the NVIDIA driver is not working: $out"
+  pid="$(systemctl show -p MainPID --value aisathome-llama 2>/dev/null || true)"
+  if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    apps="$(nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory --format=csv,noheader,nounits 2>/dev/null || true)"
+  fi
+  while IFS=, read -r idx uuid name total free; do
+    idx="$(trim "$idx")" uuid="$(trim "$uuid")" name="$(trim "$name")" total="$(trim "$total")" free="$(trim "${free:-}")"
+    [[ -n "$idx" ]] || continue
+    [[ "$total" =~ ^[0-9]+$ && "$free" =~ ^[0-9]+$ ]] || die "cannot read the GPU memory from nvidia-smi: $out"
+    gpu_count=$((gpu_count + 1))
+    own=0
+    if [[ -n "$apps" ]]; then
+      own="$(awk -F', *' -v u="$uuid" -v p="$pid" '$1 == u && $2 == p && $3 ~ /^[0-9]+$/ { s += $3 } END { print s + 0 }' <<<"$apps")"
+    fi
+    free=$((free + own))
+    if (( total > gpu_total || (total == gpu_total && free > gpu_free) )); then
+      gpu_idx="$idx" gpu_uuid="$uuid" gpu_name="$name" gpu_total="$total" gpu_free="$free" gpu_own="$own"
+    fi
+  done <<<"$out"
+  [[ $gpu_count -gt 0 ]] || die "nvidia-smi lists no GPU"
+  tier="$(tier_for_total "$gpu_total")"
+  [[ -n "$tier" ]] ||
+    die "GPU $gpu_idx ($gpu_name) has $gpu_total MiB of memory; the network needs a card with 16 GB or more (standard tier: 80k context on 16 GB cards; big tier: 192k on 24 GB and more)."
+  [[ $gpu_count -eq 1 ]] || gpu_pin="Environment=CUDA_VISIBLE_DEVICES=$gpu_uuid"
+  echo "GPU $gpu_idx: $gpu_name, $gpu_total MiB: the $tier tier ($(( $(tier_ctx "$tier") / 1024 ))k context)${gpu_pin:+; llama-server uses only this GPU}" >&2
+}
+
+# fit_advice: what to do when the tier does not fit in the card's free memory.
+fit_advice() {
+  if [[ "$tier" = standard ]]; then
+    echo "On a 16 GB card the standard tier needs the card almost to itself: no screen on it, or a very light desktop (under about 650 MB). Connect the monitor to the motherboard's graphics (integrated GPU), or run this computer without a desktop, close other programs that use the GPU (nvidia-smi lists them), and run the installer again."
+  else
+    echo "Close programs that use the GPU (nvidia-smi lists them; a desktop with a browser can take 2 GB) or connect the monitor to the motherboard's graphics, and run the installer again."
+  fi
+}
+
+# check_fit: the tier must fit in the card's free memory now; it is never shrunk to fit.
+check_fit() {
+  local need; need="$(tier_min_free "$tier")"
+  if [[ $custom = 1 ]]; then
+    echo "memory: test settings (SLOTS, CTX_PER_SLOT or KV_TYPE), so the $tier tier's check is skipped; $gpu_free MiB free" >&2
+    return 0
+  fi
+  (( gpu_free >= need )) ||
+    die "GPU $gpu_idx ($gpu_name) has $gpu_free MiB free; the $tier tier ($(( $(tier_ctx "$tier") / 1024 ))k context) needs $need MiB free. $(fit_advice)"
+  echo "memory: $gpu_free MiB free${gpu_own:+$( (( gpu_own > 0 )) && echo " (incl. $gpu_own MiB of this node's running llama-server)")}, the $tier tier needs $need: fits" >&2
+}
+
+# speed_probe <url>: decode speed after a ~$speed_ctx-token prompt, from llama-server's own
+# timings: prints "<tokens/s> <prompt tokens> <prompt seconds>". The prompt is a fixed text's
+# tokens repeated (decode speed depends on the context's length, not its content); no prompt
+# cache, 256 tokens written.
+speed_probe() {
+  python3 - "$1" "$speed_ctx" <<'PY'
+import json, sys, urllib.request
+url, n = sys.argv[1].rstrip("/"), int(sys.argv[2])
+text = ("The river town kept its records in a stone house by the bridge. Every spring the clerks "
+        "counted boats, bales of wool, barrels of salt and the names of travellers, and every autumn "
+        "they argued about the numbers. A merchant from the coast once paid in copper coins stamped "
+        "with a heron; nobody could say where they were minted. ")
+def post(path, body, timeout):
+    req = urllib.request.Request(url + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+try:
+    toks = post("/tokenize", {"content": text}, 60)["tokens"]
+    prompt = (toks * (n // len(toks) + 1))[:n]
+    t = post("/completion", {"prompt": prompt, "n_predict": 256, "temperature": 0, "ignore_eos": True,
+                             "cache_prompt": False}, 1200)["timings"]
+    print(f'{t["predicted_per_second"]:.1f} {t["prompt_n"]} {t["prompt_ms"] / 1000:.0f}')
+except Exception as e:
+    print(f"{type(e).__name__}: {e}"); sys.exit(1)
+PY
+}
+
+# speed_check: llama-server is up; refuse cards that write too slowly after a long prompt.
+speed_check() {
+  local r tps n secs
+  echo "speed test: a ${speed_ctx}-token prompt, then 256 tokens (a minute or two)" >&2
+  if ! r="$(speed_probe "${engine_url:-http://127.0.0.1:8000}")"; then
+    systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
+    die "the speed test failed ($r), so the installer stopped the node. Details: journalctl -u aisathome-llama"
+  fi
+  read -r tps n secs <<<"$r"
+  echo "speed: $tps tokens/s after a $n-token prompt (read in $secs s); the network needs at least $min_tps" >&2
+  if LC_ALL=C awk -v a="$tps" -v b="$min_tps" 'BEGIN { exit !(a + 0 < b + 0) }'; then
+    systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
+    die "GPU $gpu_idx ($gpu_name) writes $tps tokens/s after a $n-token prompt; the network needs at least $min_tps, so the installer stopped the node (users would wait too long on long prompts). If other programs used the GPU during the test (BOINC GPU tasks, games, video), stop them and run the installer again."
+  fi
+}
+
+# check_model_file <file> <hash 0|1>: a --model file must be the pinned model (size, and with 1
+# the SHA-256 too): the network never mixes quants.
+check_model_file() {
+  local size got
+  size="$(stat -c %s "$1")"
+  [[ "$size" = "$model_size" ]] ||
+    die "$1 is not the network's model: $size bytes, the pinned ${model_name} has $model_size. Leave out --model and the installer downloads it."
+  [[ "$2" = 1 ]] || return 0
+  echo "model: checking $1 (about a minute)" >&2
+  got="$(sha256sum "$1" | cut -d' ' -f1)"
+  [[ "$got" = "$model_sha" ]] ||
+    die "$1 is not the network's model: sha256 $got, the pinned ${model_name} has $model_sha. Leave out --model and the installer downloads it."
+  echo "model: $1, sha256 $got (verified)" >&2
+}
+# ---- end of tier -----------------------------------------------------------------------------
 
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
 work=""
@@ -288,7 +460,7 @@ Environment=AISATHOME_UI_PORT=$ui_port
 Environment=AISATHOME_UI_PASSWORD_FILE=$ui_password
 Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json
 Environment=AISATHOME_RESTART_TRIGGER=$ui_restart_trigger
-Environment="AISATHOME_PRESET=$preset: $slots x $ctx_per_slot tokens, KV $kv_type"
+Environment="AISATHOME_PRESET=$tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
 # Read-only GPU facts for the UI (name, memory, temperature) through nvidia-smi.
 $gpu_devices
 UNIT
@@ -521,7 +693,7 @@ read_token() {
   [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}"
 }
 
-# node.json for the preset, when no --node-config is given (inputs validated above).
+# node.json for the tier, when no --node-config is given (inputs validated above).
 gen_node_config() {
   printf '{\n  "node_id": "%s",\n  "gateway_url": "%s",\n  "upstream": "http://127.0.0.1:8000",\n  "models": [{"name": "%s", "roles": ["deep", "agent"], "slots": %s, "ctx": %s}]\n}\n' \
     "$node_id" "$gateway_url" "$alias" "$slots" "$ctx_per_slot"
@@ -539,8 +711,12 @@ fi
 [[ $dry_run = 1 || -n "$llama_build" ]] ||
   die "no llama-server: run install.sh from the prebuilt bundle, or pass --llama-build <llama.cpp/build>" 2
 [[ $bundle = 0 ]] || check_bundle
+pick_tier
+check_fit
+set_engine
 if [[ -n "$model" ]]; then
   [[ -f "$model" ]] || die "no model file: $model"
+  check_model_file "$model" 0
 else
   echo "model: $model_url (sha256 $model_sha, $(gb "$model_size") GB) to $target" >&2
   check_disk "$(dirname "$target")" $(( $(model_missing "$target") + reserve ))
@@ -556,7 +732,8 @@ if [[ $dry_run = 1 ]]; then
     pick_node_id "" "$old_id"
     echo "node.json (generated):"; gen_node_config
   fi
-  echo "preset: $preset"
+  echo "tier: $tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
+  echo "speed test after the install: at least $min_tps tokens/s after a $speed_ctx-token prompt"
   echo "$llama_exec"
   echo "local UI: $ui_port"
   node_ui_dropin
@@ -598,6 +775,7 @@ install -d -o aisathome -g aisathome -m 0750 /var/lib/aisathome-node /var/lib/ai
 if [[ -z "$model" ]]; then
   fetch_model "$target"
 elif [[ "$(readlink -f "$model")" != "$target" ]]; then
+  check_model_file "$model" 1
   mv "$model" "$target"
 fi
 chown aisathome:aisathome "$target"; chmod 0640 "$target"
@@ -780,10 +958,17 @@ systemctl enable --now aisathome-node-watchdog.timer
 systemctl enable aisathome-node-sleep.service
 if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
 started="$(date '+%Y-%m-%d %H:%M:%S')"
+# The agent stays stopped until the speed test is done, so no request reaches the node during
+# it (PartOf would otherwise restart a running agent along with llama-server).
+systemctl stop aisathome-node 2>/dev/null || true
 systemctl restart aisathome-llama
 for i in $(seq 1 90); do curl -fs http://127.0.0.1:8000/health >/dev/null && break; sleep 2; done
-curl -fs http://127.0.0.1:8000/health >/dev/null || { echo "llama-server did not become healthy; see: journalctl -u aisathome-llama" >&2; exit 1; }
+if ! curl -fs http://127.0.0.1:8000/health >/dev/null; then
+  engine_fits "$started"
+  echo "llama-server did not become healthy; see: journalctl -u aisathome-llama" >&2; exit 1
+fi
 engine_on_gpu "$started"
+speed_check
 systemctl restart aisathome-node
 sleep 3
 systemctl --no-pager --lines=3 status aisathome-node | tail -3

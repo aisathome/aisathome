@@ -8,9 +8,10 @@ the NVIDIA driver) or **building llama.cpp yourself**. Both end with the same se
 
 ## Prebuilt bundle
 
-You need an RTX 30, 40 or 50 series card with 24 GB, the NVIDIA driver 525.60.13 or newer
+You need an RTX 30, 40 or 50 series card with 16 GB or more (a 16 GB card without a screen
+on it: see [what you need](/node/#what-you-need)), the NVIDIA driver 525.60.13 or newer
 (570.26 or newer for an RTX 50), an x86_64 Linux with systemd and glibc 2.35 or newer
-(Ubuntu 22.04, Debian 12 or newer), and about 20 GB of free disk space in `/var/lib`.
+(Ubuntu 22.04, Debian 12 or newer), and about 17 GB of free disk space in `/var/lib`.
 
 ### 1. Download and check
 
@@ -29,7 +30,7 @@ release has no bundle yet, use [build it yourself](#build-it-yourself).
 ### 2. Check, then install
 
 ```bash
-./install.sh --dry-run                 # checks driver, GPU and disk; installs nothing
+./install.sh --dry-run                 # checks driver, GPU, free GPU memory and disk; installs nothing
 sudo ./install.sh
 ```
 
@@ -42,18 +43,26 @@ The installer then:
 
 - checks the NVIDIA driver, the GPU and the free disk space, and stops with a clear message
   if one is not right;
-- downloads the model (Qwen3.8 27B `UD-Q4_K_M`, 16.5 GB) from Hugging Face, pinned to one
+- picks the [tier](/node/presets/) from the card's size (16 GB: standard, 80k context;
+  24 GB and more: big, 192k) and checks that the card has enough **free** memory for it. If a
+  screen or other programs use too much, it stops and says what to do; it never picks a
+  smaller context;
+- downloads the model (Qwen3.8 27B `UD-IQ4_XS`, 14.3 GB) from Hugging Face, pinned to one
   exact file, and checks its SHA-256. An interrupted download resumes when you run the
   installer again;
-- writes `node.json` for the network's [model setting](/node/presets/) and the gateway
-  `wss://api.aisathome.org/v1/node/connect` (`--gateway-url` for another);
+- writes `node.json` for the tier and the gateway `wss://api.aisathome.org/v1/node/connect`
+  (`--gateway-url` for another);
 - creates the `aisathome` user, the two services, a watchdog that restarts a hung
   `llama-server`, and a hook that stops the node around suspend, and waits until the model
-  is loaded.
+  is loaded;
+- runs a **speed test** (a minute or two): a 32,000-token prompt, then it measures how fast
+  the card writes. Below 20 tokens/s it stops the node and says so. Pause BOINC GPU work and
+  games during the install, or the test measures them too.
 
 Add `--enable-at-boot` to start the node at boot. On a slow connection, download the model
 first without root: `./install.sh --download-only ~/models`, then install with
-`--model ~/models/Qwen3.8-27B-UD-Q4_K_M.gguf` (the file is moved).
+`--model ~/models/Qwen3.8-27B-UD-IQ4_XS.gguf` (the file is moved). `--model` takes only
+that exact file: the network runs one model file.
 
 ### 3. Check
 
@@ -61,7 +70,7 @@ first without root: `./install.sh --download-only ~/models`, then install with
 aisathome-node status
 ```
 
-You should see `CONNECTED`, the model and your GPU. For details, read the log (it needs
+You should see `CONNECTED`, the model, the tier and your GPU. For details, read the log (it needs
 `sudo` unless you are in the `adm` or `systemd-journal` group):
 
 ```bash
@@ -121,9 +130,10 @@ sudo ./node/packaging/linux/install.sh --llama-build ../llama.cpp/build \
   --node-bin ./aisathome-node
 ```
 
-As with the bundle, the installer downloads and checks the model, writes `node.json` and
-asks for the token. To use a model file you already have, add `--model <file.gguf>` (it is
-**moved** to `/var/lib/aisathome-node/models/model.gguf`). To write `node.json` yourself,
+As with the bundle, the installer picks the tier, downloads and checks the model, writes
+`node.json`, asks for the token and runs the speed test. To use the model file you already
+downloaded, add `--model <file.gguf>` (it must be the pinned file, and it is **moved** to
+`/var/lib/aisathome-node/models/model.gguf`). To write `node.json` yourself,
 pass `--node-config node.json`:
 
 ```json
@@ -131,9 +141,10 @@ pass `--node-config node.json`:
   "node_id": "your-node-name",
   "gateway_url": "wss://api.aisathome.org/v1/node/connect",
   "upstream": "http://127.0.0.1:8000",
-  "models": [{ "name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 2, "ctx": 32768 }]
+  "models": [{ "name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 1, "ctx": 196608 }]
 }
 ```
 
-Don’t put the token in the file: the installer asks for it. Add `--dry-run` to see the
+Don’t put the token in the file: the installer asks for it. Keep `slots` and `ctx` as the
+installer would write them for your tier (`--dry-run` prints them). Add `--dry-run` to see the
 `llama-server` command without installing.

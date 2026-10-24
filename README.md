@@ -25,10 +25,11 @@ production-ready.
 
 ## Run a node
 
-Linux, an NVIDIA GPU with 24 GB (RTX 3090, 4090 or 5090 class) and the NVIDIA driver. Get a
-node token on your [account page](https://aisathome.org/account), download the prebuilt
-bundle from the releases and run `sudo ./install.sh`. Every node uses one setting: one
-request at a time with a 128k context. Step by step:
+Linux, an NVIDIA GPU with 16 GB or more and the NVIDIA driver. Get a node token on your
+[account page](https://aisathome.org/account), download the prebuilt bundle from the releases
+and run `sudo ./install.sh`. Every node runs one model file, one request at a time; the
+context follows the card: 80k on 16 GB cards (without a screen on them), 192k on 24 GB and
+more. Step by step:
 [aisathome.org/node](https://aisathome.org/node/).
 
 ## Quick start (local development)

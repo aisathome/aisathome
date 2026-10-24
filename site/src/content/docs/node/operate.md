@@ -99,7 +99,7 @@ driver (Ubuntu: `sudo ubuntu-drivers install`), reboot, and run the installer ag
 bundle is built for the RTX 30, 40 and 50 series only. Build llama.cpp yourself for your
 GPU.
 
-**`not enough disk space`.** The model needs 16.5 GB plus about 2 GB in `/var/lib`. Free
+**`not enough disk space`.** The model needs 14.3 GB plus about 2 GB in `/var/lib`. Free
 some space and run the installer again; a started download resumes.
 
 **`model checksum mismatch`.** The downloaded model is not the pinned file (a corrupt
@@ -128,10 +128,26 @@ it keeps the downloaded model. The installer stops `llama-server` in this case, 
 keeps running on the CPU. If the newest installer still says this while `nvidia-smi` works,
 tell us and include the output of `grep nvidia /proc/devices`.
 
-**`llama-server did not become healthy`.** Check `journalctl -u aisathome-llama`. Out of
-memory usually means another program uses the GPU: close it, or on a desktop whose display
-runs on the same card, a smaller context may fit (`CTX_PER_SLOT=65536 sudo -E ./install.sh`);
-the node then gets only requests that fit it.
+**`... MiB free; the standard tier (80k context) needs 15200 MiB free`** (or the big tier,
+18,500). A screen or programs use too much of the card's memory for its tier; the installer
+does not shrink the context. On a 16 GB card, connect the monitor to the motherboard's
+graphics (integrated GPU) or run the computer without a desktop; close programs that use
+the GPU (`nvidia-smi` lists them), then run the installer again. A desktop with a browser
+often takes 1-2 GB.
+
+**`llama-server ran out of GPU memory while loading`.** The same, found when the model
+loaded: something took GPU memory after the check. The installer stopped the node; free the
+memory and run it again.
+
+**`... writes N tokens/s after a 32000-token prompt; the network needs at least 20`.** The
+speed test after the install was too slow, so the installer stopped the node. Cards with
+slow memory (RTX 4060 Ti, 5060 Ti) do not reach it. If BOINC GPU tasks, a game or a video ran
+during the test, stop them and run the installer again.
+
+**`... is not the network's model`.** `--model` takes only the pinned file. Leave it out and
+the installer downloads the right one.
+
+**`llama-server did not become healthy`.** Check `journalctl -u aisathome-llama`.
 
 **The node does not connect.** Check the `gateway_url` in `/etc/aisathome-node/node.json`
 and that the machine can reach `api.aisathome.org` on port 443. A rejected token shows up

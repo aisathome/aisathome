@@ -12,10 +12,18 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
 
 ## What you need
 
-- An NVIDIA GPU with **24 GB** of memory: RTX 3090, 4090 or 5090 class.
+- An NVIDIA GPU with **16 GB or more**. The context depends on the card
+  ([model settings](/node/presets/)):
+  - **16 GB** (RTX 4080, 5070 Ti, 5080 class): 80k context, and only **headless**: the screen
+    must not run on that card (connect it to the motherboard's graphics), or only a very
+    light desktop (under about 650 MB of GPU memory);
+  - **24 GB and more** (RTX 3090, 4090, 5090 class): 192k context.
+- A card fast enough on long prompts: the installer measures it and needs at least
+  20 tokens/s after a 32,000-token prompt (slower 16 GB cards such as the RTX 4060 Ti and
+  5060 Ti do not pass).
 - Linux with systemd and the NVIDIA driver (`nvidia-smi` works).
-- About 20 GB of disk for the model. With the prebuilt bundle, the install is mostly the
-  17 GB download; building llama.cpp yourself takes about an hour.
+- About 17 GB of disk for the model. With the prebuilt bundle, the install is mostly the
+  14 GB download; building llama.cpp yourself takes about an hour.
 - A **node token**: sign in on [your account page](/account) and choose **Add a node**
   (up to 10 per account; at most 10 of them connected from one internet address). The network
   takes 25 nodes for now; when it is full, the page says so.
@@ -32,7 +40,7 @@ Windows is not supported yet.
 | RTX 3090 | Ubuntu 22.04.5 (rented VM) | 575.51.03 | prebuilt bundle | 2026-10-18: the installer's GPU rule did not match this driver, so `llama-server` ran on the CPU and the install stopped. With the rule the installer now adds, set by hand: install, connect, requests and a cancel through the gateway, local UI, uninstall; about 41 tokens/s. The fixed installer itself has not run on this driver yet |
 | RTX 4090, RTX 5090 | rented | 595 | the bundle's `llama-server` in containers, not through the installer | Runs; used for the model-check measurement (2026-10-11) |
 
-Other 24 GB NVIDIA cards and distributions may work; the installer checks what it needs and
+Other NVIDIA cards with 16 GB or more and other distributions may work; the installer checks what it needs and
 says what is missing. Tell us what worked for you: [contact@aisathome.org](mailto:contact@aisathome.org).
 
 ## How the node runs

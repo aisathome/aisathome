@@ -28,11 +28,14 @@ The installer keeps:
 - the token, the node id and the gateway (from `/etc/aisathome-node/node.json`); pass
   `--node-id` or `--gateway-url` to change them;
 - the model, which it checks again (about a minute); a release that pins another model
-  downloads it;
+  downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; the old file is replaced
+  once the new one is verified, so you need about 16 GB free in `/var/lib` for the update);
 - the local UI's password, the counters and whether the node starts at boot.
 
-It replaces the binaries and the services, then restarts the node. The node is offline for a
-minute or two while the model loads again, and an answer it is writing at that moment is cut
+It checks the card for its [tier](/node/presets/) again (the memory your running node
+holds counts as free), replaces the binaries and the services, then restarts the node and
+runs the speed test before it connects again. The node is offline for a
+few minutes while the model loads again and the speed test runs, and an answer it is writing at that moment is cut
 off. To avoid that, **Pause** it in the [local UI](/node/operate/#local-ui) first, wait until
 no request is in flight, update, then **Resume**: a pause lasts across restarts.
 
