@@ -33,9 +33,11 @@ type Gateway struct {
 	waiting  map[*route]struct{}   // requests looking for a node, for priority (routing.go); guarded by mu
 	science  map[*sciRun]struct{}  // science requests holding a slot, for preemption (preempt.go); guarded by mu
 	projects atomic.Pointer[projectTable]
-	hist     *history     // daily snapshots for the network page (history.go)
-	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
-	bodies   atomic.Int64 // bytes reserved for request bodies, across all requests
+	hist     *history         // daily snapshots for the network page (history.go)
+	pstatus  *projectStatuses // runners' latest status, for the operations page (projstatus.go)
+	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
+	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
+	bodies   atomic.Int64     // bytes reserved for request bodies, across all requests
 	bodyMu   sync.Mutex
 	bodyBy   map[string]int64 // bytes reserved for request bodies, per user; guarded by bodyMu
 	stats    dayStats         // today's counts for /v1/stats
@@ -112,7 +114,8 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
-		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger()}
+		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger(),
+		pstatus: newProjectStatuses(cfg.StateDir, log)}
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {
 			return nil, err

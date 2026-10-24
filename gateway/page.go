@@ -91,10 +91,11 @@ const pageCSP = "default-src 'none'; style-src 'unsafe-inline'; font-src 'self';
 
 // shell is the data every page's header needs; page data embeds it.
 type shell struct {
-	Title   string // the page's title, before " · AIs@home"
-	ChatURL string // the header's Chat link ("" leaves it out)
-	Theme   string // "dark" or "light" from the theme cookie; "" follows the system
-	Back    string // where the theme form returns to: this page, as a GET
+	Title   string        // the page's title, before " · AIs@home"
+	ChatURL string        // the header's Chat link ("" leaves it out)
+	Theme   string        // "dark" or "light" from the theme cookie; "" follows the system
+	Back    string        // where the theme form returns to: this page, as a GET
+	Head    template.HTML // a page's own additions to <head> (a constant, never user data)
 }
 
 // navLink is an item of the header's main navigation.
@@ -132,7 +133,7 @@ var pageShell = `{{define "head"}}<!doctype html>
 <html lang="en"{{with .Theme}} data-theme="{{.}}"{{end}}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><meta name="color-scheme" content="dark light"><title>{{.Title}} · AIs@home</title>
 <link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
-` + pageStyle + `</head>{{end}}
+` + pageStyle + `{{.Head}}</head>{{end}}
 {{define "navlinks"}}{{range nav .ChatURL}}<a href="{{.Href}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}{{end}}
 {{define "source"}}<a class="head-src" href="https://github.com/aisathome/aisathome"><span class="sr-only">Source code</span>` + iconSource + `</a>{{end}}
 {{define "theme"}}<details class="theme"><summary><span class="sr-only">Select theme: </span>{{if eq .Theme "dark"}}` + iconMoon + `<span>Dark</span>{{else if eq .Theme "light"}}` + iconSun + `<span>Light</span>{{else}}` + iconLaptop + `<span>Auto</span>{{end}}` + iconCaret + `</summary>

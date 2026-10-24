@@ -1,0 +1,56 @@
+{
+ "schema": 1,
+ "generated_at": "2026-10-24T19:31:00Z",
+ "runner": {
+  "paused": false,
+  "service": "active",
+  "free_gb": 20.0
+ },
+ "attempts": [
+  {
+   "attempt": "T2-NEW-1.a-A",
+   "state": "running",
+   "steps": 26,
+   "awake_min": 104.8,
+   "budget_kind": "awake",
+   "interruptions": 0,
+   "used_min": 104.8,
+   "task_type": "NEW",
+   "size": "hard",
+   "budget_min": 120.0,
+   "step_cap": 80,
+   "cache_hit": 0.021,
+   "started_at": "2026-10-24T17:46:09Z",
+   "last_activity": "2026-10-24T19:30:02Z",
+   "last_step": {
+    "prompt_tokens": 28578,
+    "completion_tokens": 82,
+    "ended_at": "2026-10-24T19:30:02Z"
+   }
+  }
+ ],
+ "candidates": [],
+ "interruptions": [],
+ "baselines": {
+  "DOC": {
+   "min_per_step": 0.377,
+   "attempts": 2
+  },
+  "GEN": {
+   "min_per_step": 0.358,
+   "attempts": 3
+  },
+  "LINT": {
+   "min_per_step": 1.299,
+   "attempts": 2
+  },
+  "NEW": {
+   "min_per_step": 0.344,
+   "attempts": 8
+  },
+  "NS": {
+   "min_per_step": 0.513,
+   "attempts": 3
+  }
+ }
+}

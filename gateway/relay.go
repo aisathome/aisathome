@@ -308,6 +308,7 @@ func (rl *relay) commit(rec *usageRecord) {
 	g.use.record(*rec)
 	g.stats.add(*rec) // clamped numbers: a node cannot inflate the public statistics either
 	g.hist.add(*rec)
+	g.recent.add(*rec)
 	if rec.Outcome == outcomeBlocked || rec.SelfServed || (rec.Outcome == outcomePreempted && rl.sent.empty()) {
 		return // the user never got the answer (a preempted one is sent again), or it came from the account's own node
 	}
