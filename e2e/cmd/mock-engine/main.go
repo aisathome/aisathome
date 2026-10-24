@@ -1,6 +1,8 @@
 // Command mock-engine is a stand-in for llama-server on staging: it answers /health and
 // streams a fixed answer for /v1/chat/completions, so the full path (Caddy, gateway, node)
-// can be tested without a GPU. It never logs request bodies.
+// can be tested without a GPU. A request that contains longMarker gets the answer repeated to
+// longWords words (2 minutes at the default delay), to hold a slot busy (the preemption test).
+// It never logs request bodies.
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -19,6 +21,11 @@ import (
 const answer = "This is the AIs@home staging stub. No model ran; the path from the chat through " +
 	"the gateway to a node works."
 
+const (
+	longMarker = "mock engine: long answer"
+	longWords  = 6000
+)
+
 func main() {
 	addr := flag.String("addr", ":8000", "listen address")
 	delay := flag.Duration("delay", 20*time.Millisecond, "pause between streamed words")
@@ -34,6 +41,12 @@ func main() {
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 16<<20))
 		json.Unmarshal(body, &req)
 		words := strings.Fields(answer)
+		if strings.Contains(string(body), longMarker) {
+			for base := words; len(words) < longWords; {
+				words = append(words, base...)
+			}
+			words = words[:longWords]
+		}
 		usage := map[string]any{"prompt_tokens": len(body) / 4, "completion_tokens": len(words)}
 		if !req.Stream {
 			w.Header().Set("Content-Type", "application/json")

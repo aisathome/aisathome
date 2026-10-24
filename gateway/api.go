@@ -325,12 +325,17 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		clientStream: clientStream, body: body, red: red, conv: conv,
 		servedBy: g.servedBy(info, accountID), class: class, project: rt.project}
 	deadline := time.Now().Add(time.Duration(queueWait) * time.Second)
+	preempted := 0
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)
 		if n == nil {
-			if attempt == 0 {
+			switch {
+			case why == clientGone:
+			case preempted > 0: // it had a node, and gave it to a person
+				preemptedError(w)
+			case attempt == 0:
 				g.unavailable(w, rt, why)
-			} else if why != clientGone {
+			default:
 				apiError(w, http.StatusBadGateway, "request failed on all available nodes")
 			}
 			return
@@ -341,6 +346,19 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			gd = newGuard(reqText)
 		}
 		started, err := g.run(w, r, req, n, model, gd)
+		if errors.Is(err, errPreempted) && !started {
+			// Nothing reached the client: send it again, behind the people, on any node (the
+			// one it gave up included). This is no failover attempt, and it gets some time to
+			// wait even near its deadline.
+			if preempted++; preempted > maxPreemptRetries {
+				preemptedError(w)
+				return
+			}
+			delete(rt.exclude, n)
+			attempt--
+			deadline = later(deadline, time.Now().Add(30*time.Second))
+			continue
+		}
 		var flagged *guardError
 		if errors.As(err, &flagged) && !started {
 			// Not one byte of the stopped answer went out: try a trusted node if one is free now,
@@ -349,6 +367,10 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 			fb.trustedOnly, fb.preferSelf = true, false
 			if tn, tmodel := g.pick(&fb); tn != nil {
 				if started, err = g.run(w, r, req, tn, tmodel, nil); err == nil || started {
+					return
+				}
+				if errors.Is(err, errPreempted) {
+					preemptedError(w)
 					return
 				}
 			}
@@ -382,6 +404,13 @@ func (g *Gateway) servedBy(info KeyInfo, accountID string) bool {
 		return slices.Contains(g.acfg.Admins, accountID)
 	}
 	return info.ServedBy && !info.ForwardUsers
+}
+
+func later(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // contextError answers as OpenAI does, so clients can compact and retry.

@@ -42,7 +42,7 @@ type usageRecord struct {
 	Operator  string         `json:"operator"`
 	Model     string         `json:"model"`
 	Requested string         `json:"requested"`
-	Outcome   string         `json:"outcome"`        // ok, cancelled (client left), failed or blocked
+	Outcome   string         `json:"outcome"`        // ok, cancelled (client left), failed, blocked or preempted (preempt.go)
 	Relayed   int            `json:"relayed_chunks"` // text chunks the gateway relayed itself
 	Estimated bool           `json:"estimated,omitempty"`
 	Clamped   bool           `json:"clamped,omitempty"` // node reported implausible usage

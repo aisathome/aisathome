@@ -115,7 +115,8 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, sent *delivered, n *n
 // earns nothing if nothing did (not even for its prompt). Failed and blocked answers are
 // metered in full and earn nothing.
 func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, nodeU protocol.Usage, maxTokens int) {
-	ended, cancelled := rec.Outcome == "ok", rec.Outcome == "cancelled"
+	// A preempted answer counts as a cancelled one: the node is credited for what reached the client.
+	ended, cancelled := rec.Outcome == "ok", rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted
 	out, closeThink := &mt.genOut, true
 	if cancelled {
 		out = &sent.genOut

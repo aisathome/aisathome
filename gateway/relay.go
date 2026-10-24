@@ -101,6 +101,12 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	n.mu.Lock()
 	n.pending[reqID] = p
 	n.mu.Unlock()
+	var preempt <-chan struct{} // nil, never ready: only science is preempted
+	var sr *sciRun
+	if req.class == ClassScience {
+		sr = g.addScience(n)
+		preempt = sr.stop
+	}
 	// The slot reserved by pick is freed once: as soon as the node is finished with the request
 	// (Done, its error, or it left), before the end goes out to the client, so that the client's
 	// next turn finds the node holding its conversation free. A request the node was told to
@@ -112,6 +118,9 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 			n.projects[req.project]--
 		}
 		n.mu.Unlock()
+		if sr != nil {
+			g.dropScience(sr) // before the signal: a request that preempted it looks again
+		}
 		g.signal() // a slot is free again
 	})
 	defer func() {
@@ -152,6 +161,8 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 			err = rl.fail("cancelled", "", errors.New("client too slow"))
 		case <-r.Context().Done(): // client went away: tell the node to stop
 			err = rl.fail("cancelled", "", r.Context().Err())
+		case <-preempt: // a person's request waits for this slot (preempt.go)
+			err = rl.preempted()
 		case <-n.closed: // nothing left to cancel
 			// The node may have sent the rest of the answer, even its end, just before it left:
 			// the reader delivered all of it before closing n.closed, so finish with that first.
@@ -290,14 +301,14 @@ func (rl *relay) undelivered(rec *usageRecord) {
 // commit logs the record, grants its credit and charges the budgets.
 func (rl *relay) commit(rec *usageRecord) {
 	g, n, req := rl.g, rl.n, rl.req
-	if (rec.Outcome == "ok" || rec.Outcome == "cancelled") && !rec.SelfServed {
+	if (rec.Outcome == "ok" || rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted) && !rec.SelfServed {
 		g.grantCredit(n, rec.Credit, rec.Time)
 	}
 	g.use.record(*rec)
 	g.stats.add(*rec) // clamped numbers: a node cannot inflate the public statistics either
 	g.hist.add(*rec)
-	if rec.Outcome == outcomeBlocked || rec.SelfServed {
-		return // the user never got the answer, or it came from the account's own node
+	if rec.Outcome == outcomeBlocked || rec.SelfServed || (rec.Outcome == outcomePreempted && rl.sent.empty()) {
+		return // the user never got the answer (a preempted one is sent again), or it came from the account's own node
 	}
 	// Budgets are charged from what the gateway itself saw, so a node cannot drain them.
 	bu := rec.Usage

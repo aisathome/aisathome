@@ -55,9 +55,30 @@ Every chat request has a **class**: `chat` (people in the chat front end, throug
 keys) or `science` (a project's key, below). When nodes are busy, waiting requests are served
 in that order: chat, then agent, then science. A request never takes a node that a waiting
 request of a higher class could use, so a science request never delays a person's; within a
-class the order is as before. Running requests are never stopped for a higher class. Science
-requests wait in their own queue, so they never fill the queue of people's requests
-(`max_queued` applies to each). The usage log records `class` (and `project`) for each request.
+class the order is as before. Science requests wait in their own queue, so they never fill the
+queue of people's requests (`max_queued` applies to each). The usage log records `class` (and
+`project`) for each request.
+
+**Preemption.** A chat or agent request that has waited `preempt_after_seconds` (default 8;
+`-1` = off) for a node stops a running science request on a node it could use (judged as for
+placement, with its own context threshold): the one that started last, so the least work is
+lost. The node is told to cancel it, as when a client leaves; once the node confirms, the
+waiting request gets the slot. A request preempts one science request at a time (another only
+if someone else took the freed slot), and people's requests are never preempted. The science
+request:
+
+- if nothing of it reached its client yet (it was still reading the prompt, or the client did
+  not ask for a stream), the gateway sends it again itself, behind the people (at most 3 times,
+  then 503 below);
+- otherwise its stream ends with an error event `{"error": {"message": "preempted for a person:
+  ... try again shortly", "type": "server_error", "code": 503, "reason": "preempted"}}`, and a
+  request that could not be placed again gets HTTP 503 with `Retry-After: 10` and `"code":
+  "preempted"`. Both are retryable for OpenAI-compatible clients; opencode v2 continues the
+  step.
+
+A preempted attempt is logged with outcome `preempted`, counted as `preempted` per class and
+project in `/v1/stats`, credited to the node for what reached the client (as a cancelled
+answer), and charged to the project's quota only if something reached the client.
 
 A **project** is a workload the operator runs (decision 0011; TauCeti first), for example an
 agent runner. It exists only in the config, has its own keys, its own daily quota instead of
@@ -103,8 +124,9 @@ Without authentication, for the website (aggregates only: never users, keys, nod
 operators):
 
 - `GET /v1/stats`: nodes online, slots, busy and paused now; today's (UTC) requests and tokens,
-  in all, per class (`today.classes`) and per project (`today.projects`, with `node_seconds`);
-  totals since the usage log began (`total`, with `total.projects`).
+  in all, per class (`today.classes`) and per project (`today.projects`, with `node_seconds`),
+  each with `preempted` (of its requests, those stopped for a person's) when not zero; totals
+  since the usage log began (`total`, with `total.projects`).
 - `GET /v1/stats/history`: one entry per UTC day (oldest first, at most 400 days, today
   included so far): `requests`, `completed`, `prompt_tokens`, `completion_tokens`, `classes`
   (per class: `requests` and tokens), and `nodes_peak` / `nodes_avg` (nodes online, sampled

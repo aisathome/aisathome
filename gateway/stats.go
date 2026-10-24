@@ -36,6 +36,9 @@ type useCount struct {
 	Prompt     int64   `json:"prompt_tokens"`
 	Completion int64   `json:"completion_tokens"`
 	Seconds    float64 `json:"node_seconds,omitempty"` // time on nodes (projects only)
+	// Preempted counts the requests stopped for a person's (preempt.go), of Requests; /v1/stats
+	// only, not the daily history.
+	Preempted int `json:"preempted,omitempty"`
 }
 
 func (c *useCount) add(prompt, completion int, ms int64, seconds bool) {
@@ -44,6 +47,14 @@ func (c *useCount) add(prompt, completion int, ms int64, seconds bool) {
 	c.Completion += int64(max(completion, 0))
 	if seconds {
 		c.Seconds += float64(max(ms, 0)) / 1000
+	}
+}
+
+// count adds record r to c, in /v1/stats.
+func (c *useCount) count(r usageRecord, prompt, completion int, seconds bool) {
+	c.add(prompt, completion, r.Usage.DurationMs, seconds)
+	if r.Outcome == outcomePreempted {
+		c.Preempted++
 	}
 }
 
@@ -79,7 +90,7 @@ func (s *dayStats) add(r usageRecord) {
 	s.allPromptTok += int64(max(prompt, 0))
 	s.allCompleted += int64(max(completion, 0))
 	if r.Project != "" {
-		countIn(&s.allProjects, r.Project).add(prompt, completion, r.Usage.DurationMs, true)
+		countIn(&s.allProjects, r.Project).count(r, prompt, completion, true)
 	}
 	if s.since.IsZero() || r.Time.Before(s.since) {
 		s.since = r.Time.UTC()
@@ -99,10 +110,10 @@ func (s *dayStats) add(r usageRecord) {
 	s.promptTok += int64(max(prompt, 0))
 	s.completionTok += int64(max(completion, 0))
 	if r.Class != "" {
-		countIn(&s.classes, r.Class).add(prompt, completion, 0, false)
+		countIn(&s.classes, r.Class).count(r, prompt, completion, false)
 	}
 	if r.Project != "" {
-		countIn(&s.projects, r.Project).add(prompt, completion, r.Usage.DurationMs, true)
+		countIn(&s.projects, r.Project).count(r, prompt, completion, true)
 	}
 }
 

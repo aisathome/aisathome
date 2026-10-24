@@ -3,7 +3,8 @@
 // Every chat request has a class: "chat" (people in the chat front end), "agent" (people's own
 // API keys) or "science" (a project's key). When nodes are busy, a waiting request of a higher
 // class goes first, and a request never takes a node that a waiting request of a higher class
-// could use (routing.go). Running requests are never preempted.
+// could use (routing.go). A chat or agent request that has waited preempt_after_seconds stops a
+// science request on a node it could use (preempt.go); people's requests are never preempted.
 //
 // A project is an operator-run workload (TauCeti first): it exists only in the gateway config,
 // is called with its own keys (by SHA-256), has its own daily quota instead of an account's,

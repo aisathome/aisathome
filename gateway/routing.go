@@ -357,7 +357,9 @@ const (
 //
 // While it looks for a node, the request is registered for priority: requests of lower
 // classes leave it every node it could use (yieldsLocked). Science waits in its own queue, so
-// it never fills the queue of people's requests.
+// it never fills the queue of people's requests. A chat or agent request that has waited
+// PreemptAfterSec stops a science request on a node it could use (preempt.go), one at a time:
+// another only once the slot of the first is free and someone else took it.
 func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (*nodeConn, string, string) {
 	queue := &g.queued
 	if rt.class == ClassScience {
@@ -367,6 +369,12 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 	g.waiting[rt] = struct{}{}
 	g.mu.Unlock()
 	waiting := false
+	var preemptAt time.Time // zero: this request does not preempt
+	if after, ok := g.preempts(rt.class); ok {
+		preemptAt = time.Now().Add(after)
+	}
+	var claim *sciRun // the science request this one preempted, until its slot is free
+	why := ""
 	defer func() {
 		if waiting {
 			queue.Add(-1)
@@ -420,15 +428,31 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 		if d <= 0 {
 			return nil, "", timedOut
 		}
+		var preemptC <-chan time.Time
+		pt := (*time.Timer)(nil)
+		if !preemptAt.IsZero() && (claim == nil || claim.isFreed()) {
+			if wait := time.Until(preemptAt); wait > 0 {
+				pt = time.NewTimer(wait)
+				preemptC = pt.C
+			} else if claim = g.preemptFor(rt); claim != nil {
+				continue // its slot frees once the node has stopped it, and the signal wakes us
+			}
+		}
 		t := time.NewTimer(d)
 		select {
 		case <-wake:
-			t.Stop()
+		case <-preemptC:
 		case <-ctx.Done():
-			t.Stop()
-			return nil, "", clientGone
+			why = clientGone
 		case <-t.C:
-			return nil, "", timedOut
+			why = timedOut
+		}
+		t.Stop()
+		if pt != nil {
+			pt.Stop()
+		}
+		if why != "" {
+			return nil, "", why
 		}
 	}
 }

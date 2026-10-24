@@ -29,6 +29,7 @@ type Gateway struct {
 	queued   atomic.Int32          // people's requests waiting for a node (chat and agent)
 	queuedSc atomic.Int32          // science requests waiting for a node: they never fill people's queue
 	waiting  map[*route]struct{}   // requests looking for a node, for priority (routing.go); guarded by mu
+	science  map[*sciRun]struct{}  // science requests holding a slot, for preemption (preempt.go); guarded by mu
 	projects atomic.Pointer[projectTable]
 	hist     *history     // daily snapshots for the network page (history.go)
 	buffered atomic.Int64 // bytes held for non-streaming answers, across all requests
@@ -90,12 +91,15 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if cfg.CancelAckTimeoutSec == 0 {
 		cfg.CancelAckTimeoutSec = 120
 	}
+	if cfg.PreemptAfterSec == 0 {
+		cfg.PreemptAfterSec = 8
+	}
 	uw, err := newUsageWriter(cfg.UsageLog)
 	if err != nil {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger()}
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {

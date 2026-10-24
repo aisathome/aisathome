@@ -51,6 +51,10 @@ type Config struct {
 	// is freed when the node ends the request (its engine has stopped), when the node leaves,
 	// or after this long (a node that never answers a cancel). Default 120.
 	CancelAckTimeoutSec int `json:"cancel_ack_timeout_seconds"`
+	// PreemptAfterSec: a chat or agent request that has waited this long for a node stops a
+	// science request on a node it could use and takes its slot (preempt.go). Default 8; -1
+	// turns preemption off (0 is the default, as for every setting here).
+	PreemptAfterSec int `json:"preempt_after_seconds"`
 	// TokenizerFile is the model's tokenizer.json (Qwen3.8's; README "Credit"). With it the
 	// gateway counts the tokens of each answer itself, for credit; without it credit uses the
 	// node's reported counts, clamped, and the usage log says counted "node".
