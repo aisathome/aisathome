@@ -57,6 +57,11 @@ and **(site)** are live on aisathome.org once deployed.
 - The gateway's own token count of an answer (for credit) no longer stops early when the
   answer carries logprobs. (gateway, live since 2026-10-24)
 
+### Changed
+
+- People wait at most 1 second, not 8, before a science request gives up its node (`preempt_after_seconds`
+  default 1). A science step takes about 70 s, so the longer wait rarely let it finish. (gateway)
+
 ## [v0.3.0] — 2026-10-24
 
 One model for every node, 16 GB cards can join, and the network starts doing science.

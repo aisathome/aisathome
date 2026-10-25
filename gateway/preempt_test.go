@@ -137,3 +137,16 @@ func TestPreemptOnlyUsableNodes(t *testing.T) {
 		t.Fatal("a science request preempted science")
 	}
 }
+
+// A person waits at most a second before a science request gives up its node (2026-10-25: the
+// default was 8 s, longer than a person should wait for the first token).
+func TestPreemptAfterDefaultsToOneSecond(t *testing.T) {
+	g := newTestGateway(t, Config{})
+	if g.cfg.PreemptAfterSec != 1 {
+		t.Fatalf("default preempt_after_seconds = %d, want 1", g.cfg.PreemptAfterSec)
+	}
+	g = newTestGateway(t, Config{PreemptAfterSec: -1})
+	if g.cfg.PreemptAfterSec != -1 {
+		t.Fatalf("-1 (off) became %d", g.cfg.PreemptAfterSec)
+	}
+}

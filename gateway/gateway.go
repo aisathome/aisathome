@@ -107,7 +107,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		cfg.CancelAckTimeoutSec = 120
 	}
 	if cfg.PreemptAfterSec == 0 {
-		cfg.PreemptAfterSec = 8
+		cfg.PreemptAfterSec = 1
 	}
 	uw, err := newUsageWriter(cfg.UsageLog)
 	if err != nil {

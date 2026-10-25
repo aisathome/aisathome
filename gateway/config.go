@@ -59,8 +59,9 @@ type Config struct {
 	// or after this long (a node that never answers a cancel). Default 120.
 	CancelAckTimeoutSec int `json:"cancel_ack_timeout_seconds"`
 	// PreemptAfterSec: a chat or agent request that has waited this long for a node stops a
-	// science request on a node it could use and takes its slot (preempt.go). Default 8; -1
-	// turns preemption off (0 is the default, as for every setting here).
+	// science request on a node it could use and takes its slot (preempt.go). Default 1 (was 8
+	// until 2026-10-25: a science step takes about 70 s, so waiting longer rarely let it finish and
+	// only delayed the person); -1 turns preemption off (0 is the default, as for every setting here).
 	PreemptAfterSec int `json:"preempt_after_seconds"`
 	// TokenizerFile is the model's tokenizer.json (Qwen3.8's; README "Credit"). With it the
 	// gateway counts the tokens of each answer itself, for credit; without it credit uses the
