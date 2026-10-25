@@ -71,8 +71,12 @@ type statusAttempt struct {
 	State    string `json:"state"`               // queued, running, interrupted, done, failed, skipped
 	Stage    string `json:"stage,omitempty"`     // the queue service's stage (fresh, resume, score, ...)
 	Round    int    `json:"round,omitempty"`     // follow-up round; 0 = the first
-	Steps    int    `json:"steps"`               // model steps done in this round
-	StepCap  int    `json:"step_cap,omitempty"`
+	// A fix round of an open pull request: its number in the project's repository (public: the
+	// science page links it) and the fix round's number (1, 2, ...).
+	PR       int `json:"pr,omitempty"`
+	FixRound int `json:"fix_round,omitempty"`
+	Steps    int `json:"steps"` // model steps done in this round
+	StepCap  int `json:"step_cap,omitempty"`
 	// UsedMin is what the time cap counts (BudgetKind "model": the model's own time; "awake":
 	// the harness's awake time, before 2026-10-24's model-time cap); AwakeMin is awake time.
 	UsedMin       float64     `json:"used_min"`
@@ -219,6 +223,9 @@ func (s *runnerStatus) validate(now time.Time) error {
 		if a.Round < 0 || a.Round > 100 || a.Steps < 0 || a.Steps > 100000 || a.StepCap < 0 || a.StepCap > 100000 ||
 			a.Interruptions < 0 || a.Interruptions > 10000 {
 			errs = append(errs, fmt.Errorf("%s: round, steps, step_cap or interruptions out of range", f))
+		}
+		if a.PR < 0 || a.PR > 999999999 || a.FixRound < 0 || a.FixRound > 100 || (a.FixRound > 0 && a.PR == 0) {
+			errs = append(errs, fmt.Errorf("%s: pr is a pull request number, fix_round 1-100 and only with a pr", f))
 		}
 		errs = append(errs, checkNum(f+".used_min", a.UsedMin, 1e5), checkNum(f+".budget_min", a.BudgetMin, 1e5),
 			checkNum(f+".awake_min", a.AwakeMin, 1e5), checkText(f+".outcome", a.Outcome, 200))

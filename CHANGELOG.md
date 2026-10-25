@@ -14,11 +14,17 @@ and **(site)** are live on aisathome.org once deployed.
   (strict schema: public fields only, links only to GitHub pull requests and their comments, no
   reviewer model names, no keys). Anyone can read them at `GET /v1/projects/<id>/science`, with a
   short "working on now" view of the runner's status: the running tasks' title, type, size and
-  state and how many are queued, nothing else. The runner status gains an optional `title` per
-  task for it. `/science/tauceti/` loads this data in the browser (the build's data stays as the
-  fallback) and shows "Updated N h ago", "Working on now", tasks whose attempts failed before a
-  pull request, and per pull request its review rounds: the rubrics that asked for changes with
-  Tau Ceti's own one-line reason, verbatim and linked. (gateway, site)
+  state, the first ten queued tasks' title, type and size, and how many are queued, nothing else;
+  a fix round names the pull request it revises (number, its GitHub link, its title). The runner
+  status gains an optional `title` per task, and `pr` and `fix_round` for a fix round (a number
+  only; the gateway builds the link into the project's repository). `/science/tauceti/` loads this
+  data in the browser and shows it when it is newer than the build's (the build's data stays
+  otherwise), with "Updated N h ago", "Working on now" ("Fix round 4 for #19781 — title", linked)
+  and the queue, tasks whose attempts failed before a pull request, and per pull request its
+  review rounds: the rubrics that asked for changes with Tau Ceti's own one-line reason, verbatim
+  and linked. A pull request not reviewed yet shows "First review pending" (`first_review_approved`
+  is null) and is left out of the first-review count. Unknown project ids get 404 without being
+  remembered, and projects added or removed by a reload are followed. (gateway, site)
 - **Hourly usage in `/v1/stats/history`.** An `hours` list gives requests and tokens per UTC hour,
   in all and per class (chat, agent, science), for the last two weeks; aggregates only, public like
   the daily numbers. (gateway, live since 2026-10-24)

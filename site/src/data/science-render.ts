@@ -2,7 +2,7 @@
 // it from the committed JSON (the page works without JavaScript); in the browser the page renders
 // it again from the gateway's daily data when that is newer, so both use this one function.
 // Sections whose numbers are missing are left out rather than shown as dashes or zeros.
-import { ago, compact, dayLabel, exact, isoDay, shortDay, type Group, type Now, type PR, type Science, type Task } from './science-model';
+import { ago, compact, dayLabel, exact, isoDay, shortDay, type Group, type Now, type NowTask, type PR, type Science, type Task } from './science-model';
 
 const esc = (s: unknown) =>
 	String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -22,7 +22,7 @@ function tiles(s: Science) {
 		{ key: 'opened', value: String(s.prs.length), label: 'PRs opened' },
 		{ key: 'merged', value: String(s.merged), label: 'Merged by Tau Ceti' },
 		{ key: 'closed', value: String(s.closed), label: 'Closed without merging' },
-		{ key: 'first-review', value: `${s.firstReviewApproved} of ${s.prs.length}`, label: 'Approved at the first review' },
+		{ key: 'first-review', value: s.firstReviewed ? `${s.firstReviewApproved} of ${s.firstReviewed}` : null, label: 'Approved at the first review' },
 		{ key: 'gpu-hours', value: s.gpuHours !== null ? s.gpuHours.toFixed(1) : null, label: 'GPU hours' },
 		{
 			key: 'tokens-per-merged',
@@ -114,16 +114,23 @@ function rounds(p: PR) {
 
 const status = (p: PR) => (p.state === 'merged' ? `Merged ${shortDay(p.merged!)}` : p.state === 'closed' ? 'Closed, not merged' : 'Open, in review');
 
+// The first review: approved, changes asked, or not reviewed yet.
+const firstReview = (p: PR) =>
+	p.firstReviewApproved === null
+		? ['pending', 'First review pending']
+		: p.firstReviewApproved
+			? ['approved', 'Approved at first review']
+			: ['changes', 'Changes asked at first review'];
+
 function prRow(p: PR) {
+	const [first, firstText] = firstReview(p);
 	const meta = [`opened <time datetime="${isoDay(p.opened)}">${shortDay(p.opened)}</time>`];
 	if (p.size) meta.push(sizeLabel[p.size]);
 	if (p.attempts !== null) meta.push(plural(p.attempts, 'attempt'));
 	return `<tr data-pr="${p.number}" data-state="${p.state}">
 <th scope="row"><a href="${esc(p.url)}">#${p.number}</a></th>
 <td class="title">${esc(p.title)}<span class="meta">${meta.join(' · ')}</span>${rounds(p)}</td>
-<td class="status"><span class="state state-${p.state}">${status(p)}</span><span class="meta"><span class="first" data-first-review="${
-		p.firstReviewApproved ? 'approved' : 'changes'
-	}">${p.firstReviewApproved ? 'Approved' : 'Changes asked'} at first review</span><span class="fix" data-fix-rounds="${p.fixRounds}">${plural(
+<td class="status"><span class="state state-${p.state}">${status(p)}</span><span class="meta"><span class="first" data-first-review="${first}">${firstText}</span><span class="fix" data-fix-rounds="${p.fixRounds}">${plural(
 		p.fixRounds,
 		'fix round',
 	)}</span></span></td>
@@ -170,7 +177,15 @@ ${s.groups.map(group).join('')}
 tokens are the same files re-read from the cache; hover a token count for the exact number and how many tokens the model wrote.</p>`;
 }
 
-/** "Working on now" (live data only): the running tasks and how many are queued. */
+/** A running or queued task's title: a fix round names its pull request, linked ("Fix round 4 for #19781 — title"). */
+function nowTitle(t: NowTask) {
+	if (!t.pr) return esc(t.target || t.type);
+	const link = `<a href="${esc(t.pr.url)}" data-now-pr="${t.pr.number}">#${t.pr.number}</a>`;
+	const title = esc(t.pr.title || t.target);
+	return `${t.fixRound ? `Fix round ${t.fixRound} for ` : ''}${link}${title ? ` — ${title}` : ''}`;
+}
+
+/** "Working on now" (live data only): the running tasks, the first queued ones and how many are queued. */
 export function nowSection(now: Now | null | undefined, at: Date) {
 	if (now === undefined) return '';
 	let body: string;
@@ -179,14 +194,33 @@ export function nowSection(now: Now | null | undefined, at: Date) {
 		const items = now.running
 			.map((r) => {
 				const meta = [esc(r.type), r.size ? sizeLabel[r.size] : '', r.state === 'running' ? 'running' : 'interrupted, resumes automatically'].filter(Boolean);
-				return `<li data-now-task data-state="${r.state}"><span class="target">${esc(r.target)}</span><span class="meta">${meta.join(' · ')}</span></li>`;
+				return `<li data-now-task data-state="${r.state}"><span class="target">${nowTitle(r)}</span><span class="meta">${meta.join(' · ')}</span></li>`;
 			})
 			.join('');
-		const queued =
-			now.queued > 0 ? `${plural(now.queued, 'more task', 'more tasks')} queued.` : now.running.length ? 'Nothing else queued.' : '';
-		body = `${items ? `<ul>${items}</ul>` : '<p data-now-idle>Nothing is running right now.</p>'}<p class="meta" data-now-queued="${now.queued}">${queued}${
-			queued ? ' ' : ''
-		}Reported <span data-ago="${now.reportedAt.toISOString()}">${ago(now.reportedAt, at)}</span>.</p>`;
+		const queue = now.queue
+			.map((q) => {
+				const meta = [q.target || q.pr ? esc(q.type) : '', q.size ? sizeLabel[q.size] : ''].filter(Boolean);
+				return `<li data-queued${q.pr ? ` data-pr="${q.pr.number}"` : ''}><span class="target">${nowTitle(q)}</span>${
+					meta.length ? `<span class="meta">${meta.join(' · ')}</span>` : ''
+				}</li>`;
+			})
+			.join('');
+		const more = now.queued - now.queue.length;
+		const queued = queue
+			? more > 0
+				? `+${plural(more, 'more task', 'more tasks')} queued.`
+				: ''
+			: now.queued > 0
+				? `${plural(now.queued, 'more task', 'more tasks')} queued.`
+				: now.running.length
+					? 'Nothing else queued.'
+					: '';
+		body = `${items ? `<ul>${items}</ul>` : '<p data-now-idle>Nothing is running right now.</p>'}${
+			queue ? `<h3>Queued next</h3><ol class="sci-queue" data-now-queue>${queue}</ol>` : ''
+		}<p class="meta" data-now-queued="${now.queued}">${queued}${queued ? ' ' : ''}Reported <span data-ago="${now.reportedAt.toISOString()}">${ago(
+			now.reportedAt,
+			at,
+		)}</span>.</p>`;
 	}
 	return `<section class="sci-now not-content" data-science-now><h2 id="working-on-now">Working on now</h2>${body}</section>`;
 }
@@ -209,7 +243,8 @@ passed every local check (build and lints) before anything was sent.</span>`
 totals, and tasks whose attempts all failed before a pull request have rows of their own.${attempts}</li>
 <li><strong>Review rounds</strong> are Tau Ceti’s review of each commit: the review criteria (rubrics) that asked for changes, each
 with Tau Ceti’s own one-line reason, quoted verbatim and linked to its comment. <strong>Fix rounds</strong> are revisions pushed
-after review asked for changes. <strong>Approved at the first review</strong> means every one of Tau Ceti’s review criteria passed on the first try.</li>
+after review asked for changes. <strong>Approved at the first review</strong> means every one of Tau Ceti’s review criteria passed on the first try; pull requests
+not reviewed yet are left out of that count.</li>
 <li><strong>GPU hours</strong> are the time the model was working, summed over every attempt, failures included${gpu}.
 <strong>Qwen tokens</strong> are everything the model read and wrote${tok}. Most of what it reads is the same files again, served from a cache.</li>
 <li><strong>These are our own measurements,</strong> from the records of each run, not estimates. The model runs on the AIs@home

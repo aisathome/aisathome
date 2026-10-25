@@ -28,7 +28,8 @@ export type PR = Cost & {
 	merged: Date | null;
 	closed: Date | null;
 	fixRounds: number;
-	firstReviewApproved: boolean;
+	/** null: no first review yet (pending), so neither approved nor "changes asked". */
+	firstReviewApproved: boolean | null;
 	reviewURL: string | null;
 	rounds: Round[];
 };
@@ -42,10 +43,17 @@ export type Task = Cost & {
 	lastAttempt: Date | null;
 };
 
-/** What the runner works on now (live data only). */
+/** A pull request named by "working on now" (a fix round's): its number, GitHub link and title if known. */
+export type PRLink = { number: number; url: string; title: string };
+
+/** A running or queued task (live data only); a fix round names its pull request. */
+export type NowTask = { target: string; type: string; size: Size | null; fixRound: number | null; pr: PRLink | null };
+
+/** What the runner works on now (live data only): the running tasks, the first queued ones, and how many are queued. */
 export type Now = {
 	reportedAt: Date;
-	running: { target: string; type: string; size: Size | null; state: 'running' | 'interrupted' }[];
+	running: (NowTask & { state: 'running' | 'interrupted' })[];
+	queue: NowTask[];
 	queued: number;
 };
 
@@ -71,6 +79,16 @@ const date = (v: unknown): Date | null => {
 const size = (v: unknown): Size | null => (v === 'easy' || v === 'medium' || v === 'hard' ? v : null);
 const gh = (v: unknown): string | null => (typeof v === 'string' && v.startsWith('https://github.com/') ? v : null);
 const arr = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+const prURL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/([0-9]{1,9})$/;
+/** A pull request link only when its URL is a GitHub pull request of the same number. */
+const prLink = (v: any): PRLink | null => {
+	const m = prURL.exec(str(v?.url));
+	return m && n(v.number) && Number(m[1]) === v.number ? { number: v.number, url: v.url, title: str(v.title) } : null;
+};
+const nowTask = (r: any): NowTask => {
+	const pr = prLink(r?.pr);
+	return { target: str(r?.target), type: str(r?.type), size: size(r?.size), fixRound: pr ? n(r.fix_round) || null : null, pr };
+};
 
 const cost = (p: any): Cost => ({
 	attempts: n(p.attempts),
@@ -107,6 +125,7 @@ export function normalize(d: any) {
 			if (!n(p.number) || !opened || !state || !url || n(p.fix_rounds) === null) return null;
 			const merged = date(p.merged);
 			if (state === 'merged' && !merged) return null;
+			const rs = rounds(p.rounds);
 			return {
 				number: p.number,
 				url,
@@ -118,9 +137,12 @@ export function normalize(d: any) {
 				merged: state === 'merged' ? merged : null,
 				closed: state === 'closed' ? date(p.closed) : null,
 				fixRounds: p.fix_rounds,
-				firstReviewApproved: p.first_review_approved === true,
+				// Tri-state: "changes asked" needs a review round to show for it (older data said
+				// false for a PR not reviewed yet).
+				firstReviewApproved:
+					p.first_review_approved === true ? true : p.first_review_approved === false && rs.length ? false : null,
 				reviewURL: gh(p.review_url),
-				rounds: rounds(p.rounds),
+				rounds: rs,
 				...cost(p),
 			};
 		})
@@ -168,7 +190,10 @@ export function normalize(d: any) {
 					reportedAt,
 					running: arr(d.now.running)
 						.filter((r) => str(r?.target) && (r.state === 'running' || r.state === 'interrupted'))
-						.map((r) => ({ target: r.target, type: str(r.type), size: size(r.size), state: r.state })),
+						.map((r) => ({ ...nowTask(r), state: r.state })),
+					queue: arr(d.now.queue)
+						.map(nowTask)
+						.filter((r) => r.target || r.type || r.pr),
 					queued: n(d.now.queued) ?? 0,
 				}
 			: null;
@@ -186,7 +211,9 @@ export function normalize(d: any) {
 		merged: prs.filter((p) => p.state === 'merged').length,
 		closed: prs.filter((p) => p.state === 'closed').length,
 		open: prs.filter((p) => p.state === 'open').length,
-		firstReviewApproved: prs.filter((p) => p.firstReviewApproved).length,
+		firstReviewApproved: prs.filter((p) => p.firstReviewApproved === true).length,
+		/** PRs with a first review (approved or not); PRs not reviewed yet are left out of the rate. */
+		firstReviewed: prs.filter((p) => p.firstReviewApproved !== null).length,
 		attempts: n(t.attempts),
 		attemptsPassing: n(t.attempts_passing_local_checks),
 		gpuHours: n(t.gpu_hours),

@@ -2,7 +2,9 @@
 // posts its results once a day to POST /v1/projects/<id>/science with the project key (built
 // from its run records and Tau Ceti's public reviews); anyone can read them at GET on the same
 // path, together with a short "working on now" view of the runner's latest status
-// (projstatus.go): the running tasks' target, type, size and state, and how many are queued.
+// (projstatus.go): the running tasks' target, type, size and state, the first queued tasks'
+// target, type and size, and how many are queued; a fix round names its pull request (number,
+// link into the project's repository, and its title when the results list it).
 //
 // Everything here is public, so the schema is strict and narrow: unknown fields are refused,
 // links must point at GitHub pull requests and their comments, free text is bounded, and text
@@ -36,6 +38,8 @@ const (
 	scienceMinInterval = 10 * time.Second
 	// nowMaxAge: a runner status older than this is not shown as "working on now".
 	nowMaxAge = time.Hour
+	// nowQueueMax: "working on now" lists at most this many queued tasks (and counts them all).
+	nowQueueMax = 10
 )
 
 // scienceResults is what a runner posts (and what GET returns, plus received_at and now).
@@ -95,8 +99,8 @@ type sciencePR struct {
 	Merged              *time.Time     `json:"merged"`
 	Closed              *time.Time     `json:"closed"`
 	FixRounds           int            `json:"fix_rounds"`
-	FirstReviewApproved bool           `json:"first_review_approved"`
-	ReviewURL           *string        `json:"review_url"` // Tau Ceti's review scoreboard comment
+	FirstReviewApproved *bool          `json:"first_review_approved"` // null: no review yet
+	ReviewURL           *string        `json:"review_url"`            // Tau Ceti's review scoreboard comment
 	Rounds              []scienceRound `json:"rounds"`
 	scienceCost
 }
@@ -312,6 +316,9 @@ func newProjectScience(dir string) *projectScience {
 
 func (p *projectScience) file(id string) string { return filepath.Join(p.dir, "science-"+id+".json") }
 
+// get returns a project's latest results (loading them from state_dir after a restart), or
+// nil. Only results are kept: a miss is never cached, so requests for ids that have none (the
+// public GET checks the id first) cannot grow the map.
 func (p *projectScience) get(id string) *storedScience {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -327,7 +334,9 @@ func (p *projectScience) get(id string) *storedScience {
 			}
 		}
 	}
-	p.byID[id] = s
+	if s != nil {
+		p.byID[id] = s
+	}
 	return s
 }
 
@@ -382,36 +391,74 @@ func (g *Gateway) handleSciencePost(w http.ResponseWriter, r *http.Request) {
 
 // sciNow is the public "working on now" view of a runner status.
 type sciNow struct {
-	ReportedAt time.Time    `json:"reported_at"`
-	Running    []sciRunning `json:"running"`
-	Queued     int          `json:"queued"`
+	ReportedAt time.Time `json:"reported_at"`
+	Running    []sciTask `json:"running"`
+	Queued     int       `json:"queued"` // every queued task
+	Queue      []sciTask `json:"queue"`  // the first nowQueueMax of them, in queue order
 }
 
-type sciRunning struct {
-	Target string `json:"target"`
-	Type   string `json:"type"`
-	Size   string `json:"size,omitempty"`
-	State  string `json:"state"` // running, or interrupted (resumes when the runner is back)
+// sciTask is a running or queued task. A fix round names the open pull request it revises.
+type sciTask struct {
+	Target   string     `json:"target"`
+	Type     string     `json:"type"`
+	Size     string     `json:"size,omitempty"`
+	State    string     `json:"state,omitempty"` // running, or interrupted (resumes when the runner is back); none when queued
+	FixRound int        `json:"fix_round,omitempty"`
+	PR       *sciPRLink `json:"pr,omitempty"`
 }
 
-// publicNow copies the whitelisted fields of a status: the running and interrupted tasks'
-// target, type (its label when the results name one), size and state, and the queued count.
-// nil without a status or with one older than nowMaxAge.
-func publicNow(st *storedStatus, labels map[string]string, now time.Time) *sciNow {
+// sciPRLink is a pull request of the project's repository: its number, its GitHub link, and its
+// title when the published results list it.
+type sciPRLink struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+	Title  string `json:"title,omitempty"`
+}
+
+// publicNow copies the whitelisted fields of a status: the running, interrupted and first
+// queued tasks' target, type (its label when the results name one), size and state, a fix
+// round's number and pull request, and the queued count. nil without a status or with one older
+// than nowMaxAge. A pull request is only ever a number: its link is built here from the results'
+// repository (a checked GitHub URL) and must be a GitHub pull request link.
+func publicNow(st *storedStatus, res *scienceResults, now time.Time) *sciNow {
 	if st == nil || st.Status == nil || now.Sub(st.Status.GeneratedAt) > nowMaxAge {
 		return nil
 	}
-	out := &sciNow{ReportedAt: st.Status.GeneratedAt.UTC(), Running: []sciRunning{}}
+	var labels map[string]string
+	if res != nil {
+		labels = res.TypeLabels
+	}
+	task := func(a statusAttempt) sciTask {
+		t := sciTask{Target: a.Title, Type: a.TaskType, Size: a.Size}
+		if l, ok := labels[t.Type]; ok {
+			t.Type = l
+		}
+		if a.PR > 0 && res != nil {
+			if u := fmt.Sprintf("%s/pull/%d", res.Repository, a.PR); prURLRe.MatchString(u) {
+				t.PR = &sciPRLink{Number: a.PR, URL: u}
+				for _, p := range res.PRs {
+					if p.Number == a.PR {
+						t.PR.Title = p.Title
+						break
+					}
+				}
+				t.FixRound = a.FixRound
+			}
+		}
+		return t
+	}
+	out := &sciNow{ReportedAt: st.Status.GeneratedAt.UTC(), Running: []sciTask{}, Queue: []sciTask{}}
 	for _, a := range st.Status.Attempts {
 		switch a.State {
 		case "queued":
 			out.Queued++
-		case "running", "interrupted":
-			typ := a.TaskType
-			if l, ok := labels[typ]; ok {
-				typ = l
+			if len(out.Queue) < nowQueueMax {
+				out.Queue = append(out.Queue, task(a))
 			}
-			out.Running = append(out.Running, sciRunning{Target: a.Title, Type: typ, Size: a.Size, State: a.State})
+		case "running", "interrupted":
+			t := task(a)
+			t.State = a.State
+			out.Running = append(out.Running, t)
 		}
 	}
 	return out
@@ -421,12 +468,13 @@ func publicNow(st *storedStatus, labels map[string]string, now time.Time) *sciNo
 // runner posted, when they came, and what it is working on now.
 func (g *Gateway) handleScienceGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	known := false
-	for _, p := range g.cfg.Projects {
-		known = known || p.ID == id
+	// The live project table (reloads add and remove projects), checked before any lookup.
+	if t := g.projects.Load(); t == nil || t.byID[id] == nil {
+		apiError(w, http.StatusNotFound, "no published results for this project")
+		return
 	}
 	s := g.psci.get(id)
-	if !known || s == nil {
+	if s == nil {
 		apiError(w, http.StatusNotFound, "no published results for this project")
 		return
 	}
@@ -437,5 +485,5 @@ func (g *Gateway) handleScienceGet(w http.ResponseWriter, r *http.Request) {
 		Now        *sciNow   `json:"now"`
 	}
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, http.StatusOK, out{s.Results, s.ReceivedAt, publicNow(g.pstatus.get(id), s.Results.TypeLabels, now)})
+	writeJSON(w, http.StatusOK, out{s.Results, s.ReceivedAt, publicNow(g.pstatus.get(id), s.Results, now)})
 }

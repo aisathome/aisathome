@@ -28,13 +28,15 @@ const html = renderScience(s, s.generatedAt ?? new Date());
 		open-weight model running on the AIs@home network, contributes to it: small refactors, clean-ups and
 		new lemmas, each sent as a pull request like anyone else’s.
 	</p>
-	<div data-science-root data-source="build" set:html={html} />
+	<div data-science-root data-source="build" data-generated={s.generatedAt?.toISOString() ?? ''} set:html={html} />
 </StarlightPage>
 
 <script>
 	// The gateway's data (the runner rebuilds it daily), rendered like the build's: it replaces
-	// the build's whenever it loads. "Working on now" and the "N h ago" times refresh every minute
-	// while the page is visible. Any failure keeps what is shown (the build's page without it).
+	// what is shown only when it is newer (the build's data may be newer when the runner has
+	// stopped posting). "Working on now" (with the queue) and the "N h ago" times refresh every
+	// minute while the page is visible, also over the build's data. Any failure keeps what is
+	// shown (the build's page without it).
 	import { ago, normalize } from '../../data/science-model';
 	import { nowSection, renderScience } from '../../data/science-render';
 
@@ -44,7 +46,16 @@ const html = renderScience(s, s.generatedAt ?? new Date());
 			const d = new Date(el.dataset.ago ?? '');
 			if (!Number.isNaN(d.getTime())) el.textContent = ago(d, new Date());
 		});
-	let shown = '';
+	// When the data shown was generated: the build's at first, then the newest the gateway gave.
+	const shownAt = () => Date.parse(root?.dataset.generated ?? '') || 0;
+	const showNow = (html: string) => {
+		if (!root) return;
+		const fresh = document.createRange().createContextualFragment(html);
+		const old = root.querySelector('[data-science-now]');
+		if (old) old.replaceWith(fresh);
+		else root.insertBefore(fresh, root.querySelector('#every-pr')); // where renderScience puts it; null appends
+		root.dataset.now = 'live';
+	};
 	const load = async () => {
 		if (!root || !window.fetch) return;
 		try {
@@ -56,14 +67,17 @@ const html = renderScience(s, s.generatedAt ?? new Date());
 			const s = normalize(await res.json());
 			if (!s.generatedAt || (!s.prs.length && !s.tasks.length)) return;
 			const at = new Date();
-			if (s.generatedAt.toISOString() !== shown) {
-				// new daily data (or the first load): render it all; the open review rounds close
+			if (+s.generatedAt > shownAt()) {
+				// newer daily data (or the first load of data newer than the build's): render it
+				// all; the open review rounds close
 				root.innerHTML = renderScience(s, at);
 				root.dataset.source = 'live';
-				shown = s.generatedAt.toISOString();
+				root.dataset.generated = s.generatedAt.toISOString();
+				root.dataset.now = 'live';
 			} else {
-				// the same data: refresh only "Working on now", so open review rounds stay open
-				root.querySelector('[data-science-now]')?.replaceWith(document.createRange().createContextualFragment(nowSection(s.now, at)));
+				// the same or older data: refresh only "Working on now", so what is shown (and its
+				// open review rounds) stays
+				showNow(nowSection(s.now, at));
 			}
 		} catch {
 			// keep what is shown
@@ -157,6 +171,13 @@ const html = renderScience(s, s.generatedAt ?? new Date());
 	.sci-now .target { display: block; font-weight: 600; color: var(--sl-color-white); }
 	.sci-now .meta { display: block; margin: 0.15rem 0 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
 	.sci-now p { margin: 0.5rem 0 0; }
+	.sci-now a { color: var(--sl-color-accent-high); }
+	.sci-now h3 { margin: 0.9rem 0 0.35rem; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+	.sci-now ol.sci-queue { margin: 0; padding-left: 1.4rem; list-style: decimal; color: var(--sl-color-gray-3); }
+	.sci-now .sci-queue li + li { margin-top: 0.25rem; }
+	.sci-now .sci-queue .target { display: inline; font-weight: 400; color: var(--sl-color-gray-2); overflow-wrap: anywhere; }
+	.sci-now .sci-queue .meta { display: inline; margin-left: 0.4rem; }
+	.sci-now .target { overflow-wrap: anywhere; }
 
 	.sci-rounds { margin-top: 0.35rem; font-size: 0.85rem; }
 	.sci-rounds summary { cursor: pointer; color: var(--sl-color-accent-high); width: fit-content; }

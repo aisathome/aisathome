@@ -4,6 +4,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -259,5 +260,176 @@ func TestScienceNowIsAWhitelist(t *testing.T) {
 	// An hour-old status is not "now".
 	if publicNow(g.pstatus.get("tauceti"), nil, now.Add(2*time.Hour)) != nil {
 		t.Error("a two-hour-old status is shown as now")
+	}
+}
+
+// Public GETs for ids that are not projects are refused before any lookup and never cached: many
+// distinct unknown ids leave the results cache as it was (finding 2026-10-25: every miss was
+// kept, so anyone could grow the gateway's memory without bound).
+func TestScienceGetUnknownIDsDoNotGrowTheCache(t *testing.T) {
+	g := statusGateway(t, t.TempDir())
+	defer g.Close()
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(minimalScience(time.Now()))); w.Code != 200 {
+		t.Fatalf("science: HTTP %d %s", w.Code, w.Body)
+	}
+	size := func() int {
+		g.psci.mu.Lock()
+		defer g.psci.mu.Unlock()
+		return len(g.psci.byID)
+	}
+	before := size()
+	for i := 0; i < 500; i++ {
+		if code, _, _ := getScience(t, g, fmt.Sprintf("nope-%d", i)); code != http.StatusNotFound {
+			t.Fatalf("GET nope-%d: HTTP %d, want 404", i, code)
+		}
+	}
+	// A configured project without results is a miss too, and not kept either.
+	for i := 0; i < 3; i++ {
+		if code, _, _ := getScience(t, g, "other"); code != http.StatusNotFound {
+			t.Fatalf("GET other: HTTP %d, want 404", code)
+		}
+	}
+	if after := size(); after != before {
+		t.Fatalf("the results cache grew from %d to %d entries on 404s", before, after)
+	}
+	if g.psci.get("never-configured") != nil || size() != before {
+		t.Fatal("a miss of the store itself was cached")
+	}
+}
+
+// GET follows the live project table: a project added by a reload can post and be read; a
+// project removed by a reload is 404 although its results are still stored.
+func TestScienceGetFollowsReload(t *testing.T) {
+	const newKey = "ak-newproj-test-key-0123456789"
+	g := statusGateway(t, "")
+	defer g.Close()
+	body := statusJSON(minimalScience(time.Now()))
+	if w := postScience(t, g, "tauceti", testProjectKey, body); w.Code != 200 {
+		t.Fatalf("tauceti: HTTP %d %s", w.Code, w.Body)
+	}
+	if err := g.Reload(Config{Projects: []Project{
+		{ID: "other", KeySHA256: []string{keyHash(otherProjectKey)}},
+		{ID: "newproj", KeySHA256: []string{keyHash(newKey)}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if w := postScience(t, g, "newproj", newKey, body); w.Code != 200 {
+		t.Fatalf("a project added by a reload: POST HTTP %d %s", w.Code, w.Body)
+	}
+	if code, got, raw := getScience(t, g, "newproj"); code != 200 || got["prs"] == nil {
+		t.Fatalf("a project added by a reload: GET HTTP %d %s", code, raw)
+	}
+	if code, _, raw := getScience(t, g, "tauceti"); code != http.StatusNotFound {
+		t.Fatalf("a project removed by a reload: GET HTTP %d %s, want 404", code, raw)
+	}
+}
+
+// A PR without a review yet has first_review_approved null (not false: no "changes asked"
+// before any review); true and false still round-trip, other values are refused.
+func TestScienceFirstReviewIsTriState(t *testing.T) {
+	g := statusGateway(t, "")
+	defer g.Close()
+	now := time.Now()
+	m := minimalScience(now)
+	open := map[string]any{
+		"number": 21144, "url": "https://github.com/TauCetiProject/TauCeti/pull/21144",
+		"title": "refactor: prove the generator lemma once", "type": "Generalisation", "size": "medium",
+		"state": "open", "opened": now.Add(-48 * time.Hour).UTC().Format(time.RFC3339), "merged": nil, "closed": nil,
+		"fix_rounds": 0, "first_review_approved": nil, "review_url": nil, "rounds": []any{},
+		"attempts": 1, "qwen_tokens": nil, "qwen_output_tokens": nil, "gpu_minutes": nil,
+		"attempts_without_tokens": 1, "attempts_without_gpu_time": 1,
+	}
+	m["prs"] = append(m["prs"].([]any), open)
+	bad := minimalScience(now)
+	bad["prs"].([]any)[0].(map[string]any)["first_review_approved"] = "pending"
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(bad)); w.Code != http.StatusBadRequest {
+		t.Fatalf("a string first_review_approved: HTTP %d", w.Code)
+	}
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(m)); w.Code != 200 {
+		t.Fatalf("HTTP %d %s", w.Code, w.Body)
+	}
+	_, got, raw := getScience(t, g, "tauceti")
+	prs := got["prs"].([]any)
+	if v, ok := prs[1].(map[string]any)["first_review_approved"]; !ok || v != nil {
+		t.Fatalf("no review yet: first_review_approved = %v (present %v), want null: %s", v, ok, raw)
+	}
+	if v := prs[0].(map[string]any)["first_review_approved"]; v != false {
+		t.Fatalf("changes asked at the first review: %v, want false", v)
+	}
+}
+
+// "Working on now" names a fix round's pull request (number, a GitHub link into the results'
+// repository, its title from the results) and lists the first ten queued tasks (target, type
+// label, size, and the PR of a fix round) with the full count; a status's pr is a number only,
+// and a fix round needs one.
+func TestScienceNowFixRoundsAndQueue(t *testing.T) {
+	g := statusGateway(t, "")
+	defer g.Close()
+	now := time.Now()
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(minimalScience(now))); w.Code != 200 {
+		t.Fatalf("science: HTTP %d %s", w.Code, w.Body)
+	}
+	att := func(id, state string, kv ...any) map[string]any {
+		a := map[string]any{"attempt": id, "state": state, "steps": 0, "used_min": 0, "awake_min": 0, "interruptions": 0}
+		for i := 0; i < len(kv); i += 2 {
+			a[kv[i].(string)] = kv[i+1]
+		}
+		return a
+	}
+	atts := []any{att("G3b.a-F2", "running", "title", "Move subScalar to LinearPMap", "task_type", "NS", "size", "easy", "pr", 19779, "fix_round", 2)}
+	atts = append(atts, att("G1a.a-F5", "queued", "title", "Class number of isomorphic fields", "task_type", "NEW", "size", "hard", "pr", 19781, "fix_round", 5))
+	for i := 0; i < 11; i++ {
+		atts = append(atts, att(fmt.Sprintf("T2-GEN-%d.a-A", i), "queued", "title", fmt.Sprintf("Generalise lemma %d", i), "task_type", "GEN", "size", "medium"))
+	}
+	st := minimalStatus(now)
+	st["attempts"] = atts
+	if w := postStatus(t, g, "tauceti", testProjectKey, statusJSON(st)); w.Code != 200 {
+		t.Fatalf("status: HTTP %d %s", w.Code, w.Body)
+	}
+	_, got, raw := getScience(t, g, "tauceti")
+	n := got["now"].(map[string]any)
+	run := n["running"].([]any)[0].(map[string]any)
+	pr, _ := run["pr"].(map[string]any)
+	if run["fix_round"] != float64(2) || pr == nil || pr["number"] != float64(19779) ||
+		pr["url"] != "https://github.com/TauCetiProject/TauCeti/pull/19779" || pr["title"] != "refactor: move subScalar to LinearPMap" {
+		t.Fatalf("running fix round: %s", raw)
+	}
+	queue := n["queue"].([]any)
+	if n["queued"] != float64(12) || len(queue) != nowQueueMax {
+		t.Fatalf("queued %v, queue of %d, want 12 and %d: %s", n["queued"], len(queue), nowQueueMax, raw)
+	}
+	q0 := queue[0].(map[string]any)
+	qpr, _ := q0["pr"].(map[string]any)
+	if q0["target"] != "Class number of isomorphic fields" || q0["type"] != "New lemma" || q0["size"] != "hard" ||
+		q0["fix_round"] != float64(5) || qpr == nil || qpr["url"] != "https://github.com/TauCetiProject/TauCeti/pull/19781" {
+		t.Fatalf("queued fix round: %v", q0)
+	}
+	if _, ok := qpr["title"]; ok {
+		t.Errorf("a PR the results do not list got a title: %v", qpr)
+	}
+	if q1 := queue[1].(map[string]any); q1["target"] != "Generalise lemma 0" || q1["pr"] != nil || q1["state"] != nil || len(q1) != 3 {
+		t.Errorf("queued task: %v, want exactly target, type and size", q1)
+	}
+	for _, leak := range []string{"G3b", "G1a", "T2-", "steps", "used_min"} {
+		if strings.Contains(raw, leak) {
+			t.Errorf("the public JSON contains %q", leak)
+		}
+	}
+	// pr is a number in range; a fix round needs one; a URL is not a number.
+	for name, f := range map[string]func(a map[string]any){
+		"negative pr":            func(a map[string]any) { a["pr"] = -1 },
+		"pr out of range":        func(a map[string]any) { a["pr"] = 10000000000 },
+		"fix round without pr":   func(a map[string]any) { delete(a, "pr") },
+		"a URL as pr":            func(a map[string]any) { a["pr"] = "https://evil.example/pull/1" },
+		"fix round out of range": func(a map[string]any) { a["fix_round"] = 101 },
+	} {
+		b := minimalStatus(now)
+		a := att("G3b.a-F2", "running", "pr", 19779, "fix_round", 2)
+		f(a)
+		b["attempts"] = []any{a}
+		g.pstatus.byID["tauceti"].ReceivedAt = now.Add(-time.Minute)
+		if w := postStatus(t, g, "tauceti", testProjectKey, statusJSON(b)); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d, want 400", name, w.Code)
+		}
 	}
 }
