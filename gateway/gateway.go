@@ -35,6 +35,7 @@ type Gateway struct {
 	projects atomic.Pointer[projectTable]
 	hist     *history         // daily snapshots for the network page (history.go)
 	pstatus  *projectStatuses // runners' latest status, for the operations page (projstatus.go)
+	psci     *projectScience  // projects' published science results (science.go)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
 	bodies   atomic.Int64     // bytes reserved for request bodies, across all requests
@@ -115,7 +116,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), use: uw, lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger(),
-		pstatus: newProjectStatuses(cfg.StateDir, log)}
+		pstatus: newProjectStatuses(cfg.StateDir, log), psci: newProjectScience(cfg.StateDir)}
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {
 			return nil, err

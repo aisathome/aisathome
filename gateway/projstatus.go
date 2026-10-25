@@ -65,6 +65,7 @@ type statusRunner struct {
 // statusAttempt is one attempt of the queue (or one finished today).
 type statusAttempt struct {
 	Attempt  string `json:"attempt"`
+	Title    string `json:"title,omitempty"`     // the task's one-line title (public: the science page's "working on now")
 	TaskType string `json:"task_type,omitempty"` // task_types.py code: NS, DOC, GEN, LINT, NEW
 	Size     string `json:"size,omitempty"`      // easy, medium, hard
 	State    string `json:"state"`               // queued, running, interrupted, done, failed, skipped
@@ -199,7 +200,7 @@ func (s *runnerStatus) validate(now time.Time) error {
 	}
 	for i, a := range s.Attempts {
 		f := fmt.Sprintf("attempts[%d]", i)
-		errs = append(errs, checkID(f+".attempt", a.Attempt))
+		errs = append(errs, checkID(f+".attempt", a.Attempt), checkPublic(f+".title", a.Title, 200))
 		if a.TaskType != "" && !statusTypeRe.MatchString(a.TaskType) {
 			errs = append(errs, fmt.Errorf("%s.task_type: 1-8 capital letters", f))
 		}
