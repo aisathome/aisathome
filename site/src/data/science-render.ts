@@ -254,6 +254,29 @@ rebuilt once a day and published as JSON: <a href="${json}" data-science-json><c
 </ul>`;
 }
 
+/**
+ * Tau Ceti's own progress as a whole, in one line with its date (the runner reads it daily from
+ * Tau Ceti's public GitHub data; science-model.ts Progress). Counts only, no judgement; nothing
+ * when the data has none.
+ */
+function progress(s: Science) {
+	const p = s.progress;
+	if (!p) return '';
+	const count = (n: number, one: string, many = `${one}s`) => `${exact(n)} ${n === 1 ? one : many}`;
+	const parts: string[] = [];
+	if (p.mergedPRs !== null && p.mergedPRAuthors !== null)
+		parts.push(
+			`<span data-progress-merged="${p.mergedPRs}">${count(p.mergedPRs, 'pull request')} merged in the last ${count(p.windowDays, 'day')}</span>, by <span data-progress-authors="${p.mergedPRAuthors}">${count(p.mergedPRAuthors, 'GitHub account')}</span>`,
+		);
+	if (p.roadmapsActive !== null && p.roadmapsCompleted !== null)
+		parts.push(
+			`<span data-progress-roadmaps="${p.roadmapsActive}" data-progress-completed="${p.roadmapsCompleted}">${count(p.roadmapsActive, 'active roadmap')}, and ${exact(p.roadmapsCompleted)} declared complete by its maintainers</span>`,
+		);
+	return `<p class="sci-progress" data-science-progress>Tau Ceti as a whole, as of <time datetime="${isoDay(p.asOf)}" data-progress-asof>${dayLabel(
+		p.asOf,
+	)}</time>: ${parts.join('; ')}.</p>`;
+}
+
 /** The "Updated N h ago" line: the build shows the date; the browser turns it into "N h ago". */
 function updated(s: Science) {
 	if (!s.generatedAt) return '';
@@ -264,5 +287,5 @@ function updated(s: Science) {
 
 /** Everything after the introduction. */
 export function renderScience(s: Science, at: Date) {
-	return [updated(s), tiles(s), chart(s), nowSection(s.now, at), table(s), howToRead(s)].filter(Boolean).join('\n');
+	return [progress(s), updated(s), tiles(s), chart(s), nowSection(s.now, at), table(s), howToRead(s)].filter(Boolean).join('\n');
 }

@@ -3,7 +3,7 @@
  "project_url": "https://taucetiproject.org/",
  "repository": "https://github.com/TauCetiProject/TauCeti",
  "model": "Qwen3.8 27B",
- "generated_at": "2026-10-25T14:51:45Z",
+ "generated_at": "2026-10-25T18:26:16Z",
  "states_as_of": "2026-10-25",
  "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network, and every task whose attempts have not led to one. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. Review rounds quote Tau Ceti's review verbatim. These are our own measurements; PR states as of 2026-10-25.",
  "type_labels": {
@@ -14,20 +14,20 @@
   "NEW": "New lemma"
  },
  "totals": {
-  "prs_opened": 10,
+  "prs_opened": 12,
   "prs_merged": 5,
   "prs_closed": 1,
-  "prs_open": 4,
+  "prs_open": 6,
   "first_review_approved": 4,
   "first_review_approval_rate": 0.4,
-  "attempts": 27,
-  "attempts_passing_local_checks": 18,
+  "attempts": 30,
+  "attempts_passing_local_checks": 20,
   "local_check_pass_rate": 0.667,
-  "gpu_hours": 15.8,
+  "gpu_hours": 17.6,
   "attempts_without_gpu_time": 2,
-  "qwen_tokens": 45977063,
-  "qwen_output_tokens": 1246825,
-  "qwen_tokens_per_merged_pr": 9195413,
+  "qwen_tokens": 53782217,
+  "qwen_output_tokens": 1395477,
+  "qwen_tokens_per_merged_pr": 10756443,
   "attempts_without_token_count": 1
  },
  "prs": [
@@ -409,10 +409,10 @@
      ]
     }
    ],
-   "attempts": 8,
-   "qwen_tokens": 18072025,
-   "qwen_output_tokens": 499192,
-   "gpu_minutes": 294.7,
+   "attempts": 9,
+   "qwen_tokens": 21073871,
+   "qwen_output_tokens": 542818,
+   "gpu_minutes": 328.8,
    "attempts_without_tokens": 0,
    "attempts_without_gpu_time": 0
   },
@@ -457,8 +457,23 @@
    "closed": null,
    "fix_rounds": 0,
    "first_review_approved": false,
-   "review_url": null,
-   "rounds": [],
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21144#issuecomment-6399685188",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "6c7cd41a55ec",
+     "at": "2026-10-25T15:43:31Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "The new proof contains an undocumented `show` step where an explicit rewrite lemma is available.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21144#discussion_r4371390790"
+      }
+     ]
+    }
+   ],
    "attempts": 2,
    "qwen_tokens": 3237973,
    "qwen_output_tokens": 93550,
@@ -494,22 +509,51 @@
    "gpu_minutes": 5.3,
    "attempts_without_tokens": 0,
    "attempts_without_gpu_time": 0
-  }
- ],
- "tasks_without_pr": [
+  },
   {
-   "target": "Markov-kernel reachability and communication",
-   "type": "New lemma",
-   "size": "hard",
-   "state": "failed",
-   "last_attempt": "2026-10-24T20:07:20Z",
+   "number": 21248,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21248",
+   "title": "refactor: move the MonoidAlgebra trace lemmas to Mathlib's MonoidAlgebra namespace",
+   "type": "Namespace move",
+   "size": "easy",
+   "state": "open",
+   "opened": "2026-10-25T15:37:06Z",
+   "merged": null,
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": null,
+   "review_url": null,
+   "rounds": [],
    "attempts": 1,
-   "qwen_tokens": 1209198,
-   "qwen_output_tokens": 34775,
-   "gpu_minutes": 120.2,
+   "qwen_tokens": 697728,
+   "qwen_output_tokens": 19529,
+   "gpu_minutes": 16.1,
    "attempts_without_tokens": 0,
    "attempts_without_gpu_time": 0
   },
+  {
+   "number": 21266,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21266",
+   "title": "feat: define reachability and communication for kernels",
+   "type": "New lemma",
+   "size": "hard",
+   "state": "open",
+   "opened": "2026-10-25T16:46:48Z",
+   "merged": null,
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": null,
+   "review_url": null,
+   "rounds": [],
+   "attempts": 2,
+   "qwen_tokens": 5314778,
+   "qwen_output_tokens": 120272,
+   "gpu_minutes": 177.7,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0
+  }
+ ],
+ "tasks_without_pr": [
   {
    "target": "The multigraph isomorphism interface Graph.Iso",
    "type": "New lemma",
@@ -523,5 +567,13 @@
    "attempts_without_tokens": 0,
    "attempts_without_gpu_time": 0
   }
- ]
+ ],
+ "project_progress": {
+  "as_of": "2026-10-25T18:22:07Z",
+  "window_days": 30,
+  "merged_prs": 11049,
+  "merged_pr_authors": 41,
+  "roadmaps_active": 118,
+  "roadmaps_completed": 11
+ }
 }

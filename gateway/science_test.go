@@ -433,3 +433,92 @@ func TestScienceNowFixRoundsAndQueue(t *testing.T) {
 		}
 	}
 }
+
+// The project's own progress (project_progress) is optional: accepted with valid counts and
+// returned as posted; refused with an unknown field, a wrong type, negative or out-of-range
+// counts, more authors than PRs, half of a pair, no counts, a window out of range, or an as_of
+// in the future, after generated_at or more than 72 h before it (never stale numbers).
+func TestScienceProjectProgress(t *testing.T) {
+	g := statusGateway(t, "")
+	defer g.Close()
+	now := time.Now()
+	gen := now.Add(-5 * time.Hour) // minimalScience's generated_at
+	at := func(d time.Duration) string { return gen.Add(d).UTC().Format(time.RFC3339) }
+	progress := func() map[string]any {
+		return map[string]any{"as_of": at(-10 * time.Minute), "window_days": 30, "merged_prs": 11049,
+			"merged_pr_authors": 41, "roadmaps_active": 118, "roadmaps_completed": 11}
+	}
+	with := func(f func(p map[string]any)) []byte {
+		m := minimalScience(now)
+		p := progress()
+		f(p)
+		m["project_progress"] = p
+		return statusJSON(m)
+	}
+	cases := map[string][]byte{
+		"unknown field":         with(func(p map[string]any) { p["sorry_count"] = 3 }),
+		"a string count":        with(func(p map[string]any) { p["merged_prs"] = "many" }),
+		"a fractional count":    with(func(p map[string]any) { p["roadmaps_active"] = 1.5 }),
+		"negative merges":       with(func(p map[string]any) { p["merged_prs"] = -1 }),
+		"merges out of range":   with(func(p map[string]any) { p["merged_prs"] = 1_000_001; p["merged_pr_authors"] = 1 }),
+		"more authors than PRs": with(func(p map[string]any) { p["merged_pr_authors"] = 11050 }),
+		"authors without PRs":   with(func(p map[string]any) { p["merged_prs"] = nil }),
+		"negative roadmaps":     with(func(p map[string]any) { p["roadmaps_completed"] = -2 }),
+		"roadmaps out of range": with(func(p map[string]any) { p["roadmaps_active"] = 10_001 }),
+		"half of the roadmaps":  with(func(p map[string]any) { p["roadmaps_completed"] = nil }),
+		"no counts": with(func(p map[string]any) {
+			p["merged_prs"], p["merged_pr_authors"], p["roadmaps_active"], p["roadmaps_completed"] = nil, nil, nil, nil
+		}),
+		"window of zero days":           with(func(p map[string]any) { p["window_days"] = 0 }),
+		"window over a year":            with(func(p map[string]any) { p["window_days"] = 366 }),
+		"no as_of":                      with(func(p map[string]any) { delete(p, "as_of") }),
+		"as_of in the future":           with(func(p map[string]any) { p["as_of"] = now.Add(time.Hour).UTC().Format(time.RFC3339) }),
+		"as_of after generated_at":      with(func(p map[string]any) { p["as_of"] = at(time.Hour) }),
+		"as_of 73 h before the results": with(func(p map[string]any) { p["as_of"] = at(-73 * time.Hour) }),
+	}
+	notObject := minimalScience(now)
+	notObject["project_progress"] = "11049 PRs merged"
+	cases["not an object"] = statusJSON(notObject)
+	for name, body := range cases {
+		if w := postScience(t, g, "tauceti", testProjectKey, body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d, want 400: %s", name, w.Code, w.Body)
+		}
+	}
+	if g.psci.get("tauceti") != nil {
+		t.Fatal("a refused result set was stored")
+	}
+	// Without project_progress: accepted, and GET has none.
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(minimalScience(now))); w.Code != 200 {
+		t.Fatalf("without progress: HTTP %d %s", w.Code, w.Body)
+	}
+	if _, got, raw := getScience(t, g, "tauceti"); got["project_progress"] != nil || strings.Contains(raw, "project_progress") {
+		t.Fatalf("GET without posted progress has project_progress: %s", raw)
+	}
+	// Valid: returned as posted; a part the runner could not read (a pair of nulls) is fine.
+	for name, f := range map[string]func(p map[string]any){
+		"every count":  func(p map[string]any) {},
+		"no merges":    func(p map[string]any) { p["merged_prs"], p["merged_pr_authors"] = nil, nil },
+		"no roadmaps":  func(p map[string]any) { p["roadmaps_active"], p["roadmaps_completed"] = nil, nil },
+		"zero merges":  func(p map[string]any) { p["merged_prs"], p["merged_pr_authors"] = 0, 0 },
+		"71 h old":     func(p map[string]any) { p["as_of"] = at(-71 * time.Hour) },
+		"one-day view": func(p map[string]any) { p["window_days"] = 1 },
+	} {
+		g.psci.byID["tauceti"].ReceivedAt = now.Add(-time.Minute)
+		want := progress()
+		f(want)
+		if w := postScience(t, g, "tauceti", testProjectKey, with(f)); w.Code != 200 {
+			t.Errorf("%s: HTTP %d %s", name, w.Code, w.Body)
+			continue
+		}
+		_, got, raw := getScience(t, g, "tauceti")
+		p, _ := got["project_progress"].(map[string]any)
+		if len(p) != len(want) {
+			t.Errorf("%s: project_progress %v, want %v", name, p, want)
+		}
+		for k, v := range want {
+			if fmt.Sprint(p[k]) != fmt.Sprint(v) && !(v == nil && p[k] == nil) {
+				t.Errorf("%s: project_progress.%s = %v, want %v: %s", name, k, p[k], v, raw)
+			}
+		}
+	}
+}

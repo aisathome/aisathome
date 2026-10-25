@@ -57,6 +57,38 @@ export type Now = {
 	queued: number;
 };
 
+/**
+ * The project's own progress as a whole (not our contribution), read daily by the runner from the
+ * project's public GitHub data (tools/science_json.py tauceti_progress): pull requests merged into
+ * its main branch in the last `windowDays` days and their distinct GitHub accounts (the REST pulls
+ * list, Bors merges included), and its roadmaps, active and declared complete by its maintainers
+ * (TauCetiRoadmap's tree). A part that could not be read is null; null as a whole when absent.
+ */
+export type Progress = {
+	asOf: Date;
+	windowDays: number;
+	mergedPRs: number | null;
+	mergedPRAuthors: number | null;
+	roadmapsActive: number | null;
+	roadmapsCompleted: number | null;
+};
+
+const int = (v: unknown): number | null => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : null);
+/** Both counts of a pair, or neither. */
+const pair = (a: unknown, b: unknown): [number | null, number | null] => {
+	const [x, y] = [int(a), int(b)];
+	return x !== null && y !== null ? [x, y] : [null, null];
+};
+function progress(v: any): Progress | null {
+	const asOf = date(v?.as_of);
+	const windowDays = int(v?.window_days);
+	if (!asOf || !windowDays) return null;
+	const [mergedPRs, mergedPRAuthors] = pair(v.merged_prs, v.merged_pr_authors);
+	const [roadmapsActive, roadmapsCompleted] = pair(v.roadmaps_active, v.roadmaps_completed);
+	if (mergedPRs === null && roadmapsActive === null) return null;
+	return { asOf, windowDays, mergedPRs, mergedPRAuthors, roadmapsActive, roadmapsCompleted };
+}
+
 /** PRs and tasks without a PR of one type, with subtotals; values unknown on every row stay null. */
 export type Group = {
 	type: string;
@@ -223,6 +255,7 @@ export function normalize(d: any) {
 		qwenOutputTokens: n(t.qwen_output_tokens),
 		asOf: date(d?.states_as_of),
 		generatedAt: date(d?.generated_at),
+		progress: progress(d?.project_progress),
 		now,
 		jsonPath: '/science/tauceti.json',
 		livePath: '/v1/projects/tauceti/science',

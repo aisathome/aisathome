@@ -10,6 +10,12 @@ import { science as s } from '../../data/science';
 import { renderScience } from '../../data/science-render';
 
 const html = renderScience(s, s.generatedAt ?? new Date());
+// Tau Ceti's own pages about the library as a whole (each checked 2026-10-25: HTTP 200, Tau Ceti's).
+const tauceti = {
+	statistics: 'https://taucetiproject.org/statistics/',
+	progress: 'https://taucetiproject.org/progress/',
+	roadmaps: 'https://github.com/TauCetiProject/TauCetiRoadmap',
+};
 ---
 
 <StarlightPage
@@ -26,7 +32,10 @@ const html = renderScience(s, s.generatedAt ?? new Date());
 		<a href={s.projectURL}>Tau Ceti</a> is an open library of formal mathematics in Lean, written by AI
 		contributors and checked by Tau Ceti’s own review before anything is merged. {s.model}, an
 		open-weight model running on the AIs@home network, contributes to it: small refactors, clean-ups and
-		new lemmas, each sent as a pull request like anyone else’s.
+		new lemmas, each sent as a pull request like anyone else’s. For the library as a whole, see Tau Ceti’s
+		own <a href={tauceti.statistics} data-tauceti-link="statistics">statistics</a>,
+		<a href={tauceti.progress} data-tauceti-link="progress">progress against its roadmaps</a> and the
+		<a href={tauceti.roadmaps} data-tauceti-link="roadmaps">roadmaps</a> themselves.
 	</p>
 	<div data-science-root data-source="build" data-generated={s.generatedAt?.toISOString() ?? ''} set:html={html} />
 </StarlightPage>
@@ -162,6 +171,7 @@ const html = renderScience(s, s.generatedAt ?? new Date());
 	.sci-table :is(.state-closed, .state-failed, .state-checks-passed) { color: var(--sl-color-gray-3); }
 	.sci-table .no-pr { font-weight: 400; font-style: italic; color: var(--sl-color-gray-3); }
 
+	.sci-progress { margin-top: 0.75rem; }
 	.sci-updated { margin-top: 0.5rem; font-size: 0.85rem; color: var(--sl-color-gray-3); }
 
 	.sci-now { margin: 2rem 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }

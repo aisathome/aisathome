@@ -9,6 +9,14 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Tau Ceti as a whole on the science page.** `/science/tauceti/` links Tau Ceti's own
+  statistics, progress board and roadmaps, and shows one line on the library as a whole, with the
+  date it was read: pull requests merged into Tau Ceti's main branch in the last 30 days (Bors
+  merges included), from how many GitHub accounts, and its roadmaps, active and declared complete
+  by its maintainers. The runner reads these once a day from Tau Ceti's public GitHub data
+  (read-only) and posts them as an optional `project_progress` in the science results (counts
+  only, strict ranges, refused when more than 72 h older than the results). Without it the line is
+  left out, never shown with older numbers. (gateway, site)
 - **The science page refreshes daily and shows each review round.** A science project's runner
   posts its public results once a day to `POST /v1/projects/<id>/science` with its project key
   (strict schema: public fields only, links only to GitHub pull requests and their comments, no

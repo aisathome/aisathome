@@ -4,7 +4,9 @@
 // path, together with a short "working on now" view of the runner's latest status
 // (projstatus.go): the running tasks' target, type, size and state, the first queued tasks'
 // target, type and size, and how many are queued; a fix round names its pull request (number,
-// link into the project's repository, and its title when the results list it).
+// link into the project's repository, and its title when the results list it). The results may
+// also carry the project's own progress as a whole (project_progress: merged pull requests in a
+// window, their authors, roadmaps active and declared complete), counts only, refused when stale.
 //
 // Everything here is public, so the schema is strict and narrow: unknown fields are refused,
 // links must point at GitHub pull requests and their comments, free text is bounded, and text
@@ -56,6 +58,59 @@ type scienceResults struct {
 	Totals         scienceTotals     `json:"totals"`
 	PRs            []sciencePR       `json:"prs"`
 	TasksWithoutPR []scienceTask     `json:"tasks_without_pr"`
+	// ProjectProgress is the project's own progress as a whole (absent when the runner could not
+	// read it): the page's one-line description of the library, not our contribution.
+	ProjectProgress *scienceProgress `json:"project_progress,omitempty"`
+}
+
+// scienceProgress: the project's own progress, which the runner reads once a day from the
+// project's public GitHub data, read-only (tools/science_json.py tauceti_progress). A part the
+// runner could not read is null; at least one count is present.
+type scienceProgress struct {
+	AsOf       time.Time `json:"as_of"`       // when the runner read it
+	WindowDays int       `json:"window_days"` // the window of the merge counts, in days
+	// MergedPRs: pull requests merged into the repository's main branch in the window (the REST
+	// pulls list, GitHub's merges and Bors's); MergedPRAuthors: their distinct GitHub accounts,
+	// bots left out. Both or neither.
+	MergedPRs       *int `json:"merged_prs"`
+	MergedPRAuthors *int `json:"merged_pr_authors"`
+	// RoadmapsActive and RoadmapsCompleted: the project's roadmaps (TauCetiRoadmap's git tree:
+	// directories with a metadata.toml under TauCetiRoadmap/, and under Completed/, those its
+	// maintainers declared complete). Both or neither.
+	RoadmapsActive    *int `json:"roadmaps_active"`
+	RoadmapsCompleted *int `json:"roadmaps_completed"`
+}
+
+const (
+	// progressMaxAge: project progress read longer than this before the results is refused
+	// (the page never shows stale numbers as current).
+	progressMaxAge = 72 * time.Hour
+	maxProgressPRs = 1_000_000
+	maxRoadmaps    = 10_000
+)
+
+func (p *scienceProgress) validate(generated, now time.Time) []error {
+	var errs []error
+	if p.AsOf.IsZero() || p.AsOf.After(now.Add(10*time.Minute)) || p.AsOf.After(generated.Add(10*time.Minute)) ||
+		generated.Sub(p.AsOf) > progressMaxAge {
+		errs = append(errs, errors.New("project_progress.as_of: missing, in the future, after generated_at or older than 72 h"))
+	}
+	if p.WindowDays < 1 || p.WindowDays > 365 {
+		errs = append(errs, errors.New("project_progress.window_days: 1 to 365"))
+	}
+	inRange := func(v *int, max int) bool { return v == nil || (*v >= 0 && *v <= max) }
+	if (p.MergedPRs == nil) != (p.MergedPRAuthors == nil) || !inRange(p.MergedPRs, maxProgressPRs) ||
+		!inRange(p.MergedPRAuthors, maxProgressPRs) || (p.MergedPRs != nil && *p.MergedPRAuthors > *p.MergedPRs) {
+		errs = append(errs, errors.New("project_progress: merged_prs and merged_pr_authors both or neither, 0 to 1000000, authors at most the PRs"))
+	}
+	if (p.RoadmapsActive == nil) != (p.RoadmapsCompleted == nil) || !inRange(p.RoadmapsActive, maxRoadmaps) ||
+		!inRange(p.RoadmapsCompleted, maxRoadmaps) {
+		errs = append(errs, errors.New("project_progress: roadmaps_active and roadmaps_completed both or neither, 0 to 10000"))
+	}
+	if p.MergedPRs == nil && p.RoadmapsActive == nil {
+		errs = append(errs, errors.New("project_progress: no counts (leave it out instead)"))
+	}
+	return errs
 }
 
 // scienceTotals: counts are never negative; a value never recorded is null.
@@ -267,6 +322,9 @@ func (s *scienceResults) validate(now time.Time) error {
 					checkPublic(h+".reason", c.Reason, 1500), match(h+".url", commentURLRe, c.URL))
 			}
 		}
+	}
+	if s.ProjectProgress != nil {
+		errs = append(errs, s.ProjectProgress.validate(s.GeneratedAt, now)...)
 	}
 	for i, x := range s.TasksWithoutPR {
 		f := fmt.Sprintf("tasks_without_pr[%d]", i)
