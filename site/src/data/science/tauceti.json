@@ -3,24 +3,31 @@
  "project_url": "https://taucetiproject.org/",
  "repository": "https://github.com/TauCetiProject/TauCeti",
  "model": "Qwen3.8 27B",
- "generated_at": "2026-10-24T12:21:34Z",
- "states_as_of": "2026-10-24",
- "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. These are our own measurements; PR states as of 2026-10-24.",
+ "generated_at": "2026-10-25T14:51:45Z",
+ "states_as_of": "2026-10-25",
+ "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network, and every task whose attempts have not led to one. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. Review rounds quote Tau Ceti's review verbatim. These are our own measurements; PR states as of 2026-10-25.",
+ "type_labels": {
+  "NS": "Namespace move",
+  "DOC": "Docstring cleanup",
+  "GEN": "Generalisation",
+  "LINT": "Lint fix",
+  "NEW": "New lemma"
+ },
  "totals": {
-  "prs_opened": 7,
-  "prs_merged": 4,
+  "prs_opened": 10,
+  "prs_merged": 5,
   "prs_closed": 1,
-  "prs_open": 2,
-  "first_review_approved": 2,
-  "first_review_approval_rate": 0.286,
-  "attempts": 18,
-  "attempts_passing_local_checks": 13,
-  "local_check_pass_rate": 0.722,
-  "gpu_hours": 4.5,
+  "prs_open": 4,
+  "first_review_approved": 4,
+  "first_review_approval_rate": 0.4,
+  "attempts": 27,
+  "attempts_passing_local_checks": 18,
+  "local_check_pass_rate": 0.667,
+  "gpu_hours": 15.8,
   "attempts_without_gpu_time": 2,
-  "qwen_tokens": 22603260,
-  "qwen_output_tokens": 546688,
-  "qwen_tokens_per_merged_pr": 5650815,
+  "qwen_tokens": 45977063,
+  "qwen_output_tokens": 1246825,
+  "qwen_tokens_per_merged_pr": 9195413,
   "attempts_without_token_count": 1
  },
  "prs": [
@@ -29,12 +36,30 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/18860",
    "title": "refactor: move the bialgebra tensor-product API out of the TauCeti namespace",
    "type": "Namespace move",
+   "size": null,
    "state": "closed",
    "opened": "2026-10-19T19:59:26Z",
    "merged": null,
    "closed": "2026-10-20T17:36:22Z",
    "fix_rounds": 0,
    "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/18860#issuecomment-6276831809",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "2a3d9919125d",
+     "at": "2026-10-19T20:39:58Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "naming",
+       "verdict": "request_changes",
+       "reason": "The PR moves 16 declarations from `TauCeti.Bialgebra.TensorProduct` into Mathlib's root `Bialgebra.TensorProduct` namespace, but none of them has a first explicit argument of a Lean/Mathlib type, so none qualifies for the dot-notation exception to the rule that material lives in `TauCeti`. The move also separates `baseChangeTensorBialgEquiv` from the `TauCeti.Algebra.TensorProduct.baseChangeTensorAlgEquiv` it upgrades.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/18860#discussion_r4318630043"
+      }
+     ]
+    }
+   ],
    "attempts": 1,
    "qwen_tokens": 5378971,
    "qwen_output_tokens": 123805,
@@ -47,12 +72,23 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/19179",
    "title": "fix: drop simp from the right DG cohomology action lemma",
    "type": "Lint fix",
+   "size": null,
    "state": "merged",
    "opened": "2026-10-20T19:26:14Z",
    "merged": "2026-10-20T20:12:55Z",
    "closed": null,
    "fix_rounds": 0,
    "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19179#issuecomment-6299808309",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "1960ee4dcf6b",
+     "at": "2026-10-20T19:42:30Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
    "attempts": 3,
    "qwen_tokens": 1347960,
    "qwen_output_tokens": 90376,
@@ -65,12 +101,37 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/19776",
    "title": "doc: drop roadmap narrative from the monoidal conjugation docstrings",
    "type": "Docstring cleanup",
+   "size": null,
    "state": "merged",
    "opened": "2026-10-21T22:00:42Z",
    "merged": "2026-10-23T21:51:14Z",
    "closed": null,
    "fix_rounds": 1,
    "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19776#issuecomment-6330278914",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "316598223fea",
+     "at": "2026-10-22T01:42:11Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "documentation",
+       "verdict": "request_changes",
+       "reason": "The roadmap narrative is gone, but two files are left with a sentence starting \"It supplies\" that refers to nothing, and in all four files the remaining purpose paragraphs sit under `## References`. Move or merge them into the introduction.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19776#discussion_r4343608041"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "a9f5e9c67811",
+     "at": "2026-10-23T17:48:53Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
    "attempts": 2,
    "qwen_tokens": 830550,
    "qwen_output_tokens": 21705,
@@ -83,12 +144,93 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/19777",
    "title": "refactor: state the CM-field degree and automorphism count once for a prime",
    "type": "Generalisation",
-   "state": "open",
+   "size": null,
+   "state": "merged",
    "opened": "2026-10-21T22:05:47Z",
-   "merged": null,
+   "merged": "2026-10-24T12:31:37Z",
    "closed": null,
    "fix_rounds": 2,
    "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19777#issuecomment-6330287596",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "d64303e3aa7a",
+     "at": "2026-10-22T01:15:29Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "The PR is meant to remove duplicated single-prime boilerplate, but the two new lemmas still repeat the same set equality and Nat.card rewrite chain word for word. That repeated step should be factored out or collapsed into one simp call.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4343611273"
+      },
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "The new single-prime lemmas copy the same set-rewriting and cardinality steps into both Basic.lean and GaloisGroup.lean, which is the duplicated boilerplate this PR says it removes. The one-line `simpa` corollaries are fine.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4343612051"
+      },
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "The single-prime lemmas remove the Fin 1 boilerplate but prove the same Unit-range set identity twice, once in each file. Factor it into one lemma next to `range_cmRoot`.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4343612737"
+      },
+      {
+       "rubric": "reuse",
+       "verdict": "request_changes",
+       "reason": "The single-prime lemmas are new, but `card_aut_adjoin_I_sqrt_prime` now covers the existing `card_aut_adjoin_I_sqrt_five`, which still has its own ~40-line `Fin 2` proof. The PR removes this duplication for `finrank_adjoin_I_sqrt_five` but leaves it in place for the Galois-group count of ℚ(i, √5).",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4343610853"
+      },
+      {
+       "rubric": "reuse",
+       "verdict": "request_changes",
+       "reason": "The new single-prime lemmas are fine, but the existing `card_aut_adjoin_I_sqrt_five` is now a special case of `card_aut_adjoin_I_sqrt_prime` and still has its own 40-line proof.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4343611436"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "a884bd77bf5d",
+     "at": "2026-10-23T17:43:06Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The single-prime lemmas `finrank_adjoin_I_sqrt_prime` and `card_aut_adjoin_I_sqrt_prime` are fine as public API, but the PR also makes public, and lists as a main result, `insert_I_range_sqrt_unit`, a one-off proof helper that only restates Mathlib's `Set.range_const` under `insert`.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4362525793"
+      },
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The single-prime results provide useful API, but the exported generator-set identity duplicates a generic set simplification.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4362678645"
+      },
+      {
+       "rubric": "placement",
+       "verdict": "request_changes",
+       "reason": "After this PR, `card_aut_adjoin_I_sqrt_five` is a one-line corollary of the CM-field lemma `card_aut_adjoin_I_sqrt_prime` but stays in the prime-discriminant Galois file, which therefore gains a new import of `CMField.GaloisGroup`. The other new lemmas are correctly placed.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4362526103"
+      },
+      {
+       "rubric": "reuse",
+       "verdict": "request_changes",
+       "reason": "The single-prime lemmas remove real duplication, but the new public `insert_I_range_sqrt_unit` is only Mathlib's `Set.range_const` under `insert`. It should be deleted and its two uses inlined.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19777#discussion_r4343611436"
+      }
+     ]
+    },
+    {
+     "round": 3,
+     "commit": "b2f9949d0e02",
+     "at": "2026-10-23T22:26:08Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
    "attempts": 3,
    "qwen_tokens": 2808130,
    "qwen_output_tokens": 56382,
@@ -101,12 +243,23 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/19778",
    "title": "refactor: move Kernel.probabilityMeasure to ProbabilityTheory.Kernel",
    "type": "Namespace move",
+   "size": null,
    "state": "merged",
    "opened": "2026-10-21T22:10:50Z",
    "merged": "2026-10-22T02:34:30Z",
    "closed": null,
    "fix_rounds": 0,
    "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19778#issuecomment-6330347442",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "aae4fc093b76",
+     "at": "2026-10-22T01:45:04Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
    "attempts": 1,
    "qwen_tokens": 1257302,
    "qwen_output_tokens": 24530,
@@ -119,12 +272,55 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/19779",
    "title": "refactor: move LinearPMap.subScalar to Mathlib's LinearPMap namespace",
    "type": "Namespace move",
+   "size": null,
    "state": "merged",
    "opened": "2026-10-21T22:15:54Z",
    "merged": "2026-10-23T18:31:17Z",
    "closed": null,
    "fix_rounds": 1,
    "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19779#issuecomment-6330366306",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "1ca00527cf49",
+     "at": "2026-10-22T01:21:26Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The move puts subScalar's definition and four lemmas in `LinearPMap` but leaves `vadd_subScalar`/`subScalar_vadd`, also lemmas about `LinearPMap.subScalar`, in `TauCeti.LinearPMap`. The family is now split across two namespaces, and `LinearPMap.subScalar_vadd` resolves only inside the `TauCeti` namespace.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19779#discussion_r4343641918"
+      },
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The core `subScalar` API moves to `LinearPMap`, but `vadd_subScalar`/`subScalar_vadd` stay in `TauCeti.LinearPMap` on a false justification, splitting one definition's characteristic API across two namespaces.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19779#discussion_r4343643825"
+      },
+      {
+       "rubric": "naming",
+       "verdict": "request_changes",
+       "reason": "The move of `subScalar` and its domain/apply/zero/composition lemmas into Mathlib's `LinearPMap` namespace is correct, but `vadd_subScalar` and `subScalar_vadd` are statements about `LinearPMap` and still sit in `TauCeti.LinearPMap`, against Mathlib precedent for `vadd` lemmas.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19779#discussion_r4343642088"
+      },
+      {
+       "rubric": "naming",
+       "verdict": "request_changes",
+       "reason": "Moving subScalar and its four lemmas to Mathlib's `LinearPMap` namespace is correct, but `vadd_subScalar` and `subScalar_vadd` stay in `TauCeti.LinearPMap`, which splits the `subScalar` API across two namespaces and goes against Mathlib's precedent for `vadd` lemmas.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19779#discussion_r4343643999"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "01e8b36cc56e",
+     "at": "2026-10-23T17:48:04Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
    "attempts": 2,
    "qwen_tokens": 2035267,
    "qwen_output_tokens": 31396,
@@ -137,16 +333,193 @@
    "url": "https://github.com/TauCetiProject/TauCeti/pull/19781",
    "title": "feat: isomorphic number fields have the same class number",
    "type": "New lemma",
+   "size": null,
    "state": "open",
    "opened": "2026-10-21T22:20:58Z",
    "merged": null,
    "closed": null,
-   "fix_rounds": 3,
+   "fix_rounds": 2,
    "first_review_approved": false,
-   "attempts": 6,
-   "qwen_tokens": 8945080,
-   "qwen_output_tokens": 198494,
-   "gpu_minutes": 120.1,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19781#issuecomment-6330431536",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "80750f8a7e6a",
+     "at": "2026-10-22T01:39:32Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The only declaration requires a `K ≃ₐ[ℚ] L` hypothesis when its proof uses only the underlying ring isomorphism, so the public statement is narrower than it needs to be. No duplicate exists in Mathlib or TauCeti.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666717"
+      },
+      {
+       "rubric": "documentation",
+       "verdict": "request_changes",
+       "reason": "The main theorem has no docstring because its comment uses `/-!` instead of `/--`, and both comments describe the proof rather than the result. The module docstring also wrongly says no cardinality argument is used and promises a class-group isomorphism that the file never states.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343667015"
+      },
+      {
+       "rubric": "generality",
+       "verdict": "request_changes",
+       "reason": "The theorem asks for `K ≃ₐ[ℚ] L` but only uses `e.toRingEquiv`, and both Mathlib lemmas it relies on take a ring equivalence. It should be stated for `K ≃+* L`.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666861"
+      },
+      {
+       "rubric": "scope",
+       "verdict": "request_changes",
+       "reason": "New material has a genuine path to ImaginaryQuadraticClassNumber H1.2 (class-group and class-number transport under Q-algebra isomorphisms), but the description names only the roadmap, not the node. It also exports only the cardinality corollary, which H1.2 explicitly says is not enough.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666578"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "f94e93ca2d7f",
+     "at": "2026-10-23T17:42:37Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "`RingEquiv.classGroupEquiv` is an unexposed def with no lemma describing it, so consumers cannot relate it to `ClassGroup.mulEquiv` or compute it on ideal classes. Only its cardinality is usable.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666717"
+      },
+      {
+       "rubric": "generality",
+       "verdict": "request_changes",
+       "reason": "`RingEquiv.classGroupEquiv` assumes `NumberField K` and `NumberField L` but never uses them; its ingredients only need `Field K`, `Field L` and the `IsDomain (𝓞 K)` that every field provides. `classNumber_eq` is at the natural level.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666861"
+      }
+     ]
+    },
+    {
+     "round": 3,
+     "commit": "2dacaaade515",
+     "at": "2026-10-24T18:05:43Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "`RingEquiv.classGroupEquiv` is the transport the roadmap asks for (§H1.2) and its API is adequate. However, the three new `NumberField.RingOfIntegers.mapRingEquiv_{refl,symm,trans}` lemmas are general ring-of-integers lemmas exported from the class-number file instead of their existing home, and the refl and symm ones are not tagged `@[simp]`.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666717"
+      }
+     ]
+    }
+   ],
+   "attempts": 8,
+   "qwen_tokens": 18072025,
+   "qwen_output_tokens": 499192,
+   "gpu_minutes": 294.7,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0
+  },
+  {
+   "number": 20975,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/20975",
+   "title": "refactor: move the AlgHom.kernelPoint family to Mathlib's AlgHom namespace",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "open",
+   "opened": "2026-10-24T22:02:43Z",
+   "merged": null,
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/20975#issuecomment-6391397931",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "d994526817f4",
+     "at": "2026-10-25T12:33:47Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 1222135,
+   "qwen_output_tokens": 36334,
+   "gpu_minutes": 52.2,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0
+  },
+  {
+   "number": 21144,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21144",
+   "title": "refactor: prove the quadratic AdjoinRoot integral-generator lemma once",
+   "type": "Generalisation",
+   "size": "medium",
+   "state": "open",
+   "opened": "2026-10-25T07:50:27Z",
+   "merged": null,
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": false,
+   "review_url": null,
+   "rounds": [],
+   "attempts": 2,
+   "qwen_tokens": 3237973,
+   "qwen_output_tokens": 93550,
+   "gpu_minutes": 100.7,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0
+  },
+  {
+   "number": 21206,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21206",
+   "title": "docs(AlgebraicTopology/UniversalCover/Torus): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "open",
+   "opened": "2026-10-25T10:40:59Z",
+   "merged": null,
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21206#issuecomment-6397081776",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "6b8e77415c80",
+     "at": "2026-10-25T11:30:56Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 189427,
+   "qwen_output_tokens": 3755,
+   "gpu_minutes": 5.3,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0
+  }
+ ],
+ "tasks_without_pr": [
+  {
+   "target": "Markov-kernel reachability and communication",
+   "type": "New lemma",
+   "size": "hard",
+   "state": "failed",
+   "last_attempt": "2026-10-24T20:07:20Z",
+   "attempts": 1,
+   "qwen_tokens": 1209198,
+   "qwen_output_tokens": 34775,
+   "gpu_minutes": 120.2,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0
+  },
+  {
+   "target": "The multigraph isomorphism interface Graph.Iso",
+   "type": "New lemma",
+   "size": "hard",
+   "state": "failed",
+   "last_attempt": "2026-10-25T10:35:34Z",
+   "attempts": 2,
+   "qwen_tokens": 8388125,
+   "qwen_output_tokens": 231025,
+   "gpu_minutes": 225.3,
    "attempts_without_tokens": 0,
    "attempts_without_gpu_time": 0
   }

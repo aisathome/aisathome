@@ -9,6 +9,16 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **The science page refreshes daily and shows each review round.** A science project's runner
+  posts its public results once a day to `POST /v1/projects/<id>/science` with its project key
+  (strict schema: public fields only, links only to GitHub pull requests and their comments, no
+  reviewer model names, no keys). Anyone can read them at `GET /v1/projects/<id>/science`, with a
+  short "working on now" view of the runner's status: the running tasks' title, type, size and
+  state and how many are queued, nothing else. The runner status gains an optional `title` per
+  task for it. `/science/tauceti/` loads this data in the browser (the build's data stays as the
+  fallback) and shows "Updated N h ago", "Working on now", tasks whose attempts failed before a
+  pull request, and per pull request its review rounds: the rubrics that asked for changes with
+  Tau Ceti's own one-line reason, verbatim and linked. (gateway, site)
 - **Hourly usage in `/v1/stats/history`.** An `hours` list gives requests and tokens per UTC hour,
   in all and per class (chat, agent, science), for the last two weeks; aggregates only, public like
   the daily numbers. (gateway, live since 2026-10-24)

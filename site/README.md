@@ -35,7 +35,11 @@ author name.
 
 Science (`/science/tauceti/`, data at `/science/tauceti.json`): built from
 `src/data/science/tauceti.json`, exported from our run records by an export script in the
-research notes (public fields only) and committed here; refresh it by rerunning the export and
-rebuilding.
+research notes (public fields only) and committed here. That is the fallback: in the browser the
+page loads the gateway's `/v1/projects/tauceti/science` (the runner rebuilds and posts it once a
+day, plus "working on now" from its status) and renders it in place of the build's, with the same
+code (`src/data/science-render.ts`; `science-model.ts` holds the shape, so the browser's bundle
+has no data). Its styles are global (`.sci-` prefix) because the rendered HTML is not part of the
+template.
 `npm run check` fails if the JSON gains a field outside the public list. The home page's science
 section and the chart are left out while nothing is merged.

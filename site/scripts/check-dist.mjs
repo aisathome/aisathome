@@ -96,14 +96,31 @@ if (!existsSync(sciFile)) errors.push('science/tauceti.json: missing');
 else {
 	const sci = JSON.parse(readFileSync(sciFile, 'utf8'));
 	const allowed = {
-		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'totals', 'prs'],
-		pr: ['number', 'url', 'title', 'type', 'state', 'opened', 'merged', 'closed', 'fix_rounds', 'first_review_approved',
-			'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts_without_tokens', 'attempts_without_gpu_time'],
+		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'type_labels', 'totals', 'prs',
+			'tasks_without_pr'],
+		pr: ['number', 'url', 'title', 'type', 'size', 'state', 'opened', 'merged', 'closed', 'fix_rounds', 'first_review_approved',
+			'review_url', 'rounds', 'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts_without_tokens',
+			'attempts_without_gpu_time'],
+		round: ['round', 'commit', 'at', 'result', 'changes'],
+		change: ['rubric', 'verdict', 'reason', 'url'],
+		task: ['target', 'type', 'size', 'state', 'last_attempt', 'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes',
+			'attempts_without_tokens', 'attempts_without_gpu_time'],
 	};
-	for (const k of Object.keys(sci)) if (!allowed.top.includes(k)) errors.push(`science/tauceti.json: unexpected field ${k}`);
-	for (const p of sci.prs ?? []) for (const k of Object.keys(p)) if (!allowed.pr.includes(k)) errors.push(`science/tauceti.json: unexpected PR field ${k}`);
+	const only = (obj, keys, what) => { for (const k of Object.keys(obj ?? {})) if (!keys.includes(k)) errors.push(`science/tauceti.json: unexpected ${what} field ${k}`); };
+	only(sci, allowed.top, 'top-level');
+	for (const p of sci.prs ?? []) {
+		only(p, allowed.pr, 'PR');
+		for (const r of p.rounds ?? []) {
+			only(r, allowed.round, 'round');
+			for (const c of r.changes ?? []) {
+				only(c, allowed.change, 'change');
+				if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+#(discussion_r|issuecomment-)\d+$/.test(c.url)) errors.push(`science/tauceti.json: #${p.number} links ${c.url}`);
+			}
+		}
+	}
+	for (const t of sci.tasks_without_pr ?? []) only(t, allowed.task, 'task');
 	for (const [k, v] of Object.entries(sci.totals ?? {})) if (v !== null && typeof v !== 'number') errors.push(`science/tauceti.json: totals.${k} is not a number`);
-	if (/claude|opus|anthropic|\/home\/|raw\/|prompts?\//i.test(JSON.stringify(sci))) errors.push('science/tauceti.json: mentions internal tooling or paths');
+	if (/claude|opus|anthropic|codex|gpt-|gemini|\/home\/|raw\/|prompts?\//i.test(JSON.stringify(sci))) errors.push('science/tauceti.json: mentions internal tooling, reviewer models or paths');
 	const page = readFileSync(join(dist, 'science', 'tauceti', 'index.html'), 'utf8');
 	for (const p of sci.prs ?? []) {
 		for (const k of ['qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts']) {
@@ -113,8 +130,10 @@ else {
 	}
 	const rows = [...page.matchAll(/<tr data-pr="(\d+)"/g)].map((m) => Number(m[1])).sort();
 	if (rows.join() !== sci.prs.map((p) => p.number).sort().join()) errors.push(`science/tauceti/: the table (${rows}) is not the JSON's PRs`);
-	const tokenSum = sci.prs.reduce((a, p) => a + (p.qwen_tokens ?? 0), 0);
-	if (sci.totals?.qwen_tokens !== undefined && tokenSum !== sci.totals.qwen_tokens) errors.push(`science/tauceti.json: PR tokens sum to ${tokenSum}, totals say ${sci.totals.qwen_tokens}`);
+	const noPR = [...page.matchAll(/<tr data-no-pr/g)].length;
+	if (noPR !== (sci.tasks_without_pr ?? []).length) errors.push(`science/tauceti/: ${noPR} rows without a PR, the JSON has ${(sci.tasks_without_pr ?? []).length}`);
+	const tokenSum = [...sci.prs, ...(sci.tasks_without_pr ?? [])].reduce((a, p) => a + (p.qwen_tokens ?? 0), 0);
+	if (sci.totals?.qwen_tokens !== undefined && tokenSum !== sci.totals.qwen_tokens) errors.push(`science/tauceti.json: row tokens sum to ${tokenSum}, totals say ${sci.totals.qwen_tokens}`);
 	const merged = sci.prs.filter((p) => p.state === 'merged').length;
 	const shown = readFileSync(join(dist, 'index.html'), 'utf8').match(/data-home-science-merged[^>]*>(\d+)</);
 	if (merged > 0 && Number(shown?.[1]) !== merged) errors.push(`index.html: the science section shows ${shown?.[1]} merged, the JSON ${merged}`);
