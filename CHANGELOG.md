@@ -24,7 +24,7 @@ and **(site)** are live on aisathome.org once deployed.
   review rounds: the rubrics that asked for changes with Tau Ceti's own one-line reason, verbatim
   and linked. A pull request not reviewed yet shows "First review pending" (`first_review_approved`
   is null) and is left out of the first-review count. Unknown project ids get 404 without being
-  remembered, and projects added or removed by a reload are followed. (gateway, site)
+  remembered, and projects added or removed by a reload are followed. (gateway, site, live since 2026-10-25)
 - **Hourly usage in `/v1/stats/history`.** An `hours` list gives requests and tokens per UTC hour,
   in all and per class (chat, agent, science), for the last two weeks; aggregates only, public like
   the daily numbers. (gateway, live since 2026-10-24)
@@ -66,7 +66,7 @@ and **(site)** are live on aisathome.org once deployed.
 ### Changed
 
 - People wait at most 1 second, not 8, before a science request gives up its node (`preempt_after_seconds`
-  default 1). A science step takes about 70 s, so the longer wait rarely let it finish. (gateway)
+  default 1). A science step takes about 70 s, so the longer wait rarely let it finish. (gateway, live since 2026-10-25)
 
 ## [v0.3.0] — 2026-10-24
 
