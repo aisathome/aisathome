@@ -228,6 +228,9 @@ func TestAccountsListLimitsAndUsedToday(t *testing.T) {
 			t.Fatalf("list lacks %q:\n%s", want, out.String())
 		}
 	}
+	if lines := strings.Split(strings.TrimSpace(out.String()), "\n"); !strings.Contains(lines[len(lines)-1], "3 of 100 active, 3 accounts in total") {
+		t.Fatalf("the active summary must stay the last line (the browser suite reads it there):\n%s", out.String())
+	}
 	// -file alone: no config, so neither limits nor use (unchanged output).
 	out.Reset()
 	runAccounts([]string{"-file", file, "list"}, &out, &bytes.Buffer{})

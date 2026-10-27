@@ -287,7 +287,7 @@ func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, no
 	if f.Settings.Closed {
 		state = "closed"
 	}
-	fmt.Fprintf(out, "\n%d of %d active, %d accounts in total; sign-up is %s\n", active, f.Settings.MaxActive, len(f.Accounts), state)
+	fmt.Fprintln(out)
 	if cfg != nil && cfg.Accounts != nil {
 		fmt.Fprintln(out, limitsLine(cfg.Accounts.Limits))
 	}
@@ -298,6 +298,8 @@ func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, no
 	case cfg != nil:
 		fmt.Fprintln(out, "today's use is not shown: the config has no state_dir, so it lives only in the gateway's memory")
 	}
+	// The summary stays the last line: the browser tests (and scripts) read it there.
+	fmt.Fprintf(out, "%d of %d active, %d accounts in total; sign-up is %s\n", active, f.Settings.MaxActive, len(f.Accounts), state)
 	return nil
 }
 
