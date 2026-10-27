@@ -10,7 +10,10 @@ const { class: cls } = Astro.props;
 	<dl class="live-list">
 		<div class="live-item"><dt>Nodes online</dt><dd data-stat="nodes"></dd></div>
 		<div class="live-item"><dt>Requests served</dt><dd data-stat="requests"></dd></div>
-		<div class="live-item"><dt>Tokens processed</dt><dd data-stat="tokens"></dd></div>
+		<div class="live-item">
+			<dt>Tokens processed at home</dt><dd data-stat="tokens"></dd>
+			<dd class="live-note" data-stat-note>on consumer GPUs with open models, not OpenAI, Anthropic or Google</dd>
+		</div>
 	</dl>
 	<p class="live-updated">Updated <time data-stat="updated"></time> UTC</p>
 </section>
@@ -52,6 +55,18 @@ const { class: cls } = Astro.props;
 <style>
 	.live-stats[hidden] { display: none !important; }
 	.live-list, .live-list dd { margin: 0; }
+	/* Items stay top-aligned when one carries a note, so the numbers share a line. */
+	.live-list { align-items: flex-start; }
+	/* Pages lay items out as column-reverse (number above label); order -1 keeps the note last. */
+	.live-note {
+		order: -1;
+		max-width: 17rem;
+		margin-top: 0.2rem;
+		font-size: 0.75rem;
+		line-height: 1.35;
+		font-weight: 400;
+		color: var(--sl-color-gray-3);
+	}
 	@keyframes live-pulse { 50% { opacity: 0.35; } }
 	.live-dot {
 		display: inline-block;

@@ -385,7 +385,7 @@ import LiveStats from '../components/LiveStats.astro';
 	}
 	:global(.net-live .live-list) { display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; }
 	:global(.net-live .live-item) { display: flex; flex-direction: column-reverse; }
-	:global(.net-live dd) { font: 800 1.8rem/1 var(--font-display); color: var(--sl-color-white); }
+	:global(.net-live dd[data-stat]) { font: 800 1.8rem/1 var(--font-display); color: var(--sl-color-white); }
 	:global(.net-live dt), :global(.net-live .live-head), :global(.net-live .live-updated) {
 		font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3);
 	}

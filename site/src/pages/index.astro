@@ -289,7 +289,7 @@ const icons: Record<string, string> = {
 	}
 	.vb :global(.live .live-list) { display: flex; flex-wrap: wrap; gap: 1rem 3rem; }
 	.vb :global(.live .live-item) { display: flex; flex-direction: column-reverse; }
-	.vb :global(.live dd) {
+	.vb :global(.live dd[data-stat]) {
 		font: 900 clamp(2.4rem, 5vw, 3.4rem)/1 var(--font-display);
 		color: var(--sl-color-white);
 	}
