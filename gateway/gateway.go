@@ -158,7 +158,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 			return nil, fmt.Errorf("state dir: %w", err)
 		}
-		g.budget.path = filepath.Join(cfg.StateDir, "budgets.json")
+		g.budget.path = filepath.Join(cfg.StateDir, BudgetsFile)
 		g.budget.load(time.Now(), log)
 		g.credit.path = filepath.Join(cfg.StateDir, "credit.json")
 		g.credit.load(log)

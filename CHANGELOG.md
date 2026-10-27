@@ -9,6 +9,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **`aisathome-gateway accounts list` shows token limits and today's use.** A footer line states
+  the limits from the config's `accounts.limits`, which apply to each account separately
+  (tokens/day weighted, requests/min, concurrent; 0 = unlimited; the day resets 00:00 UTC), and a
+  USED TODAY column gives each account's weighted tokens since 00:00 UTC, chat and API together:
+  the account page's "Today" number, read from the budget state the gateway saves in `state_dir`
+  every 5 s. Needs `-config`; with `-file` alone the list is as before. (gateway)
 - **A task queue for science projects in the gateway** (decision 0015, phase 1: the API; the runner
   does not use it yet). A project's tools submit tasks to `POST /v1/projects/<id>/tasks` with the
   project key (idempotent by the client's task id: the same task again is no duplicate, other

@@ -3,6 +3,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -148,5 +152,115 @@ func TestUsernameClearCommand(t *testing.T) {
 	}
 	if err := runAccounts([]string{"-file", file, "username-clear", "gh:9"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("clearing an unknown account succeeded")
+	}
+}
+
+// budgetsFixture writes a gateway budget state file: weighted tokens per account and UTC day,
+// keyed by the hash of the account's budget key, as the running gateway saves it.
+func budgetsFixture(t *testing.T, dir string, use map[string][2]any) {
+	t.Helper()
+	used := map[string]any{}
+	for id, u := range use {
+		h := sha256.Sum256([]byte("acct:" + id))
+		used[hex.EncodeToString(h[:])] = map[string]any{"day": u[0], "n": u[1]}
+	}
+	h := sha256.Sum256([]byte("ak-some-plain-key")) // a key's own budget, not an account's
+	used[hex.EncodeToString(h[:])] = map[string]any{"day": "2026-10-28", "n": 999}
+	raw, _ := json.Marshal(map[string]any{"version": 1, "used": used})
+	if err := os.WriteFile(filepath.Join(dir, gateway.BudgetsFile), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// list shows the limits every account has on its own, and each account's weighted tokens of
+// the current UTC day from the gateway's saved budget state (the account page's number).
+func TestAccountsListLimitsAndUsedToday(t *testing.T) {
+	dir := t.TempDir()
+	file, state := filepath.Join(dir, "accounts.json"), filepath.Join(dir, "state")
+	os.Mkdir(state, 0o700)
+	store, _ := gateway.OpenAccountStore(file)
+	for _, id := range []string{"gh:1", "gh:2", "gh:3"} {
+		store.SignIn(id, time.Now())
+	}
+	cfg := gateway.Config{StateDir: state, Accounts: &gateway.AccountsConfig{File: file,
+		Limits: gateway.UserLimits{TokensPerDay: 5000000, RPM: 30, MaxConcurrent: 2}}}
+	cfgFile := filepath.Join(dir, "gateway.json")
+	raw, _ := json.Marshal(cfg)
+	os.WriteFile(cfgFile, raw, 0o600)
+	budgetsFixture(t, state, map[string][2]any{
+		"gh:1": {"2026-10-28", 1234567}, // today
+		"gh:2": {"2026-10-27", 4000},    // yesterday: counts nothing today
+	})
+	list := func(now time.Time) map[string]string {
+		var out bytes.Buffer
+		if err := listAccounts(&out, store.Snapshot(), &cfg, now); err != nil {
+			t.Fatal(err)
+		}
+		rows := map[string]string{}
+		for _, line := range strings.Split(out.String(), "\n") {
+			if f := strings.Fields(line); len(f) > 3 && strings.HasPrefix(f[0], "gh:") {
+				rows[f[0]] = f[3] // ID STATE KEYS USED-TODAY ...
+			}
+		}
+		rows["out"] = out.String()
+		return rows
+	}
+	// Just after midnight UTC, on a clock two hours ahead: the UTC day counts, not the local one.
+	r := list(time.Date(2026, 10, 28, 2, 0, 30, 0, time.FixedZone("CEST", 2*3600)))
+	if r["gh:1"] != "1,234,567" || r["gh:2"] != "0" || r["gh:3"] != "0" {
+		t.Fatalf("used today after midnight UTC: gh:1 %q gh:2 %q gh:3 %q\n%s", r["gh:1"], r["gh:2"], r["gh:3"], r["out"])
+	}
+	// One second before midnight UTC (still 27 October), on a clock five hours behind.
+	r = list(time.Date(2026, 10, 27, 18, 59, 59, 0, time.FixedZone("EST", -5*3600)))
+	if r["gh:1"] != "0" || r["gh:2"] != "4,000" {
+		t.Fatalf("used today before midnight UTC: gh:1 %q gh:2 %q\n%s", r["gh:1"], r["gh:2"], r["out"])
+	}
+	// Through the command, with -config: the header, the limits line and the column's meaning.
+	var out bytes.Buffer
+	if err := runAccounts([]string{"-config", cfgFile, "list"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	flat := strings.Join(strings.Fields(out.String()), " ")
+	for _, want := range []string{"ID STATE KEYS USED TODAY CREATED USERNAME",
+		"limits per account, each account separately: 5,000,000 tokens/day (weighted), 30 requests/min, 2 concurrent; the day resets 00:00 UTC",
+		"USED TODAY: weighted tokens since 00:00 UTC, chat and API together"} {
+		if !strings.Contains(flat, want) {
+			t.Fatalf("list lacks %q:\n%s", want, out.String())
+		}
+	}
+	// -file alone: no config, so neither limits nor use (unchanged output).
+	out.Reset()
+	runAccounts([]string{"-file", file, "list"}, &out, &bytes.Buffer{})
+	if strings.Contains(out.String(), "USED TODAY") || strings.Contains(out.String(), "limits per account") {
+		t.Fatalf("-file alone shows limits or use:\n%s", out.String())
+	}
+	// No saved state yet: everyone at 0. A corrupt state file is an error, not zeros.
+	os.Remove(filepath.Join(state, gateway.BudgetsFile))
+	if r := list(time.Now()); r["gh:1"] != "0" {
+		t.Fatalf("without a state file: %q\n%s", r["gh:1"], r["out"])
+	}
+	os.WriteFile(filepath.Join(state, gateway.BudgetsFile), []byte(`{"used": {`), 0o600)
+	if err := listAccounts(&bytes.Buffer{}, store.Snapshot(), &cfg, time.Now()); err == nil {
+		t.Fatal("a corrupt state file listed as zeros")
+	}
+	// Without a state_dir the use is unknown and the list says so.
+	noState := cfg
+	noState.StateDir = ""
+	out.Reset()
+	listAccounts(&out, store.Snapshot(), &noState, time.Now())
+	if strings.Contains(out.String(), "USED TODAY") || !strings.Contains(out.String(), "no state_dir") {
+		t.Fatalf("without state_dir:\n%s", out.String())
+	}
+}
+
+func TestLimitsLineAndThousands(t *testing.T) {
+	if got := limitsLine(gateway.UserLimits{}); got != "limits per account, each account separately: unlimited tokens/day (weighted), "+
+		"unlimited requests/min, unlimited concurrent; the day resets 00:00 UTC" {
+		t.Fatalf("all unlimited: %q", got)
+	}
+	for n, want := range map[int64]string{0: "0", 999: "999", 1000: "1,000", 123456: "123,456", 1234567: "1,234,567", -4000: "-4,000"} {
+		if got := thousands(n); got != want {
+			t.Fatalf("thousands(%d) = %q, want %q", n, got, want)
+		}
 	}
 }

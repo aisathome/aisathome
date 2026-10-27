@@ -590,3 +590,66 @@ func TestAccountFormsRejectMultipartAndLargeBodies(t *testing.T) {
 		t.Fatalf("normal key form: %d", resp.StatusCode)
 	}
 }
+
+// The admin CLI's "USED TODAY" (accounts list) reads the budget state the gateway saves; it
+// is the account page's "Today" number for an account using two API keys and the chat.
+func TestAccountUsedTodayMatchesPage(t *testing.T) {
+	state := t.TempDir()
+	a := newAcctRigWith(t, 100, nil, func(c *gateway.Config) { c.StateDir = state })
+	s, _ := a.signIn(t, 11)
+	other, _ := a.signIn(t, 12) // another account's use must not count
+	ask := func(base, apiKey, email string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", base+"/v1/chat/completions", strings.NewReader(chatBody))
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		if email != "" {
+			req.Header.Set("X-OpenWebUI-User-Email", email)
+			req.Header.Set("X-OpenWebUI-User-Id", "owui-uuid-11")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("request: %d", resp.StatusCode)
+		}
+	}
+	_, p1 := a.createKey(t, s)
+	_, p2 := a.createKey(t, s)
+	_, p3 := a.createKey(t, other)
+	k1, k2, k3 := keyRe.FindString(p1), keyRe.FindString(p2), keyRe.FindString(p3)
+	if k1 == "" || k2 == "" || k3 == "" || k1 == k2 {
+		t.Fatal("keys not created")
+	}
+	ask(a.gw.URL, k1, "")
+	ask(a.gw.URL, k2, "")
+	ask(a.front.URL, "owui-key", "gh-11@users.invalid")
+	ask(a.gw.URL, k3, "")
+	waitUsage(t, a.rig, 4)
+	todayRe := regexp.MustCompile(`Today: (\d+) of`)
+	page := func(session string) int64 {
+		_, body := a.get(t, "/account", session)
+		m := todayRe.FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("no Today line on the account page")
+		}
+		var n int64
+		fmt.Sscan(m[1], &n)
+		return n
+	}
+	// The budget is charged just after the usage line is written: wait for the three requests.
+	var want int64
+	waitFor(t, func() bool { want = page(s); return want > 0 && want%3 == 0 && page(other) == want/3 })
+	if err := a.g.Close(); err != nil { // saves the budget state, as the 5 s ticker would
+		t.Fatal(err)
+	}
+	used, err := gateway.AccountsUsedToday(state, []string{"gh:11", "gh:12", "gh:13"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used["gh:11"] != want || used["gh:12"] != want/3 || used["gh:13"] != 0 {
+		t.Fatalf("CLI's use today %v, account page gh:11 %d, gh:12 %d", used, want, want/3)
+	}
+}

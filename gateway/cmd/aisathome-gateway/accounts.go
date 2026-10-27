@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -16,8 +17,11 @@ import (
 
 const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json | -file accounts.json] <command>
 
-  list                 accounts, their state, number of keys and username; the limit and
-                       sign-up state
+  list                 accounts, their state, number of keys, weighted tokens used today (UTC)
+                       and username; the account limit and sign-up state, and the limits
+                       that apply to each account (tokens/day, requests/min, concurrent).
+                       USED TODAY is the account page's "Today" number, from the budget
+                       state the gateway saves every 5 s (needs -config with state_dir)
   limit <n>            let at most n accounts be active; waiting accounts get in automatically
   close | open         stop or allow new sign-ups (existing accounts keep working)
   add <id>             create an active account (e.g. gh:12345) without a sign-in, for tests
@@ -54,12 +58,18 @@ func runAccounts(args []string, out, msg io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	configSet := false
+	fs.Visit(func(f *flag.Flag) { configSet = configSet || f.Name == "config" })
 	path := *file
-	if path == "" {
-		cfg, err := loadConfig(*cfgPath)
+	var cfg *gateway.Config // nil with -file alone: list then shows no limits or use
+	if path == "" || configSet {
+		c, err := loadConfig(*cfgPath)
 		if err != nil {
 			return err
 		}
+		cfg = &c
+	}
+	if path == "" {
 		if cfg.Accounts == nil || cfg.Accounts.File == "" {
 			return fmt.Errorf("%s has no accounts.file; pass -file", *cfgPath)
 		}
@@ -83,23 +93,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 	}
 	switch a[0] {
 	case "list":
-		f := store.Snapshot()
-		active := 0
-		tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tCREATED\tUSERNAME")
-		for _, x := range f.Accounts {
-			if x.Status == gateway.StatusActive {
-				active++
-			}
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%q\n", x.ID, x.Status, len(x.Keys), x.Created.Format("2006-01-02"), x.Username)
-		}
-		tw.Flush()
-		state := "open"
-		if f.Settings.Closed {
-			state = "closed"
-		}
-		fmt.Fprintf(out, "\n%d of %d active, %d accounts in total; sign-up is %s\n", active, f.Settings.MaxActive, len(f.Accounts), state)
-		return nil
+		return listAccounts(out, store.Snapshot(), cfg, time.Now())
 	case "limit":
 		if err := need(1); err != nil {
 			return err
@@ -254,4 +248,81 @@ func listNodes(out io.Writer, f gateway.AccountsFile) error {
 	fmt.Fprintf(out, "\n%d of %d node tokens; up to %s per account; new nodes are %s; routing %s\n", total,
 		f.Settings.MaxNodesOrDefault(), perAccount, state, routing)
 	return nil
+}
+
+// listAccounts prints the accounts, the sign-up state and, with a config, the per-account
+// limits and each account's use today.
+func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, now time.Time) error {
+	var used map[string]int64 // nil: unknown, the column is left out
+	if cfg != nil && cfg.StateDir != "" {
+		ids := make([]string, len(f.Accounts))
+		for i, x := range f.Accounts {
+			ids[i] = x.ID
+		}
+		var err error
+		if used, err = gateway.AccountsUsedToday(cfg.StateDir, ids, now); err != nil {
+			return fmt.Errorf("reading today's use: %w", err)
+		}
+	}
+	active := 0
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	if used != nil {
+		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tUSED TODAY\tCREATED\tUSERNAME")
+	} else {
+		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tCREATED\tUSERNAME")
+	}
+	for _, x := range f.Accounts {
+		if x.Status == gateway.StatusActive {
+			active++
+		}
+		if used != nil {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%q\n", x.ID, x.Status, len(x.Keys), thousands(used[x.ID]),
+				x.Created.Format("2006-01-02"), x.Username)
+		} else {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%q\n", x.ID, x.Status, len(x.Keys), x.Created.Format("2006-01-02"), x.Username)
+		}
+	}
+	tw.Flush()
+	state := "open"
+	if f.Settings.Closed {
+		state = "closed"
+	}
+	fmt.Fprintf(out, "\n%d of %d active, %d accounts in total; sign-up is %s\n", active, f.Settings.MaxActive, len(f.Accounts), state)
+	if cfg != nil && cfg.Accounts != nil {
+		fmt.Fprintln(out, limitsLine(cfg.Accounts.Limits))
+	}
+	switch {
+	case used != nil:
+		fmt.Fprintf(out, "USED TODAY: weighted tokens since 00:00 UTC, chat and API together (the account page's \"Today\"),\n"+
+			"  as of the gateway's last save of %s (every 5 s)\n", filepath.Join(cfg.StateDir, gateway.BudgetsFile))
+	case cfg != nil:
+		fmt.Fprintln(out, "today's use is not shown: the config has no state_dir, so it lives only in the gateway's memory")
+	}
+	return nil
+}
+
+// limitsLine states the limits every account has, each on its own (0 = unlimited).
+func limitsLine(l gateway.UserLimits) string {
+	n := func(v int, unit string) string {
+		if v <= 0 {
+			return "unlimited " + unit
+		}
+		return thousands(int64(v)) + " " + unit
+	}
+	return "limits per account, each account separately: " + n(l.TokensPerDay, "tokens/day (weighted)") + ", " +
+		n(l.RPM, "requests/min") + ", " + n(l.MaxConcurrent, "concurrent") + "; the day resets 00:00 UTC"
+}
+
+// thousands formats n with commas: 5000000 → 5,000,000.
+func thousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
 }

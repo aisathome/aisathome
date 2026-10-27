@@ -198,14 +198,14 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		class = ClassChat
 	}
 	if accountID != "" {
-		userKey = "acct:" + accountID
+		userKey = accountBudgetKey(accountID)
 	} else if info.ForwardUsers {
 		if id, isAcct := accountFromEmail(r.Header.Get("X-OpenWebUI-User-Email")); isAcct {
 			if g.accounts == nil || !g.accounts.active(id) { // banned or waiting: not through the chat either
 				apiError(w, http.StatusForbidden, "this account is not active")
 				return
 			}
-			acct, userKey, reqAcct = g.accountInfo(id).within(info), "acct:"+id, id
+			acct, userKey, reqAcct = g.accountInfo(id).within(info), accountBudgetKey(id), id
 		} else if uid := r.Header.Get("X-OpenWebUI-User-Id"); uid != "" {
 			acct, userKey = info.forUser(uid), key+"|"+uid
 		}

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -231,6 +232,38 @@ func (b *budgets) add(key string, n int64, now time.Time) {
 	}
 	u.N += n
 	b.dirty = true
+}
+
+// BudgetsFile is the name of the budget state file in Config.StateDir.
+const BudgetsFile = "budgets.json"
+
+// accountBudgetKey is an account's budget key: its chat and all its API keys share it.
+func accountBudgetKey(id string) string { return "acct:" + id }
+
+// AccountsUsedToday reads the budget state a gateway saves in stateDir (every saveEvery and on
+// shutdown) and returns the weighted tokens each of ids has used on now's UTC day: the number
+// its account page shows ("Today: N"), as of the last save. Accounts without use today are
+// left out; a missing file means nothing was saved yet. It is for the admin CLI, which runs
+// beside the gateway and cannot see its memory.
+func AccountsUsedToday(stateDir string, ids []string, now time.Time) (map[string]int64, error) {
+	raw, err := os.ReadFile(filepath.Join(stateDir, BudgetsFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]int64{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var st budgetState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil, fmt.Errorf("%s: %w", BudgetsFile, err)
+	}
+	day, used := utcDay(now), map[string]int64{}
+	for _, id := range ids {
+		if u, ok := st.Used[keyHash(accountBudgetKey(id))]; ok && u.Day == day && u.N > 0 {
+			used[id] = u.N
+		}
+	}
+	return used, nil
 }
 
 // budgetState is the state file's format.

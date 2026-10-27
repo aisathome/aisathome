@@ -329,7 +329,7 @@ func (g *Gateway) accountData(id string) pageData {
 	if !ok {
 		return pageData{}
 	}
-	used := g.budget.used1("acct:"+id, time.Now())
+	used := g.budget.used1(accountBudgetKey(id), time.Now())
 	d := pageData{SignedIn: true, Account: a, Position: pos, API: g.acfg.PublicURL,
 		Used: used, Budget: g.acfg.Limits.TokensPerDay, MaxKeys: g.acfg.MaxKeys, Once: g.createToken(id, a.KeySeq),
 		NodeOnce: g.nodeFormToken(id, a.NodeSeq), Admin: slices.Contains(g.acfg.Admins, id) && g.accounts.active(id)}
