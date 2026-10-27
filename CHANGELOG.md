@@ -9,6 +9,21 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **A task queue for science projects in the gateway** (decision 0015, phase 1: the API; the runner
+  does not use it yet). A project's tools submit tasks to `POST /v1/projects/<id>/tasks` with the
+  project key (idempotent by the client's task id: the same task again is no duplicate, other
+  content under the same id is refused); workers claim the next one at `.../tasks/claim` with a
+  lease (30 s to 1 h, default 10 min), renew it with `.../heartbeat`, and report `.../complete`
+  (outcome, checks, score summary, the diff up to 1 MB, PR body, commit message, steps, tokens,
+  minutes, where the raw evidence is) or `.../fail` (back to the queue or failed); `.../cancel`
+  stops a queued or leased task. Claim order: a task whose lease ran out or was given back first,
+  then fix rounds and follow-ups, then first attempts, then other work, oldest first; a lease not
+  renewed in time puts the task back in the queue, and after `max_tries` leases (default 3) it
+  fails. `GET .../tasks` lists summaries with counts (filters `state`, `kind`), `GET
+  .../tasks/<task>` gives one in full; both also answer an admin's session. Nothing is public:
+  specs, diffs and results stay with the project key and the admins. Strict schema (unknown fields
+  refused), bounded sizes, at most 500 open and 200 finished tasks kept per project; every task is
+  a file in `state_dir/tasks-<project>/`, so the queue and its leases survive a restart. (gateway)
 - **Tau Ceti as a whole on the science page.** `/science/tauceti/` links Tau Ceti's own
   statistics, progress board and roadmaps, and shows one line on the library as a whole, with the
   date it was read: pull requests merged into Tau Ceti's main branch in the last 30 days (Bors
