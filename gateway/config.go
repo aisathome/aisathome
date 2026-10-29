@@ -80,6 +80,8 @@ type Config struct {
 	// StatsRefresh, if set, replaces how often the leaderboard (a minute) and the BOINC-format
 	// exports (an hour) are rebuilt. For tests.
 	StatsRefresh time.Duration `json:"-"`
+	// TasksNow, if set, is the task queue's clock (leases, affinity). For tests.
+	TasksNow func() time.Time `json:"-"`
 }
 
 // NodeToken authorises node connections. In JSON it is either a plain operator id (any

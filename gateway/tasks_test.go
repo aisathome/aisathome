@@ -118,7 +118,7 @@ func TestTaskAuth(t *testing.T) {
 			{"POST", tasksPath}, {"GET", tasksPath}, {"GET", tasksPath + "/T-A"}, {"POST", tasksPath + "/claim"},
 			{"POST", tasksPath + "/T-A/heartbeat"}, {"POST", tasksPath + "/T-A/complete"}, {"POST", tasksPath + "/T-A/fail"},
 			{"POST", tasksPath + "/T-A/cancel"}, {"POST", tasksPath + "/T-A/review"}, {"POST", tasksPath + "/T-A/decide"},
-			{"POST", tasksPath + "/T-A/exported"},
+			{"POST", tasksPath + "/T-A/exported"}, {"POST", tasksPath + "/T-A/max_tries"},
 		} {
 			body := map[string]any{"worker": "w1"}
 			if call.path == tasksPath {
@@ -216,7 +216,8 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	if w := r.lease(id, "complete", "w1", lease, map[string]any{"result": okResult}); w.Code != http.StatusConflict {
 		t.Errorf("complete with an expired lease: HTTP %d", w.Code)
 	}
-	// The same worker claims it again: only the new lease counts.
+	// The same worker claims it again: only the new lease counts (and it continues try 1,
+	// TestTaskInterruptions).
 	id2, lease2 := r.claim("w1", 60)
 	if id2 != "T-A" || lease2 == lease {
 		t.Fatalf("re-claim: %q, new lease %v", id2, lease2 != lease)
@@ -227,16 +228,32 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	if w := r.lease(id, "heartbeat", "w1", lease2, nil); w.Code != 200 {
 		t.Errorf("heartbeat with the new lease: HTTP %d", w.Code)
 	}
-	r.now = r.now.Add(time.Minute)
-	// Tries 2 and 3 expire too: the task fails instead of going round for ever.
-	r.now = r.now.Add(61 * time.Second)
-	if id3, _ := r.claim("w1", 60); id3 != "T-A" { // the claim itself sweeps; held for w1
-		t.Fatalf("third claim got %q", id3)
+	// Leases that expire and are claimed by other workers after the window use up tries 2 and
+	// 3; the last one expires too and nobody takes it back: the task fails instead of going
+	// round for ever.
+	for _, w := range []string{"w2", "w3"} {
+		r.now = r.now.Add(61 * time.Second)
+		r.g.tasks.sweepAll()
+		r.now = r.now.Add(affinityWindow)
+		if id, _ := r.claim(w, 60); id != "T-A" {
+			t.Fatalf("%s claimed %q", w, id)
+		}
+	}
+	if task := r.g.tasks.get("tauceti", "T-A"); task.Tries != 3 || task.Interruptions != 1 {
+		t.Fatalf("tries %d, interruptions %d, want 3 and 1", task.Tries, task.Interruptions)
 	}
 	r.now = r.now.Add(61 * time.Second)
 	r.g.tasks.sweepAll()
+	if r.state("T-A") != TaskQueued { // held for w3 for the window
+		t.Fatalf("the last try expired: %s, want queued for w3", r.state("T-A"))
+	}
+	if id, _ := r.claim("w4", 60); id != "" {
+		t.Fatalf("w4 claimed %s, held for w3", id)
+	}
+	r.now = r.now.Add(affinityWindow)
+	r.g.tasks.sweepAll()
 	task := r.g.tasks.get("tauceti", "T-A")
-	if task.State != TaskFailed || task.Tries != 3 || !strings.Contains(task.Error, "lease expired") {
+	if task.State != TaskFailed || task.Tries != 3 || !strings.Contains(task.Error, "lease expired on try 3 of 3 and w3 did not take it back") {
 		t.Fatalf("after 3 expired leases: %s, tries %d, error %q", task.State, task.Tries, task.Error)
 	}
 	if id, _ := r.claim("w4", 60); id != "" {
@@ -361,7 +378,7 @@ func TestTaskStateMachine(t *testing.T) {
 		t.Fatalf("done task: %+v", full)
 	}
 
-	// fail without requeue: failed; with requeue: back in the queue until max_tries.
+	// fail without requeue: failed; with requeue: given back, without using up a try.
 	r.create("T-B", "attempt")
 	id, lease = r.claim("w1", 60)
 	if w := r.lease(id, "fail", "w1", lease, map[string]any{"reason": "lake_build infra error"}); w.Code != 200 || r.state("T-B") != TaskFailed {
@@ -373,13 +390,14 @@ func TestTaskStateMachine(t *testing.T) {
 	m := newTask("T-C", "attempt")
 	m["max_tries"] = 2
 	r.call("POST", tasksPath, testProjectKey, m)
-	for try := 1; try <= 2; try++ {
+	for range 3 {
 		id, lease = r.claim("w1", 60)
 		r.lease(id, "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot stop"})
 	}
-	if c := r.g.tasks.get("tauceti", "T-C"); c.State != TaskFailed || c.Tries != 2 {
-		t.Fatalf("requeue after max_tries: %s, %d tries", c.State, c.Tries)
+	if c := r.g.tasks.get("tauceti", "T-C"); c.State != TaskQueued || c.Tries != 1 || c.Interruptions != 2 {
+		t.Fatalf("3 give-backs with max_tries 2: %s, %d tries, %d interruptions", c.State, c.Tries, c.Interruptions)
 	}
+	r.call("POST", tasksPath+"/T-C/cancel", testProjectKey, map[string]any{})
 
 	// cancel: a queued task, and a leased one whose worker then loses its lease.
 	r.create("T-D", "attempt")
@@ -571,7 +589,8 @@ func TestTaskAffinity(t *testing.T) {
 		t.Fatalf("w2 claimed %q, want F1 (A1 is held for w1)", id)
 	}
 	w, out := r2.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w1", "task": "A1"})
-	if w.Code != 200 || out["task"].(map[string]any)["id"] != "A1" || out["task"].(map[string]any)["tries"] != 2.0 {
+	if w.Code != 200 || out["task"].(map[string]any)["id"] != "A1" || out["task"].(map[string]any)["tries"] != 1.0 ||
+		out["task"].(map[string]any)["interruptions"] != 1.0 {
 		t.Fatalf("w1 claims A1 back: HTTP %d %s", w.Code, w.Body)
 	}
 	for _, c := range []struct {
@@ -687,4 +706,221 @@ func TestTaskReviewDecisionExport(t *testing.T) {
 	if w, _ := r.call("POST", tasksPath+"/T-A/exported", testProjectKey, map[string]any{}); w.Code != 400 {
 		t.Errorf("exported without seen: HTTP %d", w.Code)
 	}
+}
+
+// takeBack claims one task by id: its HTTP status and lease id.
+func (r *taskRig) takeBack(worker, task string) (int, string) {
+	r.t.Helper()
+	w, out := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": worker, "task": task, "lease_seconds": 60})
+	if w.Code != http.StatusOK {
+		return w.Code, ""
+	}
+	return w.Code, out["lease"].(map[string]any)["id"].(string)
+}
+
+func (r *taskRig) counts(id string) (int, int) {
+	r.t.Helper()
+	t := r.g.tasks.get("tauceti", id)
+	return t.Tries, t.Interruptions
+}
+
+// Interruptions do not use up tries (owner 2026-10-29): a task given back by its worker (the
+// runner on a spot stop) continues its try at the next claim, by any worker; an expired lease
+// continues it only when the same worker takes the task back within the window; a real failure
+// ends the task; a task interrupted maxInterruptions times fails; the state survives a restart.
+func TestTaskInterruptions(t *testing.T) {
+	dir := t.TempDir()
+	r := newTaskRig(t, dir)
+	m := newTask("T-A", "attempt")
+	m["max_tries"] = 2
+	r.call("POST", tasksPath, testProjectKey, m)
+
+	// Spot stops: give back, take back by id, ten times; max_tries is 2 and it stays try 1.
+	_, lease := r.takeBack("w1", "T-A")
+	for i := 1; i <= 10; i++ {
+		w, out := r.call("POST", tasksPath+"/T-A/fail", testProjectKey, map[string]any{"worker": "w1", "lease": lease, "requeue": true, "reason": "runner stop: service stop"})
+		if w.Code != 200 || out["state"] != TaskQueued || out["tries"] != 1.0 || out["interruptions"] != float64(i-1) {
+			t.Fatalf("give-back %d: HTTP %d %s", i, w.Code, w.Body)
+		}
+		r.now = r.now.Add(2 * time.Minute)
+		var code int
+		if code, lease = r.takeBack("w1", "T-A"); code != 200 {
+			t.Fatalf("take-back %d: HTTP %d", i, code)
+		}
+		if tries, n := r.counts("T-A"); tries != 1 || n != i {
+			t.Fatalf("after take-back %d: tries %d, interruptions %d", i, tries, n)
+		}
+	}
+	if ev := r.g.tasks.get("tauceti", "T-A").Events; !strings.Contains(ev[len(ev)-1].Note, "try 1 of 2 continues after an interruption (given_back; 10 so far)") {
+		t.Errorf("claim event: %+v", ev[len(ev)-1])
+	}
+	// The interruption survives a restart: given back, the gateway restarts, and the next
+	// claim, by another worker after the window, still continues the try.
+	r.lease("T-A", "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot stop"})
+	r.g.Close()
+	r = newTaskRig(t, dir)
+	r.now = time.Date(2026, 10, 27, 13, 0, 0, 0, time.UTC) // the hold has passed: anyone may claim
+	if id, _ := r.claim("w2", 60); id != "T-A" {
+		t.Fatalf("w2 claimed %q", id)
+	}
+	if tries, n := r.counts("T-A"); tries != 1 || n != 11 {
+		t.Fatalf("w2 after a give-back: tries %d, interruptions %d, want 1 and 11", tries, n)
+	}
+
+	// An expired lease taken back by the same worker within the window continues the try.
+	r.now = r.now.Add(61 * time.Second)
+	r.g.tasks.sweepAll()
+	r.now = r.now.Add(affinityWindow - time.Second)
+	if code, _ := r.takeBack("w2", "T-A"); code != 200 {
+		t.Fatalf("w2 takes back within the window: HTTP %d", code)
+	}
+	if tries, n := r.counts("T-A"); tries != 1 || n != 12 {
+		t.Fatalf("expired and taken back: tries %d, interruptions %d, want 1 and 12", tries, n)
+	}
+	// Expired, and the same worker comes back only after the window: a new try.
+	r.now = r.now.Add(61 * time.Second)
+	r.g.tasks.sweepAll()
+	r.now = r.now.Add(affinityWindow)
+	if code, _ := r.takeBack("w2", "T-A"); code != 200 {
+		t.Fatalf("w2 takes back after the window: HTTP %d", code)
+	}
+	if tries, n := r.counts("T-A"); tries != 2 || n != 12 {
+		t.Fatalf("taken back late: tries %d, interruptions %d, want 2 and 12", tries, n)
+	}
+
+	// Expired, and another worker takes it after the window: a new try (T-B, max 3).
+	r.create("T-B", "attempt")
+	if code, _ := r.takeBack("w1", "T-B"); code != 200 {
+		t.Fatalf("w1 claims T-B: HTTP %d", code)
+	}
+	r.now = r.now.Add(61 * time.Second)
+	r.g.tasks.sweepAll()
+	r.now = r.now.Add(affinityWindow)
+	if code, _ := r.takeBack("w3", "T-B"); code != 200 {
+		t.Fatalf("w3 claims T-B: HTTP %d", code)
+	}
+	if tries, n := r.counts("T-B"); tries != 2 || n != 0 {
+		t.Fatalf("another worker after an expiry: tries %d, interruptions %d, want 2 and 0", tries, n)
+	}
+	// The last try expires: its worker taking it back within the window continues it.
+	r.now = r.now.Add(61 * time.Second)
+	r.g.tasks.sweepAll()
+	r.now = r.now.Add(affinityWindow)
+	if code, _ := r.takeBack("w4", "T-B"); code != 200 { // try 3 of 3
+		t.Fatalf("w4 claims T-B: HTTP %d", code)
+	}
+	r.now = r.now.Add(61 * time.Second)
+	r.g.tasks.sweepAll()
+	r.now = r.now.Add(affinityWindow - time.Second)
+	r.g.tasks.sweepAll()
+	if r.state("T-B") != TaskQueued {
+		t.Fatalf("the last try expired, inside the window: %s", r.state("T-B"))
+	}
+	code, lease := r.takeBack("w4", "T-B")
+	if tries, n := r.counts("T-B"); code != 200 || tries != 3 || n != 1 {
+		t.Fatalf("last try taken back: HTTP %d, tries %d, interruptions %d", code, tries, n)
+	}
+
+	// A real failure ends the task at once, whatever tries are left.
+	if w := r.lease("T-B", "fail", "w4", lease, map[string]any{"reason": "exit 1 after 3 tries on w4"}); w.Code != 200 || r.state("T-B") != TaskFailed {
+		t.Fatalf("fail: HTTP %d, %s", w.Code, r.state("T-B"))
+	}
+	r.create("T-C", "attempt")
+	_, lease = r.takeBack("w1", "T-C")
+	if w := r.lease("T-C", "fail", "w1", lease, map[string]any{"reason": "lake_build infra error"}); w.Code != 200 || r.state("T-C") != TaskFailed {
+		t.Fatalf("fail on try 1: HTTP %d, %s", w.Code, r.state("T-C"))
+	}
+	if tries, n := r.counts("T-C"); tries != 1 || n != 0 {
+		t.Fatalf("failed: tries %d, interruptions %d", tries, n)
+	}
+
+	// The interruption cap: a task that keeps being interrupted still ends.
+	r.create("T-D", "attempt")
+	_, lease = r.takeBack("w1", "T-D")
+	for i := 0; i < maxInterruptions; i++ {
+		r.lease("T-D", "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot stop"})
+		_, lease = r.takeBack("w1", "T-D")
+	}
+	if tries, n := r.counts("T-D"); tries != 1 || n != maxInterruptions || r.state("T-D") != TaskLeased {
+		t.Fatalf("at the cap: %s, tries %d, interruptions %d", r.state("T-D"), tries, n)
+	}
+	w, out := r.call("POST", tasksPath+"/T-D/fail", testProjectKey, map[string]any{"worker": "w1", "lease": lease, "requeue": true, "reason": "spot stop"})
+	ev := r.g.tasks.get("tauceti", "T-D").Events
+	if w.Code != 200 || out["state"] != TaskFailed || !strings.Contains(ev[len(ev)-1].Note, "failed after 50 interruptions") {
+		t.Fatalf("give-back beyond the cap: HTTP %d %s", w.Code, w.Body)
+	}
+}
+
+// max_tries of an open task can be raised (or lowered to the tries started) with the project
+// key: 1 to 10; not on a finished task.
+func TestTaskMaxTries(t *testing.T) {
+	r := newTaskRig(t, "")
+	r.create("T-A", "attempt")
+	set := func(id string, body any) (int, map[string]any) {
+		w, out := r.call("POST", tasksPath+"/"+id+"/max_tries", testProjectKey, body)
+		return w.Code, out
+	}
+	for _, body := range []any{map[string]any{"max_tries": 0}, map[string]any{"max_tries": 11}, map[string]any{"max_tries": -1},
+		map[string]any{}, map[string]any{"max_tries": "5"}, map[string]any{"max_tries": 5, "worker": "w1"}, `{"max_tries": 5} {}`} {
+		if code, _ := set("T-A", body); code != 400 {
+			t.Errorf("max_tries %v: HTTP %d, want 400", body, code)
+		}
+	}
+	if code, _ := set("nope", map[string]any{"max_tries": 5}); code != 404 {
+		t.Errorf("unknown task: HTTP %d", code)
+	}
+	if got := r.g.tasks.get("tauceti", "T-A").MaxTries; got != defaultMaxTries {
+		t.Fatalf("a refused call changed max_tries to %d", got)
+	}
+
+	// Try 3 of 3 expired and its worker does not come back: raised to 5 within the window, the
+	// task does not fail but goes to the next worker as try 4.
+	for _, w := range []string{"w1", "w2", "w3"} {
+		if id, _ := r.claim(w, 60); id != "T-A" {
+			t.Fatalf("%s claimed %q", w, id)
+		}
+		r.now = r.now.Add(61 * time.Second)
+		r.g.tasks.sweepAll()
+		r.now = r.now.Add(affinityWindow - time.Minute)
+		if w == "w3" {
+			if code, out := set("T-A", map[string]any{"max_tries": 5}); code != 200 || out["max_tries"] != 5.0 || out["tries"] != 3.0 {
+				t.Fatalf("raise: HTTP %d %v", code, out)
+			}
+		}
+		r.now = r.now.Add(time.Minute)
+	}
+	r.g.tasks.sweepAll()
+	if r.state("T-A") != TaskQueued {
+		t.Fatalf("raised, after the window: %s, want queued", r.state("T-A"))
+	}
+	id, lease := r.claim("w4", 60)
+	if tries, _ := r.counts("T-A"); id != "T-A" || tries != 4 {
+		t.Fatalf("w4 claimed %q as try %d", id, tries)
+	}
+	if !hasEvent(r.g.tasks.get("tauceti", "T-A").Events, "max_tries", "3 -> 5") {
+		t.Error("no max_tries event")
+	}
+	// Lower, but not below the tries started; the same value again is fine.
+	if code, _ := set("T-A", map[string]any{"max_tries": 3}); code != 409 {
+		t.Errorf("below the tries: HTTP %d", code)
+	}
+	for _, n := range []int{4, 4, 10} {
+		if code, out := set("T-A", map[string]any{"max_tries": n}); code != 200 || out["max_tries"] != float64(n) || out["state"] != TaskLeased {
+			t.Errorf("max_tries %d on a leased task: HTTP %d %v", n, code, out)
+		}
+	}
+	// Not on a finished task.
+	r.lease(id, "complete", "w4", lease, map[string]any{"result": okResult})
+	if code, _ := set("T-A", map[string]any{"max_tries": 10}); code != 409 {
+		t.Errorf("a done task: HTTP %d", code)
+	}
+}
+
+func hasEvent(ev []taskEvent, what, note string) bool {
+	for _, e := range ev {
+		if e.What == what && e.Note == note {
+			return true
+		}
+	}
+	return false
 }

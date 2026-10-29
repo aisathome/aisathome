@@ -119,6 +119,9 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger(),
 		pstatus: newProjectStatuses(cfg.StateDir, log), psci: newProjectScience(cfg.StateDir),
 		tasks: newTaskStore(cfg.StateDir, log)}
+	if cfg.TasksNow != nil {
+		g.tasks.now = cfg.TasksNow
+	}
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {
 			return nil, err

@@ -9,6 +9,15 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Interruptions no longer use up a science task's tries.** A task its worker gives back
+  (`.../fail` with `"requeue": true`, as the runner does when its spot instance stops) keeps its
+  try: the next claim continues it and counts one `interruptions` instead. A lease that expires
+  without a give-back also keeps its try when the same worker takes the task back within the
+  10-minute hold; otherwise the next claim is a new try. On the last try an expired task waits
+  for its worker for those 10 minutes and fails if it does not come back (before, it failed at
+  once). A task interrupted 50 times fails at its next give-back or expiry. `POST
+  .../tasks/<task>/max_tries` (`{"max_tries": 1-10}`, project key) changes an open task's
+  `max_tries`, not below the tries it has started. (gateway)
 - **`aisathome-gateway accounts list` shows token limits and today's use.** A footer line states
   the limits from the config's `accounts.limits`, which apply to each account separately
   (tokens/day weighted, requests/min, concurrent; 0 = unlimited; the day resets 00:00 UTC), and a

@@ -1,9 +1,18 @@
 // Science task coordinator (decision 0015, phase 1): a project's task queue lives in the gateway.
 // The project's tools submit tasks; workers (the agent runner) claim the highest-priority queued
 // task with a lease, renew it with heartbeats, and report a result or a failure. A lease that is
-// not renewed in time returns the task to the queue (or fails it after max_tries leases), so a
+// not renewed in time returns the task to the queue (or fails it after max_tries tries), so a
 // worker that dies never holds a task for ever. The gateway is the single source of truth for
 // the queue and its state; validating a result (review, CI) is a separate step outside it.
+//
+// Tries and interruptions (owner 2026-10-29: "a try should not be counted when there is spot
+// interruption"): a claim starts a try, unless it continues one that was interrupted. A lease
+// ends in an interruption when its worker gives the task back (`fail` with `requeue`: the
+// runner's SIGTERM path on a spot stop) — the next claim, by any worker, continues that try — or
+// when it expires and the same worker takes the task back within affinityWindow (a stop without
+// SIGTERM, a gateway outage). Each continued try counts one interruption; at maxInterruptions a
+// further give-back or expiry fails the task. A lease that expired on the last try waits for its
+// worker for affinityWindow and fails if it does not come back.
 //
 // Endpoints, all with the project's own key (401 without one, 403 with another project's):
 //
@@ -13,8 +22,9 @@
 //	POST /v1/projects/{id}/tasks/claim              take the next task and a lease (204: none)
 //	POST /v1/projects/{id}/tasks/{task}/heartbeat   extend the lease
 //	POST /v1/projects/{id}/tasks/{task}/complete    the result (state done)
-//	POST /v1/projects/{id}/tasks/{task}/fail        give the task up (requeue or failed)
+//	POST /v1/projects/{id}/tasks/{task}/fail        give the task up: failed, or with requeue given back
 //	POST /v1/projects/{id}/tasks/{task}/cancel      queued or leased -> cancelled
+//	POST /v1/projects/{id}/tasks/{task}/max_tries   change an open task's max_tries (1-10, ≥ tries)
 //	POST /v1/projects/{id}/tasks/{task}/review      the internal review's verdict on a done task (phase 3)
 //	POST /v1/projects/{id}/tasks/{task}/decide      the owner's decision on a done task's candidate
 //	POST /v1/projects/{id}/tasks/{task}/exported    a finished task is in the owner's ledger
@@ -81,7 +91,10 @@ const (
 	maxLeaseSec     = 3600
 	defaultMaxTries = 3 // the runner's max_tries
 	maxMaxTries     = 10
-	maxTaskEvents   = 20
+	// maxInterruptions: a task interrupted this often fails at its next give-back or expiry, so
+	// a task that keeps stopping its worker still ends.
+	maxInterruptions = 50
+	maxTaskEvents    = 20
 	// taskSweepEvery: expired leases return to the queue at least this often, and on every call.
 	taskSweepEvery = 30 * time.Second
 	// affinityWindow: a task that came back from a lease waits this long for its last worker,
@@ -119,8 +132,13 @@ type Task struct {
 	PR        int             `json:"pr,omitempty"` // the pull request a fix round revises
 	CreatedBy string          `json:"created_by"`
 	State     string          `json:"state"`
-	Tries     int             `json:"tries"` // leases granted so far
+	Tries     int             `json:"tries"` // tries started; a claim that continues an interrupted try does not count
 	MaxTries  int             `json:"max_tries"`
+	// Interruptions: leases that ended without using up their try (see the top of the file).
+	Interruptions int `json:"interruptions,omitempty"`
+	// Interrupted: how the last lease ended while the next claim may continue its try:
+	// "given_back" (any claim continues it) or "expired" (only PreferWorker's, until PreferUntil).
+	Interrupted string `json:"interrupted,omitempty"`
 	// Requeued: the task was leased before and came back to the queue; it is claimed first.
 	Requeued  bool        `json:"requeued,omitempty"`
 	Seq       int64       `json:"seq"` // creation order within the project
@@ -328,7 +346,7 @@ type taskControl struct {
 	Kinds    []string    `json:"kinds,omitempty"`         // claim: only these kinds
 	Result   *TaskResult `json:"result,omitempty"`        // complete
 	Reason   string      `json:"reason,omitempty"`        // fail, cancel
-	Requeue  bool        `json:"requeue,omitempty"`       // fail: back to the queue if tries are left
+	Requeue  bool        `json:"requeue,omitempty"`       // fail: give the task back (an interruption: its try continues)
 	Task     string      `json:"task,omitempty"`          // claim: this task only (a worker taking its own back)
 }
 
@@ -433,29 +451,65 @@ func finished(state string) bool {
 	return state == TaskDone || state == TaskFailed || state == TaskCancelled
 }
 
-// giveBack returns a leased task to the queue, or fails it when its tries are used up. Holds s.mu.
-func (s *taskStore) giveBack(t *Task, now time.Time, what, reason string) {
+// How a lease ended when the next claim may continue its try (Task.Interrupted).
+const (
+	interruptGivenBack = "given_back" // the worker gave it back: any next claim continues the try
+	interruptExpired   = "expired"    // the lease expired: only its worker's take-back within the window
+)
+
+// giveBack returns a leased task to the queue, held for its worker for affinityWindow: given
+// back by the worker (fail with requeue, kind interruptGivenBack) or expired (interruptExpired).
+// Neither uses up the try yet (claim decides); a task interrupted maxInterruptions times fails.
+// Holds s.mu.
+func (s *taskStore) giveBack(t *Task, now time.Time, kind, reason string) {
 	worker := t.Lease.Worker
+	what := map[string]string{interruptGivenBack: "requeued", interruptExpired: "expired"}[kind]
 	t.Error = reason
-	if t.Tries < t.MaxTries {
-		t.State, t.Requeued = TaskQueued, true
+	if t.Interruptions >= maxInterruptions {
+		t.State, t.Interrupted = TaskFailed, ""
+		t.event(now, what, worker, fmt.Sprintf("%s; failed after %d interruptions", reason, t.Interruptions))
+	} else {
+		t.State, t.Requeued, t.Interrupted = TaskQueued, true, kind
 		t.Lease = nil
 		until := now.Add(affinityWindow)
 		t.PreferWorker, t.PreferUntil = worker, &until
-		t.event(now, what, worker, reason+"; back in the queue")
-	} else {
-		t.State = TaskFailed
-		t.event(now, what, worker, fmt.Sprintf("%s; failed after %d tries", reason, t.Tries))
+		note := reason + "; back in the queue"
+		if kind == interruptExpired && t.Tries >= t.MaxTries {
+			note += fmt.Sprintf(" for %s only (try %d of %d): failed unless it takes it back by %s", worker, t.Tries, t.MaxTries, until.UTC().Format(time.RFC3339))
+		}
+		t.event(now, what, worker, note)
 	}
 	s.save(t)
-	s.log.Info("task given back", "project", t.Project, "task", t.ID, "worker", worker, "why", what, "state", t.State, "tries", t.Tries)
+	s.log.Info("task given back", "project", t.Project, "task", t.ID, "worker", worker, "why", what, "state", t.State,
+		"tries", t.Tries, "interruptions", t.Interruptions)
 }
 
-// sweep returns the project's expired leases to the queue. Holds s.mu.
+// continues: a claim by worker now continues the task's interrupted try instead of starting one.
+func continues(t *Task, worker string, now time.Time) bool {
+	switch t.Interrupted {
+	case interruptGivenBack:
+		return true
+	case interruptExpired:
+		return t.PreferWorker == worker && t.PreferUntil != nil && now.Before(*t.PreferUntil)
+	}
+	return false
+}
+
+// sweep returns the project's expired leases to the queue, and fails a task whose lease expired
+// on its last try when its worker has not taken it back within the window. Holds s.mu.
 func (s *taskStore) sweep(p *projectTasks, now time.Time) {
 	for _, t := range p.byID {
-		if t.State == TaskLeased && !now.Before(t.Lease.ExpiresAt) {
-			s.giveBack(t, now, "expired", "lease expired (no heartbeat)")
+		switch {
+		case t.State == TaskLeased && !now.Before(t.Lease.ExpiresAt):
+			s.giveBack(t, now, interruptExpired, "lease expired (no heartbeat)")
+		case t.State == TaskQueued && t.Interrupted == interruptExpired && t.Tries >= t.MaxTries &&
+			t.PreferUntil != nil && !now.Before(*t.PreferUntil):
+			worker := t.PreferWorker
+			t.State, t.Interrupted, t.PreferWorker, t.PreferUntil = TaskFailed, "", "", nil
+			t.Error = fmt.Sprintf("lease expired on try %d of %d and %s did not take it back within %s", t.Tries, t.MaxTries, worker, affinityWindow)
+			t.event(now, "failed", worker, t.Error)
+			s.save(t)
+			s.log.Info("task failed", "project", t.Project, "task", t.ID, "worker", worker, "why", "expired on the last try")
 		}
 	}
 }
@@ -614,17 +668,25 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, only 
 		claimOrder(q)
 		t = q[0]
 	}
-	t.PreferWorker, t.PreferUntil = "", nil
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return nil, err
 	}
-	t.State, t.Tries, t.Error = TaskLeased, t.Tries+1, ""
+	note := ""
+	if continues(t, worker, now) {
+		t.Interruptions++
+		note = fmt.Sprintf("try %d of %d continues after an interruption (%s; %d so far)", t.Tries, t.MaxTries, t.Interrupted, t.Interruptions)
+	} else {
+		t.Tries++
+		note = fmt.Sprintf("try %d of %d", t.Tries, t.MaxTries)
+	}
+	t.PreferWorker, t.PreferUntil, t.Interrupted = "", nil, ""
+	t.State, t.Error = TaskLeased, ""
 	t.Lease = &taskLease{ID: hex.EncodeToString(id[:]), Worker: worker, TTLSec: ttl, Since: now, HeartbeatAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}
-	t.event(now, "claimed", worker, fmt.Sprintf("try %d of %d", t.Tries, t.MaxTries))
+	t.event(now, "claimed", worker, note)
 	s.save(t)
-	s.log.Info("task claimed", "project", project, "task", t.ID, "worker", worker, "try", t.Tries)
+	s.log.Info("task claimed", "project", project, "task", t.ID, "worker", worker, "try", t.Tries, "interruptions", t.Interruptions)
 	out := t.view(true)
 	out.Lease.ID = t.Lease.ID // only the claimer sees it
 	return out, nil
@@ -702,7 +764,7 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 		reason = "failed by the worker"
 	}
 	if requeue {
-		s.giveBack(t, now, "requeued", reason)
+		s.giveBack(t, now, interruptGivenBack, reason)
 	} else {
 		t.State, t.Error = TaskFailed, reason
 		t.event(now, "failed", worker, reason)
@@ -738,6 +800,30 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	s.save(t)
 	s.prune(p)
 	s.log.Info("task cancelled", "project", project, "task", id, "worker", worker)
+	return t.view(false), nil
+}
+
+// setMaxTries changes an open task's max_tries (n is 1 to maxMaxTries): not below the tries it
+// has started (409), and not on a finished task (409).
+func (s *taskStore) setMaxTries(project, id string, n int) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, now := s.open(project)
+	t, ok := p.byID[id]
+	switch {
+	case !ok:
+		return nil, terr(http.StatusNotFound, "no task %s", id)
+	case finished(t.State):
+		return nil, terr(http.StatusConflict, "task %s is %s already", id, t.State)
+	case n < t.Tries:
+		return nil, terr(http.StatusConflict, "task %s has started %d tries; max_tries cannot be lower", id, t.Tries)
+	}
+	if n != t.MaxTries {
+		t.event(now, "max_tries", "", fmt.Sprintf("%d -> %d", t.MaxTries, n))
+		t.MaxTries = n
+		s.save(t)
+		s.log.Info("task max_tries", "project", project, "task", id, "max_tries", n)
+	}
 	return t.view(false), nil
 }
 
@@ -1156,7 +1242,31 @@ func (g *Gateway) handleTaskFail(w http.ResponseWriter, r *http.Request) {
 		taskError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "tries": t.Tries, "max_tries": t.MaxTries})
+	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "tries": t.Tries, "max_tries": t.MaxTries, "interruptions": t.Interruptions})
+}
+
+// handleTaskMaxTries changes an open task's max_tries (project key only).
+func (g *Gateway) handleTaskMaxTries(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !g.projectFor(w, r, id) {
+		return
+	}
+	var body struct {
+		MaxTries int `json:"max_tries"`
+	}
+	if !decodeTaskBody(w, r, maxTaskControlBody, &body) {
+		return
+	}
+	if body.MaxTries < 1 || body.MaxTries > maxMaxTries {
+		apiError(w, http.StatusBadRequest, fmt.Sprintf("max_tries: 1 to %d", maxMaxTries))
+		return
+	}
+	t, err := g.tasks.setMaxTries(id, r.PathValue("task"), body.MaxTries)
+	if err != nil {
+		taskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "tries": t.Tries, "max_tries": t.MaxTries, "interruptions": t.Interruptions})
 }
 
 func (g *Gateway) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
@@ -1261,6 +1371,7 @@ func (g *Gateway) taskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/complete", g.handleTaskComplete)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/fail", g.handleTaskFail)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/cancel", g.handleTaskCancel)
+	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/max_tries", g.handleTaskMaxTries)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/review", g.handleTaskReview)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/decide", g.handleTaskDecide)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/exported", g.handleTaskExported)

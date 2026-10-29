@@ -12,6 +12,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/aisathome/aisathome/gateway"
 )
 
 func taskCall(t *testing.T, a *acctRig, method, path, key string, body any) (int, map[string]any) {
@@ -230,5 +233,132 @@ func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
 	}
 	if _, page := a.get(t, "/account/ops", user); strings.Contains(page, "T5-B") {
 		t.Error("a normal account sees the queue")
+	}
+}
+
+// Interruptions do not use up tries (owner 2026-10-29): a runner on a spot instance that is
+// stopped every hour gives its task back and takes it back by id, more often than max_tries,
+// and the task stays on its first try; a lease that expires is taken back by the same runner
+// within the window without a new try, by another runner after it with one; a real failure ends
+// the task. max_tries of an open task can be raised with the project key only.
+func TestTaskInterruptionsKeepTries(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 10, 29, 20, 0, 0, 0, time.UTC)}
+	a := newAcctRigWith(t, 100, nil, func(c *gateway.Config) {
+		withProjects(c)
+		c.TasksNow = clk.Now
+	})
+	const path = "/v1/projects/tauceti/tasks"
+	for _, id := range []string{"T5-NS-2.a-A", "T5-NS-3.a-A"} {
+		if code, out := taskCall(t, a, "POST", path, projectKey, map[string]any{"id": id, "kind": "attempt", "created_by": "migration",
+			"max_tries": 3, "spec": map[string]any{"attempt": id}}); code != 201 {
+			t.Fatalf("create %s: HTTP %d %v", id, code, out)
+		}
+	}
+	claim := func(worker, task string) (int, map[string]any, string) {
+		t.Helper()
+		code, out := taskCall(t, a, "POST", path+"/claim", projectKey, map[string]any{"worker": worker, "task": task})
+		if code != 200 {
+			return code, out, ""
+		}
+		return code, out["task"].(map[string]any), out["lease"].(map[string]any)["id"].(string)
+	}
+	get := func(id string) map[string]any {
+		t.Helper()
+		_, out := taskCall(t, a, "GET", path+"/"+id, projectKey, nil)
+		return out["task"].(map[string]any)
+	}
+
+	// Five spot stops in five hours: given back on SIGTERM, taken back by id after the restart.
+	code, task, lease := claim("ip-10-0-1-5", "T5-NS-2.a-A")
+	if code != 200 || task["tries"] != 1.0 {
+		t.Fatalf("first claim: HTTP %d %v", code, task)
+	}
+	for i := 1; i <= 5; i++ {
+		for range 10 { // 50 minutes of work, a heartbeat every 5
+			clk.Add(5 * time.Minute)
+			if code, out := taskCall(t, a, "POST", path+"/T5-NS-2.a-A/heartbeat", projectKey, map[string]any{"worker": "ip-10-0-1-5", "lease": lease}); code != 200 {
+				t.Fatalf("heartbeat: HTTP %d %v", code, out)
+			}
+		}
+		code, out := taskCall(t, a, "POST", path+"/T5-NS-2.a-A/fail", projectKey, map[string]any{"worker": "ip-10-0-1-5", "lease": lease,
+			"requeue": true, "reason": "runner stop: service stop"})
+		if code != 200 || out["state"] != "queued" || out["tries"] != 1.0 {
+			t.Fatalf("give-back %d: HTTP %d %v", i, code, out)
+		}
+		clk.Add(3 * time.Minute)
+		if code, task, lease = claim("ip-10-0-1-5", "T5-NS-2.a-A"); code != 200 {
+			t.Fatalf("take-back %d: HTTP %d %v", i, code, task)
+		}
+		if task["tries"] != 1.0 || task["interruptions"] != float64(i) || task["state"] != "leased" {
+			t.Fatalf("after spot stop %d: tries %v, interruptions %v, %v", i, task["tries"], task["interruptions"], task["state"])
+		}
+	}
+
+	// A stop without SIGTERM: the lease expires (10 minutes) and the runner takes the task back
+	// within the window: the same try.
+	clk.Add(11 * time.Minute)
+	if code, _, _ := claim("runner-b", "T5-NS-2.a-A"); code != 409 { // the claim sweeps: held for the runner
+		t.Fatalf("another runner takes the held task: HTTP %d", code)
+	}
+	clk.Add(5 * time.Minute)
+	if code, task, lease = claim("ip-10-0-1-5", "T5-NS-2.a-A"); code != 200 || task["tries"] != 1.0 || task["interruptions"] != 6.0 {
+		t.Fatalf("taken back after an expiry: HTTP %d %v", code, task)
+	}
+	// It expires again and the runner does not come back: another runner after the window
+	// starts try 2.
+	clk.Add(11 * time.Minute)
+	if code, _, _ := claim("runner-b", "T5-NS-2.a-A"); code != 409 {
+		t.Fatalf("runner-b inside the window: HTTP %d", code)
+	}
+	clk.Add(10 * time.Minute)
+	code, task, lease = claim("runner-b", "T5-NS-2.a-A")
+	if code != 200 || task["tries"] != 2.0 || task["interruptions"] != 6.0 {
+		t.Fatalf("runner-b after the window: HTTP %d %v", code, task)
+	}
+
+	// max_tries: the project key raises it; another project's key, no key and an admin's
+	// session cannot; out of range and below the tries started are refused.
+	if code, out := taskCall(t, a, "POST", path+"/T5-NS-2.a-A/max_tries", projectKey, map[string]any{"max_tries": 6}); code != 200 || out["max_tries"] != 6.0 || out["tries"] != 2.0 {
+		t.Fatalf("raise max_tries: HTTP %d %v", code, out)
+	}
+	for _, c := range []struct {
+		key  string
+		body map[string]any
+		want int
+	}{
+		{unlimitedKey, map[string]any{"max_tries": 10}, 403},
+		{"", map[string]any{"max_tries": 10}, 401},
+		{projectKey, map[string]any{"max_tries": 11}, 400},
+		{projectKey, map[string]any{"max_tries": 0}, 400},
+		{projectKey, map[string]any{"max_tries": 1}, 409},
+	} {
+		if code, out := taskCall(t, a, "POST", path+"/T5-NS-2.a-A/max_tries", c.key, c.body); code != c.want {
+			t.Errorf("max_tries %v (with a key: %v): HTTP %d %v, want %d", c.body, c.key != "", code, out, c.want)
+		}
+	}
+	admin, _ := a.signIn(t, 1) // gh:1 is in accounts.admins
+	req, _ := http.NewRequest("POST", a.gw.URL+path+"/T5-NS-2.a-A/max_tries", strings.NewReader(`{"max_tries": 10}`))
+	req.Header.Set("Cookie", admin)
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 401 {
+		t.Fatalf("an admin session sets max_tries: %v %v", err, resp.StatusCode)
+	}
+	if got := get("T5-NS-2.a-A"); got["max_tries"] != 6.0 {
+		t.Fatalf("max_tries after the refused calls: %v", got["max_tries"])
+	}
+
+	// A real failure ends the task, with tries left.
+	if code, out := taskCall(t, a, "POST", path+"/T5-NS-2.a-A/fail", projectKey, map[string]any{"worker": "runner-b", "lease": lease,
+		"reason": "exit 1 after 3 tries on runner-b"}); code != 200 || out["state"] != "failed" || out["tries"] != 2.0 {
+		t.Fatalf("fail: HTTP %d %v", code, out)
+	}
+	if code, _, _ := claim("runner-b", "T5-NS-2.a-A"); code != 409 {
+		t.Fatalf("a failed task was claimed: HTTP %d", code)
+	}
+	if code, out := taskCall(t, a, "POST", path+"/T5-NS-2.a-A/max_tries", projectKey, map[string]any{"max_tries": 10}); code != 409 {
+		t.Fatalf("max_tries on a failed task: HTTP %d %v", code, out)
+	}
+	if got := get("T5-NS-3.a-A"); got["tries"] != 0.0 || got["state"] != "queued" {
+		t.Fatalf("the other task: %v", got)
 	}
 }
