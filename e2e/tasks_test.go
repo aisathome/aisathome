@@ -142,3 +142,93 @@ func TestTaskCoordinatorFlow(t *testing.T) {
 		t.Fatalf("public science shows a task: HTTP %d", resp.StatusCode)
 	}
 }
+
+// Phases 2 and 3 (decision 0015): a runner gives its task back on a spot stop and takes it back
+// by id to resume from its checkpoint, while a second runner gets other work; the result, the
+// internal review's verdict, the owner's decision and the export marker are stored; the admins
+// see the queue on /account/ops, nobody else.
+func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
+	a := newAcctRigWith(t, 100, nil, withProjects)
+	const path = "/v1/projects/tauceti/tasks"
+	for _, task := range []map[string]any{
+		{"id": "T5-A.a-A", "kind": "attempt", "created_by": "owner", "spec": map[string]any{"attempt": "T5-A.a-A"}},
+		{"id": "T5-B.a-F1", "kind": "fix_round", "created_by": "owner", "pr": 22500, "spec": map[string]any{"attempt": "T5-B.a-F1"}},
+	} {
+		if code, out := taskCall(t, a, "POST", path, projectKey, task); code != 201 {
+			t.Fatalf("create: HTTP %d %v", code, out)
+		}
+	}
+	claim := func(worker, task string) (int, string, string) {
+		t.Helper()
+		body := map[string]any{"worker": worker}
+		if task != "" {
+			body["task"] = task
+		}
+		code, out := taskCall(t, a, "POST", path+"/claim", projectKey, body)
+		if code != 200 {
+			return code, "", ""
+		}
+		return code, out["task"].(map[string]any)["id"].(string), out["lease"].(map[string]any)["id"].(string)
+	}
+	_, id, lease := claim("runner-a", "")
+	if id != "T5-B.a-F1" {
+		t.Fatalf("first claim %q, want the fix round", id)
+	}
+	// A spot stop: the runner gives the task back; the other runner does not get it (held for
+	// the runner with the checkpoint) but the next task; runner-a takes its task back by id.
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/fail", projectKey, map[string]any{"worker": "runner-a", "lease": lease, "requeue": true, "reason": "runner stop (spot)"}); code != 200 || out["state"] != "queued" {
+		t.Fatalf("requeue: HTTP %d %v", code, out)
+	}
+	if _, got, _ := claim("runner-b", ""); got != "T5-A.a-A" {
+		t.Fatalf("runner-b claimed %q, want T5-A.a-A", got)
+	}
+	if code, _, _ := claim("runner-b", "T5-B.a-F1"); code != 409 {
+		t.Fatalf("runner-b claims the held task by id: HTTP %d", code)
+	}
+	code, id, lease := claim("runner-a", "T5-B.a-F1")
+	if code != 200 || id != "T5-B.a-F1" {
+		t.Fatalf("runner-a takes its task back: HTTP %d %q", code, id)
+	}
+	result := map[string]any{"outcome": "passes every local CI check", "checks_passed": true, "diff": "--- a/TauCeti/B.lean\n+++ b/TauCeti/B.lean\n",
+		"pr_body": "Renames.", "commit_msg": "fix: rename", "steps": 20, "prompt_tokens": 500000, "completion_tokens": 9000,
+		"model_min": 12.5, "awake_min": 30, "raw_ref": "raw/2026-10-29/T5-B.a-F1", "score": map[string]any{"ledger_attempt": map[string]any{"attempt": "T5-B.a-F1"}}}
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/complete", projectKey, map[string]any{"worker": "runner-a", "lease": lease, "result": result}); code != 200 {
+		t.Fatalf("complete: HTTP %d %v", code, out)
+	}
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/review", projectKey, map[string]any{"verdict": "red", "by": "owner-codex", "round": 1, "findings": 2, "summary": "2 findings"}); code != 200 {
+		t.Fatalf("review: HTTP %d %v", code, out)
+	}
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/review", unlimitedKey, map[string]any{"verdict": "green", "by": "x"}); code != 403 {
+		t.Fatalf("review with another project's key: HTTP %d %v", code, out)
+	}
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/decide", projectKey, map[string]any{"decision": "rejected", "by": "owner", "note": "fix round next"}); code != 200 {
+		t.Fatalf("decide: HTTP %d %v", code, out)
+	}
+	_, out := taskCall(t, a, "GET", path+"?exported=false", projectKey, nil)
+	ts := out["tasks"].([]any)
+	if len(ts) != 1 || ts[0].(map[string]any)["id"] != id {
+		t.Fatalf("waiting for export: %v", ts)
+	}
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/exported", projectKey, map[string]any{"seen": ts[0].(map[string]any)["updated_at"]}); code != 200 || out["exported_at"] == nil {
+		t.Fatalf("exported: HTTP %d %v", code, out)
+	}
+
+	admin, _ := a.signIn(t, 1)
+	user, _ := a.signIn(t, 2)
+	resp, page := a.get(t, "/account/ops", admin)
+	if resp.StatusCode != 200 {
+		t.Fatalf("ops: HTTP %d", resp.StatusCode)
+	}
+	for _, want := range []string{`id="tasks"`, `data-task="T5-B.a-F1"`, "red (owner-codex)", "rejected", "exported",
+		`data-task="T5-A.a-A"`, "<code>runner-b</code>", "1 leased, 1 done"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("ops page lacks %q", want)
+		}
+	}
+	if strings.Contains(page, "+++ b/TauCeti/B.lean") || strings.Contains(page, lease) {
+		t.Error("the ops page shows a diff or a lease id")
+	}
+	if _, page := a.get(t, "/account/ops", user); strings.Contains(page, "T5-B") {
+		t.Error("a normal account sees the queue")
+	}
+}

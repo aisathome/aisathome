@@ -117,7 +117,8 @@ func TestTaskAuth(t *testing.T) {
 		for _, call := range []struct{ method, path string }{
 			{"POST", tasksPath}, {"GET", tasksPath}, {"GET", tasksPath + "/T-A"}, {"POST", tasksPath + "/claim"},
 			{"POST", tasksPath + "/T-A/heartbeat"}, {"POST", tasksPath + "/T-A/complete"}, {"POST", tasksPath + "/T-A/fail"},
-			{"POST", tasksPath + "/T-A/cancel"},
+			{"POST", tasksPath + "/T-A/cancel"}, {"POST", tasksPath + "/T-A/review"}, {"POST", tasksPath + "/T-A/decide"},
+			{"POST", tasksPath + "/T-A/exported"},
 		} {
 			body := map[string]any{"worker": "w1"}
 			if call.path == tasksPath {
@@ -168,7 +169,7 @@ func TestTaskClaimOrder(t *testing.T) {
 	}
 
 	// A requeued first attempt goes before a newer fix round (as the runner resumes interrupted
-	// work first).
+	// work first); its last worker takes it (TestTaskAffinity: others wait affinityWindow).
 	r2 := newTaskRig(t, "")
 	r2.create("A1", "attempt")
 	id, lease := r2.claim("w1", 60)
@@ -176,7 +177,7 @@ func TestTaskClaimOrder(t *testing.T) {
 	if w := r2.lease(id, "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot stop"}); w.Code != 200 {
 		t.Fatalf("requeue: HTTP %d %s", w.Code, w.Body)
 	}
-	if id, _ := r2.claim("w2", 60); id != "A1" {
+	if id, _ := r2.claim("w1", 60); id != "A1" {
 		t.Fatalf("after a requeue claimed %q, want A1", id)
 	}
 	// kinds narrows a claim.
@@ -229,7 +230,7 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	r.now = r.now.Add(time.Minute)
 	// Tries 2 and 3 expire too: the task fails instead of going round for ever.
 	r.now = r.now.Add(61 * time.Second)
-	if id3, _ := r.claim("w3", 60); id3 != "T-A" { // the claim itself sweeps
+	if id3, _ := r.claim("w1", 60); id3 != "T-A" { // the claim itself sweeps; held for w1
 		t.Fatalf("third claim got %q", id3)
 	}
 	r.now = r.now.Add(61 * time.Second)
@@ -467,12 +468,14 @@ func TestTaskPersistence(t *testing.T) {
 	r2.g.Close()
 	r3 := newTaskRig(t, dir)
 	r3.now = r.now.Add(time.Hour)
-	if id, _ := r3.claim("w2", 60); id != "T-C" {
+	if id, _ := r3.claim("w1", 60); id != "T-C" {
 		t.Fatalf("after a long restart claimed %q, want T-C back first", id)
 	}
 }
 
-// The queue is bounded: open tasks per project, and finished tasks kept.
+// The queue is bounded: open tasks per project, and finished tasks kept. Only exported
+// finished tasks are dropped (owner 2026-10-27, decision 6): while too many wait for the
+// export, create refuses new tasks.
 func TestTaskBounds(t *testing.T) {
 	r := newTaskRig(t, "")
 	for i := 0; i < maxOpenTasks; i++ {
@@ -485,11 +488,203 @@ func TestTaskBounds(t *testing.T) {
 		r.now = r.now.Add(time.Second)
 		r.call("POST", fmt.Sprintf("%s/T-%d/cancel", tasksPath, i), testProjectKey, map[string]any{})
 	}
+	// Nothing exported: all 210 finished tasks are kept, and create waits for the export.
 	_, out := r.call("GET", tasksPath+"?state=cancelled", testProjectKey, nil)
-	if n := len(out["tasks"].([]any)); n != maxKeptTasks {
-		t.Fatalf("%d cancelled tasks kept, want %d", n, maxKeptTasks)
+	if n := len(out["tasks"].([]any)); n != maxKeptTasks+10 {
+		t.Fatalf("%d cancelled tasks kept, want all %d (none exported)", n, maxKeptTasks+10)
 	}
-	if r.g.tasks.get("tauceti", "T-0") != nil || r.g.tasks.get("tauceti", fmt.Sprintf("T-%d", maxKeptTasks+9)) == nil {
-		t.Fatal("pruning dropped the wrong tasks: the oldest finished go first")
+	if w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-new", "attempt")); w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "export") {
+		t.Fatalf("create with %d finished tasks waiting for export: HTTP %d %s", maxKeptTasks+10, w.Code, w.Body)
+	}
+	// Export the oldest 30: the 10 oldest are dropped (210 finished, 200 kept), the newer stay.
+	r.export(t, 30)
+	_, out = r.call("GET", tasksPath+"?state=cancelled", testProjectKey, nil)
+	if n := len(out["tasks"].([]any)); n != maxKeptTasks {
+		t.Fatalf("after the export %d cancelled tasks kept, want %d", n, maxKeptTasks)
+	}
+	if r.g.tasks.get("tauceti", "T-9") != nil || r.g.tasks.get("tauceti", "T-10") == nil || r.g.tasks.get("tauceti", fmt.Sprintf("T-%d", maxKeptTasks+9)) == nil {
+		t.Fatal("pruning dropped the wrong tasks: the oldest exported go first")
+	}
+	// 190 wait for export now: create works again.
+	if w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-new", "attempt")); w.Code != http.StatusCreated {
+		t.Fatalf("create after the export: HTTP %d %s", w.Code, w.Body)
+	}
+}
+
+// export marks the oldest n finished, unexported tasks as exported, as the owner's export does.
+func (r *taskRig) export(t *testing.T, n int) {
+	t.Helper()
+	_, out := r.call("GET", tasksPath+"?exported=false", testProjectKey, nil)
+	ts := out["tasks"].([]any)
+	for i := len(ts) - 1; i >= 0 && n > 0; i, n = i-1, n-1 { // the list is newest first
+		x := ts[i].(map[string]any)
+		if w, _ := r.call("POST", tasksPath+"/"+x["id"].(string)+"/exported", testProjectKey, map[string]any{"seen": x["updated_at"]}); w.Code != 200 {
+			t.Fatalf("exported %s: HTTP %d %s", x["id"], w.Code, w.Body)
+		}
+	}
+}
+
+// A task that came back from a lease waits for its last worker (it holds the checkpoint) for
+// affinityWindow; then anyone may claim it. A worker can claim its own task back by id.
+func TestTaskAffinity(t *testing.T) {
+	r := newTaskRig(t, "")
+	r.create("A1", "attempt")
+	r.create("A2", "attempt")
+	id, lease := r.claim("w1", 60)
+	if id != "A1" {
+		t.Fatalf("claimed %q", id)
+	}
+	if w := r.lease(id, "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot stop"}); w.Code != 200 {
+		t.Fatalf("requeue: HTTP %d", w.Code)
+	}
+	// Another worker gets the next task, not the one held for w1.
+	if id, _ := r.claim("w2", 60); id != "A2" {
+		t.Fatalf("w2 claimed %q, want A2 (A1 is held for w1)", id)
+	}
+	if id, _ := r.claim("w2", 60); id != "" {
+		t.Fatalf("w2 claimed %q, want nothing", id)
+	}
+	if w, _ := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w2", "task": "A1"}); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "held for w1") {
+		t.Fatalf("w2 claims A1 by id: HTTP %d %s", w.Code, w.Body)
+	}
+	// The list and the summary show for whom it is held.
+	if got := r.g.tasks.get("tauceti", "A1"); got.PreferWorker != "w1" || got.PreferUntil == nil {
+		t.Fatalf("held: %+v", got)
+	}
+	// After the window, anyone.
+	r.now = r.now.Add(affinityWindow)
+	if id, _ := r.claim("w2", 60); id != "A1" {
+		t.Fatalf("after the window w2 claimed %q, want A1", id)
+	}
+	if got := r.g.tasks.get("tauceti", "A1"); got.PreferWorker != "" || got.PreferUntil != nil {
+		t.Fatalf("a claim keeps the hold: %+v", got)
+	}
+
+	// An expired lease holds the task for its worker too, and the worker takes it back by id
+	// although another task is first in the claim order.
+	r2 := newTaskRig(t, "")
+	r2.create("A1", "attempt")
+	id, _ = r2.claim("w1", 60)
+	r2.now = r2.now.Add(61 * time.Second)
+	r2.create("F1", "fix_round")
+	if id, _ := r2.claim("w2", 60); id != "F1" {
+		t.Fatalf("w2 claimed %q, want F1 (A1 is held for w1)", id)
+	}
+	w, out := r2.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w1", "task": "A1"})
+	if w.Code != 200 || out["task"].(map[string]any)["id"] != "A1" || out["task"].(map[string]any)["tries"] != 2.0 {
+		t.Fatalf("w1 claims A1 back: HTTP %d %s", w.Code, w.Body)
+	}
+	for _, c := range []struct {
+		body map[string]any
+		want int
+	}{
+		{map[string]any{"worker": "w1", "task": "A1"}, http.StatusConflict},               // leased now
+		{map[string]any{"worker": "w1", "task": "nope"}, http.StatusNotFound},             // no such task
+		{map[string]any{"worker": "w1", "task": "A1", "kinds": []string{"attempt"}}, 400}, // one or the other
+		{map[string]any{"worker": "w1", "task": "../x"}, 400},                             // not an id
+	} {
+		if w, _ := r2.call("POST", tasksPath+"/claim", testProjectKey, c.body); w.Code != c.want {
+			t.Errorf("claim %v: HTTP %d, want %d", c.body, w.Code, c.want)
+		}
+	}
+	if w := r2.lease("A1", "heartbeat", "w1", out["lease"].(map[string]any)["id"].(string), map[string]any{"task": "A1"}); w.Code != 400 {
+		t.Errorf("heartbeat with task: HTTP %d", w.Code)
+	}
+}
+
+// The internal review's verdict and the owner's decision are stored on a done task only, with
+// the project key; they show in the task and (without the detail) in the list, and a task
+// changed by them needs another export.
+func TestTaskReviewDecisionExport(t *testing.T) {
+	r := newTaskRig(t, "")
+	r.create("T-A", "attempt")
+	review := map[string]any{"verdict": "red", "by": "owner-codex", "round": 1, "findings": 3, "summary": "3 findings",
+		"detail": map[string]any{"findings": []any{"rename", "docstring", "simp"}}}
+	if w, _ := r.call("POST", tasksPath+"/T-A/review", testProjectKey, review); w.Code != http.StatusConflict {
+		t.Fatalf("review of a queued task: HTTP %d", w.Code)
+	}
+	id, lease := r.claim("w1", 60)
+	if w, _ := r.call("POST", tasksPath+"/T-A/exported", testProjectKey, map[string]any{"seen": r.now}); w.Code != http.StatusConflict {
+		t.Fatalf("exported while leased: HTTP %d", w.Code)
+	}
+	r.lease(id, "complete", "w1", lease, map[string]any{"result": okResult})
+	for name, mod := range map[string]func(m map[string]any){
+		"verdict":       func(m map[string]any) { m["verdict"] = "amber" },
+		"no reviewer":   func(m map[string]any) { delete(m, "by") },
+		"at":            func(m map[string]any) { m["at"] = "2026-10-27T12:00:00Z" },
+		"unknown field": func(m map[string]any) { m["score"] = 1 },
+		"secret":        func(m map[string]any) { m["summary"] = "ghp_" + strings.Repeat("x", 36) },
+		"detail array":  func(m map[string]any) { m["detail"] = []any{1} },
+		"detail big":    func(m map[string]any) { m["detail"] = map[string]any{"x": strings.Repeat("a", maxTaskReviewDetail)} },
+	} {
+		m := map[string]any{}
+		for k, v := range review {
+			m[k] = v
+		}
+		mod(m)
+		if w, _ := r.call("POST", tasksPath+"/T-A/review", testProjectKey, m); w.Code != 400 {
+			t.Errorf("review with bad %s: HTTP %d %s", name, w.Code, w.Body)
+		}
+	}
+	// The export takes the done task; then a review changes it, so it waits for export again.
+	r.export(t, 1)
+	if got := r.g.tasks.get("tauceti", "T-A"); got.ExportedAt == nil {
+		t.Fatal("not marked exported")
+	}
+	before := r.g.tasks.get("tauceti", "T-A").UpdatedAt
+	r.now = r.now.Add(time.Minute)
+	w, out := r.call("POST", tasksPath+"/T-A/review", testProjectKey, review)
+	if w.Code != 200 || out["review"].(map[string]any)["verdict"] != "red" || out["review"].(map[string]any)["at"] == nil {
+		t.Fatalf("review: HTTP %d %s", w.Code, w.Body)
+	}
+	got := r.g.tasks.get("tauceti", "T-A")
+	if got.ExportedAt != nil || got.Review == nil || *got.Review.Findings != 3 || !strings.Contains(string(got.Review.Detail), "docstring") {
+		t.Fatalf("after the review: exported %v, review %+v", got.ExportedAt, got.Review)
+	}
+	// The export of the old state is refused (it changed since); the list shows it as not exported.
+	if w, _ := r.call("POST", tasksPath+"/T-A/exported", testProjectKey, map[string]any{"seen": before}); w.Code != http.StatusConflict {
+		t.Fatalf("exported with a stale updated_at: HTTP %d", w.Code)
+	}
+	w, _ = r.call("GET", tasksPath+"?exported=false", testProjectKey, nil)
+	if !strings.Contains(w.Body.String(), `"verdict":"red"`) || strings.Contains(w.Body.String(), "docstring") {
+		t.Fatalf("list: the review without its detail: %s", w.Body)
+	}
+	if w, _ := r.call("GET", tasksPath+"?exported=maybe", testProjectKey, nil); w.Code != 400 {
+		t.Errorf("exported=maybe: HTTP %d", w.Code)
+	}
+	// A later green review replaces it.
+	review["verdict"], review["round"], review["findings"] = "green", 2, 0
+	if w, _ := r.call("POST", tasksPath+"/T-A/review", testProjectKey, review); w.Code != 200 {
+		t.Fatalf("second review: HTTP %d", w.Code)
+	}
+	if got := r.g.tasks.get("tauceti", "T-A"); got.Review.Verdict != "green" || got.Review.Round != 2 {
+		t.Fatalf("second review: %+v", got.Review)
+	}
+
+	// The decision: opened needs the PR, the others none.
+	for _, c := range []struct {
+		body map[string]any
+		want int
+	}{
+		{map[string]any{"decision": "opened", "by": "owner"}, 400},
+		{map[string]any{"decision": "approved", "by": "owner", "pr": 7}, 400},
+		{map[string]any{"decision": "merged", "by": "owner"}, 400},
+		{map[string]any{"decision": "approved"}, 400},
+		{map[string]any{"decision": "approved", "by": "owner"}, 200},
+		{map[string]any{"decision": "opened", "by": "owner", "pr": 22500}, 200},
+	} {
+		if w, _ := r.call("POST", tasksPath+"/T-A/decide", testProjectKey, c.body); w.Code != c.want {
+			t.Errorf("decide %v: HTTP %d, want %d %s", c.body, w.Code, c.want, w.Body)
+		}
+	}
+	if got := r.g.tasks.get("tauceti", "T-A"); got.Decision == nil || got.Decision.Decision != "opened" || got.Decision.PR != 22500 {
+		t.Fatalf("decision: %+v", got.Decision)
+	}
+	if w, _ := r.call("POST", tasksPath+"/nope/decide", testProjectKey, map[string]any{"decision": "approved", "by": "owner"}); w.Code != 404 {
+		t.Errorf("decide unknown: HTTP %d", w.Code)
+	}
+	// Persisted: the review and decision survive a restart (TestTaskPersistence covers files).
+	if w, _ := r.call("POST", tasksPath+"/T-A/exported", testProjectKey, map[string]any{}); w.Code != 400 {
+		t.Errorf("exported without seen: HTTP %d", w.Code)
 	}
 }

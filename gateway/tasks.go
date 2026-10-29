@@ -15,10 +15,20 @@
 //	POST /v1/projects/{id}/tasks/{task}/complete    the result (state done)
 //	POST /v1/projects/{id}/tasks/{task}/fail        give the task up (requeue or failed)
 //	POST /v1/projects/{id}/tasks/{task}/cancel      queued or leased -> cancelled
+//	POST /v1/projects/{id}/tasks/{task}/review      the internal review's verdict on a done task (phase 3)
+//	POST /v1/projects/{id}/tasks/{task}/decide      the owner's decision on a done task's candidate
+//	POST /v1/projects/{id}/tasks/{task}/exported    a finished task is in the owner's ledger
 //
 // Claim order: tasks that were leased before and came back (an expired lease, a worker's
 // requeue) first, as the runner resumes interrupted work first; then by class (1 fix rounds and
-// follow-ups, 2 first attempts, 3 other work); oldest first within a class.
+// follow-ups, 2 first attempts, 3 other work); oldest first within a class. A task that came
+// back is held for its last worker for affinityWindow (it has the checkpoint; owner 2026-10-27,
+// decision 5), then anyone may claim it. A claim may name one task (`task`): a worker takes back
+// the task whose lease it lost, to resume from its own checkpoint.
+//
+// Retention (owner 2026-10-27, decision 6): a finished task is dropped only after the owner's
+// export to the ledger has marked it (`exported`); a review or decision after that needs another
+// export. While too many finished tasks wait for export, create refuses new tasks.
 //
 // Nothing here is public: specs, prompts and diffs before a pull request stay with the project
 // key and the admins. Each task is one file under state_dir/tasks-<project>/, written atomically
@@ -74,6 +84,10 @@ const (
 	maxTaskEvents   = 20
 	// taskSweepEvery: expired leases return to the queue at least this often, and on every call.
 	taskSweepEvery = 30 * time.Second
+	// affinityWindow: a task that came back from a lease waits this long for its last worker,
+	// which holds its checkpoint (owner 2026-10-27: about 10 minutes).
+	affinityWindow      = 10 * time.Minute
+	maxTaskReviewDetail = 16 << 10
 )
 
 // Task states.
@@ -116,6 +130,15 @@ type Task struct {
 	Result    *TaskResult `json:"result,omitempty"`
 	Error     string      `json:"error,omitempty"` // the last failure, expiry or cancel reason
 	Events    []taskEvent `json:"events,omitempty"`
+	// PreferWorker holds a task that came back for its last worker until PreferUntil.
+	PreferWorker string     `json:"prefer_worker,omitempty"`
+	PreferUntil  *time.Time `json:"prefer_until,omitempty"`
+	// Review is the internal review's verdict (optional: the internal review is temporary, owner
+	// 2026-10-27), Decision the owner's; both only on a done task.
+	Review   *TaskReview   `json:"review,omitempty"`
+	Decision *TaskDecision `json:"decision,omitempty"`
+	// ExportedAt: the owner's export took the task as it was at that UpdatedAt; nil = not (again).
+	ExportedAt *time.Time `json:"exported_at,omitempty"`
 
 	size int // bytes on disk, for maxKeptBytes
 }
@@ -152,6 +175,59 @@ type TaskResult struct {
 	AwakeMin         float64         `json:"awake_min"`
 	RawRef           string          `json:"raw_ref,omitempty"` // e.g. raw/2026-10-27/T2-NS-2.a-F1 on the runner
 	FinishedAt       time.Time       `json:"finished_at"`
+}
+
+// TaskReview is the internal pre-review's verdict on a done task's result.
+type TaskReview struct {
+	Verdict  string          `json:"verdict"`            // green or red
+	By       string          `json:"by"`                 // the reviewer: owner-codex, qwen-judge, ...
+	Round    int             `json:"round,omitempty"`    // the internal review round
+	Findings *int            `json:"findings,omitempty"` // how many findings
+	Summary  string          `json:"summary,omitempty"`  // one line
+	Detail   json.RawMessage `json:"detail,omitempty"`   // opaque object, ≤ 16 KB
+	At       time.Time       `json:"at"`
+}
+
+func (v *TaskReview) validate() error {
+	errs := []error{checkID("by", v.By), checkText("summary", v.Summary, 500)}
+	if v.Verdict != "green" && v.Verdict != "red" {
+		errs = append(errs, errors.New("verdict: green or red"))
+	}
+	if v.Round < 0 || v.Round > 1000 || (v.Findings != nil && (*v.Findings < 0 || *v.Findings > 100000)) {
+		errs = append(errs, errors.New("round or findings out of range"))
+	}
+	if v.Detail != nil {
+		if err := checkObject("detail", v.Detail, maxTaskReviewDetail); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if !v.At.IsZero() {
+		errs = append(errs, errors.New("at: set by the gateway"))
+	}
+	return errors.Join(errs...)
+}
+
+// TaskDecision is the owner's decision on a done task's candidate (runner_service.py decide).
+type TaskDecision struct {
+	Decision string    `json:"decision"` // approved, rejected, opened
+	PR       int       `json:"pr,omitempty"`
+	By       string    `json:"by"`
+	Note     string    `json:"note,omitempty"`
+	At       time.Time `json:"at"`
+}
+
+func (d *TaskDecision) validate() error {
+	errs := []error{checkID("by", d.By), checkText("note", d.Note, 500)}
+	if !slices.Contains([]string{"approved", "rejected", "opened"}, d.Decision) {
+		errs = append(errs, errors.New("decision: approved, rejected or opened"))
+	}
+	if d.PR < 0 || d.PR > 999999999 || (d.Decision == "opened") != (d.PR > 0) {
+		errs = append(errs, errors.New("pr: the pull request number, with opened only"))
+	}
+	if !d.At.IsZero() {
+		errs = append(errs, errors.New("at: set by the gateway"))
+	}
+	return errors.Join(errs...)
 }
 
 func (r *TaskResult) validate() error {
@@ -253,6 +329,7 @@ type taskControl struct {
 	Result   *TaskResult `json:"result,omitempty"`        // complete
 	Reason   string      `json:"reason,omitempty"`        // fail, cancel
 	Requeue  bool        `json:"requeue,omitempty"`       // fail: back to the queue if tries are left
+	Task     string      `json:"task,omitempty"`          // claim: this task only (a worker taking its own back)
 }
 
 // projectTasks is one project's queue.
@@ -363,6 +440,8 @@ func (s *taskStore) giveBack(t *Task, now time.Time, what, reason string) {
 	if t.Tries < t.MaxTries {
 		t.State, t.Requeued = TaskQueued, true
 		t.Lease = nil
+		until := now.Add(affinityWindow)
+		t.PreferWorker, t.PreferUntil = worker, &until
 		t.event(now, what, worker, reason+"; back in the queue")
 	} else {
 		t.State = TaskFailed
@@ -399,22 +478,38 @@ func (s *taskStore) open(project string) (*projectTasks, time.Time) {
 	return p, now
 }
 
-// prune drops the oldest finished tasks beyond maxKeptTasks or maxKeptBytes. Holds s.mu.
+// prune drops the oldest exported finished tasks while the finished ones are beyond
+// maxKeptTasks or maxKeptBytes. A task not exported (again) is never dropped. Holds s.mu.
 func (s *taskStore) prune(p *projectTasks) {
 	var fin []*Task
-	kept := 0
+	n, kept := 0, 0
 	for _, t := range p.byID {
 		if finished(t.State) {
-			fin = append(fin, t)
+			n++
 			kept += t.size
+			if t.ExportedAt != nil {
+				fin = append(fin, t)
+			}
 		}
 	}
 	sort.Slice(fin, func(i, j int) bool { return fin[i].UpdatedAt.Before(fin[j].UpdatedAt) })
-	for len(fin) > 0 && (len(fin) > maxKeptTasks || kept > maxKeptBytes) {
+	for len(fin) > 0 && (n > maxKeptTasks || kept > maxKeptBytes) {
+		n--
 		kept -= fin[0].size
 		s.drop(fin[0])
 		fin = fin[1:]
 	}
+}
+
+// unexported counts the finished tasks that wait for the owner's export, and their bytes.
+func unexported(p *projectTasks) (n, size int) {
+	for _, t := range p.byID {
+		if finished(t.State) && t.ExportedAt == nil {
+			n++
+			size += t.size
+		}
+	}
+	return n, size
 }
 
 // taskErr is an error with its HTTP status.
@@ -456,6 +551,9 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	if open >= maxOpenTasks {
 		return nil, false, terr(http.StatusTooManyRequests, "at most %d open tasks per project", maxOpenTasks)
 	}
+	if n, size := unexported(p); n >= maxKeptTasks || size >= maxKeptBytes {
+		return nil, false, terr(http.StatusTooManyRequests, "%d finished tasks (%d bytes) wait for the export to the ledger; export them first", n, size)
+	}
 	p.seq++
 	t := &Task{ID: n.ID, Project: project, Kind: n.Kind, Class: taskKinds[n.Kind], Title: n.Title, Spec: spec,
 		BaseRef: n.BaseRef, PR: n.PR, CreatedBy: n.CreatedBy, State: TaskQueued, MaxTries: maxTries, Seq: p.seq, CreatedAt: now}
@@ -481,22 +579,42 @@ func claimOrder(ts []*Task) {
 	})
 }
 
-// claim leases the next queued task to worker, or returns nil when none is queued.
-func (s *taskStore) claim(project, worker string, ttl int, kinds []string) (*Task, error) {
+// heldFor: a task that came back waits for its last worker until PreferUntil.
+func heldFor(t *Task, worker string, now time.Time) bool {
+	return t.PreferWorker != "" && t.PreferWorker != worker && t.PreferUntil != nil && now.Before(*t.PreferUntil)
+}
+
+// claim leases the next queued task to worker, or returns nil when none is queued. With only,
+// it leases that task if it is queued and not held for another worker (404 or 409 otherwise).
+func (s *taskStore) claim(project, worker string, ttl int, kinds []string, only string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, now := s.open(project)
-	var q []*Task
-	for _, t := range p.byID {
-		if t.State == TaskQueued && (len(kinds) == 0 || slices.Contains(kinds, t.Kind)) {
-			q = append(q, t)
+	var t *Task
+	if only != "" {
+		t = p.byID[only]
+		switch {
+		case t == nil:
+			return nil, terr(http.StatusNotFound, "no task %s", only)
+		case t.State != TaskQueued:
+			return nil, terr(http.StatusConflict, "task %s is %s", only, t.State)
+		case heldFor(t, worker, now):
+			return nil, terr(http.StatusConflict, "task %s is held for %s until %s", only, t.PreferWorker, t.PreferUntil.UTC().Format(time.RFC3339))
 		}
+	} else {
+		var q []*Task
+		for _, t := range p.byID {
+			if t.State == TaskQueued && (len(kinds) == 0 || slices.Contains(kinds, t.Kind)) && !heldFor(t, worker, now) {
+				q = append(q, t)
+			}
+		}
+		if len(q) == 0 {
+			return nil, nil
+		}
+		claimOrder(q)
+		t = q[0]
 	}
-	if len(q) == 0 {
-		return nil, nil
-	}
-	claimOrder(q)
-	t := q[0]
+	t.PreferWorker, t.PreferUntil = "", nil
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return nil, err
@@ -623,6 +741,83 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	return t.view(false), nil
 }
 
+// doneTask finds a done task for a review or a decision (404, 409).
+func doneTask(p *projectTasks, id string) (*Task, error) {
+	t, ok := p.byID[id]
+	if !ok {
+		return nil, terr(http.StatusNotFound, "no task %s", id)
+	}
+	if t.State != TaskDone {
+		return nil, terr(http.StatusConflict, "task %s is %s; only a done task has a result to review or decide on", id, t.State)
+	}
+	return t, nil
+}
+
+// review stores the internal review's verdict (the latest replaces an earlier one); the task
+// needs another export.
+func (s *taskStore) review(project, id string, v *TaskReview) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, now := s.open(project)
+	t, err := doneTask(p, id)
+	if err != nil {
+		return nil, err
+	}
+	if v.Detail != nil {
+		if b, err := canonicalJSON(v.Detail); err == nil {
+			v.Detail = b
+		}
+	}
+	v.At = now.UTC()
+	t.Review, t.ExportedAt = v, nil
+	t.event(now, "reviewed", "", v.Verdict+" by "+v.By)
+	s.save(t)
+	s.log.Info("task reviewed", "project", project, "task", id, "verdict", v.Verdict, "by", v.By)
+	return t.view(false), nil
+}
+
+// decide stores the owner's decision on a candidate; the task needs another export.
+func (s *taskStore) decide(project, id string, d *TaskDecision) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, now := s.open(project)
+	t, err := doneTask(p, id)
+	if err != nil {
+		return nil, err
+	}
+	d.At = now.UTC()
+	t.Decision, t.ExportedAt = d, nil
+	t.event(now, "decided", "", d.Decision+" by "+d.By)
+	s.save(t)
+	s.log.Info("task decided", "project", project, "task", id, "decision", d.Decision, "pr", d.PR)
+	return t.view(false), nil
+}
+
+// exported marks a finished task as taken into the ledger as it was at seen (its updated_at
+// when the export read it): a task changed since (a review, a decision) gives 409, so the next
+// export takes the change. It does not change updated_at (the pruning order).
+func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, now := s.open(project)
+	t, ok := p.byID[id]
+	switch {
+	case !ok:
+		return nil, terr(http.StatusNotFound, "no task %s", id)
+	case !finished(t.State):
+		return nil, terr(http.StatusConflict, "task %s is %s, not finished", id, t.State)
+	case !t.UpdatedAt.Equal(seen):
+		return nil, terr(http.StatusConflict, "task %s changed at %s after the export read it; export it again", id, t.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	}
+	if t.ExportedAt == nil {
+		at := now.UTC()
+		t.ExportedAt = &at
+		s.save(t)
+		s.prune(p)
+	}
+	return t.view(false), nil
+}
+
 // get returns one task in full (without the lease id), or nil.
 func (s *taskStore) get(project, id string) *Task {
 	s.mu.Lock()
@@ -634,9 +829,10 @@ func (s *taskStore) get(project, id string) *Task {
 	return nil
 }
 
-// list returns summaries of a project's tasks in the given states and kinds (empty: all): open
-// tasks in claim order first, then finished ones, newest first; and the count per state.
-func (s *taskStore) list(project string, states, kinds []string) ([]*Task, map[string]int) {
+// list returns summaries of a project's tasks in the given states and kinds (empty: all), and
+// with exported "true" or "false" only the finished tasks exported or not: open tasks in claim
+// order first, then finished ones, newest first; and the count per state.
+func (s *taskStore) list(project string, states, kinds []string, exported string) ([]*Task, map[string]int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, _ := s.open(project)
@@ -645,6 +841,9 @@ func (s *taskStore) list(project string, states, kinds []string) ([]*Task, map[s
 	for _, t := range p.byID {
 		counts[t.State]++
 		if (len(states) > 0 && !slices.Contains(states, t.State)) || (len(kinds) > 0 && !slices.Contains(kinds, t.Kind)) {
+			continue
+		}
+		if exported != "" && (!finished(t.State) || (t.ExportedAt != nil) != (exported == "true")) {
 			continue
 		}
 		switch t.State {
@@ -684,6 +883,10 @@ func (t *Task) view(full bool) *Task {
 		r := *t.Result
 		c.Result = &r
 	}
+	if t.Review != nil {
+		v := *t.Review
+		c.Review = &v
+	}
 	return &c
 }
 
@@ -693,6 +896,9 @@ func (t *Task) summary() *Task {
 	c.Events = nil
 	if c.Result != nil {
 		c.Result.Diff, c.Result.PRBody, c.Result.CommitMsg, c.Result.Score = "", "", "", nil
+	}
+	if c.Review != nil {
+		c.Review.Detail = nil
 	}
 	return c
 }
@@ -785,6 +991,11 @@ func (g *Gateway) handleTaskList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	states, kinds := splitList(r.URL.Query().Get("state")), splitList(r.URL.Query().Get("kind"))
+	exported := r.URL.Query().Get("exported")
+	if exported != "" && exported != "true" && exported != "false" {
+		apiError(w, http.StatusBadRequest, "exported: true or false")
+		return
+	}
 	for _, s := range states {
 		if !slices.Contains(queueStates, s) {
 			apiError(w, http.StatusBadRequest, "state: "+strings.Join(queueStates, ", "))
@@ -797,7 +1008,7 @@ func (g *Gateway) handleTaskList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ts, counts := g.tasks.list(id, states, kinds)
+	ts, counts := g.tasks.list(id, states, kinds, exported)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"project": id, "counts": counts, "tasks": ts})
 }
@@ -843,10 +1054,16 @@ func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if c.Lease != "" || c.Result != nil || c.Reason != "" || c.Requeue {
-		apiError(w, http.StatusBadRequest, "claim takes worker, lease_seconds and kinds only")
+		apiError(w, http.StatusBadRequest, "claim takes worker, lease_seconds, kinds and task only")
 		return
 	}
-	t, err := g.tasks.claim(id, c.Worker, c.LeaseSec, c.Kinds)
+	if c.Task != "" {
+		if err := checkID("task", c.Task); err != nil || len(c.Kinds) > 0 {
+			apiError(w, http.StatusBadRequest, "task: one task id, without kinds")
+			return
+		}
+	}
+	t, err := g.tasks.claim(id, c.Worker, c.LeaseSec, c.Kinds, c.Task)
 	if err != nil {
 		taskError(w, err)
 		return
@@ -873,8 +1090,8 @@ func (g *Gateway) leaseRequest(w http.ResponseWriter, r *http.Request, limit int
 	if err == nil && (len(c.Lease) != 32 || strings.Trim(c.Lease, "0123456789abcdef") != "") {
 		err = errors.New("lease: the id the claim returned")
 	}
-	if err == nil && (c.LeaseSec != 0 || len(c.Kinds) > 0) {
-		err = errors.New("lease_seconds and kinds belong to a claim")
+	if err == nil && (c.LeaseSec != 0 || len(c.Kinds) > 0 || c.Task != "") {
+		err = errors.New("lease_seconds, kinds and task belong to a claim")
 	}
 	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
@@ -951,7 +1168,7 @@ func (g *Gateway) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 	if !decodeTaskBody(w, r, maxTaskControlBody, &c) {
 		return
 	}
-	if c.Worker != "" || c.Lease != "" || c.LeaseSec != 0 || len(c.Kinds) > 0 || c.Result != nil || c.Requeue {
+	if c.Worker != "" || c.Lease != "" || c.LeaseSec != 0 || len(c.Kinds) > 0 || c.Result != nil || c.Requeue || c.Task != "" {
 		apiError(w, http.StatusBadRequest, "cancel takes a reason only")
 		return
 	}
@@ -967,6 +1184,74 @@ func (g *Gateway) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"state": t.State})
 }
 
+// handleTaskReview stores the internal review's verdict on a done task (project key only).
+func (g *Gateway) handleTaskReview(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !g.projectFor(w, r, id) {
+		return
+	}
+	var v TaskReview
+	if !decodeTaskBody(w, r, maxTaskCreateBody, &v) {
+		return
+	}
+	if err := v.validate(); err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t, err := g.tasks.review(id, r.PathValue("task"), &v)
+	if err != nil {
+		taskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "review": t.Review})
+}
+
+// handleTaskDecide stores the owner's decision on a done task's candidate (project key only).
+func (g *Gateway) handleTaskDecide(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !g.projectFor(w, r, id) {
+		return
+	}
+	var d TaskDecision
+	if !decodeTaskBody(w, r, maxTaskControlBody, &d) {
+		return
+	}
+	if err := d.validate(); err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t, err := g.tasks.decide(id, r.PathValue("task"), &d)
+	if err != nil {
+		taskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "decision": t.Decision})
+}
+
+// handleTaskExported marks a finished task as exported to the ledger (project key only).
+func (g *Gateway) handleTaskExported(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !g.projectFor(w, r, id) {
+		return
+	}
+	var body struct {
+		Seen time.Time `json:"seen"` // the task's updated_at as the export read it
+	}
+	if !decodeTaskBody(w, r, maxTaskControlBody, &body) {
+		return
+	}
+	if body.Seen.IsZero() {
+		apiError(w, http.StatusBadRequest, "seen: the task's updated_at as the export read it")
+		return
+	}
+	t, err := g.tasks.exported(id, r.PathValue("task"), body.Seen)
+	if err != nil {
+		taskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "exported_at": t.ExportedAt})
+}
+
 func (g *Gateway) taskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{id}/tasks", g.handleTaskCreate)
 	mux.HandleFunc("GET /v1/projects/{id}/tasks", g.handleTaskList)
@@ -976,4 +1261,7 @@ func (g *Gateway) taskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/complete", g.handleTaskComplete)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/fail", g.handleTaskFail)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/cancel", g.handleTaskCancel)
+	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/review", g.handleTaskReview)
+	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/decide", g.handleTaskDecide)
+	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/exported", g.handleTaskExported)
 }

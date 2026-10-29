@@ -15,6 +15,19 @@ and **(site)** are live on aisathome.org once deployed.
   USED TODAY column gives each account's weighted tokens since 00:00 UTC, chat and API together:
   the account page's "Today" number, read from the budget state the gateway saves in `state_dir`
   every 5 s. Needs `-config`; with `-file` alone the list is as before. (gateway)
+- **The science task queue: affinity, review, decision and export** (decision 0015, phases 2
+  and 3, the gateway's part). A task that comes back to the queue (its lease expired, or the
+  worker gave it back) waits 10 minutes for its last worker, which holds its checkpoint; then any
+  worker may take it. A claim may name one task (`"task": "<id>"`), so a worker takes back its own
+  task after a restart. On a done task, `POST .../tasks/<task>/review` stores the internal
+  review's verdict (`green` or `red`, reviewer, round, findings, a one-line summary, a detail
+  object up to 16 KB) and `.../decide` the owner's decision (`approved`, `rejected`, or `opened`
+  with the PR number); the latest replaces the earlier one. `.../exported` marks a finished task
+  as taken into the owner's ledger (with the `updated_at` it read; a task changed since is
+  refused, so the next export takes the change). Finished tasks are now dropped only once
+  exported, and creating tasks is refused (429) while 200 finished tasks or 64 MB wait for the
+  export; `GET .../tasks?exported=false` lists them. `/account/ops` shows the queue (open tasks in
+  claim order, the newest finished ones, their review and decision) to admins only. (gateway)
 - **A task queue for science projects in the gateway** (decision 0015, phase 1: the API; the runner
   does not use it yet). A project's tools submit tasks to `POST /v1/projects/<id>/tasks` with the
   project key (idempotent by the client's task id: the same task again is no duplicate, other

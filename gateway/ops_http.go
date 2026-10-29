@@ -106,9 +106,70 @@ type opsData struct {
 	Cost        string
 	CostNote    string
 	Now         string
+	Tasks       []opsTask // the gateway's task queue (decision 0015): open, then recent finished
+	TaskCounts  string
+	TaskExport  int // finished tasks waiting for the export to the ledger
 	Forbidden   bool
 	SignedOut   bool
 	ProjectList []string
+}
+
+// opsTask is one row of the gateway's task queue.
+type opsTask struct {
+	ID, Kind, State, Tries, Worker, Lease, Outcome, Review, Decision, Updated string
+	Exported, Held                                                            bool
+}
+
+// opsKeptFinished: the queue card shows this many finished tasks, newest first.
+const opsKeptFinished = 15
+
+func (g *Gateway) opsTasks(d *opsData, project string, now time.Time) {
+	ts, counts := g.tasks.list(project, nil, nil, "")
+	var parts []string
+	for _, st := range queueStates {
+		if counts[st] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[st], st))
+		}
+	}
+	d.TaskCounts = strings.Join(parts, ", ")
+	fin := 0
+	for _, t := range ts {
+		if finished(t.State) {
+			if t.ExportedAt == nil {
+				d.TaskExport++
+			}
+			if fin++; fin > opsKeptFinished {
+				continue
+			}
+		}
+		row := opsTask{ID: t.ID, Kind: t.Kind, State: t.State, Tries: fmt.Sprintf("%d of %d", t.Tries, t.MaxTries),
+			Updated: ago(now.Sub(t.UpdatedAt)), Exported: t.ExportedAt != nil, Held: heldFor(t, "", now)}
+		if t.Lease != nil {
+			row.Worker = t.Lease.Worker
+			if t.State == TaskLeased {
+				row.Lease = fmt.Sprintf("expires in %d s", int(t.Lease.ExpiresAt.Sub(now).Seconds()))
+			}
+		}
+		if row.Held {
+			row.Worker = t.PreferWorker
+			row.Lease = "held for its last worker until " + t.PreferUntil.UTC().Format("15:04") + " UTC"
+		}
+		if t.Result != nil {
+			row.Outcome = t.Result.Outcome
+		} else if t.Error != "" && t.State != TaskLeased {
+			row.Outcome = t.Error
+		}
+		if t.Review != nil {
+			row.Review = t.Review.Verdict + " (" + t.Review.By + ")"
+		}
+		if t.Decision != nil {
+			row.Decision = t.Decision.Decision
+			if t.Decision.PR > 0 {
+				row.Decision += fmt.Sprintf(" #%d", t.Decision.PR)
+			}
+		}
+		d.Tasks = append(d.Tasks, row)
+	}
 }
 
 type opsCandidate struct {
@@ -261,6 +322,7 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 		}
 	}
 	d.Nodes = g.opsNodes(contracts)
+	g.opsTasks(&d, project, now)
 	return d
 }
 
@@ -322,7 +384,7 @@ tr.warn td:first-child{box-shadow:inset 3px 0 var(--warn);padding-left:.6rem}
 var opsTmpl = newPage("ops", template.FuncMap{
 	"badge": func(state string) string {
 		switch state {
-		case "running":
+		case "running", "leased":
 			return "busy"
 		case "interrupted":
 			return "paused"
@@ -363,6 +425,14 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <div class="card" id="queue"><h2>Queue</h2>
 {{if .Queue}}<ol>{{range .Queue}}<li><code>{{.Attempt}}</code>{{if .TaskType}} <span class="mut small">{{.TaskType}}{{with .Size}} {{.}}{{end}}</span>{{end}}{{with .AddedAt}} <span class="mut small">queued {{.UTC.Format "01-02 15:04"}} UTC</span>{{end}}</li>{{end}}</ol>
 {{else}}<p class="mut">The queue is empty.</p>{{end}}</div>
+<div class="card" id="tasks"><h2>Task queue (gateway)</h2>
+<p class="mut small">{{if .TaskCounts}}{{.TaskCounts}}{{else}}No tasks.{{end}}{{if .TaskExport}} · <strong>{{.TaskExport}} finished waiting for the export to the ledger</strong>{{end}}</p>
+{{if .Tasks}}<div class="table-wrap"><table><tr><th>Task</th><th>Kind</th><th>State</th><th>Tries</th><th>Worker</th><th>Outcome</th><th>Review</th><th>Decision</th><th>Updated</th></tr>
+{{range .Tasks}}<tr data-task="{{.ID}}"><td data-label="Task"><code>{{.ID}}</code></td><td data-label="Kind">{{.Kind}}</td>
+<td data-label="State"><span class="badge {{badge .State}}">{{.State}}</span>{{if .Exported}} <span class="mut small">exported</span>{{end}}</td>
+<td data-label="Tries">{{.Tries}}</td><td data-label="Worker">{{with .Worker}}<code>{{.}}</code>{{end}}{{with .Lease}} <span class="mut small">{{.}}</span>{{end}}</td>
+<td data-label="Outcome">{{.Outcome}}</td><td data-label="Review">{{.Review}}</td><td data-label="Decision">{{.Decision}}</td><td data-label="Updated">{{.Updated}}</td></tr>{{end}}</table></div>
+{{end}}</div>
 <div class="card" id="candidates"><h2>Candidates waiting</h2>
 {{if .Candidates}}<div class="table-wrap"><table><tr><th>Attempt</th><th>Since</th><th>Waiting</th><th>Outcome</th></tr>
 {{range .Candidates}}<tr><td data-label="Attempt"><code>{{.Attempt}}</code></td><td data-label="Since">{{.Since}} UTC</td><td data-label="Waiting">{{.Waiting}}</td><td data-label="Outcome">{{.Outcome}}</td></tr>{{end}}</table></div>
