@@ -844,6 +844,7 @@ func (s *taskStore) chainView(project, id string) *taskChain {
 	if c, ok := p.chains[id]; ok {
 		v := *c
 		v.Verdicts = slices.Clone(c.Verdicts)
+		v.Rounds = slices.Clone(c.Rounds) // costRound writes in them while an answer is written out
 		return &v
 	}
 	return nil

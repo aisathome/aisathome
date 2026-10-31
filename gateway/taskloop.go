@@ -313,14 +313,19 @@ func (s *taskStore) loopStopped(p *projectTasks, t *Task, why string, now time.T
 	return s.stopChain(p, t, "the automatic task did not finish: "+why, now)
 }
 
-// queueReview creates a candidate's review task. Holds s.mu.
+// queueReview creates a candidate's review task. Holds s.mu. After a crash it may run again over the
+// loop's own review: queued or running, the rest of the step is written; ended, that end moved the
+// candidate on. Any other task under the review's id means no review will come: the operator decides.
 func (s *taskStore) queueReview(p *projectTasks, t *Task, now time.Time) error {
 	id := t.ID + reviewSuffix
 	if err := checkID("id", id); err != nil {
 		return s.stopChain(p, t, "the review task's id is too long", now)
 	}
 	rv, ok := p.byID[id]
-	if ok && (rv.CreatedBy != gatewayCreator || rv.State != TaskQueued) { // not the one a crash left
+	if ok && (rv.CreatedBy != gatewayCreator || rv.Kind != "review") {
+		return s.stopChain(p, t, "the review's id "+id+" is taken by another task", now)
+	}
+	if ok && finished(rv.State) {
 		return nil
 	}
 	if !ok {

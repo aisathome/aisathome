@@ -99,6 +99,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A candidate no longer drops out of the review loop when its review's id is taken.** If
+  `<candidate>.review` is already a person's task, or not a review, the candidate goes to
+  `needs-operator` with the reason, instead of ending with no review and no stage. A chain in an
+  answer is now its own copy of `rounds`, and task lists leave out the recipe of a waiting
+  `loop_pending`, as they do a task's spec. (gateway)
 - **A diff of a new file is no longer taken for personal data.** Git's null hash (`index
   00000000000..`) passed the check for a Norwegian ID number, or for a card number at 13 to 19 digits, so
   the request waited for a trusted node. All-zero numbers no longer count. (gateway)

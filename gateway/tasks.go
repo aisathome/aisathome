@@ -355,6 +355,11 @@ func (t *Task) view(full bool) *Task {
 	if !full {
 		c.Spec = nil
 		c.NextFix = nil
+		if t.LoopPending != nil { // the step stays in sight; its recipe can be megabytes
+			lp := *t.LoopPending
+			lp.Fix = nil
+			c.LoopPending = &lp
+		}
 	}
 	if t.Lease != nil {
 		l := *t.Lease

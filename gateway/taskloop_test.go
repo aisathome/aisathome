@@ -73,6 +73,11 @@ func loopEnds() []loopEnd {
 			r.create("T1.a-A", "attempt")
 			return done("T1.a-A", r.claimID("w1", "T1.a-A"), passed)
 		}},
+		{"the review id is taken", 3, func(r *taskRig) step {
+			r.createReview("T1.a-A.review", "T1.a-A")
+			r.create("T1.a-A", "attempt")
+			return done("T1.a-A", r.claimID("w1", "T1.a-A"), passed)
+		}},
 		{"green", 3, func(r *taskRig) step {
 			r.candidate("T1.a-A", true)
 			res := map[string]any{"outcome": "qwen review: green", "model_min": 12.5,
@@ -502,5 +507,160 @@ func TestChainOfPlainIDs(t *testing.T) {
 	r = loopRig(t, dir, 3)
 	if rv := r.g.tasks.get("tauceti", "plain.r2.review"); rv.Chain != "plain" {
 		t.Fatalf("a person's review is in chain %q", rv.Chain)
+	}
+}
+
+// A task under a candidate's review id means the loop's review will not come: the candidate goes to the
+// operator, whatever the task is and however far it got, and nothing is made in its place.
+func TestLoopReviewIDTaken(t *testing.T) {
+	for name, setup := range map[string]func(r *taskRig){
+		"a person's review, queued":               func(r *taskRig) { r.createReview("T1.a-A.review", "T1.a-A") },
+		"a person's review, of another candidate": func(r *taskRig) { r.createReview("T1.a-A.review", "T0.a-A") },
+		"a person's review, running": func(r *taskRig) {
+			r.createReview("T1.a-A.review", "T1.a-A")
+			r.claimID("w2", "T1.a-A.review")
+		},
+		"a person's review, finished": func(r *taskRig) {
+			r.createReview("T1.a-A.review", "T1.a-A")
+			r.verdict("T1.a-A.review", "green", nil)
+		},
+		"another kind of task": func(r *taskRig) { r.create("T1.a-A.review", "other") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			r := loopRig(t, dir, 3)
+			setup(r)
+			r.candidate("T1.a-A", true)
+			check := func() {
+				t.Helper()
+				c, got := r.chainOf("T1.a-A"), r.g.tasks.get("tauceti", "T1.a-A")
+				if got.Stage != StageNeedsOperator || got.LoopPending != nil || c.Status != StageNeedsOperator || !strings.Contains(c.Stop, "T1.a-A.review") {
+					t.Fatalf("candidate stage %q, chain %+v", got.Stage, c)
+				}
+			}
+			check()
+			r.g.Close()
+			r = loopRig(t, dir, 3)
+			check()
+		})
+	}
+}
+
+// The same for one of the loop's own rounds, which a recipe may name like a review.
+func TestLoopReviewIDTakenByARound(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.create("T1.a-P1", "attempt")
+	r.candidate("T1.a-A", true)
+	r.verdict("T1.a-A.review", "red", recipe("T1.a-P1.review"))
+	if n := r.g.tasks.get("tauceti", "T1.a-P1.review"); n == nil || n.Kind != "fix_round" || n.CreatedBy != gatewayCreator {
+		t.Fatalf("round %+v", n)
+	}
+	r.candidate("T1.a-P1", true)
+	if got := r.g.tasks.get("tauceti", "T1.a-P1"); got.Stage != StageNeedsOperator {
+		t.Fatalf("stage %q", got.Stage)
+	}
+}
+
+// owe gives a task its debt again, as a crash before settle cleared it would leave it, and pays it.
+func (r *taskRig) owe(id string) {
+	r.t.Helper()
+	s := r.g.tasks
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.load("tauceti")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	t := p.byID[id]
+	t.LoopPending = &loopPending{Step: owedDone}
+	if err := s.settle(p, t, r.now); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// The loop's own review is never a stranger: a candidate's debt paid again after its review was
+// claimed or ended neither stops the chain nor takes back what the review decided.
+func TestLoopOwnReviewAfterACrash(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	r.claimID("w1", "T1.a-A.review")
+	r.owe("T1.a-A")
+	if got, c := r.g.tasks.get("tauceti", "T1.a-A"), r.chainOf("T1.a-A"); got.Stage != StageInReview || c.Status != StageInReview || c.Stop != "" {
+		t.Fatalf("running: stage %q, chain %+v", got.Stage, c)
+	}
+
+	r = loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	r.verdict("T1.a-A.review", "green", nil)
+	r.owe("T1.a-A")
+	if got, c := r.g.tasks.get("tauceti", "T1.a-A"), r.chainOf("T1.a-A"); got.Stage != StageReady || c.Status != StageReady || c.Stop != "passed" {
+		t.Fatalf("ended: stage %q, chain %+v", got.Stage, c)
+	}
+}
+
+// A chain in an answer is its own copy: a task ending meanwhile writes in the live chain's rounds
+// (costRound), and the answer is written outside the lock. Run with -race.
+func TestChainViewOwnsItsRounds(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	r.redRound("T1.a-A", "T1.a-P1")
+	view := r.chainOf("T1.a-A")
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				json.Marshal(view)
+			}
+		}
+	}()
+	r.candidate("T1.a-P1", true)
+	close(stop)
+	<-done
+	if view.Rounds[0].Costed {
+		t.Fatal("the view changed with the chain")
+	}
+	if c := r.chainOf("T1.a-A"); !c.Rounds[0].Costed {
+		t.Fatalf("the chain did not record the cost: %+v", c)
+	}
+}
+
+// A list leaves out a waiting recipe, as it does a task's spec, and the recipe stays for the loop: a
+// debt that a disk fault keeps open must not cost each list its size again.
+func TestListLeavesOutAWaitingRecipe(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	lease := r.claimID("w1", "T1.a-A.review")
+	r.diskFull(isChainFile)
+	r.lease("T1.a-A.review", "complete", "w1", lease, map[string]any{"result": red(bigRecipe("T1.a-P1", 1<<20))})
+	w, out := r.call("GET", tasksPath, testProjectKey, nil)
+	if w.Code != 200 || w.Body.Len() > 64<<10 {
+		t.Fatalf("list: HTTP %d, %d bytes", w.Code, w.Body.Len())
+	}
+	seen := false
+	for _, x := range out["tasks"].([]any) {
+		if m := x.(map[string]any); m["id"] == "T1.a-A.review" {
+			lp, _ := m["loop_pending"].(map[string]any)
+			seen = lp["step"] == owedDone
+		}
+	}
+	if !seen {
+		t.Fatalf("the debt is not in the list: %s", w.Body)
+	}
+	if got := r.g.tasks.get("tauceti", "T1.a-A.review"); got.LoopPending == nil || got.LoopPending.Fix == nil || len(got.LoopPending.Fix.Spec) < 1<<20 {
+		t.Fatalf("a full view lost the recipe: %+v", got.LoopPending)
+	}
+	r.diskBack()
+	r.g.tasks.sweepAll()
+	if n := r.g.tasks.get("tauceti", "T1.a-P1"); n == nil || len(n.Spec) < 1<<20 {
+		t.Fatal("the round lost its recipe")
+	}
+	live := &Task{LoopPending: &loopPending{Step: owedDone, Fix: &taskNew{ID: "x"}}}
+	if v := live.summary(); v.LoopPending.Fix != nil || live.LoopPending.Fix == nil {
+		t.Fatalf("summary %+v, task %+v", v.LoopPending, live.LoopPending)
 	}
 }
