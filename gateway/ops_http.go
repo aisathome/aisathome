@@ -22,7 +22,7 @@ import (
 
 // recentUse remembers the last science requests (time, node, token counts), so the page can
 // name the node that served an attempt's last step: the runner knows the step's token counts,
-// the gateway knows the node (as research/agent-runner/steptime.py matches them).
+// the gateway knows the node (as the runner's step timing matches them).
 type recentUse struct {
 	mu   sync.Mutex
 	ring [512]recentRec

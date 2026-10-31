@@ -96,7 +96,7 @@ if (!existsSync(sciFile)) errors.push('science/tauceti.json: missing');
 else {
 	const sci = JSON.parse(readFileSync(sciFile, 'utf8'));
 	const allowed = {
-		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'type_labels', 'totals', 'prs',
+		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'type_labels', 'totals', 'project_progress', 'prs',
 			'tasks_without_pr'],
 		pr: ['number', 'url', 'title', 'type', 'size', 'state', 'opened', 'merged', 'closed', 'fix_rounds', 'first_review_approved',
 			'review_url', 'rounds', 'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts_without_tokens',

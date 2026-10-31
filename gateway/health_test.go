@@ -27,7 +27,7 @@ func tp(s string) *time.Time {
 	return &t
 }
 
-// Recorded case: trial 2's T2-NEW-1.a-A (raw/2026-10-24/T2-NEW-1.a-A in the research repo),
+// Recorded case: trial 2's T2-NEW-1.a-A (from the project's internal records),
 // replayed by the runner's reporter (tools/status_report.py --replay ... --at ...):
 //   - 18:10 UTC, step 10: 2.38 min per step against the NEW median 0.344 (8 attempts): slow;
 //     23.8 of 120 budget minutes: no budget warning yet;
