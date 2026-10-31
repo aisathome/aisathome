@@ -244,6 +244,46 @@ func TestPreemptedScienceWithoutOutputIsRetried(t *testing.T) {
 	}
 }
 
+// A preemption is not a failover attempt: a science request preempted twice is still sent again, up
+// to maxPreemptRetries, and finishes.
+func TestPreemptedTwiceIsRetriedTwice(t *testing.T) {
+	r := preemptRig(t, 1)
+	sci := start(t, r, "science", sizedBody(150, false)) // 3 s
+	for i := 0; i < 2; i++ {
+		busyWith(t, r)
+		if a := send(t, r, "chat", sizedBody(5, true)); a.status != 200 || !a.done {
+			t.Fatalf("chat %d: %d %v", i, a.status, a.errEvt)
+		}
+	}
+	if s := <-sci; s.status != 200 || strings.Count(s.body, "t149 ") != 1 {
+		t.Fatalf("science after two preemptions: %d %.200s", s.status, s.body)
+	}
+	waitUsage(t, r, 5)
+	if got := strings.Join(outcomes(t, r, "project:tauceti"), ","); got != "preempted,preempted,ok" {
+		t.Fatalf("science attempts: %s", got)
+	}
+}
+
+// A preempted request gets time to wait again even past its own queue time.
+func TestPreemptedPastItsQueueTimeStillWaits(t *testing.T) {
+	r := newRigCfg(t, func(c *gateway.Config) {
+		withProjects(c)
+		c.Projects[0].QueueTimeoutSec = 1 // gone when the preemption comes
+		c.Keys["owui-key"] = gateway.KeyInfo{User: "owui", ForwardUsers: true}
+		c.PreemptAfterSec = 1
+	})
+	r.startNode(t.Context(), "solo", "node-token", sizedEngine(t), 1)
+	r.waitNodes(t, 1)
+	sci := start(t, r, "science", sizedBody(150, false))
+	busyWith(t, r)
+	if a := send(t, r, "chat", sizedBody(50, true)); a.status != 200 || !a.done { // 1 s
+		t.Fatalf("chat: %d %v", a.status, a.errEvt)
+	}
+	if s := <-sci; s.status != 200 || strings.Count(s.body, "t149 ") != 1 {
+		t.Fatalf("science past its queue time: %d %.200s", s.status, s.body)
+	}
+}
+
 // People's requests are never preempted, whichever class waits for them; and with
 // preempt_after_seconds -1 science is not preempted either. The waiting request is served
 // once the running one ended, in full.

@@ -173,12 +173,83 @@ type keyLimit struct {
 	info KeyInfo
 }
 
+// chatCaller is the first stage's result: who a chat request is from and what it is held to.
+type chatCaller struct {
+	info      KeyInfo // the request's API key's
+	accountID string  // the account an account's own API key belongs to
+	acct      KeyInfo // the limits and routing the request runs under
+	userKey   string  // the budget and the fair share it counts against
+	reqAcct   string  // the account behind the request, API key or chat
+	class     string  // the workload class (project.go)
+	proj      *Project
+	charge    []string   // the budgets it is charged to
+	limits    []keyLimit // the keys whose request limits apply
+	overWait  int        // over its budget: seconds until it resets; only its own nodes may serve it
+}
+
+// chatJob is the second stage's result: a request ready for a node, and where it may go.
+type chatJob struct {
+	req       *chatReq
+	rt        *route
+	reqText   string // what the user wrote, before redaction, for the guards
+	queueWait int    // seconds it may wait for a node
+}
+
+// handleChat serves a chat request in three stages, in this order, since each refusal must cost as
+// little as it can and nothing may reach a node unprepared: identity and limits (who asks, within
+// which budget; the body is read before a concurrency slot is taken, and the slots are held until
+// the answer ends), request preparation (checks, routing, redaction), and execution (node choice,
+// retries, preemption). Charging happens where the answer is relayed (relay.go), to chatCaller's
+// charge.
 func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
+	c, ok := g.chatIdentity(w, r)
+	if !ok {
+		return
+	}
+	// The body is read before taking a concurrency slot (a slow upload must not hold one),
+	// within a deadline and a memory budget shared by all requests.
+	size := int64(maxBody)
+	if r.ContentLength >= 0 && r.ContentLength < size {
+		size = r.ContentLength
+	}
+	release, status := g.reserveBody(c.userKey, size)
+	if release == nil {
+		w.Header().Set("Retry-After", "5")
+		if status == http.StatusTooManyRequests {
+			apiError(w, status, "too many uploads in progress for this user")
+		} else {
+			apiError(w, status, "the gateway is busy; try again shortly")
+		}
+		return
+	}
+	defer release()
+	body, ok := readChatBody(w, r, size)
+	if !ok {
+		return
+	}
+	for _, l := range c.limits {
+		release, reason := g.lim.acquire(l.k, l.info, time.Now())
+		if release == nil {
+			apiError(w, http.StatusTooManyRequests, reason)
+			return
+		}
+		defer release()
+	}
+	job, ok := g.chatPrepare(w, c, body)
+	if !ok {
+		return
+	}
+	g.chatExecute(w, r, job)
+}
+
+// chatIdentity works out who a request is from, what it is charged to and which limits apply, and
+// refuses a wrong key, a blocked account or a used-up budget. It writes the error and returns false.
+func (g *Gateway) chatIdentity(w http.ResponseWriter, r *http.Request) (*chatCaller, bool) {
 	key := bearer(r)
 	info, accountID, ok := g.authenticate(r)
 	if !ok {
 		apiError(w, http.StatusUnauthorized, "invalid API key")
-		return
+		return nil, false
 	}
 	// End users behind a trusted front end (Open WebUI) are identified by its pseudonymous
 	// user id and get their own limits, on top of the front end's key limits. Signed-in
@@ -191,7 +262,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	if info.Project != "" {
 		if proj = g.projects.Load().byID[info.Project]; proj == nil { // removed by a reload just now
 			apiError(w, http.StatusUnauthorized, "invalid API key")
-			return
+			return nil, false
 		}
 		class, userKey = ClassScience, projectUser(proj.ID) // one budget for all its keys
 	} else if info.ForwardUsers {
@@ -203,7 +274,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		if id, isAcct := accountFromEmail(r.Header.Get("X-OpenWebUI-User-Email")); isAcct {
 			if g.accounts == nil || !g.accounts.active(id) { // banned or waiting: not through the chat either
 				apiError(w, http.StatusForbidden, "this account is not active")
-				return
+				return nil, false
 			}
 			acct, userKey, reqAcct = g.accountInfo(id).within(info), accountBudgetKey(id), id
 		} else if uid := r.Header.Get("X-OpenWebUI-User-Id"); uid != "" {
@@ -231,26 +302,16 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			budgetError(w, wait)
-			return
+			return nil, false
 		}
 	}
-	// The body is read before taking a concurrency slot (a slow upload must not hold one),
-	// within a deadline and a memory budget shared by all requests.
-	size := int64(maxBody)
-	if r.ContentLength >= 0 && r.ContentLength < size {
-		size = r.ContentLength
-	}
-	release, status := g.reserveBody(userKey, size)
-	if release == nil {
-		w.Header().Set("Retry-After", "5")
-		if status == http.StatusTooManyRequests {
-			apiError(w, status, "too many uploads in progress for this user")
-		} else {
-			apiError(w, status, "the gateway is busy; try again shortly")
-		}
-		return
-	}
-	defer release()
+	return &chatCaller{info: info, accountID: accountID, acct: acct, userKey: userKey, reqAcct: reqAcct,
+		class: class, proj: proj, charge: charge, limits: limits, overWait: overWait}, true
+}
+
+// readChatBody reads the request's JSON, of at most size bytes, within bodyReadTimeout. It writes
+// the error and returns false.
+func readChatBody(w http.ResponseWriter, r *http.Request, size int64) (map[string]any, bool) {
 	rc := http.NewResponseController(w)
 	rc.SetReadDeadline(time.Now().Add(bodyReadTimeout))
 	var body map[string]any
@@ -258,27 +319,25 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	rc.SetReadDeadline(time.Time{})
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON body")
-		return
+		return nil, false
 	}
-	for _, l := range limits {
-		release, reason := g.lim.acquire(l.k, l.info, time.Now())
-		if release == nil {
-			apiError(w, http.StatusTooManyRequests, reason)
-			return
-		}
-		defer release()
-	}
+	return body, true
+}
+
+// chatPrepare checks a request, bounds it, decides where it may go from what the user wrote, and only
+// then redacts it and renders what a node will see. It writes the error and returns false.
+func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[string]any) (*chatJob, bool) {
 	if msgs, ok := body["messages"].([]any); body == nil || !ok || len(msgs) == 0 {
 		apiError(w, http.StatusBadRequest, "the body must be a JSON object with a non-empty messages array")
-		return
+		return nil, false
 	}
 	if n, ok := body["n"].(float64); ok && n != 1 { // answers are assembled as one choice
 		apiError(w, http.StatusBadRequest, "n must be 1")
-		return
+		return nil, false
 	}
 	if msg := checkReasoningBudget(body, g.cfg.MaxMaxTokens); msg != "" {
 		apiError(w, http.StatusBadRequest, msg)
-		return
+		return nil, false
 	}
 	want, _ := body["model"].(string)
 	clientStream, _ := body["stream"].(bool)
@@ -292,44 +351,52 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// Privacy: personal data goes only to trusted nodes (and the requester's own); secrets
 	// never reach a node at all (replaced by placeholders, restored in the answer).
-	rt := g.routeFor(want, body, acct, reqAcct, acct.VolunteerAgents && !info.ForwardUsers)
-	rt.class = class
+	rt := g.routeFor(want, body, c.acct, c.reqAcct, c.acct.VolunteerAgents && !c.info.ForwardUsers)
+	rt.class = c.class
 	queueWait := g.cfg.QueueTimeoutSec
-	if proj != nil {
-		rt.project, rt.share = proj.ID, proj.MaxNodeShare
-		if proj.QueueTimeoutSec > 0 {
-			queueWait = proj.QueueTimeoutSec
+	if c.proj != nil {
+		rt.project, rt.share = c.proj.ID, c.proj.MaxNodeShare
+		if c.proj.QueueTimeoutSec > 0 {
+			queueWait = c.proj.QueueTimeoutSec
 		}
 	}
-	if overWait > 0 {
+	if c.overWait > 0 {
 		rt.onlySelf = true
 		if g.servesFor(rt) == 0 {
-			budgetError(w, overWait)
-			return
+			budgetError(w, c.overWait)
+			return nil, false
 		}
 	}
 	reqText := requestText(body) // before redaction: addresses the user wrote, for the guards
 	red := newRedactor()
 	// Nothing to hide only when the key itself belongs to the operator whose nodes serve it
 	// (not for end users behind a shared front-end key).
-	ownNodes := !info.ForwardUsers && info.OnlyOperator != "" && info.OnlyOperator == info.User
+	ownNodes := !c.info.ForwardUsers && c.info.OnlyOperator != "" && c.info.OnlyOperator == c.info.User
 	if !ownNodes {
 		red.redactBody(body)
 	}
-	red.restoreOn = acct.RestoreSecrets
+	red.restoreOn = c.acct.RestoreSecrets
 	if red.overflow {
 		apiError(w, http.StatusBadRequest, "too many secrets in one request; remove credentials and try again")
-		return
+		return nil, false
 	}
 
 	// Rendered and hashed once, as a node will get it: routing looks for the node that holds
 	// this conversation (routing.go), credit for what that node had cached (credit_http.go).
 	conv := g.pcache.print(forNode(body))
-	rt.who, rt.conv = keyHash(userKey), conv.hashes
-	req := &chatReq{user: acct.User, who: userKey, charge: charge, self: rt.self, want: want,
+	rt.who, rt.conv = keyHash(c.userKey), conv.hashes
+	req := &chatReq{user: c.acct.User, who: c.userKey, charge: c.charge, self: rt.self, want: want,
 		clientStream: clientStream, logprobs: wantsLogprobs(body), body: body, red: red, conv: conv,
-		servedBy: g.servedBy(info, accountID), class: class, project: rt.project}
-	deadline := time.Now().Add(time.Duration(queueWait) * time.Second)
+		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project}
+	return &chatJob{req: req, rt: rt, reqText: reqText, queueWait: queueWait}, true
+}
+
+// chatExecute finds a node and runs the request on it: one retry on another connection while no
+// output went out, a trusted node after a guard stopped an answer, and for preempted science a
+// place behind the people.
+func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJob) {
+	rt, req := job.rt, job.req
+	deadline := time.Now().Add(time.Duration(job.queueWait) * time.Second)
 	preempted := 0
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)
@@ -348,7 +415,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 		rt.exclude[n] = true
 		var gd *guard // answers from strangers' nodes are checked (guard.go)
 		if !n.trusted && n.operator != rt.self {
-			gd = newGuard(reqText)
+			gd = newGuard(job.reqText)
 		}
 		started, err := g.run(w, r, req, n, model, gd)
 		if errors.Is(err, errPreempted) && !started {

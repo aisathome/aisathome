@@ -469,6 +469,28 @@ func TestGuardFallbackKeepsOperator(t *testing.T) {
 	}
 }
 
+// The fallback after a stopped answer goes to a trusted node only: it runs without a guard, so
+// another volunteer's node would hand the client what the guard just stopped.
+func TestGuardFallbackIsTrustedOnly(t *testing.T) {
+	var evil atomic.Int32
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.Keys["vol-key"] = gateway.KeyInfo{User: "dave", VolunteerAgents: true}
+		c.QueueTimeoutSec = 2
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.startNode(ctx, "vol1", "node-token", evilEngine(&evil), 2)
+	r.startNode(ctx, "vol2", "node-token", evilEngine(&evil), 2)
+	r.waitNodes(t, 2)
+	code, out := ask(t, r, "vol-key", `{"model":"deep","messages":[{"role":"user","content":"fix my build"}],"tools":[{"type":"function","function":{"name":"bash"}}]}`)
+	if code != 502 || !strings.Contains(out, "safety check") || strings.Contains(out, "evil.example") {
+		t.Fatalf("no trusted node free: %d %s", code, out)
+	}
+	if evil.Load() != 1 {
+		t.Fatalf("%d volunteer nodes saw the request", evil.Load())
+	}
+}
+
 // A paused node with a large context does not keep a smaller active node from serving a short
 // prompt with a large max_tokens (the answer ends at the context instead).
 func TestPausedNodeDoesNotBlockContextFallback(t *testing.T) {
