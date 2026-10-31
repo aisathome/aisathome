@@ -89,22 +89,24 @@ else {
 	if (home.join() !== listed.slice(0, 3).join()) errors.push(`index.html: the dev log section (${home}) is not the newest posts (${listed.slice(0, 3)})`);
 }
 
-// Science (/science/tauceti/): the published JSON holds public fields only (the research ledger it
-// comes from has internal notes), and the page and the home page agree with it.
-const sciFile = join(dist, 'science', 'tauceti.json');
-if (!existsSync(sciFile)) errors.push('science/tauceti.json: missing');
+// Science (/science/tauceti/): the data the build renders holds public fields only (the research
+// ledger it comes from has internal notes), and the page and the home page agree with it. It is
+// not served: a copy published here stayed at its export date while the page moved on.
+const sciFile = new URL('../src/data/science/tauceti.json', import.meta.url);
+if (existsSync(join(dist, 'science', 'tauceti.json'))) errors.push('science/tauceti.json: published; the data lives at /v1/projects/tauceti/science');
+if (!existsSync(sciFile)) errors.push('src/data/science/tauceti.json: missing');
 else {
 	const sci = JSON.parse(readFileSync(sciFile, 'utf8'));
 	const allowed = {
 		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'type_labels', 'totals', 'project_progress', 'prs',
 			'tasks_without_pr'],
-		pr: ['number', 'url', 'title', 'type', 'size', 'state', 'opened', 'merged', 'closed', 'fix_rounds', 'first_review_approved',
+		pr: ['number', 'task', 'url', 'title', 'type', 'size', 'state', 'opened', 'merged', 'closed', 'fix_rounds', 'internal_rounds', 'first_review_approved',
 			'review_url', 'rounds', 'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes', 'attempts_without_tokens',
-			'attempts_without_gpu_time'],
+			'attempts_without_gpu_time', 'review_qwen_tokens', 'review_gpu_minutes', 'reviews_left_out'],
 		round: ['round', 'commit', 'at', 'result', 'changes'],
 		change: ['rubric', 'verdict', 'reason', 'url'],
-		task: ['target', 'type', 'size', 'state', 'last_attempt', 'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes',
-			'attempts_without_tokens', 'attempts_without_gpu_time'],
+		task: ['task', 'target', 'type', 'size', 'state', 'internal_rounds', 'last_attempt', 'attempts', 'qwen_tokens', 'qwen_output_tokens', 'gpu_minutes',
+			'attempts_without_tokens', 'attempts_without_gpu_time', 'review_qwen_tokens', 'review_gpu_minutes', 'reviews_left_out'],
 	};
 	const only = (obj, keys, what) => { for (const k of Object.keys(obj ?? {})) if (!keys.includes(k)) errors.push(`science/tauceti.json: unexpected ${what} field ${k}`); };
 	only(sci, allowed.top, 'top-level');

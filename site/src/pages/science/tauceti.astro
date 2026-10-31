@@ -3,11 +3,11 @@
 // counted. The build renders src/data/science/tauceti.json (the page works without JavaScript);
 // the browser then loads the gateway's daily data (GET /v1/projects/tauceti/science, rebuilt by
 // the runner from its records and Tau Ceti's public reviews) and renders it with the same code
-// (src/data/science-render.ts) in its place, adding "Working on now". Styles are global
+// (src/data/science-insights.ts) in its place, adding "Working on now". Styles are global
 // (prefixed .sci-) because the rendered HTML is not part of this template.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { science as s } from '../../data/science';
-import { renderScience } from '../../data/science-render';
+import { renderScience } from '../../data/science-insights';
 
 const html = renderScience(s, s.generatedAt ?? new Date());
 // Tau Ceti's own pages about the library as a whole (each checked 2026-10-25: HTTP 200, Tau Ceti's).
@@ -24,20 +24,21 @@ const tauceti = {
 		description: `Pull requests that ${s.model}, an open model on the AIs@home network, opened on Tau Ceti, a library of formal mathematics written by AIs. Every attempt counts.`,
 	}}
 	headings={[
-		{ depth: 2, slug: 'every-pr', text: 'Every pull request' },
+		{ depth: 2, slug: 'insights', text: 'Results by type' },
+		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
+		{ depth: 2, slug: 'every-pr', text: 'Pull requests' },
 		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
 	]}
 >
 	<p>
-		<a href={s.projectURL}>Tau Ceti</a> is an open library of formal mathematics in Lean, written by AI
-		contributors and checked by Tau Ceti’s own review before anything is merged. {s.model}, an
-		open-weight model running on the AIs@home network, contributes to it: small refactors, clean-ups and
-		new lemmas, each sent as a pull request like anyone else’s. For the library as a whole, see Tau Ceti’s
-		own <a href={tauceti.statistics} data-tauceti-link="statistics">statistics</a>,
-		<a href={tauceti.progress} data-tauceti-link="progress">progress against its roadmaps</a> and the
-		<a href={tauceti.roadmaps} data-tauceti-link="roadmaps">roadmaps</a> themselves.
+		{s.model}, an open-weight model on the AIs@home network, sends pull requests to <a href={s.projectURL}>Tau Ceti</a>, a library of
+		formal mathematics checked by its own review. For the library as a whole, see Tau Ceti’s{' '}
+		<a href={tauceti.statistics} data-tauceti-link="statistics">statistics</a>,{' '}
+		<a href={tauceti.progress} data-tauceti-link="progress">progress</a> and{' '}
+		<a href={tauceti.roadmaps} data-tauceti-link="roadmaps">roadmaps</a>.
 	</p>
 	<div data-science-root data-source="build" data-generated={s.generatedAt?.toISOString() ?? ''} set:html={html} />
+	<div class="sci-tip" data-science-tip hidden></div>
 </StarlightPage>
 
 <script>
@@ -47,9 +48,115 @@ const tauceti = {
 	// minute while the page is visible, also over the build's data. Any failure keeps what is
 	// shown (the build's page without it).
 	import { ago, normalize } from '../../data/science-model';
-	import { nowSection, renderScience } from '../../data/science-render';
+	import { compareRows, defaultSort, firstDir, noPRStatus, nowSection, statusRank, type Sort, type SortKey, type SortKeys } from '../../data/science-render';
+	import { compareScore, renderScience, scoreFirstDir, type ScoreKey, type ScoreKeys, type ScoreSort } from '../../data/science-insights';
 
 	const root = document.querySelector<HTMLElement>('[data-science-root]');
+
+	// The list's filters (one type, one state) and sort order, kept here only: they survive a new
+	// render of the data, and a row is moved rather than rebuilt, so its open review rounds stay.
+	const filter = { type: '', state: '' };
+	let sort: Sort = { ...defaultSort };
+	const num = (v: string | undefined) => (v === undefined ? null : Number(v));
+	const rowKeys = (row: HTMLElement): SortKeys => ({
+		number: num(row.dataset.sortNumber),
+		title: row.querySelector('[data-sort-title]')?.firstChild?.textContent ?? '',
+		date: num(row.dataset.sortDate),
+		status: statusRank(row.querySelector<HTMLElement>('[data-no-pr-status]')?.dataset.noPrStatus ?? row.dataset.state ?? ''),
+		tokens: num(row.dataset.sortTokens),
+		minutes: num(row.dataset.sortMinutes),
+	});
+	// One header look for both tables: the arrow and aria-sort on the sorted column only.
+	const markHeads = (heads: NodeListOf<HTMLElement>, key: (th: HTMLElement) => string | undefined, s: { key: string; dir: string } | null) =>
+		heads.forEach((th) => {
+			const on = !!s && key(th) === s.key;
+			if (on) th.setAttribute('aria-sort', s.dir === 'asc' ? 'ascending' : 'descending');
+			else th.removeAttribute('aria-sort');
+			const mark = th.querySelector('.sort-mark');
+			if (mark) mark.textContent = on ? (s.dir === 'asc' ? '▲' : '▼') : '';
+		});
+	// The scorecard starts in the page's order of types, with no arrow; "All types" is in the foot.
+	let scoreSort: ScoreSort | null = null;
+	const applyScoreSort = () => {
+		const body = root?.querySelector('[data-science-scorecard] tbody');
+		if (!root || !body) return;
+		markHeads(root.querySelectorAll<HTMLElement>('[data-science-scorecard] th[data-score-col]'), (th) => th.dataset.scoreCol, scoreSort);
+		const rows = [...body.querySelectorAll<HTMLElement>(':scope > tr')];
+		const keys = new Map(rows.map((r) => [r, JSON.parse(r.dataset.score ?? '{}') as ScoreKeys]));
+		const sorted = [...rows].sort((a, b) => (scoreSort ? compareScore(keys.get(a)!, keys.get(b)!, scoreSort) : keys.get(a)!.order - keys.get(b)!.order));
+		if (sorted.some((r, i) => r !== rows[i])) sorted.forEach((r) => body.appendChild(r));
+	};
+	const applySort = () => {
+		const body = root?.querySelector('[data-science-prs] tbody');
+		if (!root || !body) return;
+		markHeads(root.querySelectorAll<HTMLElement>('[data-science-prs] th[data-sort-col]'), (th) => th.dataset.sortCol, sort);
+		const rows = [...body.querySelectorAll<HTMLElement>(':scope > tr')];
+		const keys = new Map(rows.map((r) => [r, rowKeys(r)]));
+		const sorted = [...rows].sort((a, b) => compareRows(keys.get(a)!, keys.get(b)!, sort));
+		if (sorted.some((r, i) => r !== rows[i])) sorted.forEach((r) => body.appendChild(r));
+	};
+	const applyFilters = () => {
+		if (!root) return;
+		root.querySelectorAll<HTMLButtonElement>('[data-science-filters] [data-filter]').forEach((b) => {
+			b.setAttribute('aria-pressed', String(filter[b.dataset.filter as 'type' | 'state'] === (b.dataset.value ?? '')));
+		});
+		const rows = [...root.querySelectorAll<HTMLElement>('[data-science-list] tr[data-pr], [data-science-list] tr[data-no-pr]')];
+		let shown = 0;
+		for (const row of rows) {
+			const state = row.hasAttribute('data-no-pr') ? 'no-pr' : row.dataset.state;
+			row.hidden = (!!filter.type && row.dataset.type !== filter.type) || (!!filter.state && state !== filter.state);
+			if (!row.hidden) shown++;
+		}
+		const count = root.querySelector<HTMLElement>('[data-list-count]');
+		if (count) count.textContent = `Showing ${shown} of ${rows.length}`;
+	};
+	root?.addEventListener('click', (e) => {
+		const score = (e.target as HTMLElement).closest<HTMLElement>('[data-score-sort]');
+		if (score) {
+			const key = score.dataset.scoreSort as ScoreKey;
+			scoreSort = { key, dir: scoreSort?.key === key ? (scoreSort.dir === 'asc' ? 'desc' : 'asc') : scoreFirstDir(key) };
+			applyScoreSort();
+			return;
+		}
+		const head = (e.target as HTMLElement).closest<HTMLElement>('[data-sort]');
+		if (head) {
+			const key = head.dataset.sort as SortKey;
+			sort = { key, dir: sort.key === key ? (sort.dir === 'asc' ? 'desc' : 'asc') : firstDir(key) };
+			applySort();
+			return;
+		}
+		const b = (e.target as HTMLElement).closest<HTMLElement>('[data-filter]');
+		if (!b) return;
+		filter[b.dataset.filter as 'type' | 'state'] = b.dataset.value ?? '';
+		// A type chosen in the numbers on top opens the list on it.
+		const list = root.querySelector<HTMLDetailsElement>('[data-science-list]');
+		if (list && !list.contains(b)) {
+			list.open = true;
+			list.scrollIntoView({ block: 'start' });
+		}
+		applyFilters();
+	});
+
+	// One tooltip for every chart mark, on hover and on keyboard focus. The text is set as text.
+	const tip = document.querySelector<HTMLElement>('[data-science-tip]');
+	const showTip = (e: Event) => {
+		const m = (e.target as Element).closest?.('[data-tip]');
+		if (!tip) return;
+		if (!m) {
+			tip.hidden = true;
+			return;
+		}
+		tip.textContent = m.getAttribute('data-tip');
+		tip.hidden = false;
+		const r = m.getBoundingClientRect();
+		const left = Math.min(Math.max(8, r.left + r.width / 2 - tip.offsetWidth / 2), document.documentElement.clientWidth - tip.offsetWidth - 8);
+		tip.style.left = `${left}px`;
+		tip.style.top = `${Math.max(8, r.top - tip.offsetHeight - 8)}px`;
+	};
+	root?.addEventListener('pointerover', showTip);
+	root?.addEventListener('focusin', showTip);
+	root?.addEventListener('pointerleave', () => tip && (tip.hidden = true));
+	root?.addEventListener('focusout', () => tip && (tip.hidden = true));
 	const tick = () =>
 		root?.querySelectorAll<HTMLElement>('[data-ago]').forEach((el) => {
 			const d = new Date(el.dataset.ago ?? '');
@@ -79,97 +186,80 @@ const tauceti = {
 			if (+s.generatedAt > shownAt()) {
 				// newer daily data (or the first load of data newer than the build's): render it
 				// all; the open review rounds close
+				const open = root.querySelector<HTMLDetailsElement>('[data-science-list]')?.open;
 				root.innerHTML = renderScience(s, at);
+				const list = root.querySelector<HTMLDetailsElement>('[data-science-list]');
+				if (list && open) list.open = true;
 				root.dataset.source = 'live';
 				root.dataset.generated = s.generatedAt.toISOString();
 				root.dataset.now = 'live';
 			} else {
-				// the same or older data: refresh only "Working on now", so what is shown (and its
-				// open review rounds) stays
+				// the same or older data: refresh only "Working on now" and where the tasks without
+				// a PR stand, so what is shown (and its open review rounds) stays
 				showNow(nowSection(s.now, at));
+				for (const row of root.querySelectorAll<HTMLElement>('tr[data-task-id]')) {
+					// the row's own state: this data may be older than what is shown; only `now` is news
+					const cell = row.querySelector('.status');
+					const state = row.dataset.state === 'failed' ? 'failed' : 'checks-passed';
+					if (cell) cell.innerHTML = noPRStatus({ task: row.dataset.taskId ?? '', state }, s.now);
+				}
 			}
 		} catch {
 			// keep what is shown
 		} finally {
 			tick();
+			applyScoreSort();
+			applySort();
+			applyFilters();
 		}
 	};
 	tick();
+	applyScoreSort();
+	applySort();
+	applyFilters();
 	load();
 	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>
 
 <style is:global>
-	.sci-tiles {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
-		gap: 1rem;
-		margin: 2rem 0;
-	}
-	.sci-tiles div {
-		display: flex;
-		flex-direction: column-reverse;
-		padding: 1rem 1.25rem;
-		border-top: 4px solid var(--sl-color-accent);
-		border-radius: 0.4rem;
-		background: var(--b-surface);
-	}
-	.sci-tiles dd { margin: 0; font: 900 clamp(1.8rem, 4vw, 2.6rem)/1 var(--font-display); color: var(--sl-color-white); }
-	.sci-tiles dt { margin-top: 0.35rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
-
-	.sci-chart { margin: 2rem 0; padding: 1rem 1.25rem 0.5rem; border-radius: 0.5rem; background: var(--b-band); }
-	.sci-chart figcaption { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
-	.sci-chart svg { display: block; width: 100%; height: auto; margin-top: 0.5rem; overflow: visible; }
-	.sci-chart .grid line { stroke: var(--sl-color-gray-5); stroke-width: 1; }
-	.sci-chart .grid text { font: 12px var(--font-mono, monospace); fill: var(--sl-color-gray-3); }
-	.sci-chart .line { fill: none; stroke: var(--sl-color-accent); stroke-width: 2; stroke-linejoin: round; }
-	.sci-chart .dot { fill: var(--sl-color-accent); stroke: var(--b-band); stroke-width: 2; }
-	.sci-chart .hit { fill: transparent; }
-	.sci-chart .pt { cursor: default; outline: none; }
-	.sci-chart .pt:is(:hover, :focus-visible) .dot { r: 7; fill: var(--sl-color-accent-high); }
-
 	.sci-wrap { overflow-x: auto; margin-top: 1rem; }
 	.sci-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 	.sci-table :is(th, td) { padding: 0.5rem 0.75rem 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
 	.sci-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
 	.sci-table tbody th { white-space: nowrap; font-weight: 600; }
 	.sci-table tbody th a { color: var(--sl-color-accent-high); }
-	.sci-table .title { min-width: 13rem; color: var(--sl-color-white); white-space: normal; overflow-wrap: anywhere; }
-	.sci-table .group-head :is(th, td) { padding-top: 1.25rem; font-weight: 700; color: var(--sl-color-white); border-bottom-color: var(--sl-color-gray-4); }
-	.sci-table .group-head th { font-family: var(--font-display); font-size: 1.1rem; letter-spacing: 0.02em; text-transform: uppercase; }
-	.sci-table .group-sub { margin-left: 0.6rem; font: 400 0.85rem var(--sl-font, inherit); text-transform: none; letter-spacing: 0; color: var(--sl-color-gray-3); }
+	.sci-table .title { min-width: 10rem; color: var(--sl-color-white); white-space: normal; overflow-wrap: anywhere; }
+	.sci-table thead button { all: unset; cursor: pointer; }
+	.sci-table thead button:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+	.sci-table thead th[aria-sort] button { color: var(--sl-color-white); }
+	.sci-table .sort-mark { display: inline-block; min-width: 1em; margin-left: 0.2em; color: var(--sl-color-accent-high); }
 	.sci-table [title] { cursor: help; }
 	.sci-table [data-unknown] { color: var(--sl-color-gray-3); font-style: italic; }
 	.sci-table .status .meta > span { display: block; }
-	.sci-table td.num .meta { white-space: normal; }
 	.sci-note { font-size: 0.85rem; color: var(--sl-color-gray-3); }
 	.sci-table .meta { display: block; margin-top: 0.15rem; font-size: 0.8rem; font-weight: 400; color: var(--sl-color-gray-3); }
 	.sci-table td:not(.title) { white-space: nowrap; }
+	.sci-table td.status { min-width: 8rem; white-space: normal; }
 	.sci-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 	.sci-table :is(th, td):last-child { padding-right: 0; }
 	.sci-table .state { font-weight: 600; }
 	/* Phones: each PR as a small card instead of a wide table. */
 	@media (max-width: 40rem) {
-		.sci-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-		.sci-table tr { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+		.sci-table thead tr { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; padding: 0 0 0.5rem; }
+		.sci-table tbody tr { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
 		.sci-table :is(th, td) { padding: 0; border: 0; }
 		.sci-table .title { grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
-		.sci-table td:not(.title) { grid-column: 2; white-space: normal; }
+		.sci-table td:not(.title) { grid-column: 2; min-width: 0; white-space: normal; }
 		.sci-table .num { text-align: left; }
-		.sci-table :is(.tok, .min)::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
-		.sci-table .group-head { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; padding-top: 1.5rem; }
-		.sci-table .group-head th { flex-basis: 100%; }
-		.sci-table .group-head :is(th, td) { padding: 0; }
-		.sci-table .group-head td { font-size: 0.85rem; }
-		.sci-table td.num .meta { display: inline; margin-left: 0.4rem; }
+		.sci-table :is(.tok, .min, .date)::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
 		.sci-table .status .meta > span { display: inline; }
 		.sci-table .status .meta > span + span::before { content: ' · '; }
-		.sci-chart .grid text { font-size: 22px; }
-		.sci-chart .grid text.minor { display: none; }
 	}
 	.sci-table .state-merged { color: var(--sl-color-accent-high); }
 	.sci-table :is(.state-closed, .state-failed, .state-checks-passed) { color: var(--sl-color-gray-3); }
 	.sci-table .no-pr { font-weight: 400; font-style: italic; color: var(--sl-color-gray-3); }
+	.sci-table .task-id { display: block; margin-top: 0.15rem; font: 400 0.75rem var(--font-mono, monospace); color: var(--sl-color-gray-3); }
+	.sci-table :is(.state-running, .state-queued) { color: var(--sl-color-accent-high); }
 
 	.sci-progress { margin-top: 0.75rem; }
 	.sci-updated { margin-top: 0.5rem; font-size: 0.85rem; color: var(--sl-color-gray-3); }
@@ -179,6 +269,8 @@ const tauceti = {
 	.sci-now ul { margin: 0; padding: 0; list-style: none; }
 	.sci-now li + li { margin-top: 0.4rem; }
 	.sci-now .target { display: block; font-weight: 600; color: var(--sl-color-white); }
+	.sci-now .run { display: block; margin-top: 0.1rem; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-accent-high); }
+	.sci-now .sci-queue .run { display: inline; margin-left: 0.4rem; font-weight: 400; }
 	.sci-now .meta { display: block; margin: 0.15rem 0 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
 	.sci-now p { margin: 0.5rem 0 0; }
 	.sci-now a { color: var(--sl-color-accent-high); }
@@ -189,6 +281,55 @@ const tauceti = {
 	.sci-now .sci-queue .meta { display: inline; margin-left: 0.4rem; }
 	.sci-now .target { overflow-wrap: anywhere; }
 
+	/* Series colours by type: the palette's first five, stepped per theme (light has labels and a table as relief). */
+	:root { --sci-1: #3987e5; --sci-2: #d95926; --sci-3: #199e70; --sci-4: #c98500; --sci-5: #d55181; --sci-0: var(--sl-color-gray-4); }
+	:root[data-theme='light'] { --sci-1: #2a78d6; --sci-2: #eb6834; --sci-3: #1baf7a; --sci-4: #eda100; --sci-5: #e87ba4; }
+	.sci-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
+	@media (max-width: 40rem) { .sci-kpis { grid-template-columns: repeat(2, 1fr); } }
+	.sci-kpis div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
+	.sci-kpis dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); color: var(--sl-color-white); }
+	.sci-kpis dt { margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+	.sci-score { width: 100%; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+	.sci-score :is(th, td) { padding: 0.35rem 0.5rem 0.35rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: right; white-space: nowrap; }
+	.sci-score :is(th, td):first-child { text-align: left; }
+	.sci-score thead th { font-size: 0.7rem; font-weight: 600; line-height: 1.2; white-space: normal; vertical-align: bottom; color: var(--sl-color-gray-3); }
+	.sci-score tfoot :is(th, td) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+	.sci-score button { all: unset; cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+	.sci-score button:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+	.sci-score thead button { font-weight: inherit; color: inherit; }
+	.sci-score thead th[aria-sort] button { color: var(--sl-color-white); }
+	.sci-score .sort-mark { display: inline-block; min-width: 1em; margin-left: 0.2em; color: var(--sl-color-accent-high); }
+	.sci-small, .sci-none { color: var(--sl-color-gray-3); }
+	.sci-swatch { display: inline-block; width: 0.7rem; height: 0.7rem; margin-right: 0.35rem; border-radius: 2px; }
+	.sci-swatch.s0 { background: var(--sci-0); } .sci-swatch.s1 { background: var(--sci-1); } .sci-swatch.s2 { background: var(--sci-2); }
+	.sci-swatch.s3 { background: var(--sci-3); } .sci-swatch.s4 { background: var(--sci-4); } .sci-swatch.s5 { background: var(--sci-5); }
+	.sci-chart { margin: 1.25rem 0; padding: 1rem 1.25rem 0.5rem; border-radius: 0.5rem; background: var(--b-band); }
+	.sci-chart figcaption { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+	.sci-chart svg { display: block; width: 100%; height: auto; margin-top: 0.5rem; overflow: visible; }
+	.sci-chart .grid line { stroke: var(--sl-color-gray-5); stroke-width: 1; }
+	.sci-chart .grid text { font: 12px var(--font-mono, monospace); fill: var(--sl-color-gray-3); }
+	.sci-chart .line { fill: none; stroke: var(--sl-color-accent); stroke-width: 2; stroke-linejoin: round; }
+	.sci-chart .dot { fill: var(--sl-color-accent); stroke: var(--b-band); stroke-width: 2; }
+	.sci-chart .hit { fill: transparent; }
+	.sci-chart .pt { cursor: default; outline: none; }
+	.sci-chart .pt:is(:hover, :focus-visible) .dot { r: 7; fill: var(--sl-color-accent-high); }
+	.sci-chart .total { font: 700 13px var(--font-mono, monospace); fill: var(--sl-color-white); }
+	@media (max-width: 40rem) {
+		.sci-chart .grid text { font-size: 22px; }
+		.sci-chart .grid text.minor { display: none; }
+		.sci-chart .total { font-size: 22px; }
+	}
+	.sci-notes { font-size: 0.8rem; color: var(--sl-color-gray-3); }
+	.sci-list { margin-top: 0.5rem; }
+	.sci-list > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+	.sci-filters { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.6rem 0 0.2rem; }
+	.sci-filters button { padding: 0.15rem 0.6rem; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
+	.sci-filters button[aria-pressed='true'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-white); }
+	.sci-filters .sep { width: 0.75rem; }
+	.sci-table tr[hidden], .sci-table tbody[hidden] { display: none; }
+	.sci-tip { position: fixed; z-index: 20; max-width: 18rem; padding: 0.3rem 0.5rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.3rem; background: var(--sl-color-black); color: var(--sl-color-white); font-size: 0.8rem; pointer-events: none; }
+	.sci-tip[hidden] { display: none; }
+
 	.sci-rounds { margin-top: 0.35rem; font-size: 0.85rem; }
 	.sci-rounds summary { cursor: pointer; color: var(--sl-color-accent-high); width: fit-content; }
 	.sci-rounds ol { margin: 0.4rem 0 0; padding-left: 1.1rem; }
@@ -197,7 +338,6 @@ const tauceti = {
 	.sci-rounds ul { margin: 0.2rem 0 0; padding-left: 1rem; list-style: disc; }
 	.sci-rounds ul li { margin-top: 0.2rem; color: var(--sl-color-gray-2); }
 	.sci-rounds .rubric { font-weight: 600; color: var(--sl-color-white); }
-	.sci-rounds q { quotes: '“' '”'; }
 	.sci-rounds code { font-size: 0.8rem; overflow-wrap: anywhere; }
 	.sci-rounds a { color: var(--sl-color-accent-high); }
 	.sci-rounds .review-link { display: inline-block; margin-top: 0.4rem; }

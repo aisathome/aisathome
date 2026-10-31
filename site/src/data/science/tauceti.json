@@ -3,31 +3,31 @@
  "project_url": "https://taucetiproject.org/",
  "repository": "https://github.com/TauCetiProject/TauCeti",
  "model": "Qwen3.8 27B",
- "generated_at": "2026-10-25T18:26:16Z",
- "states_as_of": "2026-10-25",
- "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network, and every task whose attempts have not led to one. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. Review rounds quote Tau Ceti's review verbatim. These are our own measurements; PR states as of 2026-10-25.",
+ "generated_at": "2026-10-31T19:33:22Z",
+ "states_as_of": "2026-10-31",
+ "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network, and every task whose attempts have not led to one. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. Review rounds quote Tau Ceti's review verbatim. These are our own measurements; PR states as of 2026-10-31.",
  "type_labels": {
-  "NS": "Namespace move",
   "DOC": "Docstring cleanup",
   "GEN": "Generalisation",
   "LINT": "Lint fix",
-  "NEW": "New lemma"
+  "NEW": "New lemma",
+  "NS": "Namespace move"
  },
  "totals": {
-  "prs_opened": 12,
-  "prs_merged": 5,
-  "prs_closed": 1,
-  "prs_open": 6,
-  "first_review_approved": 4,
-  "first_review_approval_rate": 0.4,
-  "attempts": 30,
-  "attempts_passing_local_checks": 20,
-  "local_check_pass_rate": 0.667,
-  "gpu_hours": 17.6,
+  "prs_opened": 29,
+  "prs_merged": 26,
+  "prs_closed": 2,
+  "prs_open": 1,
+  "first_review_approved": 19,
+  "first_review_approval_rate": 0.679,
+  "attempts": 91,
+  "attempts_passing_local_checks": 69,
+  "local_check_pass_rate": 0.758,
+  "gpu_hours": 58.51,
   "attempts_without_gpu_time": 2,
-  "qwen_tokens": 53782217,
-  "qwen_output_tokens": 1395477,
-  "qwen_tokens_per_merged_pr": 10756443,
+  "qwen_tokens": 205514828,
+  "qwen_output_tokens": 4410624,
+  "qwen_tokens_per_merged_pr": 7904416,
   "attempts_without_token_count": 1
  },
  "prs": [
@@ -65,7 +65,9 @@
    "qwen_output_tokens": 123805,
    "gpu_minutes": null,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 1
+   "attempts_without_gpu_time": 1,
+   "task": "T0-NS-1",
+   "internal_rounds": 0
   },
   {
    "number": 19179,
@@ -94,7 +96,9 @@
    "qwen_output_tokens": 90376,
    "gpu_minutes": 56.8,
    "attempts_without_tokens": 1,
-   "attempts_without_gpu_time": 1
+   "attempts_without_gpu_time": 1,
+   "task": "T0-LINT-1",
+   "internal_rounds": 0
   },
   {
    "number": 19776,
@@ -137,7 +141,9 @@
    "qwen_output_tokens": 21705,
    "gpu_minutes": 13.7,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T1-DOC-1",
+   "internal_rounds": 0
   },
   {
    "number": 19777,
@@ -236,7 +242,9 @@
    "qwen_output_tokens": 56382,
    "gpu_minutes": 34.2,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T1-GEN-1",
+   "internal_rounds": 0
   },
   {
    "number": 19778,
@@ -265,7 +273,9 @@
    "qwen_output_tokens": 24530,
    "gpu_minutes": 21.6,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T1-NS-1",
+   "internal_rounds": 0
   },
   {
    "number": 19779,
@@ -326,7 +336,9 @@
    "qwen_output_tokens": 31396,
    "gpu_minutes": 23.3,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T1-NS-2",
+   "internal_rounds": 0
   },
   {
    "number": 19781,
@@ -334,13 +346,13 @@
    "title": "feat: isomorphic number fields have the same class number",
    "type": "New lemma",
    "size": null,
-   "state": "open",
+   "state": "closed",
    "opened": "2026-10-21T22:20:58Z",
    "merged": null,
-   "closed": null,
-   "fix_rounds": 2,
+   "closed": "2026-10-27T19:28:36Z",
+   "fix_rounds": 5,
    "first_review_approved": false,
-   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19781#issuecomment-6330431536",
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/19781#issuecomment-6427858789",
    "rounds": [
     {
      "round": 1,
@@ -407,14 +419,30 @@
        "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4343666717"
       }
      ]
+    },
+    {
+     "round": 4,
+     "commit": "3dec87564e8e",
+     "at": "2026-10-26T21:33:06Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The class-group transport API is complete, its body is hidden, and its simp annotations match the existing ClassGroup.mulEquiv lemmas. However, the restated `Ideal.comap_mapRingEquiv_refl` is a general fact about `RingEquiv.refl` that no longer involves `mapRingEquiv`, so its name is misleading and it is filed under the wrong home.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/19781#discussion_r4382746629"
+      }
+     ]
     }
    ],
-   "attempts": 9,
-   "qwen_tokens": 21073871,
-   "qwen_output_tokens": 542818,
-   "gpu_minutes": 328.8,
+   "attempts": 10,
+   "qwen_tokens": 22484228,
+   "qwen_output_tokens": 577123,
+   "gpu_minutes": 362.7,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T1-NEW-1",
+   "internal_rounds": 0
   },
   {
    "number": 20975,
@@ -422,28 +450,58 @@
    "title": "refactor: move the AlgHom.kernelPoint family to Mathlib's AlgHom namespace",
    "type": "Namespace move",
    "size": "medium",
-   "state": "open",
+   "state": "merged",
    "opened": "2026-10-24T22:02:43Z",
-   "merged": null,
+   "merged": "2026-10-30T15:16:29Z",
    "closed": null,
-   "fix_rounds": 0,
-   "first_review_approved": true,
-   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/20975#issuecomment-6391397931",
+   "fix_rounds": 2,
+   "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/20975#issuecomment-6507808962",
    "rounds": [
     {
      "round": 1,
      "commit": "d994526817f4",
-     "at": "2026-10-25T12:33:47Z",
+     "at": "2026-10-25T21:35:59Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "naming",
+       "verdict": "request_changes",
+       "reason": "Eight of the nine moved declarations take `f : H →ₐ[k] k` as their first explicit argument and correctly belong in root `AlgHom`. `kernelPoint_comp_connectedComponentQuotient_mem` takes `z : PrimeSpectrum H` first, so moving it to `AlgHom` puts it in the wrong namespace.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/20975#discussion_r4372536254"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "c22c61a0bcbf",
+     "at": "2026-10-27T21:00:06Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "documentation",
+       "verdict": "request_changes",
+       "reason": "The edited module docstring retains roadmap coordination text prohibited by the documentation rubric.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/20975#discussion_r4394086260"
+      }
+     ]
+    },
+    {
+     "round": 3,
+     "commit": "72f25f091382",
+     "at": "2026-10-29T20:40:03Z",
      "result": "approved",
      "changes": []
     }
    ],
-   "attempts": 1,
-   "qwen_tokens": 1222135,
-   "qwen_output_tokens": 36334,
-   "gpu_minutes": 52.2,
+   "attempts": 3,
+   "qwen_tokens": 3174224,
+   "qwen_output_tokens": 66262,
+   "gpu_minutes": 78.4,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T2-NS-2",
+   "internal_rounds": 0
   },
   {
    "number": 21144,
@@ -451,11 +509,11 @@
    "title": "refactor: prove the quadratic AdjoinRoot integral-generator lemma once",
    "type": "Generalisation",
    "size": "medium",
-   "state": "open",
+   "state": "merged",
    "opened": "2026-10-25T07:50:27Z",
-   "merged": null,
+   "merged": "2026-10-25T21:07:01Z",
    "closed": null,
-   "fix_rounds": 0,
+   "fix_rounds": 2,
    "first_review_approved": false,
    "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21144#issuecomment-6399685188",
    "rounds": [
@@ -472,14 +530,23 @@
        "url": "https://github.com/TauCetiProject/TauCeti/pull/21144#discussion_r4371390790"
       }
      ]
+    },
+    {
+     "round": 2,
+     "commit": "a63cd64b41b5",
+     "at": "2026-10-25T20:47:08Z",
+     "result": "approved",
+     "changes": []
     }
    ],
-   "attempts": 2,
-   "qwen_tokens": 3237973,
-   "qwen_output_tokens": 93550,
-   "gpu_minutes": 100.7,
+   "attempts": 3,
+   "qwen_tokens": 4294803,
+   "qwen_output_tokens": 102941,
+   "gpu_minutes": 156.3,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T2-GEN-1",
+   "internal_rounds": 0
   },
   {
    "number": 21206,
@@ -487,18 +554,18 @@
    "title": "docs(AlgebraicTopology/UniversalCover/Torus): drop the roadmap narrative from the module docstrings",
    "type": "Docstring cleanup",
    "size": "easy",
-   "state": "open",
+   "state": "merged",
    "opened": "2026-10-25T10:40:59Z",
-   "merged": null,
+   "merged": "2026-10-26T23:53:26Z",
    "closed": null,
    "fix_rounds": 0,
    "first_review_approved": true,
-   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21206#issuecomment-6397081776",
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21206#issuecomment-6427220276",
    "rounds": [
     {
      "round": 1,
      "commit": "6b8e77415c80",
-     "at": "2026-10-25T11:30:56Z",
+     "at": "2026-10-26T21:01:06Z",
      "result": "approved",
      "changes": []
     }
@@ -508,7 +575,9 @@
    "qwen_output_tokens": 3755,
    "gpu_minutes": 5.3,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T2-DOC-1",
+   "internal_rounds": 0
   },
   {
    "number": 21248,
@@ -516,20 +585,30 @@
    "title": "refactor: move the MonoidAlgebra trace lemmas to Mathlib's MonoidAlgebra namespace",
    "type": "Namespace move",
    "size": "easy",
-   "state": "open",
+   "state": "merged",
    "opened": "2026-10-25T15:37:06Z",
-   "merged": null,
+   "merged": "2026-10-28T18:17:54Z",
    "closed": null,
    "fix_rounds": 0,
-   "first_review_approved": null,
-   "review_url": null,
-   "rounds": [],
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21248#issuecomment-6427290194",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "3dec8350da5c",
+     "at": "2026-10-26T21:04:41Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
    "attempts": 1,
    "qwen_tokens": 697728,
    "qwen_output_tokens": 19529,
    "gpu_minutes": 16.1,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T2-NS-1",
+   "internal_rounds": 0
   },
   {
    "number": 21266,
@@ -537,20 +616,688 @@
    "title": "feat: define reachability and communication for kernels",
    "type": "New lemma",
    "size": "hard",
-   "state": "open",
+   "state": "merged",
    "opened": "2026-10-25T16:46:48Z",
+   "merged": "2026-10-30T16:14:03Z",
+   "closed": null,
+   "fix_rounds": 3,
+   "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21266#issuecomment-6526405879",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "21f194546e56",
+     "at": "2026-10-25T17:48:34Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The communication predicate lacks a public characteristic lemma, and the reflexivity lemmas lack normal-form automation annotations.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4371768912"
+      },
+      {
+       "rubric": "generality",
+       "verdict": "request_changes",
+       "reason": "Reflexivity and transitivity carry unnecessary assumptions that restrict the communication API.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4371769086"
+      },
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "The reflexivity proof uses an undocumented definitional-equality step.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4371769219"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "a622bd95a123",
+     "at": "2026-10-25T21:26:15Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "The prior findings are resolved: `communicates_def` exists and both reflexivity lemmas are `@[simp]`. The transitivity, symmetry and one-step lemmas take `κ` and the states as explicit arguments even though the hypotheses determine them, which blocks the conventional `hxy.trans hyz` / `h.symm` usage.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4371768912"
+      }
+     ]
+    },
+    {
+     "round": 3,
+     "commit": "a76262e4087c",
+     "at": "2026-10-27T23:15:00Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "`Reaches` and `Communicates` take the kernel `κ` as an implicit binder, so the defined predicates hide the object they are about and break the roadmap's `Reaches κ x y` interface. The rest of the surface is minimal and adequately characterized.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4395247006"
+      }
+     ]
+    },
+    {
+     "round": 4,
+     "commit": "1dd33e914086",
+     "at": "2026-10-29T20:18:07Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "Two proof-style issues: `Reaches.refl` depends on an undocumented definitional equality between `κ ^ 0`, `1` and `Kernel.id` through instances, and `Reaches.trans` ends with a roundabout `restrict_univ ▸` step whose rewrite target Lean must infer.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4417436560"
+      },
+      {
+       "rubric": "reuse",
+       "verdict": "request_changes",
+       "reason": "Reaches/Communicates are new (Mathlib's Irreducible.lean has only IsIrreducible) and IsIrreducible is correctly reused; one proof step in Reaches.trans re-derives an existing Mathlib lemma.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21266#discussion_r4417435935"
+      }
+     ]
+    },
+    {
+     "round": 5,
+     "commit": "1dd33e914086",
+     "at": "2026-10-30T15:24:07Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 7,
+   "qwen_tokens": 15031506,
+   "qwen_output_tokens": 276284,
+   "gpu_minutes": 282.3,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T2-NEW-2",
+   "internal_rounds": 2
+  },
+  {
+   "number": 21439,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21439",
+   "title": "docs(LinearAlgebra/FiniteBilinearModule/Primary): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-26T21:06:41Z",
+   "merged": "2026-10-26T21:44:48Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21439#issuecomment-6427704634",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "9ddecbfac8ad",
+     "at": "2026-10-26T21:25:28Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 202812,
+   "qwen_output_tokens": 3690,
+   "gpu_minutes": 3.4,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T3-DOC-1",
+   "internal_rounds": 0
+  },
+  {
+   "number": 21440,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21440",
+   "title": "refactor: move the FundamentalGroup homeomorphism and mapOfEq lemmas to Mathlib's FundamentalGroup namespace",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-26T21:07:42Z",
+   "merged": "2026-10-30T19:49:21Z",
+   "closed": null,
+   "fix_rounds": 1,
+   "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21440#issuecomment-6529356919",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "62987b9f51ee",
+     "at": "2026-10-26T21:55:46Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "api-design",
+       "verdict": "request_changes",
+       "reason": "Both moved equivalence definitions expose their implementation despite already providing forward and inverse application lemmas.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/21440#discussion_r4382961651"
+      }
+     ]
+    },
+    {
+     "round": 2,
+     "commit": "a163ee26de4e",
+     "at": "2026-10-30T17:39:48Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 5,
+   "qwen_tokens": 14768132,
+   "qwen_output_tokens": 296649,
+   "gpu_minutes": 223.6,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T3-NS-1",
+   "internal_rounds": 3
+  },
+  {
+   "number": 21938,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/21938",
+   "title": "refactor: move the étalé-space chart API to Mathlib's TopCat.Presheaf.EtaleSpace namespace",
+   "type": "Namespace move",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-27T20:17:26Z",
+   "merged": "2026-10-28T01:04:44Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/21938#issuecomment-6453505174",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "331290e6d6f0",
+     "at": "2026-10-27T21:03:46Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 1743800,
+   "qwen_output_tokens": 35054,
+   "gpu_minutes": 26.5,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T3-NS-2",
+   "internal_rounds": 0
+  },
+  {
+   "number": 22474,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/22474",
+   "title": "refactor: move the Submodule.iSupLift construction to Mathlib's Submodule namespace",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-28T20:22:55Z",
+   "merged": "2026-10-29T13:51:39Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/22474#issuecomment-6487135911",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "4b0006677a74",
+     "at": "2026-10-29T03:32:19Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 833813,
+   "qwen_output_tokens": 15500,
+   "gpu_minutes": 16.4,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T4-NS-1",
+   "internal_rounds": 0
+  },
+  {
+   "number": 22475,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/22475",
+   "title": "docs(Combinatorics/Young/HookLength): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-28T20:23:14Z",
+   "merged": "2026-10-29T14:10:36Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/22475#issuecomment-6487476709",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "b4437f49919d",
+     "at": "2026-10-29T03:56:13Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 322322,
+   "qwen_output_tokens": 11697,
+   "gpu_minutes": 9.8,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T4-DOC-1",
+   "internal_rounds": 0
+  },
+  {
+   "number": 22898,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/22898",
+   "title": "refactor: one continuity lemma for Maslov phases along a frame; the loop and path versions become corollaries",
+   "type": "Generalisation",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-29T20:50:50Z",
+   "merged": "2026-10-30T05:08:59Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/22898#issuecomment-6511033839",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "bb6698a0070e",
+     "at": "2026-10-29T23:34:10Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 3,
+   "qwen_tokens": 1892099,
+   "qwen_output_tokens": 41186,
+   "gpu_minutes": 38.5,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T3-GEN-1",
+   "internal_rounds": 2
+  },
+  {
+   "number": 23104,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/23104",
+   "title": "docs(Algebra/Coalgebra/Comodule/Flag): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-30T06:22:45Z",
+   "merged": "2026-10-30T10:16:25Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/23104#issuecomment-6518343114",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "d5e4160be2de",
+     "at": "2026-10-30T08:18:52Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 309544,
+   "qwen_output_tokens": 6164,
+   "gpu_minutes": 4.1,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T5-DOC-2",
+   "internal_rounds": 0
+  },
+  {
+   "number": 23728,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/23728",
+   "title": "refactor: state the open-domain fixed-complement step once; the quotient-coordinate neighbourhood theorems use it",
+   "type": "Generalisation",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-30T16:33:11Z",
+   "merged": "2026-10-30T19:31:58Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/23728#issuecomment-6528921546",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "2c87feea6841",
+     "at": "2026-10-30T17:20:44Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 3,
+   "qwen_tokens": 6663531,
+   "qwen_output_tokens": 139135,
+   "gpu_minutes": 133.3,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T5-GEN-1",
+   "internal_rounds": 2
+  },
+  {
+   "number": 23831,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/23831",
+   "title": "refactor: state self-orthogonality of a row code once; the Golay self-duality proofs become corollaries",
+   "type": "Generalisation",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-30T21:28:54Z",
+   "merged": "2026-10-31T03:09:47Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/23831#issuecomment-6534199235",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "f1251da01532",
+     "at": "2026-10-30T21:48:45Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 3,
+   "qwen_tokens": 6663276,
+   "qwen_output_tokens": 177761,
+   "gpu_minutes": 208.2,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T4-GEN-1",
+   "internal_rounds": 2
+  },
+  {
+   "number": 23834,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/23834",
+   "title": "refactor: move the antipode of the universal enveloping algebra to Mathlib's UniversalEnvelopingAlgebra namespace",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-30T21:35:28Z",
+   "merged": "2026-10-31T03:10:01Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/23834#issuecomment-6534365151",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "6e6f8e60a882",
+     "at": "2026-10-30T21:57:40Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 4,
+   "qwen_tokens": 10349590,
+   "qwen_output_tokens": 147445,
+   "gpu_minutes": 104,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T5-NS-3",
+   "internal_rounds": 3
+  },
+  {
+   "number": 24072,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24072",
+   "title": "refactor: move the PDE coefficient-field continuity lemmas to Mathlib's Continuous and ContinuousOn namespaces",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-31T09:34:19Z",
+   "merged": "2026-10-31T16:06:07Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24072#issuecomment-6541895654",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "ea99abdaceeb",
+     "at": "2026-10-31T09:50:55Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 3103657,
+   "qwen_output_tokens": 37477,
+   "gpu_minutes": 32.3,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-NS-1",
+   "internal_rounds": 0
+  },
+  {
+   "number": 24073,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24073",
+   "title": "refactor: move the matrix-coefficient closure lemmas to Mathlib's Representation namespace",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-31T09:34:21Z",
+   "merged": "2026-10-31T12:08:37Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24073#issuecomment-6542222936",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "1841c4af9130",
+     "at": "2026-10-31T10:27:19Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 2667976,
+   "qwen_output_tokens": 38189,
+   "gpu_minutes": 28.8,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-NS-3",
+   "internal_rounds": 0
+  },
+  {
+   "number": 24079,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24079",
+   "title": "docs(Topology/Covering/Monodromy): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-31T09:50:51Z",
+   "merged": "2026-10-31T12:08:45Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24079#issuecomment-6542379767",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "432213c8cfe0",
+     "at": "2026-10-31T10:44:35Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 326089,
+   "qwen_output_tokens": 9264,
+   "gpu_minutes": 5.7,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-DOC-1",
+   "internal_rounds": 0
+  },
+  {
+   "number": 24088,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24088",
+   "title": "docs(KnotTheory/Grid/Rectangle): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-31T10:09:02Z",
+   "merged": "2026-10-31T12:08:54Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24088#issuecomment-6542519460",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "b4d0dbdee03d",
+     "at": "2026-10-31T10:59:47Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 283676,
+   "qwen_output_tokens": 5291,
+   "gpu_minutes": 3.5,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-DOC-2",
+   "internal_rounds": 0
+  },
+  {
+   "number": 24089,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24089",
+   "title": "docs(Analysis/Contour/Dixon): drop the roadmap narrative from the module docstrings",
+   "type": "Docstring cleanup",
+   "size": "easy",
+   "state": "merged",
+   "opened": "2026-10-31T10:09:10Z",
+   "merged": "2026-10-31T12:08:56Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24089#issuecomment-6542536304",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "668436d31f57",
+     "at": "2026-10-31T11:01:33Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 1,
+   "qwen_tokens": 195722,
+   "qwen_output_tokens": 3828,
+   "gpu_minutes": 3.1,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T5-DOC-1",
+   "internal_rounds": 0
+  },
+  {
+   "number": 24387,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24387",
+   "title": "refactor: move the finite-index Sturm bound to Mathlib's ModularForm namespace",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "merged",
+   "opened": "2026-10-31T16:07:23Z",
+   "merged": "2026-10-31T19:00:04Z",
+   "closed": null,
+   "fix_rounds": 0,
+   "first_review_approved": true,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24387#issuecomment-6547252205",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "f7ee5a664428",
+     "at": "2026-10-31T18:11:44Z",
+     "result": "approved",
+     "changes": []
+    }
+   ],
+   "attempts": 2,
+   "qwen_tokens": 8063822,
+   "qwen_output_tokens": 125125,
+   "gpu_minutes": 108.6,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-NS-4",
+   "internal_rounds": 1,
+   "review_qwen_tokens": 989132,
+   "review_gpu_minutes": 29.8,
+   "reviews_left_out": 0
+  },
+  {
+   "number": 24465,
+   "url": "https://github.com/TauCetiProject/TauCeti/pull/24465",
+   "title": "feat: a continuous alternating form vanishes on pullback along a map of rank less than its degree",
+   "type": "New lemma",
+   "size": "medium",
+   "state": "open",
+   "opened": "2026-10-31T17:06:58Z",
    "merged": null,
    "closed": null,
    "fix_rounds": 0,
-   "first_review_approved": null,
-   "review_url": null,
-   "rounds": [],
-   "attempts": 2,
-   "qwen_tokens": 5314778,
-   "qwen_output_tokens": 120272,
-   "gpu_minutes": 177.7,
+   "first_review_approved": false,
+   "review_url": "https://github.com/TauCetiProject/TauCeti/pull/24465#issuecomment-6548214299",
+   "rounds": [
+    {
+     "round": 1,
+     "commit": "a6a60edb1cc4",
+     "at": "2026-10-31T19:31:36Z",
+     "result": "changes requested",
+     "changes": [
+      {
+       "rubric": "generality",
+       "verdict": "request_changes",
+       "reason": "The rank-vanishing result should be proved algebraically first, with the continuous statement derived from it.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/24465#discussion_r4433028254"
+      },
+      {
+       "rubric": "generality",
+       "verdict": "request_changes",
+       "reason": "The new range-rank theorem is the general form of the existing `ContinuousAlternatingMap.eq_zero_of_finrank_lt` (TopDegree.lean:64), but the PR keeps that special case with its own copy of the same proof under stronger `DivisionRing` hypotheses; the algebraic core is also stated only at the continuous level, which its proof never uses.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/24465#discussion_r4433049184"
+      },
+      {
+       "rubric": "naming",
+       "verdict": "request_changes",
+       "reason": "The namespace and conclusion part of the name are fine, but the hypothesis part reverses Mathlib's `finrank_range` word order.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/24465#discussion_r4433049453"
+      },
+      {
+       "rubric": "placement",
+       "verdict": "request_changes",
+       "reason": "The new lemma is the pullback form of the existing `ContinuousAlternatingMap.eq_zero_of_finrank_lt` and belongs beside it in `TopDegree.lean`, not in a new single-theorem file. The PR description also says the lemma is in `TopDegree.lean` when the diff creates `RangeRank.lean`.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/24465#discussion_r4433049265"
+      },
+      {
+       "rubric": "proof-quality",
+       "verdict": "request_changes",
+       "reason": "The proof is short and readable, but its closing `exact` matches the goal only by unfolding the `toAlternatingMap` coercion, `AlternatingMap.compLinearMap`, `Submodule.subtype` and the zero map, and it has no comment saying so.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/24465#discussion_r4433049534"
+      },
+      {
+       "rubric": "reuse",
+       "verdict": "request_changes",
+       "reason": "The new pullback-vanishing lemma copies the proof of the existing `ContinuousAlternatingMap.eq_zero_of_finrank_lt` (TopDegree.lean:64), which is its `L = id` case, so two lemmas now carry the same argument. Prove one from the other.",
+       "url": "https://github.com/TauCetiProject/TauCeti/pull/24465#discussion_r4433049107"
+      }
+     ]
+    }
+   ],
+   "attempts": 4,
+   "qwen_tokens": 9226183,
+   "qwen_output_tokens": 182062,
+   "gpu_minutes": 121.3,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T5-NEW-1",
+   "internal_rounds": 1,
+   "review_qwen_tokens": 836992,
+   "review_gpu_minutes": 0.0,
+   "reviews_left_out": 1
   }
  ],
  "tasks_without_pr": [
@@ -565,15 +1312,116 @@
    "qwen_output_tokens": 231025,
    "gpu_minutes": 225.3,
    "attempts_without_tokens": 0,
-   "attempts_without_gpu_time": 0
+   "attempts_without_gpu_time": 0,
+   "task": "T2-NEW-1",
+   "internal_rounds": 0
+  },
+  {
+   "target": "Countable singleton formulas for Kernel.Invariant and Kernel.IsReversible",
+   "type": "New lemma",
+   "size": "medium",
+   "state": "failed",
+   "last_attempt": "2026-10-27T00:52:20Z",
+   "attempts": 1,
+   "qwen_tokens": 1918840,
+   "qwen_output_tokens": 56911,
+   "gpu_minutes": 36.9,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T3-NEW-1",
+   "internal_rounds": 0
+  },
+  {
+   "target": "Move the Clifford conjugate-subrepresentation API to Mathlib's Representation",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "failed",
+   "last_attempt": "2026-10-30T16:18:44Z",
+   "attempts": 1,
+   "qwen_tokens": 4098475,
+   "qwen_output_tokens": 67114,
+   "gpu_minutes": 48.4,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T5-NS-2b",
+   "internal_rounds": 0
+  },
+  {
+   "target": "Move the column-module API of a matrix ring to Mathlib's Matrix",
+   "type": "Namespace move",
+   "size": "medium",
+   "state": "checks-passed",
+   "last_attempt": "2026-10-31T15:27:21Z",
+   "attempts": 4,
+   "qwen_tokens": 12727117,
+   "qwen_output_tokens": 195426,
+   "gpu_minutes": 163.2,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-NS-2",
+   "internal_rounds": 4,
+   "review_qwen_tokens": 3865278,
+   "review_gpu_minutes": 99.2,
+   "reviews_left_out": 0
+  },
+  {
+   "target": "Move the barycentric subdivision to Mathlib's PreAbstractSimplicialComplex",
+   "type": "Namespace move",
+   "size": "easy",
+   "state": "failed",
+   "last_attempt": "2026-10-31T18:42:38Z",
+   "attempts": 2,
+   "qwen_tokens": 4729400,
+   "qwen_output_tokens": 117319,
+   "gpu_minutes": 88.9,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T5-NS-1",
+   "internal_rounds": 0
+  },
+  {
+   "target": "The positive-multiple saturation of an additive submonoid, with its API",
+   "type": "New lemma",
+   "size": "medium",
+   "state": "checks-passed",
+   "last_attempt": "2026-10-31T18:56:18Z",
+   "attempts": 6,
+   "qwen_tokens": 19717473,
+   "qwen_output_tokens": 446196,
+   "gpu_minutes": 324.4,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T4-NEW-2",
+   "internal_rounds": 3,
+   "review_qwen_tokens": 2020049,
+   "review_gpu_minutes": 27.4,
+   "reviews_left_out": 1
+  },
+  {
+   "target": "Borel reducibility of setoids, with its characteristic API",
+   "type": "New lemma",
+   "size": "medium",
+   "state": "checks-passed",
+   "last_attempt": "2026-10-31T18:58:01Z",
+   "attempts": 4,
+   "qwen_tokens": 26789258,
+   "qwen_output_tokens": 627028,
+   "gpu_minutes": 501.5,
+   "attempts_without_tokens": 0,
+   "attempts_without_gpu_time": 0,
+   "task": "T6-NEW-1",
+   "internal_rounds": 1,
+   "review_qwen_tokens": 2031593,
+   "review_gpu_minutes": 61.1,
+   "reviews_left_out": 0
   }
  ],
  "project_progress": {
-  "as_of": "2026-10-25T18:22:07Z",
+  "as_of": "2026-10-31T19:31:03Z",
   "window_days": 30,
-  "merged_prs": 11049,
-  "merged_pr_authors": 41,
-  "roadmaps_active": 118,
-  "roadmaps_completed": 11
+  "merged_prs": 12773,
+  "merged_pr_authors": 40,
+  "roadmaps_active": 124,
+  "roadmaps_completed": 30
  }
 }

@@ -15,10 +15,16 @@ type Cost = {
 	gpuMinutes: number | null;
 	attemptsWithoutTokens: number;
 	attemptsWithoutGpuTime: number;
+	/** Internal reviews on the same model; null when none. A stalled review's minutes are left out and counted. */
+	reviewTokens: number | null;
+	reviewMinutes: number | null;
+	reviewsLeftOut: number;
 };
 
 export type PR = Cost & {
 	number: number;
+	/** The task's id (T5-NS-3); '' in older data. */
+	task: string;
 	url: string;
 	title: string;
 	type: string;
@@ -27,7 +33,10 @@ export type PR = Cost & {
 	opened: Date;
 	merged: Date | null;
 	closed: Date | null;
+	/** Rounds that answered Tau Ceti's review or CI. */
 	fixRounds: number;
+	/** Rounds that answered our own review, before or after the PR opened; null in older data. */
+	internalRounds: number | null;
 	/** null: no first review yet (pending), so neither approved nor "changes asked". */
 	firstReviewApproved: boolean | null;
 	reviewURL: string | null;
@@ -36,7 +45,11 @@ export type PR = Cost & {
 
 /** A task whose attempts have not led to a PR (yet): failures before a PR count too. */
 export type Task = Cost & {
+	/** The task's id (T5-NS-3); '' in older data. */
+	task: string;
 	target: string;
+	/** Rounds that answered our own review; null in older data. */
+	internalRounds: number | null;
 	type: string;
 	size: Size | null;
 	state: 'failed' | 'checks-passed';
@@ -47,7 +60,21 @@ export type Task = Cost & {
 export type PRLink = { number: number; url: string; title: string };
 
 /** A running or queued task (live data only); a fix round names its pull request. */
-export type NowTask = { target: string; type: string; size: Size | null; fixRound: number | null; pr: PRLink | null };
+export type NowTask = {
+	task: string;
+	target: string;
+	type: string;
+	size: Size | null;
+	/** What kind of run: new, rerun, rerun-more-time, fix-review, fix-ci, fix-internal, review, followup; '' in older data. */
+	run: string;
+	/** A fix's round or a rerun's try. */
+	runRound: number | null;
+	fixRound: number | null;
+	pr: PRLink | null;
+};
+
+/** Every running or queued task in short: where a task without a PR stands, what the queue is a mix of. */
+export type Active = { task: string; state: 'running' | 'interrupted' | 'queued'; run: string };
 
 /** What the runner works on now (live data only): the running tasks, the first queued ones, and how many are queued. */
 export type Now = {
@@ -55,6 +82,7 @@ export type Now = {
 	running: (NowTask & { state: 'running' | 'interrupted' })[];
 	queue: NowTask[];
 	queued: number;
+	active: Active[];
 };
 
 /**
@@ -119,7 +147,16 @@ const prLink = (v: any): PRLink | null => {
 };
 const nowTask = (r: any): NowTask => {
 	const pr = prLink(r?.pr);
-	return { target: str(r?.target), type: str(r?.type), size: size(r?.size), fixRound: pr ? n(r.fix_round) || null : null, pr };
+	return {
+		task: str(r?.task),
+		target: str(r?.target),
+		type: str(r?.type),
+		size: size(r?.size),
+		run: str(r?.run),
+		runRound: n(r?.run_round) || null,
+		fixRound: pr ? n(r.fix_round) || null : null,
+		pr,
+	};
 };
 
 const cost = (p: any): Cost => ({
@@ -129,6 +166,9 @@ const cost = (p: any): Cost => ({
 	gpuMinutes: n(p.gpu_minutes),
 	attemptsWithoutTokens: n(p.attempts_without_tokens) ?? 0,
 	attemptsWithoutGpuTime: n(p.attempts_without_gpu_time) ?? 0,
+	reviewTokens: n(p.review_qwen_tokens),
+	reviewMinutes: n(p.review_gpu_minutes),
+	reviewsLeftOut: n(p.reviews_left_out) ?? 0,
 });
 
 const rounds = (v: unknown): Round[] =>
@@ -160,6 +200,7 @@ export function normalize(d: any) {
 			const rs = rounds(p.rounds);
 			return {
 				number: p.number,
+				task: str(p.task),
 				url,
 				title: str(p.title),
 				type: str(p.type),
@@ -169,6 +210,7 @@ export function normalize(d: any) {
 				merged: state === 'merged' ? merged : null,
 				closed: state === 'closed' ? date(p.closed) : null,
 				fixRounds: p.fix_rounds,
+				internalRounds: n(p.internal_rounds),
 				// Tri-state: "changes asked" needs a review round to show for it (older data said
 				// false for a PR not reviewed yet).
 				firstReviewApproved:
@@ -184,7 +226,16 @@ export function normalize(d: any) {
 		.map((t): Task | null => {
 			const state = t?.state === 'failed' || t?.state === 'checks-passed' ? t.state : null;
 			if (!state || !str(t.target)) return null;
-			return { target: t.target, type: str(t.type), size: size(t.size), state, lastAttempt: date(t.last_attempt), ...cost(t) };
+			return {
+				task: str(t.task),
+				target: t.target,
+				type: str(t.type),
+				size: size(t.size),
+				state,
+				internalRounds: n(t.internal_rounds),
+				lastAttempt: date(t.last_attempt),
+				...cost(t),
+			};
 		})
 		.filter((t): t is Task => t !== null);
 
@@ -227,6 +278,9 @@ export function normalize(d: any) {
 						.map(nowTask)
 						.filter((r) => r.target || r.type || r.pr),
 					queued: n(d.now.queued) ?? 0,
+					active: arr(d.now.active)
+						.filter((a) => a?.state === 'running' || a?.state === 'interrupted' || a?.state === 'queued')
+						.map((a) => ({ task: str(a.task), state: a.state, run: str(a.run) })),
 				}
 			: null;
 	}
@@ -257,7 +311,6 @@ export function normalize(d: any) {
 		generatedAt: date(d?.generated_at),
 		progress: progress(d?.project_progress),
 		now,
-		jsonPath: '/science/tauceti.json',
 		livePath: '/v1/projects/tauceti/science',
 		pagePath: '/science/tauceti/',
 	};

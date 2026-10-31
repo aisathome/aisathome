@@ -35,7 +35,7 @@ func minimalScience(now time.Time) map[string]any {
 			"number": 19779, "url": "https://github.com/TauCetiProject/TauCeti/pull/19779",
 			"title": "refactor: move subScalar to LinearPMap", "type": "Namespace move", "size": "easy",
 			"state": "merged", "opened": ts(-72 * time.Hour), "merged": ts(-24 * time.Hour), "closed": nil,
-			"fix_rounds": 1, "first_review_approved": false,
+			"fix_rounds": 1, "internal_rounds": 2, "first_review_approved": false,
 			"review_url": "https://github.com/TauCetiProject/TauCeti/pull/19779#issuecomment-6330287596",
 			"rounds": []any{
 				map[string]any{"round": 1, "commit": "1ca00527cf49", "at": ts(-70 * time.Hour), "result": "changes requested",
@@ -46,6 +46,7 @@ func minimalScience(now time.Time) map[string]any {
 			},
 			"attempts": 2, "qwen_tokens": 2000000, "qwen_output_tokens": 60000, "gpu_minutes": 50.5,
 			"attempts_without_tokens": 0, "attempts_without_gpu_time": 0,
+			"review_qwen_tokens": 40000, "review_gpu_minutes": 33.5, "reviews_left_out": 1,
 		}},
 		"tasks_without_pr": []any{map[string]any{
 			"target": "The multigraph isomorphism interface Graph.Iso", "type": "New lemma", "size": "hard",
@@ -175,6 +176,10 @@ func TestSciencePostSchema(t *testing.T) {
 		"negative tokens":                   mod(func(m map[string]any) { task(m)["qwen_tokens"] = -1 }),
 		"more without tokens than attempts": mod(func(m map[string]any) { task(m)["attempts_without_tokens"] = 9 }),
 		"wrong type":                        mod(func(m map[string]any) { pr(m)["fix_rounds"] = "one" }),
+		"negative internal rounds":          mod(func(m map[string]any) { pr(m)["internal_rounds"] = -1 }),
+		"negative review minutes":           mod(func(m map[string]any) { pr(m)["review_gpu_minutes"] = -1 }),
+		"negative review tokens":            mod(func(m map[string]any) { task(m)["review_qwen_tokens"] = -1 }),
+		"negative reviews left out":         mod(func(m map[string]any) { pr(m)["reviews_left_out"] = -1 }),
 		"future":                            mod(func(m map[string]any) { m["generated_at"] = now.Add(time.Hour).UTC().Format(time.RFC3339) }),
 		"bad day":                           mod(func(m map[string]any) { m["states_as_of"] = "yesterday" }),
 		"trailing data":                     append(statusJSON(minimalScience(now)), []byte(`{}`)...),
@@ -429,6 +434,115 @@ func TestScienceNowFixRoundsAndQueue(t *testing.T) {
 		b["attempts"] = []any{a}
 		g.pstatus.byID["tauceti"].ReceivedAt = now.Add(-time.Minute)
 		if w := postStatus(t, g, "tauceti", testProjectKey, statusJSON(b)); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d, want 400", name, w.Code)
+		}
+	}
+}
+
+// A running or queued internal review is part of "working on now" (finding 2026-10-31: the page
+// said "Nothing is running" during reviews); its kind of run is public, the run of an unknown
+// kind is refused.
+func TestScienceNowShowsReviews(t *testing.T) {
+	g := statusGateway(t, "")
+	defer g.Close()
+	now := time.Now()
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(minimalScience(now))); w.Code != 200 {
+		t.Fatalf("science: HTTP %d %s", w.Code, w.Body)
+	}
+	att := func(id, state, run string) map[string]any {
+		return map[string]any{"attempt": id, "state": state, "run": run, "task": "T6-NS-4", "title": "Move subScalar", "task_type": "NS",
+			"steps": 0, "used_min": 0, "awake_min": 0, "interruptions": 0}
+	}
+	st := minimalStatus(now)
+	done := att("T6-NS-9.a-A", "done", "new")
+	st["attempts"] = []any{att("T6-NS-4.a-P1.review", "running", "review"), att("T6-NS-5.a-A.review", "queued", "review"), done}
+	if w := postStatus(t, g, "tauceti", testProjectKey, statusJSON(st)); w.Code != 200 {
+		t.Fatalf("status: HTTP %d %s", w.Code, w.Body)
+	}
+	_, got, raw := getScience(t, g, "tauceti")
+	n := got["now"].(map[string]any)
+	run, queue := n["running"].([]any), n["queue"].([]any)
+	if len(run) != 1 || run[0].(map[string]any)["run"] != "review" || run[0].(map[string]any)["state"] != "running" ||
+		len(queue) != 1 || queue[0].(map[string]any)["run"] != "review" {
+		t.Fatalf("reviews in now: %s", raw)
+	}
+	if strings.Contains(raw, ".review") || strings.Contains(raw, "P1") {
+		t.Errorf("an attempt id reached the public JSON: %s", raw)
+	}
+	for name, f := range map[string]func(a map[string]any){
+		"an unknown kind of run":   func(a map[string]any) { a["run"] = "something else" },
+		"a task id with a path":    func(a map[string]any) { a["task"] = "T6/NS" },
+		"a task id naming a model": func(a map[string]any) { a["task"] = "T6-claude-1" },
+		"a round out of range":     func(a map[string]any) { a["run_round"] = 101 },
+	} {
+		bad := minimalStatus(now)
+		a := att("T6-NS-4.a-P1.review", "running", "review")
+		f(a)
+		bad["attempts"] = []any{a}
+		g.pstatus.byID["tauceti"].ReceivedAt = now.Add(-time.Minute)
+		if w := postStatus(t, g, "tauceti", testProjectKey, statusJSON(bad)); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d, want 400", name, w.Code)
+		}
+	}
+}
+
+// Each row and "working on now" say which task it is and what kind of run; "active" lists every
+// running and queued task past the page's ten, in short, and nothing finished. Attempt ids stay out.
+func TestScienceTaskIdsAndKinds(t *testing.T) {
+	g := statusGateway(t, "")
+	defer g.Close()
+	now := time.Now()
+	sc := minimalScience(now)
+	sc["prs"].([]any)[0].(map[string]any)["task"] = "T1-NS-2"
+	sc["tasks_without_pr"].([]any)[0].(map[string]any)["task"] = "T2-NEW-1"
+	sc["tasks_without_pr"].([]any)[0].(map[string]any)["internal_rounds"] = 1
+	if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(sc)); w.Code != 200 {
+		t.Fatalf("science: HTTP %d %s", w.Code, w.Body)
+	}
+	att := func(id, state, task, run string, round int) any {
+		return map[string]any{"attempt": id, "state": state, "task": task, "run": run, "run_round": round, "title": "A task",
+			"task_type": "NEW", "steps": 0, "used_min": 0, "awake_min": 0, "interruptions": 0}
+	}
+	atts := []any{att("T2-NEW-1.a-AT", "running", "T2-NEW-1", "rerun-more-time", 3), att("T9-NS-1.a-A", "done", "T9-NS-1", "new", 0)}
+	for i := 0; i < 12; i++ {
+		atts = append(atts, att(fmt.Sprintf("T7-NS-%d.a-A", i), "queued", fmt.Sprintf("T7-NS-%d", i), "new", 0))
+	}
+	st := minimalStatus(now)
+	st["attempts"] = atts
+	if w := postStatus(t, g, "tauceti", testProjectKey, statusJSON(st)); w.Code != 200 {
+		t.Fatalf("status: HTTP %d %s", w.Code, w.Body)
+	}
+	_, got, raw := getScience(t, g, "tauceti")
+	if got["prs"].([]any)[0].(map[string]any)["task"] != "T1-NS-2" ||
+		got["tasks_without_pr"].([]any)[0].(map[string]any)["task"] != "T2-NEW-1" {
+		t.Fatalf("task ids on rows: %s", raw)
+	}
+	n := got["now"].(map[string]any)
+	r := n["running"].([]any)[0].(map[string]any)
+	if r["task"] != "T2-NEW-1" || r["run"] != "rerun-more-time" || r["run_round"] != float64(3) {
+		t.Fatalf("running: %v", r)
+	}
+	active := n["active"].([]any)
+	if len(active) != 13 || len(n["queue"].([]any)) != nowQueueMax {
+		t.Fatalf("active %d, queue %d: %s", len(active), len(n["queue"].([]any)), raw)
+	}
+	if a := active[0].(map[string]any); a["task"] != "T2-NEW-1" || a["state"] != "running" || a["run"] != "rerun-more-time" || len(a) != 3 {
+		t.Errorf("active[0]: %v", a)
+	}
+	for _, leak := range []string{"T9-NS-1", ".a-A", ".a-AT"} {
+		if strings.Contains(raw, leak) {
+			t.Errorf("the public JSON contains %q", leak)
+		}
+	}
+	for name, bad := range map[string]func(m map[string]any){
+		"a task id with spaces on a PR": func(m map[string]any) { m["prs"].([]any)[0].(map[string]any)["task"] = "T1 NS" },
+		"a task id with a model":        func(m map[string]any) { m["tasks_without_pr"].([]any)[0].(map[string]any)["task"] = "T-codex" },
+		"negative internal rounds":      func(m map[string]any) { m["tasks_without_pr"].([]any)[0].(map[string]any)["internal_rounds"] = -1 },
+	} {
+		m := minimalScience(now)
+		bad(m)
+		g.psci.byID["tauceti"].ReceivedAt = now.Add(-time.Minute)
+		if w := postScience(t, g, "tauceti", testProjectKey, statusJSON(m)); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: HTTP %d, want 400", name, w.Code)
 		}
 	}

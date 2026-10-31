@@ -71,6 +71,11 @@ type statusAttempt struct {
 	State    string `json:"state"`               // queued, running, interrupted, done, failed, skipped
 	Stage    string `json:"stage,omitempty"`     // the queue service's stage (fresh, resume, score, ...)
 	Round    int    `json:"round,omitempty"`     // follow-up round; 0 = the first
+	// Public, for the science page's "working on now": the task's id (T5-NS-3, not the attempt's), what
+	// kind of run this is, and which round of a fix or try of a rerun.
+	Task     string `json:"task,omitempty"`
+	Run      string `json:"run,omitempty"`
+	RunRound int    `json:"run_round,omitempty"`
 	// A fix round of an open pull request: its number in the project's repository (public: the
 	// science page links it) and the fix round's number (1, 2, ...).
 	PR       int `json:"pr,omitempty"`
@@ -136,6 +141,8 @@ type statusCost struct {
 var (
 	statusIDRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	statusTypeRe = regexp.MustCompile(`^[A-Z]{1,8}$`)
+	// statusTaskRe: a task's id; T5-NS-3, T5-NS-2b.
+	statusTaskRe = regexp.MustCompile(`^[A-Z][A-Za-z0-9-]{0,23}$`)
 	// secretLike: a long unbroken run of key characters (API keys, GitHub tokens, hashes) or a
 	// known key prefix. A status never needs one.
 	secretLike = regexp.MustCompile(`[A-Za-z0-9_+/=-]{32,}|(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9])|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
@@ -146,6 +153,10 @@ var (
 	serviceStates = []string{"active", "inactive", "failed", "activating", "deactivating", "unknown"}
 	sizes         = []string{"", "easy", "medium", "hard"}
 	budgetKinds   = []string{"", "model", "awake"}
+	// runKinds: new (a first attempt), rerun, rerun-more-time, fix-review, fix-ci and fix-internal (a
+	// round answering the project's review, its CI or our own review), review (an internal review
+	// of a candidate, the review loop), followup (an operator's follow-up round).
+	runKinds = []string{"", "new", "rerun", "rerun-more-time", "fix-review", "fix-ci", "fix-internal", "review", "followup"}
 )
 
 func oneOf(v string, set []string) bool {
@@ -216,6 +227,13 @@ func (s *runnerStatus) validate(now time.Time) error {
 		}
 		if !oneOf(a.BudgetKind, budgetKinds) {
 			errs = append(errs, fmt.Errorf("%s.budget_kind: model or awake", f))
+		}
+		if !oneOf(a.Run, runKinds) {
+			errs = append(errs, fmt.Errorf("%s.run: one of %s", f, strings.Join(runKinds[1:], ", ")))
+		}
+		errs = append(errs, checkTask(f+".task", a.Task))
+		if a.RunRound < 0 || a.RunRound > 100 {
+			errs = append(errs, fmt.Errorf("%s.run_round: 0 to 100", f))
 		}
 		if a.Stage != "" {
 			errs = append(errs, checkID(f+".stage", a.Stage))

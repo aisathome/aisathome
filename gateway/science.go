@@ -2,8 +2,9 @@
 // posts its results once a day to POST /v1/projects/<id>/science with the project key (built
 // from its run records and Tau Ceti's public reviews); anyone can read them at GET on the same
 // path, together with a short "working on now" view of the runner's latest status
-// (projstatus.go): the running tasks' target, type, size and state, the first queued tasks'
-// target, type and size, and how many are queued; a fix round names its pull request (number,
+// (projstatus.go): the running tasks' id, target, type, size, state and kind of run, the first
+// queued tasks' id, target, type, size and kind of run, how many are queued, and every running or
+// queued task's id, state and kind of run; a fix round names its pull request (number,
 // link into the project's repository, and its title when the results list it). The results may
 // also carry the project's own progress as a whole (project_progress: merged pull requests in a
 // window, their authors, roadmaps active and declared complete), counts only, refused when stale.
@@ -12,7 +13,8 @@
 // links must point at GitHub pull requests and their comments, free text is bounded, and text
 // that names a reviewer model or looks like a key is refused. The "now" view copies only the
 // whitelisted status fields; attempt ids, outcomes, budgets, the instance and costs stay on the
-// admin-only operations page.
+// admin-only operations page. A task's id (T5-NS-3) and its kind of run are public (owner,
+// 2026-10-31: the page should name what we talk about); who reviews internally is not.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -141,10 +143,16 @@ type scienceCost struct {
 	GPUMinutes             *float64 `json:"gpu_minutes"`
 	AttemptsWithoutTokens  int      `json:"attempts_without_tokens"`
 	AttemptsWithoutGPUTime int      `json:"attempts_without_gpu_time"`
+	// Internal reviews of the task on the same model, apart from its attempts: tokens, GPU minutes,
+	// and how many reviews' minutes are left out (a stall, not work).
+	ReviewQwenTokens *int64   `json:"review_qwen_tokens,omitempty"`
+	ReviewGPUMinutes *float64 `json:"review_gpu_minutes,omitempty"`
+	ReviewsLeftOut   int      `json:"reviews_left_out,omitempty"`
 }
 
 type sciencePR struct {
 	Number              int            `json:"number"`
+	Task                string         `json:"task,omitempty"` // the task's id: T5-NS-3
 	URL                 string         `json:"url"`
 	Title               string         `json:"title"`
 	Type                string         `json:"type"`
@@ -153,7 +161,8 @@ type sciencePR struct {
 	Opened              time.Time      `json:"opened"`
 	Merged              *time.Time     `json:"merged"`
 	Closed              *time.Time     `json:"closed"`
-	FixRounds           int            `json:"fix_rounds"`
+	FixRounds           int            `json:"fix_rounds"`            // rounds that answered the project's review or CI
+	InternalRounds      int            `json:"internal_rounds"`       // rounds that answered our own review
 	FirstReviewApproved *bool          `json:"first_review_approved"` // null: no review yet
 	ReviewURL           *string        `json:"review_url"`            // Tau Ceti's review scoreboard comment
 	Rounds              []scienceRound `json:"rounds"`
@@ -179,11 +188,13 @@ type scienceChange struct {
 
 // scienceTask is a task whose attempts have not led to a PR (failures before a PR count too).
 type scienceTask struct {
-	Target      string     `json:"target"`
-	Type        string     `json:"type"`
-	Size        *string    `json:"size"`
-	State       string     `json:"state"` // failed, checks-passed
-	LastAttempt *time.Time `json:"last_attempt"`
+	Task           string     `json:"task,omitempty"` // the task's id: T5-NS-3
+	Target         string     `json:"target"`
+	Type           string     `json:"type"`
+	Size           *string    `json:"size"`
+	State          string     `json:"state"`           // failed, checks-passed
+	InternalRounds int        `json:"internal_rounds"` // rounds that answered our own review
+	LastAttempt    *time.Time `json:"last_attempt"`
 	scienceCost
 }
 
@@ -233,6 +244,17 @@ func match(field string, re *regexp.Regexp, s string) error {
 	return nil
 }
 
+// checkTask accepts a task's id, or none (older results).
+func checkTask(field, s string) error {
+	if s == "" {
+		return nil
+	}
+	if err := match(field, statusTaskRe, s); err != nil {
+		return err
+	}
+	return checkPublic(field, s, 24)
+}
+
 func checkSize(field string, s *string) error {
 	if s != nil && !oneOf(*s, taskSizes) {
 		return fmt.Errorf("%s: easy, medium, hard or null", field)
@@ -246,11 +268,18 @@ func (c *scienceCost) validate(f string) []error {
 		c.AttemptsWithoutTokens > c.Attempts || c.AttemptsWithoutGPUTime > c.Attempts {
 		errs = append(errs, fmt.Errorf("%s: attempt counts out of range", f))
 	}
-	if (c.QwenTokens != nil && *c.QwenTokens < 0) || (c.QwenOutputTokens != nil && *c.QwenOutputTokens < 0) {
+	if (c.QwenTokens != nil && *c.QwenTokens < 0) || (c.QwenOutputTokens != nil && *c.QwenOutputTokens < 0) ||
+		(c.ReviewQwenTokens != nil && *c.ReviewQwenTokens < 0) {
 		errs = append(errs, fmt.Errorf("%s: negative tokens", f))
 	}
 	if c.GPUMinutes != nil {
 		errs = append(errs, checkNum(f+".gpu_minutes", *c.GPUMinutes, 1e6))
+	}
+	if c.ReviewGPUMinutes != nil {
+		errs = append(errs, checkNum(f+".review_gpu_minutes", *c.ReviewGPUMinutes, 1e6))
+	}
+	if c.ReviewsLeftOut < 0 || c.ReviewsLeftOut > 10000 {
+		errs = append(errs, fmt.Errorf("%s: reviews_left_out out of range", f))
 	}
 	return errs
 }
@@ -293,7 +322,7 @@ func (s *scienceResults) validate(now time.Time) error {
 	for i, p := range s.PRs {
 		f := fmt.Sprintf("prs[%d]", i)
 		errs = append(errs, match(f+".url", prURLRe, p.URL), checkPublic(f+".title", p.Title, 300),
-			checkPublic(f+".type", p.Type, 60), checkSize(f+".size", p.Size))
+			checkPublic(f+".type", p.Type, 60), checkSize(f+".size", p.Size), checkTask(f+".task", p.Task))
 		if p.Number <= 0 || !strings.HasSuffix(p.URL, fmt.Sprintf("/pull/%d", p.Number)) {
 			errs = append(errs, fmt.Errorf("%s: number and url disagree", f))
 		}
@@ -303,8 +332,8 @@ func (s *scienceResults) validate(now time.Time) error {
 		if p.Opened.IsZero() || (p.State == "merged") != (p.Merged != nil) {
 			errs = append(errs, fmt.Errorf("%s: opened missing, or merged date without the merged state", f))
 		}
-		if p.FixRounds < 0 || p.FixRounds > 100 || len(p.Rounds) > 100 {
-			errs = append(errs, fmt.Errorf("%s: fix_rounds or rounds out of range", f))
+		if p.FixRounds < 0 || p.FixRounds > 100 || p.InternalRounds < 0 || p.InternalRounds > 100 || len(p.Rounds) > 100 {
+			errs = append(errs, fmt.Errorf("%s: fix_rounds, internal_rounds or rounds out of range", f))
 		}
 		if p.ReviewURL != nil {
 			errs = append(errs, match(f+".review_url", commentURLRe, *p.ReviewURL))
@@ -328,9 +357,13 @@ func (s *scienceResults) validate(now time.Time) error {
 	}
 	for i, x := range s.TasksWithoutPR {
 		f := fmt.Sprintf("tasks_without_pr[%d]", i)
-		errs = append(errs, checkPublic(f+".target", x.Target, 300), checkPublic(f+".type", x.Type, 60), checkSize(f+".size", x.Size))
+		errs = append(errs, checkPublic(f+".target", x.Target, 300), checkPublic(f+".type", x.Type, 60), checkSize(f+".size", x.Size),
+			checkTask(f+".task", x.Task))
 		if !oneOf(x.State, taskStates) {
 			errs = append(errs, fmt.Errorf("%s.state: failed or checks-passed", f))
+		}
+		if x.InternalRounds < 0 || x.InternalRounds > 100 {
+			errs = append(errs, fmt.Errorf("%s.internal_rounds: 0 to 100", f))
 		}
 		errs = append(errs, x.scienceCost.validate(f)...)
 	}
@@ -453,14 +486,27 @@ type sciNow struct {
 	Running    []sciTask `json:"running"`
 	Queued     int       `json:"queued"` // every queued task
 	Queue      []sciTask `json:"queue"`  // the first nowQueueMax of them, in queue order
+	// Active is every running, interrupted and queued task in short, so the page can say where a
+	// task without a PR stands, and what the queue is a mix of.
+	Active []sciActive `json:"active"`
+}
+
+// sciActive is a running or queued task in short.
+type sciActive struct {
+	Task  string `json:"task,omitempty"`
+	State string `json:"state"` // running, interrupted, queued
+	Run   string `json:"run,omitempty"`
 }
 
 // sciTask is a running or queued task. A fix round names the open pull request it revises.
 type sciTask struct {
+	Task     string     `json:"task,omitempty"`
 	Target   string     `json:"target"`
 	Type     string     `json:"type"`
 	Size     string     `json:"size,omitempty"`
 	State    string     `json:"state,omitempty"` // running, or interrupted (resumes when the runner is back); none when queued
+	Run      string     `json:"run,omitempty"`   // what kind of run (runKinds)
+	RunRound int        `json:"run_round,omitempty"`
 	FixRound int        `json:"fix_round,omitempty"`
 	PR       *sciPRLink `json:"pr,omitempty"`
 }
@@ -474,8 +520,9 @@ type sciPRLink struct {
 }
 
 // publicNow copies the whitelisted fields of a status: the running, interrupted and first
-// queued tasks' target, type (its label when the results name one), size and state, a fix
-// round's number and pull request, and the queued count. nil without a status or with one older
+// queued tasks' target, type (its label when the results name one), size, state and kind of run
+// (an internal review is one of them, so the page never says "nothing is running" during one), a
+// fix round's number and pull request, and the queued count. nil without a status or with one older
 // than nowMaxAge. A pull request is only ever a number: its link is built here from the results'
 // repository (a checked GitHub URL) and must be a GitHub pull request link.
 func publicNow(st *storedStatus, res *scienceResults, now time.Time) *sciNow {
@@ -487,7 +534,7 @@ func publicNow(st *storedStatus, res *scienceResults, now time.Time) *sciNow {
 		labels = res.TypeLabels
 	}
 	task := func(a statusAttempt) sciTask {
-		t := sciTask{Target: a.Title, Type: a.TaskType, Size: a.Size}
+		t := sciTask{Task: a.Task, Target: a.Title, Type: a.TaskType, Size: a.Size, Run: a.Run, RunRound: a.RunRound}
 		if l, ok := labels[t.Type]; ok {
 			t.Type = l
 		}
@@ -505,7 +552,7 @@ func publicNow(st *storedStatus, res *scienceResults, now time.Time) *sciNow {
 		}
 		return t
 	}
-	out := &sciNow{ReportedAt: st.Status.GeneratedAt.UTC(), Running: []sciTask{}, Queue: []sciTask{}}
+	out := &sciNow{ReportedAt: st.Status.GeneratedAt.UTC(), Running: []sciTask{}, Queue: []sciTask{}, Active: []sciActive{}}
 	for _, a := range st.Status.Attempts {
 		switch a.State {
 		case "queued":
@@ -517,7 +564,10 @@ func publicNow(st *storedStatus, res *scienceResults, now time.Time) *sciNow {
 			t := task(a)
 			t.State = a.State
 			out.Running = append(out.Running, t)
+		default:
+			continue
 		}
+		out.Active = append(out.Active, sciActive{a.Task, a.State, a.Run})
 	}
 	return out
 }
