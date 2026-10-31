@@ -832,11 +832,12 @@ func (s *taskStore) list(project string, states, kinds []string, exported string
 	return out, counts
 }
 
-// chainView returns a chain's record, or nil.
+// chainView returns a chain's record, or nil. It comes with a list or a get, which have swept, so it
+// only loads: a list of 200 chains must not retry a failing write 200 times.
 func (s *taskStore) chainView(project, id string) *taskChain {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, _, err := s.open(project)
+	p, err := s.load(project)
 	if err != nil {
 		return nil
 	}

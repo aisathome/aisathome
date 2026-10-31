@@ -469,6 +469,11 @@ func TestUnreadableQueueIsNotEmpty(t *testing.T) {
 	}
 	w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-A", "attempt"))
 	unavailable(t, w.Code, "create over a task it cannot see")
+	var d opsData
+	r.g.opsTasks(&d, "tauceti", r.now)
+	if !strings.Contains(d.TaskCounts, "cannot be read") {
+		t.Fatalf("the ops card says %q", d.TaskCounts)
+	}
 	if err := os.Chmod(tasks, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -500,6 +505,29 @@ func TestLeaseExpiresDuringFailedWrites(t *testing.T) {
 	}
 	if got := r.g.tasks.get("tauceti", id); got.Tries != 1 || got.Interruptions != 1 {
 		t.Fatalf("task %+v", got)
+	}
+}
+
+// A list during a fault tries a failing write once per sweep, not once per chain: each try after a
+// failed write reads the whole queue again.
+func TestListDuringAFaultStaysCheap(t *testing.T) {
+	r := newTaskRig(t, t.TempDir())
+	r.create("T1.a-A", "attempt")
+	r.create("T2.a-A", "attempt")
+	r.create("T3.a-A", "attempt")
+	r.create("T4.a-A", "attempt")
+	r.claim("w1", 60)
+	r.now = r.now.Add(2 * time.Minute) // an expired lease: every sweep tries to write
+	tries := 0
+	r.g.tasks.write = func(string, []byte) error {
+		tries++
+		return syscall.ENOSPC
+	}
+	if w, out := r.call("GET", tasksPath, testProjectKey, nil); w.Code != 200 || len(out["tasks"].([]any)) != 4 {
+		t.Fatalf("list: HTTP %d %s", w.Code, w.Body)
+	}
+	if tries > 2 {
+		t.Fatalf("%d tries for one list", tries)
 	}
 }
 
