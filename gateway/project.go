@@ -14,6 +14,7 @@
 package gateway
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"regexp"
@@ -66,6 +67,10 @@ type Project struct {
 	// QueueTimeoutSec is how long a request waits for a node; science waits behind people's
 	// requests, so it may wait longer than they do. Default the gateway's queue_timeout_seconds.
 	QueueTimeoutSec int `json:"queue_timeout_seconds,omitempty"`
+	// ReviewLoop: a task that passes its checks gets a review task, and a red verdict a fix round
+	// (tasks.go, "The review loop"). MaxReviewRounds: automatic rounds per chain; 0 = 3.
+	ReviewLoop      bool `json:"review_loop,omitempty"`
+	MaxReviewRounds int  `json:"max_review_rounds,omitempty"`
 }
 
 var projectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
@@ -74,6 +79,16 @@ var projectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 type projectTable struct {
 	byHash map[string]*Project // key SHA-256 → project
 	byID   map[string]*Project
+}
+
+// reviewLoop is the task store's view of a project's review loop.
+func (g *Gateway) reviewLoop(project string) (bool, int) {
+	t := g.projects.Load()
+	if t == nil || t.byID[project] == nil {
+		return false, defaultReviewRounds
+	}
+	p := t.byID[project]
+	return p.ReviewLoop, cmp.Or(p.MaxReviewRounds, defaultReviewRounds)
 }
 
 // newProjectTable checks the projects of a config.

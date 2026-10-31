@@ -5,10 +5,14 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -236,6 +240,132 @@ func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
 	}
 }
 
+// The review loop through the real server: a passing candidate gets its review from the gateway,
+// behind fixes and before first attempts; two runners working the queue never hold one task; a spot
+// stop keeps the review's try; red schedules a fix round at class 3, the limit stops at the
+// operator, and the ops card shows it. Nothing here opens a PR: there is no way to.
+func TestTaskReviewLoopFlow(t *testing.T) {
+	a := newAcctRigWith(t, 100, nil, func(c *gateway.Config) {
+		withProjects(c)
+		c.Projects[0].ReviewLoop, c.Projects[0].MaxReviewRounds = true, 1
+	})
+	const path = "/v1/projects/tauceti/tasks"
+	create := func(task map[string]any) {
+		t.Helper()
+		task["created_by"] = "owner"
+		if task["spec"] == nil {
+			task["spec"] = map[string]any{"attempt": task["id"]}
+		}
+		if code, out := taskCall(t, a, "POST", path, projectKey, task); code != 201 {
+			t.Fatalf("create %v: HTTP %d %v", task["id"], code, out)
+		}
+	}
+	claim := func(worker, task string) (int, string, string) {
+		t.Helper()
+		body := map[string]any{"worker": worker}
+		if task != "" {
+			body["task"] = task
+		}
+		code, out := taskCall(t, a, "POST", path+"/claim", projectKey, body)
+		if code != 200 {
+			return code, "", ""
+		}
+		return code, out["task"].(map[string]any)["id"].(string), out["lease"].(map[string]any)["id"].(string)
+	}
+	complete := func(worker, id, lease string, result map[string]any) {
+		t.Helper()
+		if code, out := taskCall(t, a, "POST", path+"/"+id+"/complete", projectKey, map[string]any{"worker": worker, "lease": lease, "result": result}); code != 200 {
+			t.Fatalf("complete %s: HTTP %d %v", id, code, out)
+		}
+	}
+	get := func(id string) (map[string]any, map[string]any) {
+		t.Helper()
+		_, out := taskCall(t, a, "GET", path+"/"+id, projectKey, nil)
+		task, _ := out["task"].(map[string]any)
+		ch, _ := out["chain"].(map[string]any)
+		return task, ch
+	}
+	passed := map[string]any{"outcome": "passes every local CI check", "checks_passed": true, "diff": "--- a/X.lean\n+++ b/X.lean\n", "model_min": 20}
+	create(map[string]any{"id": "T6-C.a-A", "kind": "attempt"})
+	_, id, lease := claim("runner-a", "")
+	complete("runner-a", id, lease, passed)
+
+	create(map[string]any{"id": "T6-D.a-A", "kind": "attempt"})
+	create(map[string]any{"id": "T6-E.a-P1", "kind": "fix_round", "findings_source": "prereview-qwen"})
+	create(map[string]any{"id": "T6-F.a-P1", "kind": "fix_round", "findings_source": "prereview"})
+	create(map[string]any{"id": "T6-G.a-F1", "kind": "fix_round", "findings_source": "review", "pr": 22600})
+
+	// Two runners at once: each task goes to one of them.
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	claimed, leases := map[string]string{}, map[string]string{}
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(w string) {
+			defer wg.Done()
+			_, got, l := claim(w, "")
+			if got == "" {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if prev, dup := claimed[got]; dup {
+				t.Errorf("%s claimed by %s and %s", got, prev, w)
+			}
+			claimed[got], leases[got] = w, l
+		}([]string{"runner-a", "runner-b"}[i%2])
+	}
+	wg.Wait()
+	const rv = "T6-C.a-A.review"
+	if len(claimed) != 5 || claimed[rv] == "" {
+		t.Fatalf("claimed %v", claimed)
+	}
+	// A spot stop: the review is given back and taken back on the same try.
+	w := claimed[rv]
+	if code, out := taskCall(t, a, "POST", path+"/"+rv+"/fail", projectKey, map[string]any{"worker": w, "lease": leases[rv], "requeue": true, "reason": "runner stop: spot"}); code != 200 || out["tries"] != float64(1) {
+		t.Fatalf("give back: HTTP %d %v", code, out)
+	}
+	code, _, lease := claim(w, rv)
+	if code != 200 {
+		t.Fatalf("take back: HTTP %d", code)
+	}
+	if tk, _ := get(rv); tk["tries"] != float64(1) || tk["interruptions"] != float64(1) || tk["class"] != float64(4) || tk["created_by"] != "gateway" {
+		t.Fatalf("after the take-back: %v", tk)
+	}
+	red := map[string]any{"verdict": "red", "by": "qwen-judge", "judge": "qwen", "findings": 1, "summary": "naming"}
+	fix := func(id string) map[string]any {
+		return map[string]any{"id": id, "kind": "fix_round", "findings_source": "prereview-qwen", "created_by": "runner", "spec": map[string]any{"attempt": id}}
+	}
+	complete(w, rv, lease, map[string]any{"outcome": "qwen review: findings", "model_min": 22.5, "completion_tokens": 4000, "review": red, "fix": fix("T6-C.a-P1")})
+	parent, _ := get("T6-C.a-A")
+	if parent["stage"] != "fix-scheduled" || parent["qwen_review"].(map[string]any)["verdict"] != "red" || parent["review"] != nil {
+		t.Fatalf("parent: %v", parent)
+	}
+	round, ch := get("T6-C.a-P1")
+	if round["class"] != float64(3) || round["created_by"] != "gateway" || ch["auto_rounds"] != float64(1) {
+		t.Fatalf("the round: %v, chain %v", round, ch)
+	}
+	// The round passes, and red again is the limit (1 here): the operator's.
+	_, _, lease = claim("runner-b", "T6-C.a-P1")
+	complete("runner-b", "T6-C.a-P1", lease, passed)
+	_, _, lease = claim("runner-b", "T6-C.a-P1.review")
+	complete("runner-b", "T6-C.a-P1.review", lease, map[string]any{"outcome": "qwen review: findings", "review": red, "fix": fix("T6-C.a-P2")})
+	if tk, _ := get("T6-C.a-P2"); tk != nil {
+		t.Fatalf("a round past the limit: %v", tk)
+	}
+	cand, ch := get("T6-C.a-P1")
+	if cand["stage"] != "needs-operator" || ch["reviews"] != float64(2) || ch["auto_rounds"] != float64(1) {
+		t.Fatalf("at the limit: %v, chain %v", cand, ch)
+	}
+	admin, _ := a.signIn(t, 1)
+	_, page := a.get(t, "/account/ops", admin)
+	for _, want := range []string{"qwen red (qwen-judge)", `data-task="T6-C.a-P1.review"`, "needs-operator: 2 reviews, 1 of 1 rounds", "limit of 1"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("ops page lacks %q", want)
+		}
+	}
+}
+
 // Interruptions do not use up tries (owner 2026-10-29): a runner on a spot instance that is
 // stopped every hour gives its task back and takes it back by id, more often than max_tries,
 // and the task stays on its first try; a lease that expires is taken back by the same runner
@@ -360,5 +490,261 @@ func TestTaskInterruptionsKeepTries(t *testing.T) {
 	}
 	if got := get("T5-NS-3.a-A"); got["tries"] != 0.0 || got["state"] != "queued" {
 		t.Fatalf("the other task: %v", got)
+	}
+}
+
+// loopGateway is a gateway with the review loop on and a state dir, which a test can restart.
+type loopGateway struct {
+	cfg gateway.Config
+	g   *gateway.Gateway
+	url string
+	srv *httptest.Server
+}
+
+func newLoopGateway(t *testing.T, rounds int) *loopGateway {
+	t.Helper()
+	l := &loopGateway{}
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.StateDir = t.TempDir()
+		withProjects(c)
+		c.Projects[0].ReviewLoop, c.Projects[0].MaxReviewRounds = true, rounds
+		l.cfg = *c
+	}, mockEngine(t, false))
+	l.g, l.srv, l.url = r.g, r.gw, r.gw.URL
+	return l
+}
+
+func (l *loopGateway) restart(t *testing.T) {
+	t.Helper()
+	l.srv.Close()
+	if err := l.g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	g, err := gateway.New(l.cfg, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.g, l.srv = g, httptest.NewServer(g.Handler())
+	l.url = l.srv.URL
+	t.Cleanup(func() { l.srv.Close(); l.g.Close() })
+}
+
+func (l *loopGateway) call(t *testing.T, method, path string, body any) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest(method, l.url+"/v1/projects/tauceti/tasks"+path, bytes.NewReader(raw))
+	req.Header.Set("Authorization", "Bearer "+projectKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+func (l *loopGateway) create(t *testing.T, id, kind string) {
+	t.Helper()
+	if code, out := l.call(t, "POST", "", map[string]any{"id": id, "kind": kind, "created_by": "owner", "spec": map[string]any{"attempt": id}}); code != 201 {
+		t.Fatalf("create %s: HTTP %d %v", id, code, out)
+	}
+}
+
+func (l *loopGateway) claim(t *testing.T, id string) string {
+	t.Helper()
+	code, out := l.call(t, "POST", "/claim", map[string]any{"worker": "runner-a", "task": id})
+	if code != 200 {
+		t.Fatalf("claim %s: HTTP %d %v", id, code, out)
+	}
+	return out["lease"].(map[string]any)["id"].(string)
+}
+
+func (l *loopGateway) complete(t *testing.T, id, lease string, result map[string]any) {
+	t.Helper()
+	if code, out := l.call(t, "POST", "/"+id+"/complete", map[string]any{"worker": "runner-a", "lease": lease, "result": result}); code != 200 {
+		t.Fatalf("complete %s: HTTP %d %v", id, code, out)
+	}
+}
+
+func (l *loopGateway) get(t *testing.T, id string) (map[string]any, map[string]any) {
+	t.Helper()
+	code, out := l.call(t, "GET", "/"+id, nil)
+	if code != 200 {
+		return nil, nil
+	}
+	ch, _ := out["chain"].(map[string]any)
+	return out["task"].(map[string]any), ch
+}
+
+var (
+	loopPassed = map[string]any{"outcome": "passes every local CI check", "checks_passed": true, "diff": "--- a/X.lean\n+++ b/X.lean\n", "model_min": 20}
+	loopRed    = map[string]any{"verdict": "red", "by": "qwen-judge", "judge": "qwen", "findings": 1, "summary": "naming"}
+)
+
+func loopFix(id string, spec map[string]any) map[string]any {
+	return map[string]any{"id": id, "kind": "fix_round", "findings_source": "prereview-qwen", "created_by": "runner", "spec": spec}
+}
+
+// A gateway that stopped between saving a finished review and scheduling its round: the file it left
+// has the review done and the round owed. The restart makes the round once, and the worker's retry
+// of the report, which never got an answer, changes nothing.
+func TestTaskLoopCrashBetweenSaveAndRound(t *testing.T) {
+	l := newLoopGateway(t, 3)
+	const cand, rv, round = "T7-C.a-A", "T7-C.a-A.review", "T7-C.a-P1"
+	l.create(t, cand, "attempt")
+	l.complete(t, cand, l.claim(t, cand), loopPassed)
+	lease := l.claim(t, rv)
+	fix := loopFix(round, map[string]any{"attempt": round})
+	l.srv.Close()
+	if err := l.g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(l.cfg.StateDir, "tasks-tauceti", rv+".json")
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task map[string]any
+	if err := json.Unmarshal(raw, &task); err != nil {
+		t.Fatal(err)
+	}
+	task["state"] = "done"
+	task["result"] = map[string]any{"outcome": "qwen review: findings", "model_min": 22.5, "steps": 0, "prompt_tokens": 0, "completion_tokens": 0, "awake_min": 0,
+		"finished_at": time.Now().UTC()}
+	task["review"] = map[string]any{"verdict": "red", "by": "qwen-judge", "judge": "qwen", "at": time.Now().UTC()}
+	task["loop_pending"] = map[string]any{"step": "done", "fix": fix}
+	raw, _ = json.Marshal(task)
+	if err := os.WriteFile(file, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g, err := gateway.New(l.cfg, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.g, l.srv = g, httptest.NewServer(g.Handler())
+	l.url = l.srv.URL
+	t.Cleanup(func() { l.srv.Close(); l.g.Close() })
+
+	check := func(when string) {
+		t.Helper()
+		n, ch := l.get(t, round)
+		if n == nil || n["created_by"] != "gateway" || n["round_kind"] != "qwen-review" || ch["auto_rounds"] != float64(1) || ch["reviews"] != float64(1) {
+			t.Fatalf("%s: round %v, chain %v", when, n, ch)
+		}
+		if p, _ := l.get(t, cand); p["stage"] != "fix-scheduled" || p["qwen_review"] == nil {
+			t.Fatalf("%s: candidate %v", when, p)
+		}
+		if _, out := l.call(t, "GET", "?state=queued", nil); len(out["tasks"].([]any)) != 1 {
+			t.Fatalf("%s: queue %v", when, out["tasks"])
+		}
+	}
+	check("after the restart")
+	if code, out := l.call(t, "POST", "/"+rv+"/complete", map[string]any{"worker": "runner-a", "lease": lease,
+		"result": map[string]any{"outcome": "qwen review: findings", "review": loopRed, "fix": fix}}); code != 200 {
+		t.Fatalf("the retry: HTTP %d %v", code, out)
+	}
+	check("after the retry")
+	l.restart(t)
+	check("after another restart")
+}
+
+// The pruning leaves a candidate whose review is still queued, however many tasks finish after it.
+func TestTaskPruneKeepsTheReviewedCandidate(t *testing.T) {
+	l := newLoopGateway(t, 3)
+	const cand, rv = "T7-P.a-A", "T7-P.a-A.review"
+	l.create(t, cand, "attempt")
+	l.complete(t, cand, l.claim(t, cand), loopPassed)
+	exported := func(id string) {
+		t.Helper()
+		tk, _ := l.get(t, id)
+		if code, out := l.call(t, "POST", "/"+id+"/exported", map[string]any{"seen": tk["updated_at"]}); code != 200 {
+			t.Fatalf("exported %s: HTTP %d %v", id, code, out)
+		}
+	}
+	exported(cand)
+	for i := 0; i < 205; i++ {
+		id := fmt.Sprintf("O-%d", i)
+		l.create(t, id, "other")
+		if code, _ := l.call(t, "POST", "/"+id+"/cancel", map[string]any{}); code != 200 {
+			t.Fatalf("cancel: HTTP %d", code)
+		}
+		exported(id)
+	}
+	if tk, _ := l.get(t, "O-0"); tk != nil {
+		t.Fatalf("nothing was pruned: %v", tk)
+	}
+	l.complete(t, rv, l.claim(t, rv), map[string]any{"outcome": "qwen review: green", "review": map[string]any{"verdict": "green", "by": "qwen-judge", "judge": "qwen"}})
+	if p, ch := l.get(t, cand); p == nil || p["stage"] != "ready-for-operator" || ch["status"] != "ready-for-operator" {
+		t.Fatalf("candidate %v, chain %v", p, ch)
+	}
+}
+
+// A round past the limit that a create cannot carry: it waits in the gateway, the operator continues
+// it with a note, and it counts as the operator's, once.
+func TestTaskContinueBigWaitingRound(t *testing.T) {
+	l := newLoopGateway(t, 1)
+	const cand, round, next = "T7-W.a-A", "T7-W.a-P1", "T7-W.a-P2"
+	l.create(t, cand, "attempt")
+	l.complete(t, cand, l.claim(t, cand), loopPassed)
+	l.complete(t, cand+".review", l.claim(t, cand+".review"), map[string]any{"outcome": "findings", "review": loopRed, "fix": loopFix(round, map[string]any{"attempt": round})})
+	l.complete(t, round, l.claim(t, round), loopPassed)
+	big := map[string]any{"attempt": next, "files": map[string]any{"tasks/tree_patches/x.diff": strings.Repeat("x", 300<<10)},
+		"ledger": map[string]any{"subtask": map[string]any{"fix_rounds": map[string]any{"P2": map[string]any{"findings": "verbatim"}}}}}
+	const rv = round + ".review"
+	l.complete(t, rv, l.claim(t, rv), map[string]any{"outcome": "findings", "review": loopRed, "fix": loopFix(next, big)})
+	if p, ch := l.get(t, round); p["stage"] != "needs-operator" || ch["auto_rounds"] != float64(1) {
+		t.Fatalf("at the limit: %v, chain %v", p, ch)
+	}
+	waiting, _ := l.get(t, rv)
+	create := waiting["next_fix"].(map[string]any)
+	create["created_by"] = "owner"
+	if code, _ := l.call(t, "POST", "", create); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a create of the recipe: HTTP %d", code)
+	}
+	body := map[string]any{"created_by": "owner", "note": "`A.lean` imports `B`."}
+	if code, out := l.call(t, "POST", "/"+rv+"/continue", body); code != 201 || out["created"] != true {
+		t.Fatalf("continue: HTTP %d %v", code, out)
+	}
+	if code, out := l.call(t, "POST", "/"+rv+"/continue", body); code != 200 || out["created"] != false {
+		t.Fatalf("again: HTTP %d %v", code, out)
+	}
+	l.restart(t)
+	n, ch := l.get(t, next)
+	if n == nil || n["created_by"] != "owner" || n["class"] != float64(3) || ch["auto_rounds"] != float64(1) || ch["operator_rounds"] != float64(1) || ch["status"] != "operator-round" {
+		t.Fatalf("the round: %v, chain %v", n, ch)
+	}
+	fx := n["spec"].(map[string]any)["ledger"].(map[string]any)["subtask"].(map[string]any)["fix_rounds"].(map[string]any)["P2"].(map[string]any)
+	if fx["operator_note"] != "`A.lean` imports `B`." || fx["findings"] != "verbatim" {
+		t.Fatalf("the fix-round entry: %v", fx)
+	}
+	code, out := l.call(t, "POST", "/claim", map[string]any{"worker": "runner-a"})
+	if got := out["task"].(map[string]any); code != 200 || got["id"] != next || len(got["spec"].(map[string]any)["files"].(map[string]any)["tasks/tree_patches/x.diff"].(string)) != 300<<10 {
+		t.Fatalf("claim: HTTP %d", code)
+	}
+}
+
+// A task id without a hyphen: its review stays in its chain across a restart, so the counts stay one.
+func TestTaskChainOfAPlainIDSurvivesRestart(t *testing.T) {
+	l := newLoopGateway(t, 3)
+	l.create(t, "plain", "attempt")
+	l.complete(t, "plain", l.claim(t, "plain"), loopPassed)
+	l.restart(t)
+	if rv, _ := l.get(t, "plain.review"); rv["chain"] != "plain" {
+		t.Fatalf("the review: %v", rv)
+	}
+	l.complete(t, "plain.review", l.claim(t, "plain.review"), map[string]any{"outcome": "findings", "model_min": 5, "review": loopRed,
+		"fix": loopFix("plain-P1", map[string]any{"attempt": "plain-P1"})})
+	rv, ch := l.get(t, "plain.review")
+	if ch == nil || ch["id"] != "plain" || ch["reviews"] != float64(1) || ch["auto_rounds"] != float64(1) || rv["chain"] != "plain" {
+		t.Fatalf("chain %v, review %v", ch, rv)
+	}
+	if n, _ := l.get(t, "plain-P1"); n == nil {
+		t.Fatal("no round: the chain split")
+	}
+	ents, _ := os.ReadDir(filepath.Join(l.cfg.StateDir, "task-chains-tauceti"))
+	if len(ents) != 1 {
+		t.Fatalf("%d chain files", len(ents))
 	}
 }

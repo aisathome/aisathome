@@ -156,6 +156,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		return nil, err
 	}
 	g.every(keysFileCheck, g.checkKeysFile)
+	g.tasks.loop = g.reviewLoop
 	g.every(taskSweepEvery, g.tasks.sweepAll) // expired leases go back to the queue without a call
 	if cfg.StateDir != "" {
 		if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
