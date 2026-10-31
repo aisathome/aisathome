@@ -20,7 +20,8 @@ import (
 )
 
 // taskChain is the record of one chain: an attempt and all its rounds. It outlives its tasks, which
-// are dropped after the export.
+// are dropped after the export. On disk it comes before the round it counts, so that no failed write
+// or crash leaves a round the limit did not see.
 type taskChain struct {
 	ID        string `json:"id"`
 	Project   string `json:"project"`
@@ -30,8 +31,8 @@ type taskChain struct {
 	Reviews   int    `json:"reviews"`             // Qwen reviews finished
 	// AutoRounds: rounds the loop scheduled after a failure, of either kind: the count the limit
 	// reads. FreshBases: tasks it moved to a fresh base, which no model failed, with their own limit.
-	// OperatorRounds: a person's. Rounds: each automatic one and each the operator continued from a
-	// waiting recipe, with its kind.
+	// OperatorRounds: a person's. Rounds: each of them all, with its kind (a round a person created
+	// follows no task).
 	AutoRounds     int          `json:"auto_rounds"`
 	FreshBases     int          `json:"fresh_bases"`
 	OperatorRounds int          `json:"operator_rounds"`
@@ -99,13 +100,13 @@ func (s *taskStore) chainDir(project string) string {
 }
 
 // loadChains reads a project's chain records. Holds s.mu.
-func (s *taskStore) loadChains(project string, p *projectTasks) {
+func (s *taskStore) loadChains(project string, p *projectTasks) error {
 	ents, err := os.ReadDir(s.chainDir(project))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			s.log.Warn("chain dir unreadable", "project", project, "err", err)
-		}
-		return
+		return err
 	}
 	for _, e := range ents {
 		name := e.Name()
@@ -113,16 +114,17 @@ func (s *taskStore) loadChains(project string, p *projectTasks) {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(s.chainDir(project), name))
-		var c taskChain
-		if err == nil {
-			err = json.Unmarshal(raw, &c)
+		if err != nil {
+			return err
 		}
-		if err != nil || c.ID+".json" != name {
+		var c taskChain
+		if err = json.Unmarshal(raw, &c); err != nil || c.ID+".json" != name {
 			s.log.Warn("chain file unreadable, ignoring it", "project", project, "file", name, "err", err)
 			continue
 		}
 		p.chains[c.ID] = &c
 	}
+	return nil
 }
 
 // chain returns a chain's record, made on first use. Holds s.mu.
@@ -136,21 +138,24 @@ func (s *taskStore) chain(p *projectTasks, id string, now time.Time) *taskChain 
 	return c
 }
 
-func (s *taskStore) saveChain(project string, c *taskChain) {
+// saveChain writes one chain's record. On an error the caller stops, and what it was scheduling
+// waits: the limit reads this count. Holds s.mu.
+func (s *taskStore) saveChain(project string, c *taskChain) error {
 	c.Project = project
-	if s.dir == "" {
-		return
+	_, err := s.put(project, s.chainDir(project), c.ID, c)
+	return err
+}
+
+// countPersonsRound records a round a person creates, by its id, so that a create repeated after a
+// failed write does not count it twice. Holds s.mu.
+func (s *taskStore) countPersonsRound(p *projectTasks, t *Task, now time.Time) error {
+	c := s.chain(p, t.Chain, now)
+	if !c.hasRound(t.ID, "", roundOperator) {
+		c.OperatorRounds++
+		c.Rounds = append(c.Rounds, chainRound{Task: t.ID, Kind: roundOperator, At: now.UTC()})
 	}
-	raw, _ := json.Marshal(c)
-	if err := os.MkdirAll(s.chainDir(project), 0o700); err == nil {
-		err = s.write(filepath.Join(s.chainDir(project), c.ID+".json"), raw)
-		if err == nil {
-			return
-		}
-		s.log.Warn("saving chain failed", "project", project, "chain", c.ID, "err", err)
-	} else {
-		s.log.Warn("chain dir", "project", project, "err", err)
-	}
+	c.Status, c.Stop = chainOperatorRound, ""
+	return s.saveChain(t.Project, c)
 }
 
 // What a finished task still owes the loop (loopPending.Step).
@@ -169,32 +174,37 @@ type loopPending struct {
 	Fix  *taskNew `json:"fix,omitempty"`
 }
 
-// settle does what t owes the loop, then clears the debt. After a crash it runs again at load, over
-// whatever part got done: each step below notices what is there already, so nothing is counted or
-// made twice. Holds s.mu.
-func (s *taskStore) settle(p *projectTasks, t *Task, now time.Time) {
+// settle does what t owes the loop, then clears the debt. After a crash or a failed write it runs
+// again, over whatever part reached the disk: each step below notices what is there already, so
+// nothing is counted or made twice. It stops at a failed write. Holds s.mu.
+func (s *taskStore) settle(p *projectTasks, t *Task, now time.Time) error {
 	lp := t.LoopPending
 	if lp == nil {
-		return
+		return nil
 	}
+	var err error
 	switch lp.Step {
 	case owedDone:
-		s.afterDone(p, t, lp.Fix, now)
+		err = s.afterDone(p, t, lp.Fix, now)
 	case owedSkipped:
-		s.skipped(p, t, lp.Fix, now)
+		err = s.skipped(p, t, lp.Fix, now)
 	case owedStop:
-		s.loopStopped(p, t, lp.Why, now)
+		err = s.loopStopped(p, t, lp.Why, now)
 	case owedContinue:
-		s.continueRound(p, t, lp.Fix, now)
+		err = s.continueRound(p, t, lp.Fix, now)
 	default:
 		s.log.Warn("unknown loop step, dropping it", "project", t.Project, "task", t.ID, "step", lp.Step)
 	}
+	if err != nil {
+		return err
+	}
 	t.LoopPending = nil
-	s.save(t)
+	return s.save(t)
 }
 
-// settleAll finishes what a crash left, oldest first, before anyone reads the queue. Holds s.mu.
-func (s *taskStore) settleAll(p *projectTasks) {
+// settleAll finishes what a crash or a failed write left, oldest first, before anyone reads the
+// queue, and stops at a failed write. Holds s.mu.
+func (s *taskStore) settleAll(p *projectTasks, now time.Time) {
 	var owing []*Task
 	for _, t := range p.byID {
 		if t.LoopPending != nil {
@@ -202,27 +212,27 @@ func (s *taskStore) settleAll(p *projectTasks) {
 		}
 	}
 	slices.SortFunc(owing, func(a, b *Task) int { return int(a.Seq - b.Seq) })
-	now := s.now()
 	for _, t := range owing {
-		s.log.Info("finishing the loop's step after a restart", "project", t.Project, "task", t.ID, "step", t.LoopPending.Step)
-		s.settle(p, t, now)
+		s.log.Info("finishing the loop's step", "project", t.Project, "task", t.ID, "step", t.LoopPending.Step)
+		if s.settle(p, t, now) != nil {
+			return
+		}
 	}
 }
 
 // setStage moves a candidate in the loop; like a review, it needs another export. Holds s.mu.
-func (s *taskStore) setStage(t *Task, stage, note string, now time.Time) {
+func (s *taskStore) setStage(t *Task, stage, note string, now time.Time) error {
 	t.Stage, t.ExportedAt = stage, nil
 	t.event(now, "stage", "", strings.TrimSpace(stage+" "+note))
-	s.save(t)
+	return s.save(t)
 }
 
 // afterDone is what a finished task means for the loop. Holds s.mu.
-func (s *taskStore) afterDone(p *projectTasks, t *Task, fix *taskNew, now time.Time) {
+func (s *taskStore) afterDone(p *projectTasks, t *Task, fix *taskNew, now time.Time) error {
 	on, limit := s.loop(t.Project)
 	r := t.Result
 	if t.Kind == "review" {
-		s.reviewDone(p, t, fix, on, limit, now)
-		return
+		return s.reviewDone(p, t, fix, on, limit, now)
 	}
 	passed := r.ChecksPassed != nil && *r.ChecksPassed
 	if t.CreatedBy == gatewayCreator {
@@ -231,17 +241,18 @@ func (s *taskStore) afterDone(p *projectTasks, t *Task, fix *taskNew, now time.T
 			c.RoundModelMin += r.ModelMin
 			c.RoundPrompt += r.PromptTokens
 			c.RoundCompl += r.CompletionTokens
-			s.saveChain(t.Project, c)
+			if err := s.saveChain(t.Project, c); err != nil {
+				return err
+			}
 		}
 	}
 	if !on || t.Kind == "other" {
-		return
+		return nil
 	}
 	if passed {
-		s.queueReview(p, t, now)
-		return
+		return s.queueReview(p, t, now)
 	}
-	s.scheduleRound(p, t, t, fix, roundChecks, limit, now)
+	return s.scheduleRound(p, t, t, fix, roundChecks, limit, now)
 }
 
 // costRound: t's cost is not in the chain yet; it is from now on.
@@ -264,50 +275,53 @@ func (c *taskChain) hasRound(id, from, kind string) bool {
 
 // skipped: a re-check skipped a task. No model failed; the runner's recipe moves it to a fresh base,
 // and without one the operator decides. Holds s.mu.
-func (s *taskStore) skipped(p *projectTasks, t *Task, fix *taskNew, now time.Time) {
+func (s *taskStore) skipped(p *projectTasks, t *Task, fix *taskNew, now time.Time) error {
 	on, limit := s.loop(t.Project)
 	switch {
 	case !on:
-		s.loopStopped(p, t, t.Error, now)
+		return s.loopStopped(p, t, t.Error, now)
 	case fix == nil:
-		s.stopChain(p, t, t.Error, now)
+		return s.stopChain(p, t, t.Error, now)
 	default:
-		s.scheduleRound(p, t, t, fix, roundFreshBase, limit, now)
+		return s.scheduleRound(p, t, t, fix, roundFreshBase, limit, now)
 	}
 }
 
 // stopChain ends the loop at t: the operator takes over. Holds s.mu.
-func (s *taskStore) stopChain(p *projectTasks, t *Task, why string, now time.Time) {
+func (s *taskStore) stopChain(p *projectTasks, t *Task, why string, now time.Time) error {
 	c := s.chain(p, t.Chain, now)
 	c.Status, c.Stop = StageNeedsOperator, why
-	s.saveChain(t.Project, c)
-	s.setStage(t, StageNeedsOperator, why, now)
+	if err := s.saveChain(t.Project, c); err != nil {
+		return err
+	}
+	if err := s.setStage(t, StageNeedsOperator, why, now); err != nil {
+		return err
+	}
 	s.log.Info("review loop stopped", "project", t.Project, "task", t.ID, "why", why)
+	return nil
 }
 
 // loopStopped: a loop's task ended without a result to act on. Only tasks of the loop stop it:
 // a person's task failing is a person's to see. Holds s.mu.
-func (s *taskStore) loopStopped(p *projectTasks, t *Task, why string, now time.Time) {
+func (s *taskStore) loopStopped(p *projectTasks, t *Task, why string, now time.Time) error {
 	if t.CreatedBy != gatewayCreator {
-		return
+		return nil
 	}
 	if parent, ok := p.byID[t.Parent]; ok && t.Kind == "review" && parent.State == TaskDone {
-		s.stopChain(p, parent, "the review did not finish: "+why, now)
-		return
+		return s.stopChain(p, parent, "the review did not finish: "+why, now)
 	}
-	s.stopChain(p, t, "the automatic task did not finish: "+why, now)
+	return s.stopChain(p, t, "the automatic task did not finish: "+why, now)
 }
 
 // queueReview creates a candidate's review task. Holds s.mu.
-func (s *taskStore) queueReview(p *projectTasks, t *Task, now time.Time) {
+func (s *taskStore) queueReview(p *projectTasks, t *Task, now time.Time) error {
 	id := t.ID + reviewSuffix
 	if err := checkID("id", id); err != nil {
-		s.stopChain(p, t, "the review task's id is too long", now)
-		return
+		return s.stopChain(p, t, "the review task's id is too long", now)
 	}
 	rv, ok := p.byID[id]
 	if ok && (rv.CreatedBy != gatewayCreator || rv.State != TaskQueued) { // not the one a crash left
-		return
+		return nil
 	}
 	if !ok {
 		var spec map[string]json.RawMessage
@@ -325,17 +339,24 @@ func (s *taskStore) queueReview(p *projectTasks, t *Task, now time.Time) {
 			CreatedAt: now, Parent: t.ID, Chain: t.Chain}
 		rv.event(now, "created", "", gatewayCreator)
 		p.byID[id] = rv
-		s.save(rv)
+		if err := s.save(rv); err != nil {
+			return err
+		}
 	}
 	c := s.chain(p, t.Chain, now)
 	c.Candidate, c.Status, c.Stop = t.ID, StageInReview, ""
-	s.saveChain(t.Project, c)
-	s.setStage(t, StageInReview, "", now)
+	if err := s.saveChain(t.Project, c); err != nil {
+		return err
+	}
+	if err := s.setStage(t, StageInReview, "", now); err != nil {
+		return err
+	}
 	s.log.Info("review queued", "project", t.Project, "task", id)
+	return nil
 }
 
 // reviewDone records a finished review and, for the loop's own, acts on the verdict. Holds s.mu.
-func (s *taskStore) reviewDone(p *projectTasks, t *Task, fix *taskNew, on bool, limit int, now time.Time) {
+func (s *taskStore) reviewDone(p *projectTasks, t *Task, fix *taskNew, on bool, limit int, now time.Time) error {
 	r, c := t.Result, s.chain(p, t.Chain, now)
 	v := chainVerdict{Task: t.ID, Verdict: "none", ModelMin: r.ModelMin, Prompt: r.PromptTokens, Compl: r.CompletionTokens,
 		Manual: t.CreatedBy != gatewayCreator, At: now.UTC()}
@@ -355,31 +376,36 @@ func (s *taskStore) reviewDone(p *projectTasks, t *Task, fix *taskNew, on bool, 
 		if n := len(c.Verdicts) - maxChainVerdicts; n > 0 {
 			c.Verdicts = c.Verdicts[n:]
 		}
-		s.saveChain(t.Project, c)
+		if err := s.saveChain(t.Project, c); err != nil {
+			return err
+		}
 	}
 	parent, ok := p.byID[t.Parent]
 	if ok && parent.State == TaskDone && t.Review != nil && !sameVerdict(parent.QwenReview, t.Review) {
 		q := *t.Review
 		parent.QwenReview, parent.ExportedAt = &q, nil
 		parent.event(now, "qwen reviewed", "", q.Verdict+" by "+q.By)
-		s.save(parent)
+		if err := s.save(parent); err != nil {
+			return err
+		}
 	}
 	if v.Manual || !on { // it records; it schedules nothing
-		return
+		return nil
 	}
 	if !ok || parent.State != TaskDone {
-		s.stopChain(p, t, "the candidate's task is gone", now)
-		return
+		return s.stopChain(p, t, "the candidate's task is gone", now)
 	}
 	switch v.Verdict {
 	case "green":
 		c.Status, c.Stop = StageReady, "passed"
-		s.saveChain(t.Project, c)
-		s.setStage(parent, StageReady, "", now)
+		if err := s.saveChain(t.Project, c); err != nil {
+			return err
+		}
+		return s.setStage(parent, StageReady, "", now)
 	case "red":
-		s.scheduleRound(p, t, parent, fix, roundQwen, limit, now)
+		return s.scheduleRound(p, t, parent, fix, roundQwen, limit, now)
 	default:
-		s.stopChain(p, parent, "the review gave no verdict", now)
+		return s.stopChain(p, parent, "the review gave no verdict", now)
 	}
 }
 
@@ -390,14 +416,16 @@ func sameVerdict(a, b *TaskReview) bool {
 // scheduleRound makes the next automatic round after `from`, unless the chain has used its rounds:
 // the limit covers failed reviews and failed checks together, and fresh bases apart, which no model
 // failed but which must end too. `origin` keeps the recipe for the operator. Holds s.mu.
-func (s *taskStore) scheduleRound(p *projectTasks, origin, from *Task, fix *taskNew, kind string, limit int, now time.Time) {
+func (s *taskStore) scheduleRound(p *projectTasks, origin, from *Task, fix *taskNew, kind string, limit int, now time.Time) error {
 	c := s.chain(p, from.Chain, now)
-	stop := func(why string) {
+	stop := func(why string) error {
 		if fix != nil {
 			origin.NextFix = fix
-			s.save(origin)
+			if err := s.save(origin); err != nil {
+				return err
+			}
 		}
-		s.stopChain(p, from, why, now)
+		return s.stopChain(p, from, why, now)
 	}
 	if fix == nil || !c.hasRound(fix.ID, from.ID, kind) {
 		used := c.AutoRounds
@@ -405,36 +433,34 @@ func (s *taskStore) scheduleRound(p *projectTasks, origin, from *Task, fix *task
 			used = c.FreshBases
 		}
 		if used >= limit {
-			stop(fmt.Sprintf("the limit of %d automatic rounds (%s)", limit, kind))
-			return
+			return stop(fmt.Sprintf("the limit of %d automatic rounds (%s)", limit, kind))
 		}
 		if fix == nil {
-			stop("the runner gave no round after " + kind)
-			return
+			return stop("the runner gave no round after " + kind)
 		}
 		if err := checkRecipe(fix, from, kind); err != nil {
 			fix = nil
-			stop("the runner's round was refused: " + err.Error())
-			return
+			return stop("the runner's round was refused: " + err.Error())
 		}
 		if _, taken := p.byID[fix.ID]; taken {
-			stop("the round's id " + fix.ID + " is taken")
-			return
+			return stop("the round's id " + fix.ID + " is taken")
 		}
 	}
 	spec, err := canonicalJSON(fix.Spec)
 	if err != nil {
-		stop("the round's spec does not parse")
-		return
+		return stop("the round's spec does not parse")
 	}
-	s.makeRound(p, c, from, fix, spec, kind, now)
+	if err := s.makeRound(p, c, from, fix, spec, kind, now); err != nil {
+		return err
+	}
 	s.log.Info("round scheduled", "project", from.Project, "task", fix.ID, "kind", kind, "rounds", c.AutoRounds, "limit", limit)
+	return nil
 }
 
 // makeRound counts a round after `from` and queues it; run again after a crash, it does the part
 // that is missing. An operator's round is a person's task: it stays outside the automatic limit and
 // the automatic cost, as a fix round created by hand. Holds s.mu.
-func (s *taskStore) makeRound(p *projectTasks, c *taskChain, from *Task, fix *taskNew, spec json.RawMessage, kind string, now time.Time) {
+func (s *taskStore) makeRound(p *projectTasks, c *taskChain, from *Task, fix *taskNew, spec json.RawMessage, kind string, now time.Time) error {
 	creator, status := gatewayCreator, StageFixScheduled
 	if kind == roundOperator {
 		creator, status = fix.CreatedBy, chainOperatorRound
@@ -451,7 +477,9 @@ func (s *taskStore) makeRound(p *projectTasks, c *taskChain, from *Task, fix *ta
 		c.Rounds = append(c.Rounds, chainRound{Task: fix.ID, Kind: kind, From: from.ID, At: now.UTC()})
 	}
 	c.Candidate, c.Status, c.Stop = from.ID, status, ""
-	s.saveChain(from.Project, c)
+	if err := s.saveChain(from.Project, c); err != nil {
+		return err
+	}
 	if _, ok := p.byID[fix.ID]; !ok {
 		maxTries := fix.MaxTries
 		if maxTries == 0 {
@@ -463,22 +491,33 @@ func (s *taskStore) makeRound(p *projectTasks, c *taskChain, from *Task, fix *ta
 			CreatedAt: now, FindingsSource: fix.FindingsSource, Chain: from.Chain, RoundKind: kind}
 		n.event(now, "created", "", kind+" after "+from.ID)
 		p.byID[n.ID] = n
-		s.save(n)
+		if err := s.save(n); err != nil {
+			return err
+		}
 	}
-	s.setStage(from, StageFixScheduled, fix.ID, now)
+	return s.setStage(from, StageFixScheduled, fix.ID, now)
 }
 
 // resume schedules the round waiting on a finished task, as the operator's: the gateway keeps the
 // recipe, so its size does not matter here. A repeated call gives the same round (created false).
+// With no round to show yet (a failed write), the answer is 503 though the request is saved: the
+// round comes by itself, and a repeated call finds it.
 func (s *taskStore) resume(project, id, by, note string) (*Task, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, false, err
+	}
+	roundWaits := terr(http.StatusServiceUnavailable, "the round is saved and waits for the task queue to write it; ask again shortly")
 	t, ok := p.byID[id]
 	switch {
 	case !ok:
 		return nil, false, terr(http.StatusNotFound, "no task %s", id)
 	case t.ContinuedAs != "":
+		if t.LoopPending != nil {
+			return nil, false, roundWaits
+		}
 		if n, ok := p.byID[t.ContinuedAs]; ok {
 			return n.view(false), false, nil
 		}
@@ -510,22 +549,29 @@ func (s *taskStore) resume(project, id, by, note string) (*Task, bool, error) {
 		return nil, false, err
 	}
 	t.ContinuedAs, t.LoopPending = fix.ID, &loopPending{Step: owedContinue, Fix: &fix}
-	s.save(t)
-	s.settle(p, t, now)
+	if err := s.conclude(p, t, now); err != nil {
+		return nil, false, err
+	}
+	if p.stale {
+		return nil, false, roundWaits
+	}
 	s.prune(p)
 	s.log.Info("waiting round continued", "project", project, "task", id, "round", fix.ID, "by", by)
 	return p.byID[fix.ID].view(false), true, nil
 }
 
 // continueRound makes the waiting round, after the candidate when it is still here. Holds s.mu.
-func (s *taskStore) continueRound(p *projectTasks, t *Task, fix *taskNew, now time.Time) {
+func (s *taskStore) continueRound(p *projectTasks, t *Task, fix *taskNew, now time.Time) error {
 	from := t
 	if parent, ok := p.byID[t.Parent]; ok {
 		from = parent
 	}
-	s.makeRound(p, s.chain(p, t.Chain, now), from, fix, fix.Spec, roundOperator, now)
+	if err := s.makeRound(p, s.chain(p, t.Chain, now), from, fix, fix.Spec, roundOperator, now); err != nil {
+		return err
+	}
 	t.NextFix = nil
 	t.event(now, "continued", "", fix.ID+" by "+fix.CreatedBy)
+	return nil
 }
 
 // withNote puts the operator's note in the round's fix-round ledger entry, the one place of a spec

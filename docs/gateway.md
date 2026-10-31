@@ -127,6 +127,27 @@ their answers carry the served-by headers (above). Projects are read at start an
 removing a hash revokes the key. A config with an invalid project does not start (on SIGHUP the
 old config stays).
 
+### The task queue when the disk fails
+
+A project's task queue lives in `state_dir` (`tasks-<project>/` and `task-chains-<project>/`), one
+file per task and per chain. A write that fails (a full disk, a read-only directory) is handled
+like a crash of that project's queue, and what is on disk stays the truth:
+
+- A call whose change did not reach the disk answers 503 with `Retry-After` and changes nothing, so
+  a worker repeats it. The log says `task queue write failed`, with the file and the reason.
+- A task's end is saved together with what it still owes the review loop. Once that save worked the
+  call answers ok, even if a later write of the loop fails: a restart loses nothing.
+- A chain's count is written before the round it counts, so that the round limit holds. If it
+  cannot be written, no round is made. The debt stays on the task (`loop_pending`), is tried again
+  at every call and every 30 s, and until it is paid `claim` answers 503 and no work goes out.
+  `continue` answers 503 in that state too, but its request is saved: the round comes by itself.
+- A queue that cannot be read answers 503, never an empty list, and the ops page says so.
+
+The queue heals by itself once the disk can be written again: free the space or fix the directory;
+no restart is needed, and a restart does no harm. While it lasts, a worker's lease cannot be renewed,
+so a fault longer than the lease (10 minutes by default) sends those tasks back to the queue when
+the disk returns; the worker takes them back without losing a try.
+
 ## Public statistics
 
 Without authentication, for the website (aggregates only: never users, keys, nodes or

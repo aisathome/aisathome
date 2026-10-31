@@ -748,3 +748,64 @@ func TestTaskChainOfAPlainIDSurvivesRestart(t *testing.T) {
 		t.Fatalf("%d chain files", len(ents))
 	}
 }
+
+// A real read-only directory, through the HTTP API and a restart: with its chain unwritable a red
+// verdict is saved and answered, but no round exists and no work goes out; with the task directory
+// unwritable too, a create is refused. When the directories are writable again the round comes by
+// itself, counted once, and the limit of 1 holds.
+func TestTaskQueueOnAReadOnlyDisk(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	l := newLoopGateway(t, 1)
+	const cand, rv, round, next = "T7-R.a-A", "T7-R.a-A.review", "T7-R.a-P1", "T7-R.a-P2"
+	l.create(t, cand, "attempt")
+	l.complete(t, cand, l.claim(t, cand), loopPassed)
+	lease := l.claim(t, rv)
+	mode := func(dir string, m os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(filepath.Join(l.cfg.StateDir, dir), m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const chains, tasks = "task-chains-tauceti", "tasks-tauceti"
+	t.Cleanup(func() {
+		os.Chmod(filepath.Join(l.cfg.StateDir, chains), 0o700)
+		os.Chmod(filepath.Join(l.cfg.StateDir, tasks), 0o700)
+	})
+	held := func(when string) {
+		t.Helper()
+		if n, _ := l.get(t, round); n != nil {
+			t.Fatalf("%s: a round without its count: %v", when, n)
+		}
+		if code, _ := l.call(t, "POST", "/claim", map[string]any{"worker": "runner-b"}); code != 503 {
+			t.Fatalf("%s: claim: HTTP %d", when, code)
+		}
+	}
+	mode(chains, 0o500)
+	l.complete(t, rv, lease, map[string]any{"outcome": "qwen review: findings", "review": loopRed,
+		"fix": loopFix(round, map[string]any{"attempt": round})})
+	held("after the verdict")
+	mode(tasks, 0o500)
+	if code, out := l.call(t, "POST", "", map[string]any{"id": "T8.a-A", "kind": "attempt", "created_by": "owner", "spec": map[string]any{}}); code != 503 {
+		t.Fatalf("create on a read-only queue: HTTP %d %v", code, out)
+	}
+	mode(tasks, 0o700)
+	l.restart(t)
+	held("after a restart")
+
+	mode(chains, 0o700)
+	n, ch := l.get(t, round)
+	if n == nil || ch["auto_rounds"] != float64(1) || ch["reviews"] != float64(1) {
+		t.Fatalf("after the disk came back: round %v, chain %v", n, ch)
+	}
+	l.restart(t)
+	if _, ch := l.get(t, round); ch["auto_rounds"] != float64(1) {
+		t.Fatalf("after another restart: chain %v", ch)
+	}
+	l.complete(t, round, l.claim(t, round), map[string]any{"outcome": "fails", "checks_passed": false, "model_min": 5,
+		"fix": loopFix(next, map[string]any{"attempt": next})})
+	if n, _ := l.get(t, next); n != nil {
+		t.Fatalf("a second round past the limit of 1: %v", n)
+	}
+}

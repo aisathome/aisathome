@@ -99,6 +99,13 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **The science task queue no longer says ok for what a restart would lose.** When a write fails
+  (a full disk, a read-only directory) the call answers 503 with `Retry-After` and changes nothing.
+  A failed save of a chain stops scheduling, so the limit on automatic rounds holds, and `claim`
+  answers 503 until the loop's step is done; it is tried again every 30 s, without a restart. A queue
+  that cannot be read answers 503, not an empty list. A person's fix round now shows in its chain's
+  `rounds`, kind `operator`, with an empty `from`. See "The task queue when the disk fails" in
+  `docs/gateway.md`. (gateway)
 - **A chat no longer fails while the network does science.** A chat or agent request that has
   waited 8 seconds for a node now stops the most recent science request on a node it can use and
   takes its place; before, a chat could fail with "all nodes serving deep are busy" while the

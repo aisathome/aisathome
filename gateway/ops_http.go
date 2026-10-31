@@ -124,6 +124,10 @@ type opsTask struct {
 const opsKeptFinished = 15
 
 func (g *Gateway) opsTasks(d *opsData, project string, now time.Time) {
+	if err := g.tasks.ready(project); err != nil {
+		d.TaskCounts = err.Error()
+		return
+	}
 	ts, counts := g.tasks.list(project, nil, nil, "")
 	_, rounds := g.tasks.loop(project)
 	var parts []string

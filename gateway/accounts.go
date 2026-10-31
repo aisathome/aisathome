@@ -302,14 +302,11 @@ func (s *AccountStore) Update(fn func(*AccountsFile) error) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+	raw = append(raw, '\n')
+	if err := writeFileAtomic(s.path, raw); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		return err
-	}
-	s.apply(f, sha256.Sum256(append(raw, '\n')))
+	s.apply(f, sha256.Sum256(raw))
 	return nil
 }
 

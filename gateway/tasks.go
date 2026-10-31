@@ -69,6 +69,16 @@
 // on every change, so the queue survives a restart; the number of tasks and the bytes kept are
 // bounded per project.
 //
+// A failed write (a full disk, a read-only directory) is treated as a crash of that project's
+// queue, and recovers the same way (owner 2026-10-31). What is on disk is the truth: a call whose
+// change did not reach the disk answers 503 and changes nothing, so it may be repeated, and the
+// project's memory is dropped and read again at the next call or sweep, with no rollback to get
+// wrong. The save of a task's end, with what it owes the loop, is what decides a call's answer:
+// after it a restart loses nothing, so the call answers ok even when a later step of the loop
+// fails. That step stops at the failed write, since a chain's count must reach the disk before the
+// round it counts, the next call or sweep (every taskSweepEvery) does the debt again, and until it
+// is paid a claim answers 503.
+//
 // SPDX-License-Identifier: Apache-2.0
 package gateway
 
@@ -481,6 +491,8 @@ type projectTasks struct {
 	byID   map[string]*Task
 	chains map[string]*taskChain
 	seq    int64
+	// stale: a write failed, so this memory may be ahead of the disk; load replaces it.
+	stale bool
 }
 
 // taskStore keeps every project's tasks in memory and in state_dir.
@@ -504,23 +516,37 @@ func newTaskStore(dir string, log *slog.Logger) *taskStore {
 
 func (s *taskStore) pdir(project string) string { return filepath.Join(s.dir, "tasks-"+project) }
 
-// load returns a project's queue, reading it from state_dir the first time. Holds s.mu.
-func (s *taskStore) load(project string) *projectTasks {
-	if p, ok := s.byPr[project]; ok {
-		return p
+// load returns a project's queue as the disk has it: read the first time and after a failed write.
+// Holds s.mu.
+func (s *taskStore) load(project string) (*projectTasks, error) {
+	if p, ok := s.byPr[project]; ok && !p.stale {
+		return p, nil
 	}
-	p := &projectTasks{byID: map[string]*Task{}, chains: map[string]*taskChain{}}
-	s.byPr[project] = p
-	if s.dir == "" || !projectID.MatchString(project) {
-		return p
-	}
-	s.loadChains(project, p)
-	ents, err := os.ReadDir(s.pdir(project))
+	p, err := s.read(project)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			s.log.Warn("task dir unreadable", "project", project, "err", err)
-		}
-		return p
+		s.log.Error("task queue unreadable", "project", project, "err", err)
+		return nil, terr(http.StatusServiceUnavailable, "the task queue cannot be read; try again shortly")
+	}
+	s.byPr[project] = p
+	return p, nil
+}
+
+// read reads a project's queue from state_dir. A file that does not parse is left out, as at every
+// start; a disk that does not answer is an error, not an empty queue.
+func (s *taskStore) read(project string) (*projectTasks, error) {
+	p := &projectTasks{byID: map[string]*Task{}, chains: map[string]*taskChain{}}
+	if s.dir == "" || !projectID.MatchString(project) {
+		return p, nil
+	}
+	if err := s.loadChains(project, p); err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(s.pdir(project))
+	if errors.Is(err, os.ErrNotExist) {
+		return p, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	for _, e := range ents {
 		name := e.Name()
@@ -528,10 +554,11 @@ func (s *taskStore) load(project string) *projectTasks {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(s.pdir(project), name))
-		var t Task
-		if err == nil {
-			err = json.Unmarshal(raw, &t)
+		if err != nil {
+			return nil, err
 		}
+		var t Task
+		err = json.Unmarshal(raw, &t)
 		if err == nil && (t.ID+".json" != name || t.Project != project || !slices.Contains(queueStates, t.State)) {
 			err = errors.New("does not match its file name, project or a state")
 		}
@@ -545,35 +572,58 @@ func (s *taskStore) load(project string) *projectTasks {
 		p.byID[t.ID] = &t
 		p.seq = max(p.seq, t.Seq)
 	}
-	s.settleAll(p)
-	return p
+	return p, nil
 }
 
-// save writes one task (holds s.mu).
-func (s *taskStore) save(t *Task) {
-	raw, _ := json.Marshal(t)
-	t.size = len(raw)
-	if s.dir == "" {
-		return
-	}
-	if err := os.MkdirAll(s.pdir(t.Project), 0o700); err == nil {
-		err = s.write(filepath.Join(s.pdir(t.Project), t.ID+".json"), raw)
-		if err == nil {
-			return
+// put writes one file of a project's queue, or marks the project stale and says why not, for a 503.
+// Holds s.mu.
+func (s *taskStore) put(project, dir, name string, v any) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err == nil && s.dir != "" {
+		if err = os.MkdirAll(dir, 0o700); err == nil {
+			err = s.write(filepath.Join(dir, name+".json"), raw)
 		}
-		s.log.Warn("saving task failed", "project", t.Project, "task", t.ID, "err", err)
-	} else {
-		s.log.Warn("task dir", "project", t.Project, "err", err)
 	}
+	if err != nil {
+		s.byPr[project].stale = true
+		s.log.Error("task queue write failed", "project", project, "file", name, "err", err)
+		return nil, terr(http.StatusServiceUnavailable, "the task queue could not save this; nothing changed, try again shortly")
+	}
+	return raw, nil
 }
 
-func (s *taskStore) drop(t *Task) {
-	delete(s.byPr[t.Project].byID, t.ID)
+// save writes one task. On an error the caller stops: see the top of the file. Holds s.mu.
+func (s *taskStore) save(t *Task) error {
+	raw, err := s.put(t.Project, s.pdir(t.Project), t.ID, t)
+	if err == nil {
+		t.size = len(raw)
+	}
+	return err
+}
+
+// conclude saves a change that may owe the loop a step, and does the step. Only the save decides
+// the answer: past it, a failed step waits on disk for the next call or sweep. Holds s.mu.
+func (s *taskStore) conclude(p *projectTasks, t *Task, now time.Time) error {
+	if err := s.save(t); err != nil {
+		return err
+	}
+	if err := s.settle(p, t, now); err != nil {
+		s.log.Warn("the loop's step waits for the next sweep", "project", t.Project, "task", t.ID)
+	}
+	return nil
+}
+
+// drop forgets a finished task once its file is gone; a file that stays keeps the task, and the
+// next prune tries again. Holds s.mu.
+func (s *taskStore) drop(t *Task) bool {
 	if s.dir != "" {
 		if err := os.Remove(filepath.Join(s.pdir(t.Project), t.ID+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.log.Warn("removing task failed", "project", t.Project, "task", t.ID, "err", err)
+			return false
 		}
 	}
+	delete(s.byPr[t.Project].byID, t.ID)
+	return true
 }
 
 func (t *Task) event(at time.Time, what, worker, note string) {
@@ -598,7 +648,7 @@ const (
 // back by the worker (fail with requeue, kind interruptGivenBack) or expired (interruptExpired).
 // Neither uses up the try yet (claim decides); a task interrupted maxInterruptions times fails.
 // Holds s.mu.
-func (s *taskStore) giveBack(t *Task, now time.Time, kind, reason string) {
+func (s *taskStore) giveBack(p *projectTasks, t *Task, now time.Time, kind, reason string) error {
 	worker := t.Lease.Worker
 	what := map[string]string{interruptGivenBack: "requeued", interruptExpired: "expired"}[kind]
 	t.Error = reason
@@ -617,10 +667,12 @@ func (s *taskStore) giveBack(t *Task, now time.Time, kind, reason string) {
 		}
 		t.event(now, what, worker, note)
 	}
-	s.save(t)
-	s.settle(s.load(t.Project), t, now)
+	if err := s.conclude(p, t, now); err != nil {
+		return err
+	}
 	s.log.Info("task given back", "project", t.Project, "task", t.ID, "worker", worker, "why", what, "state", t.State,
 		"tries", t.Tries, "interruptions", t.Interruptions)
+	return nil
 }
 
 // continues: a claim by worker now continues the task's interrupted try instead of starting one.
@@ -634,13 +686,18 @@ func continues(t *Task, worker string, now time.Time) bool {
 	return false
 }
 
-// sweep returns the project's expired leases to the queue, and fails a task whose lease expired
-// on its last try when its worker has not taken it back within the window. Holds s.mu.
+// sweep does what the loop is still owed, returns the project's expired leases to the queue, and
+// fails a task whose lease expired on its last try when its worker has not taken it back within the
+// window. It stops at a failed write, leaving p stale. Holds s.mu.
 func (s *taskStore) sweep(p *projectTasks, now time.Time) {
+	s.settleAll(p, now)
 	for _, t := range p.byID {
+		if p.stale {
+			return
+		}
 		switch {
 		case t.State == TaskLeased && !now.Before(t.Lease.ExpiresAt):
-			s.giveBack(t, now, interruptExpired, "lease expired (no heartbeat)")
+			s.giveBack(p, t, now, interruptExpired, "lease expired (no heartbeat)")
 		case t.State == TaskQueued && t.Interrupted == interruptExpired && t.Tries >= t.MaxTries &&
 			t.PreferUntil != nil && !now.Before(*t.PreferUntil):
 			worker := t.PreferWorker
@@ -648,35 +705,51 @@ func (s *taskStore) sweep(p *projectTasks, now time.Time) {
 			t.Error = fmt.Sprintf("lease expired on try %d of %d and %s did not take it back within %s", t.Tries, t.MaxTries, worker, affinityWindow)
 			t.event(now, "failed", worker, t.Error)
 			t.LoopPending = &loopPending{Step: owedStop, Why: "the lease expired on the last try"}
-			s.save(t)
-			s.settle(p, t, now)
-			s.log.Info("task failed", "project", t.Project, "task", t.ID, "worker", worker, "why", "expired on the last try")
+			if s.conclude(p, t, now) == nil {
+				s.log.Info("task failed", "project", t.Project, "task", t.ID, "worker", worker, "why", "expired on the last try")
+			}
 		}
 	}
 }
 
-// sweepAll sweeps every loaded project (the background check).
+// sweepAll sweeps every loaded project (the background check), so that a debt or an expired lease
+// does not wait for a call.
 func (s *taskStore) sweepAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
-	for _, p := range s.byPr {
-		s.sweep(p, now)
+	for project := range s.byPr {
+		s.open(project)
 	}
 }
 
-// open loads and sweeps a project's queue; the caller holds s.mu.
-func (s *taskStore) open(project string) (*projectTasks, time.Time) {
+// open loads and sweeps a project's queue, and gives the memory that matches the disk even when the
+// sweep could not write. The caller holds s.mu.
+func (s *taskStore) open(project string) (*projectTasks, time.Time, error) {
 	now := s.now()
-	p := s.load(project)
-	s.sweep(p, now)
-	return p, now
+	p, err := s.load(project)
+	if err == nil {
+		s.sweep(p, now)
+		p, err = s.load(project)
+	}
+	return p, now, err
+}
+
+// ready: the project's queue can be read; a 503 otherwise. For the calls that only read, which
+// would show an unreadable queue as an empty one.
+func (s *taskStore) ready(project string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _, err := s.open(project)
+	return err
 }
 
 // prune drops the oldest exported finished tasks while the finished ones are beyond
 // maxKeptTasks or maxKeptBytes. A task not exported (again) is never dropped, nor one an open task
-// still needs, nor one a round waits on. Holds s.mu.
+// still needs, nor one a round waits on or that still owes the loop a step. Holds s.mu.
 func (s *taskStore) prune(p *projectTasks) {
+	if p.stale {
+		return
+	}
 	var fin []*Task
 	n, kept := 0, 0
 	needed := neededByOpen(p)
@@ -684,25 +757,27 @@ func (s *taskStore) prune(p *projectTasks) {
 		if finished(t.State) {
 			n++
 			kept += t.size
-			if t.ExportedAt != nil && !needed[t.ID] && t.NextFix == nil {
+			if t.ExportedAt != nil && !needed[t.ID] && t.NextFix == nil && t.LoopPending == nil {
 				fin = append(fin, t)
 			}
 		}
 	}
 	sort.Slice(fin, func(i, j int) bool { return fin[i].UpdatedAt.Before(fin[j].UpdatedAt) })
 	for len(fin) > 0 && (n > maxKeptTasks || kept > maxKeptBytes) {
-		n--
-		kept -= fin[0].size
-		s.drop(fin[0])
+		if s.drop(fin[0]) {
+			n--
+			kept -= fin[0].size
+		}
 		fin = fin[1:]
 	}
 }
 
-// neededByOpen: the tasks an open task follows: a review's candidate, a round's predecessor.
+// neededByOpen: the tasks an open task follows: a review's candidate, a round's predecessor. A task
+// that still owes the loop a step counts as open: the step reads them.
 func neededByOpen(p *projectTasks) map[string]bool {
 	needed := map[string]bool{}
 	for _, t := range p.byID {
-		if finished(t.State) {
+		if finished(t.State) && t.LoopPending == nil {
 			continue
 		}
 		if t.Parent != "" {
@@ -744,7 +819,10 @@ func terr(code int, format string, a ...any) error { return &taskErr{code, fmt.S
 func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, false, err
+	}
 	spec, err := canonicalJSON(n.Spec)
 	if err != nil {
 		return nil, false, terr(http.StatusBadRequest, "spec: %v", err)
@@ -769,13 +847,14 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 		BaseRef: n.BaseRef, PR: n.PR, CreatedBy: n.CreatedBy, State: TaskQueued, MaxTries: maxTries, Seq: p.seq, CreatedAt: now,
 		FindingsSource: n.FindingsSource, Parent: n.Parent, Chain: chainFor(n.ID, n.Parent)}
 	t.event(now, "created", "", n.CreatedBy)
-	p.byID[t.ID] = t
-	s.save(t)
 	if t.Kind == "fix_round" { // a person's round: above the automatic limit, and counted apart
-		c := s.chain(p, t.Chain, now)
-		c.OperatorRounds++
-		c.Status, c.Stop = chainOperatorRound, ""
-		s.saveChain(project, c)
+		if err := s.countPersonsRound(p, t, now); err != nil {
+			return nil, false, err
+		}
+	}
+	p.byID[t.ID] = t
+	if err := s.save(t); err != nil {
+		return nil, false, err
 	}
 	s.prune(p)
 	s.log.Info("task created", "project", project, "task", t.ID, "kind", t.Kind, "by", t.CreatedBy)
@@ -814,6 +893,17 @@ func claimOrder(ts []*Task) {
 	})
 }
 
+// owes: a task still owes the loop a step, because a write failed. Nothing is claimed meanwhile: a
+// round or review half made must not run before its chain says so.
+func owes(p *projectTasks) bool {
+	for _, t := range p.byID {
+		if t.LoopPending != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // heldFor: a task that came back waits for its last worker until PreferUntil.
 func heldFor(t *Task, worker string, now time.Time) bool {
 	return t.PreferWorker != "" && t.PreferWorker != worker && t.PreferUntil != nil && now.Before(*t.PreferUntil)
@@ -825,7 +915,13 @@ func heldFor(t *Task, worker string, now time.Time) bool {
 func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxClass int, only string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
+	if owes(p) {
+		return nil, terr(http.StatusServiceUnavailable, "the task queue could not save a step of the review loop; no work goes out until it has")
+	}
 	var t *Task
 	if only != "" {
 		t = p.byID[only]
@@ -868,7 +964,9 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxCl
 	t.Lease = &taskLease{ID: hex.EncodeToString(id[:]), Worker: worker, TTLSec: ttl, Since: now, HeartbeatAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}
 	t.event(now, "claimed", worker, note)
-	s.save(t)
+	if err := s.save(t); err != nil {
+		return nil, err
+	}
 	s.log.Info("task claimed", "project", project, "task", t.ID, "worker", worker, "try", t.Tries, "interruptions", t.Interruptions)
 	out := t.view(true)
 	out.Lease.ID = t.Lease.ID // only the claimer sees it
@@ -895,7 +993,10 @@ func sameLease(t *Task, worker, lease string) bool {
 func (s *taskStore) heartbeat(project, id, worker, lease string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, err := s.leased(p, id, worker, lease)
 	if err != nil {
 		return nil, err
@@ -903,14 +1004,19 @@ func (s *taskStore) heartbeat(project, id, worker, lease string) (*Task, error) 
 	t.Lease.HeartbeatAt = now
 	t.Lease.ExpiresAt = now.Add(time.Duration(t.Lease.TTLSec) * time.Second)
 	t.UpdatedAt = now
-	s.save(t)
+	if err := s.save(t); err != nil {
+		return nil, err
+	}
 	return t.view(false), nil
 }
 
 func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, err := s.leased(p, id, worker, lease)
 	if err != nil {
 		if t != nil && t.State == TaskDone && sameLease(t, worker, lease) {
@@ -942,8 +1048,9 @@ func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult) (
 	}
 	t.event(now, "done", worker, r.Outcome)
 	t.LoopPending = &loopPending{Step: owedDone, Fix: fix}
-	s.save(t)
-	s.settle(p, t, now)
+	if err := s.conclude(p, t, now); err != nil {
+		return nil, err
+	}
 	s.prune(p)
 	s.log.Info("task done", "project", project, "task", id, "worker", worker, "outcome", r.Outcome, "diff_bytes", len(r.Diff))
 	return t.view(false), nil
@@ -952,7 +1059,10 @@ func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult) (
 func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool, fix *taskNew) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, err := s.leased(p, id, worker, lease)
 	if err != nil {
 		if t != nil && t.State == TaskFailed && sameLease(t, worker, lease) {
@@ -964,7 +1074,9 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 		reason = "failed by the worker"
 	}
 	if requeue {
-		s.giveBack(t, now, interruptGivenBack, reason)
+		if err := s.giveBack(p, t, now, interruptGivenBack, reason); err != nil {
+			return nil, err
+		}
 	} else {
 		t.State, t.Error = TaskFailed, reason
 		t.event(now, "failed", worker, reason)
@@ -972,8 +1084,9 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 		if strings.HasPrefix(reason, skippedPrefix) {
 			t.LoopPending = &loopPending{Step: owedSkipped, Fix: fix}
 		}
-		s.save(t)
-		s.settle(p, t, now)
+		if err := s.conclude(p, t, now); err != nil {
+			return nil, err
+		}
 		s.log.Info("task failed", "project", project, "task", id, "worker", worker)
 	}
 	s.prune(p)
@@ -983,7 +1096,10 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, ok := p.byID[id]
 	switch {
 	case !ok:
@@ -1003,8 +1119,9 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	t.State, t.Error = TaskCancelled, reason
 	t.event(now, "cancelled", worker, reason)
 	t.LoopPending = &loopPending{Step: owedStop, Why: "cancelled: " + reason}
-	s.save(t)
-	s.settle(p, t, now)
+	if err := s.conclude(p, t, now); err != nil {
+		return nil, err
+	}
 	s.prune(p)
 	s.log.Info("task cancelled", "project", project, "task", id, "worker", worker)
 	return t.view(false), nil
@@ -1015,7 +1132,10 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 func (s *taskStore) setMaxTries(project, id string, n int) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, ok := p.byID[id]
 	switch {
 	case !ok:
@@ -1028,7 +1148,9 @@ func (s *taskStore) setMaxTries(project, id string, n int) (*Task, error) {
 	if n != t.MaxTries {
 		t.event(now, "max_tries", "", fmt.Sprintf("%d -> %d", t.MaxTries, n))
 		t.MaxTries = n
-		s.save(t)
+		if err := s.save(t); err != nil {
+			return nil, err
+		}
 		s.log.Info("task max_tries", "project", project, "task", id, "max_tries", n)
 	}
 	return t.view(false), nil
@@ -1051,7 +1173,10 @@ func doneTask(p *projectTasks, id string) (*Task, error) {
 func (s *taskStore) review(project, id string, v *TaskReview) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, err := doneTask(p, id)
 	if err != nil {
 		return nil, err
@@ -1069,7 +1194,9 @@ func (s *taskStore) review(project, id string, v *TaskReview) (*Task, error) {
 	}
 	t.ExportedAt = nil
 	t.event(now, "reviewed", "", v.Verdict+" by "+v.By)
-	s.save(t)
+	if err := s.save(t); err != nil {
+		return nil, err
+	}
 	s.log.Info("task reviewed", "project", project, "task", id, "verdict", v.Verdict, "by", v.By)
 	return t.view(false), nil
 }
@@ -1078,7 +1205,10 @@ func (s *taskStore) review(project, id string, v *TaskReview) (*Task, error) {
 func (s *taskStore) decide(project, id string, d *TaskDecision) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, err := doneTask(p, id)
 	if err != nil {
 		return nil, err
@@ -1086,7 +1216,9 @@ func (s *taskStore) decide(project, id string, d *TaskDecision) (*Task, error) {
 	d.At = now.UTC()
 	t.Decision, t.ExportedAt = d, nil
 	t.event(now, "decided", "", d.Decision+" by "+d.By)
-	s.save(t)
+	if err := s.save(t); err != nil {
+		return nil, err
+	}
 	s.log.Info("task decided", "project", project, "task", id, "decision", d.Decision, "pr", d.PR)
 	return t.view(false), nil
 }
@@ -1097,7 +1229,10 @@ func (s *taskStore) decide(project, id string, d *TaskDecision) (*Task, error) {
 func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, now := s.open(project)
+	p, now, err := s.open(project)
+	if err != nil {
+		return nil, err
+	}
 	t, ok := p.byID[id]
 	switch {
 	case !ok:
@@ -1110,7 +1245,9 @@ func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) 
 	if t.ExportedAt == nil {
 		at := now.UTC()
 		t.ExportedAt = &at
-		s.save(t)
+		if err := s.save(t); err != nil {
+			return nil, err
+		}
 		s.prune(p)
 	}
 	return t.view(false), nil
@@ -1120,7 +1257,10 @@ func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) 
 func (s *taskStore) get(project, id string) *Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, _ := s.open(project)
+	p, _, err := s.open(project)
+	if err != nil {
+		return nil
+	}
 	if t, ok := p.byID[id]; ok {
 		return t.view(true)
 	}
@@ -1133,8 +1273,11 @@ func (s *taskStore) get(project, id string) *Task {
 func (s *taskStore) list(project string, states, kinds []string, exported string) ([]*Task, map[string]int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, _ := s.open(project)
 	counts := map[string]int{}
+	p, _, err := s.open(project)
+	if err != nil {
+		return nil, counts
+	}
 	var queued, leased, fin []*Task
 	for _, t := range p.byID {
 		counts[t.State]++
@@ -1169,7 +1312,10 @@ func (s *taskStore) list(project string, states, kinds []string, exported string
 func (s *taskStore) chainView(project, id string) *taskChain {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, _ := s.open(project)
+	p, _, err := s.open(project)
+	if err != nil {
+		return nil
+	}
 	if c, ok := p.chains[id]; ok {
 		v := *c
 		v.Verdicts = slices.Clone(c.Verdicts)
@@ -1264,6 +1410,9 @@ func decodeTaskBody(w http.ResponseWriter, r *http.Request, limit int64, v any) 
 func taskError(w http.ResponseWriter, err error) {
 	var te *taskErr
 	if errors.As(err, &te) {
+		if te.code == http.StatusServiceUnavailable {
+			w.Header().Set("Retry-After", "30")
+		}
 		apiError(w, te.code, te.msg)
 		return
 	}
@@ -1321,6 +1470,10 @@ func (g *Gateway) handleTaskList(w http.ResponseWriter, r *http.Request) {
 	if !g.tasksReader(w, r, id) {
 		return
 	}
+	if err := g.tasks.ready(id); err != nil {
+		taskError(w, err)
+		return
+	}
 	states, kinds := splitList(r.URL.Query().Get("state")), splitList(r.URL.Query().Get("kind"))
 	exported := r.URL.Query().Get("exported")
 	if exported != "" && exported != "true" && exported != "false" {
@@ -1352,6 +1505,10 @@ func (g *Gateway) handleTaskList(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) handleTaskGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !g.tasksReader(w, r, id) {
+		return
+	}
+	if err := g.tasks.ready(id); err != nil {
+		taskError(w, err)
 		return
 	}
 	t := g.tasks.get(id, r.PathValue("task"))

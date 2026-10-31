@@ -19,7 +19,10 @@ func (r *taskRig) digest() string {
 	r.t.Helper()
 	r.g.tasks.mu.Lock()
 	defer r.g.tasks.mu.Unlock()
-	p := r.g.tasks.load("tauceti")
+	p, _, err := r.g.tasks.open("tauceti")
+	if err != nil {
+		r.t.Fatal(err)
+	}
 	var out []string
 	for _, t := range p.byID {
 		qwen, next := "", ""
@@ -51,20 +54,21 @@ func red(fix map[string]any) map[string]any {
 	return res
 }
 
-// A crash at any write of a task's end, or again at any write of the recovery, comes to the state
-// without a crash, and the worker's retry of the same report changes nothing: no second review or
-// round, nothing counted twice, no recipe lost.
-func TestLoopCrashAtEveryWrite(t *testing.T) {
-	type step func(r *taskRig)
+// loopEnd is one way a task ends: setup brings a rig to the moment before, the step it returns does
+// the call and gives its HTTP status.
+type loopEnd struct {
+	name  string
+	limit int
+	setup func(r *taskRig) func(r *taskRig) int
+}
+
+func loopEnds() []loopEnd {
+	type step = func(r *taskRig) int
 	done := func(id, lease string, body map[string]any) step {
-		return func(r *taskRig) { r.lease(id, "complete", "w1", lease, map[string]any{"result": body}) }
+		return func(r *taskRig) int { return r.lease(id, "complete", "w1", lease, map[string]any{"result": body}).Code }
 	}
 	passed := map[string]any{"outcome": "passes", "checks_passed": true, "model_min": 30.0, "prompt_tokens": 900, "completion_tokens": 90}
-	cases := []struct {
-		name  string
-		limit int
-		setup func(r *taskRig) step
-	}{
+	return []loopEnd{
 		{"a candidate passes", 3, func(r *taskRig) step {
 			r.create("T1.a-A", "attempt")
 			return done("T1.a-A", r.claimID("w1", "T1.a-A"), passed)
@@ -105,30 +109,40 @@ func TestLoopCrashAtEveryWrite(t *testing.T) {
 		{"a skip moves to a fresh base", 3, func(r *taskRig) step {
 			r.create("T1.a-A", "attempt")
 			lease := r.claimID("w1", "T1.a-A")
-			return func(r *taskRig) {
-				r.lease("T1.a-A", "fail", "w1", lease, map[string]any{"reason": "skipped: main changed X.lean", "fix": retry("T1.a-AB1", "attempt", "")})
+			return func(r *taskRig) int {
+				return r.lease("T1.a-A", "fail", "w1", lease, map[string]any{"reason": "skipped: main changed X.lean", "fix": retry("T1.a-AB1", "attempt", "")}).Code
 			}
 		}},
 		{"a review fails", 3, func(r *taskRig) step {
 			r.candidate("T1.a-A", true)
 			lease := r.claimID("w1", "T1.a-A.review")
-			return func(r *taskRig) { r.lease("T1.a-A.review", "fail", "w1", lease, map[string]any{"reason": "boom"}) }
+			return func(r *taskRig) int {
+				return r.lease("T1.a-A.review", "fail", "w1", lease, map[string]any{"reason": "boom"}).Code
+			}
 		}},
 		{"a review is cancelled", 3, func(r *taskRig) step {
 			r.candidate("T1.a-A", true)
-			return func(r *taskRig) {
-				r.call("POST", tasksPath+"/T1.a-A.review/cancel", testProjectKey, map[string]any{"reason": "operator"})
+			return func(r *taskRig) int {
+				w, _ := r.call("POST", tasksPath+"/T1.a-A.review/cancel", testProjectKey, map[string]any{"reason": "operator"})
+				return w.Code
 			}
 		}},
 		{"the operator continues", 0, func(r *taskRig) step {
 			r.candidate("T1.a-A", true)
 			r.finishTask("T1.a-A.review", red(recipe("T1.a-P1")))
-			return func(r *taskRig) {
-				r.call("POST", tasksPath+"/T1.a-A.review/continue", testProjectKey, map[string]any{"created_by": "owner"})
+			return func(r *taskRig) int {
+				w, _ := r.call("POST", tasksPath+"/T1.a-A.review/continue", testProjectKey, map[string]any{"created_by": "owner"})
+				return w.Code
 			}
 		}},
 	}
-	for _, tc := range cases {
+}
+
+// A crash at any write of a task's end, or again at any write of the recovery, comes to the state
+// without a crash, and the worker's retry of the same report changes nothing: no second review or
+// round, nothing counted twice, no recipe lost.
+func TestLoopCrashAtEveryWrite(t *testing.T) {
+	for _, tc := range loopEnds() {
 		t.Run(tc.name, func(t *testing.T) {
 			ref := loopRig(t, t.TempDir(), tc.limit)
 			final := tc.setup(ref)

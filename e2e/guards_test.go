@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -570,6 +571,9 @@ func TestGuardHoldsNodeBeforeFreeingItsSlot(t *testing.T) {
 // every few seconds must not lift it (it did, 2026-10-18). The gateway writes it once the
 // file is writable again; only then can the operator clear it.
 func TestGuardHoldSticksWhenTheFileCannotBeWritten(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
 	logs := &syncBuf{}
 	logSink = logs
 	defer func() { logSink = io.Discard }()
@@ -584,11 +588,13 @@ func TestGuardHoldSticksWhenTheFileCannotBeWritten(t *testing.T) {
 	body := func(stream bool) string {
 		return fmt.Sprintf(`{"model":"deep","stream":%v,"messages":[{"role":"user","content":"fix my build"}],"tools":[{"type":"function","function":{"name":"bash"}}]}`, stream)
 	}
-	// Writes to the accounts file fail: its temporary file cannot be created (also as root).
-	block := a.file + ".tmp"
-	if err := os.Mkdir(block, 0o700); err != nil {
+	// Writes to the accounts file fail: its directory is read-only, so its temporary file cannot be
+	// created. Reading it still works, as the sweep needs.
+	dir := filepath.Dir(a.file)
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
 	if code, out := ask(t, a.rig, "agent-key", body(true)); code != 502 || !strings.Contains(out, "safety check") {
 		t.Fatalf("flagged tool call: %d %s", code, out)
 	}
@@ -614,7 +620,7 @@ func TestGuardHoldSticksWhenTheFileCannotBeWritten(t *testing.T) {
 		t.Fatalf("the held node got requests after a sweep (%d)", evil.Load())
 	}
 	// The file is writable again: the retry records the hold, which stays.
-	if err := os.Remove(block); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool {
