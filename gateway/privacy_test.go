@@ -158,6 +158,9 @@ func TestPIIDetection(t *testing.T) {
 		{"number " + fnr, true},
 		{"order 12345678901 shipped", fodselsnummer("12345678901")},
 		{"plain text with numbers 2026 and 42", false},
+		{"new file mode 100644\nindex 00000000000..5ea936f9122\n--- /dev/null", false}, // git's null hash
+		{"deleted file mode 100644\nindex 5ea936f9122..0000000000000\n", false},        // 13 zeros pass Luhn
+		{"zeros 0000 0000 0000 0000", false},
 	} {
 		if got := hasPII(msg(c.text)); got != c.want {
 			t.Errorf("%q: got %v want %v", c.text, got, c.want)

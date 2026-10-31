@@ -99,6 +99,9 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A diff of a new file is no longer taken for personal data.** Git's null hash (`index
+  00000000000..`) passed the check for a Norwegian ID number, or for a card number at 13 to 19 digits, so
+  the request waited for a trusted node. All-zero numbers no longer count. (gateway)
 - **The science task queue no longer says ok for what a restart would lose.** When a write fails
   (a full disk, a read-only directory) the call answers 503 with `Retry-After` and changes nothing.
   A failed save of a chain stops scheduling, so the limit on automatic rounds holds, and `claim`

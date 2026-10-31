@@ -220,6 +220,27 @@ func TestTrustRouting(t *testing.T) {
 	}
 }
 
+// A diff of a new file names git's null hash, eleven zeros that pass the identity number's check.
+// As personal data it waited for a trusted node; on a network of volunteers none comes, and Qwen's
+// reviews of new files stalled (prod, 2026-10-31). Real personal data still waits.
+func TestNullHashReachesAVolunteerNode(t *testing.T) {
+	r := newRigCfg(t, func(c *gateway.Config) { c.QueueTimeoutSec = 1 }, mockEngine(t, false))
+	ask := func(content string) int {
+		b, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": content}}})
+		resp := r.do(t, "POST", "/v1/chat/completions", "user-key", string(b))
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	diff := "diff --git a/A.lean b/A.lean\nnew file mode 100644\nindex 00000000000..3446d1c680f\n--- /dev/null\n+++ b/A.lean\n"
+	if c := ask(diff); c != 200 {
+		t.Fatalf("a diff of a new file: %d", c)
+	}
+	if c := ask(diff + "+-- ola.nordmann@example.no\n"); c != http.StatusServiceUnavailable {
+		t.Fatalf("the same diff with an address: %d", c)
+	}
+}
+
 func TestPerUserLimits(t *testing.T) {
 	r := newRigCfg(t, func(c *gateway.Config) {
 		c.Keys["owui-key"] = gateway.KeyInfo{User: "owui", ForwardUsers: true,

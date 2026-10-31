@@ -407,6 +407,9 @@ func hasPII(body map[string]any) bool {
 		}
 		for _, m := range digitRe.FindAllString(s, -1) {
 			d := strings.NewReplacer(" ", "", "-", "").Replace(m)
+			if strings.Trim(d, "0") == "" {
+				continue // git's null hash in a diff of a new file (index 00000000000..3446d1c680f): both checks pass zeros
+			}
 			if (len(d) >= 13 && len(d) <= 19 && luhn(d)) || (len(d) == 11 && fodselsnummer(d)) {
 				found = true
 				return
