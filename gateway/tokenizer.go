@@ -54,6 +54,11 @@ type addedToken struct {
 
 const tokCacheMax = 1 << 16
 
+// maxBPE bounds what one merge run holds in memory, about 200 bytes for each byte of its piece:
+// a longer piece is merged in parts of this size. No word of real text is this long; in one that
+// is, a merge across a part's edge is missed, which costs a token at most per part.
+const maxBPE = 64 << 10
+
 // tokenizerFile is the part of tokenizer.json the gateway reads.
 type tokenizerFile struct {
 	AddedTokens []struct {
@@ -252,13 +257,21 @@ func (t *Tokenizer) piece(p string) []int32 {
 	if ok {
 		return ids
 	}
+	if len(p) > maxBPE {
+		for len(p) > 0 {
+			n := min(len(p), maxBPE)
+			ids = append(ids, t.bpe(p[:n])...)
+			p = p[n:]
+		}
+		return ids
+	}
 	ids = t.bpe(p)
 	if len(p) <= 256 {
 		t.cacheMu.Lock()
 		if len(t.cache) >= tokCacheMax {
 			clear(t.cache)
 		}
-		t.cache[p] = ids
+		t.cache[strings.Clone(p)] = ids // a key cut from the text would keep all of the text alive
 		t.cacheMu.Unlock()
 	}
 	return ids

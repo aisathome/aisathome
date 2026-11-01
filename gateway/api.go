@@ -377,9 +377,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	// Rendered and hashed once, as a node will get it: routing looks for the node that holds
 	// this conversation (routing.go), credit for what that node had cached (credit_http.go).
 	conv := g.pcache.print(forNode(body))
-	if g.tok != nil {
-		conv.ids = g.tok.Encode(conv.prompt)
-	}
+	g.countPrompt(conv)
 	rt.setPrompt(conv, requestMaxTokens(body, g.cfg.DefaultMaxTokens))
 	rt.who, rt.conv = keyHash(c.userKey), conv.hashes
 	if c.overWait > 0 { // past the budget, it may only use the requester's own node

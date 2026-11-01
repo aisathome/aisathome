@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+	"unsafe"
 
 	"github.com/aisathome/aisathome/protocol"
 )
@@ -140,5 +142,88 @@ func TestEstimateCountsWithTokenizer(t *testing.T) {
 	<-m.ready
 	if len(m.promptIDs) != len(ids) || &m.promptIDs[0] != &job.req.conv.ids[0] {
 		t.Fatalf("credit counted the prompt again, or differently: %d tokens", len(m.promptIDs))
+	}
+}
+
+// Counting happens before a request has a node, so what it may cost has a limit: a few prompts
+// at a time, each counted whatever its size, since a long prompt may well fit a node.
+func TestCountingIsBounded(t *testing.T) {
+	g := newTestGateway(t, Config{TokenizerFile: "testdata/qwen38-mini-tokenizer.json"})
+	defer g.Close()
+	counted := func(size int) bool {
+		cp := &convPrint{prompt: strings.Repeat("a", size)}
+		g.countPrompt(cp)
+		return cp.ids != nil
+	}
+	if !counted(1<<20 + 1) {
+		t.Fatal("a long prompt is not counted")
+	}
+	// With every slot taken a prompt waits, and goes on when one is free.
+	for i := 0; i < countSlots; i++ {
+		g.counting <- struct{}{}
+	}
+	done := make(chan bool, 1)
+	go func() { done <- counted(100) }()
+	select {
+	case <-done:
+		t.Fatal("a prompt was counted with every slot taken")
+	case <-time.After(100 * time.Millisecond):
+	}
+	<-g.counting
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("the prompt was not counted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a free slot did not let it go on")
+	}
+	if len(g.counting) != countSlots-1 {
+		t.Fatalf("%d slots taken, want the test's %d: a slot was not given back", len(g.counting), countSlots-1)
+	}
+}
+
+// A word longer than maxBPE is merged in parts, so one word cannot hold memory for all of itself.
+// "in" merges and the edge cuts it, so the parts' count differs from one run over the whole.
+func TestLongWordIsMergedInParts(t *testing.T) {
+	tk, err := LoadTokenizer("testdata/qwen38-mini-tokenizer.json", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	word := "x" + strings.Repeat("in", maxBPE/2+2)
+	if word[maxBPE-1:maxBPE+1] != "in" {
+		t.Fatalf("the edge does not cut a merge: %q", word[maxBPE-1:maxBPE+1])
+	}
+	parts := len(tk.bpe(word[:maxBPE])) + len(tk.bpe(word[maxBPE:]))
+	if whole := len(tk.bpe(word)); parts == whole {
+		t.Fatalf("%d tokens either way: this test shows nothing", whole)
+	}
+	if got := tk.Count(word); got != parts {
+		t.Fatalf("%d tokens, want %d from its parts", got, parts)
+	}
+	if ids := tk.Encode(word[:maxBPE]); len(ids) != len(tk.bpe(word[:maxBPE])) {
+		t.Fatalf("a piece of exactly maxBPE was cut: %d tokens", len(ids))
+	}
+}
+
+// A cached word is its own copy: a piece of the prompt as a key would keep the whole prompt in
+// memory for as long as the entry lives, and the cache holds tens of thousands of them.
+func TestTokenizerCacheKeepsNoPrompt(t *testing.T) {
+	tk, err := LoadTokenizer("testdata/qwen38-mini-tokenizer.json", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := strings.Repeat(" ", 1<<16) + "freshword" + strings.Repeat(" ", 1<<16)
+	tk.Count(prompt)
+	start := uintptr(unsafe.Pointer(unsafe.StringData(prompt)))
+	found := false
+	for k := range tk.cache {
+		found = found || strings.Contains(k, "freshword")
+		if at := uintptr(unsafe.Pointer(unsafe.StringData(k))); at >= start && at < start+uintptr(len(prompt)) {
+			t.Fatalf("the cached %q points into the prompt", k)
+		}
+	}
+	if !found {
+		t.Fatal("the word was not cached: this test shows nothing")
 	}
 }

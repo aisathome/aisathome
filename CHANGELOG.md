@@ -114,7 +114,9 @@ and **(site)** are live on aisathome.org once deployed.
   its JSON, which ran 1.06-1.47 x real tokens on steps and up to 3.2 x on compaction summaries,
   whose reasoning the model never sees. It now counts the rendered prompt with its tokenizer,
   plus 1% and 16 tokens, so a 65k prompt fits a node of 81,920 and a summary is not refused.
-  Without a tokenizer it is a third of the rendered bytes. (gateway)
+  Without a tokenizer it is a third of the rendered bytes. At most four prompts are counted at
+  once, and a word over 64 KiB is merged in parts, which bounds what a request of one huge word
+  costs (8 MiB: from 945 to 272 MiB at peak). (gateway)
 
 - **A candidate no longer drops out of the review loop when its review's id is taken.** If
   `<candidate>.review` is already a person's task, or not a review, the candidate goes to

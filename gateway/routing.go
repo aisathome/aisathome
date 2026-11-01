@@ -183,6 +183,22 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 // request unservable.
 const minOutputRoom = 4096
 
+// countSlots is how many prompts are counted at once. Counting comes before the request has a
+// node, so anyone with a key can ask for it: real text costs 30 MB/s, but a run of letters as
+// long as a whole body (8 MiB) takes 3 s and about 270 MiB. The others wait, as the budget for
+// request bodies bounds how many there are.
+const countSlots = 4
+
+// countPrompt counts cp's tokens for routing, and for credit after it.
+func (g *Gateway) countPrompt(cp *convPrint) {
+	if g.tok == nil {
+		return
+	}
+	g.counting <- struct{}{}
+	defer func() { <-g.counting }()
+	cp.ids = g.tok.Encode(cp.prompt)
+}
+
 // promptEstimate is the context a rendered prompt takes on a node, in tokens.
 //
 // With a tokenizer it is the gateway's own count of the rendered prompt, which on 713 real
