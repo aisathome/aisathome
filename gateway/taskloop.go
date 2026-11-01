@@ -278,14 +278,21 @@ func (s *taskStore) candidateReady(p *projectTasks, t *Task, stop string, now ti
 	return s.setStage(t, StageReady, "", now)
 }
 
+// reviewEnds: an open review of the loop in a project with reviews off. The sweep ends it; one still
+// here after a sweep could not be saved as ended, and has no debt on disk to say so (owes).
+func (s *taskStore) reviewEnds(t *Task) bool {
+	return t.Kind == "review" && t.CreatedBy == gatewayCreator && !finished(t.State) && !s.loop(t.Project).reviews
+}
+
 // endReviews: reviews went off, so nothing waits for one. The open reviews end first, each with its
-// debt saved: a claim cannot lease one while a candidate's write waits for the disk. Holds s.mu.
+// debt saved: a claim cannot lease one while a candidate's write waits for the disk. A failed end
+// leaves the review as it was and p stale; the next sweep tries again. Holds s.mu.
 func (s *taskStore) endReviews(p *projectTasks, now time.Time) {
 	for _, t := range p.byID {
 		if p.stale {
 			return
 		}
-		if t.Kind == "review" && t.CreatedBy == gatewayCreator && !finished(t.State) && !s.loop(t.Project).reviews {
+		if s.reviewEnds(t) {
 			s.endTask(p, t, reviewsOff, now)
 		}
 	}

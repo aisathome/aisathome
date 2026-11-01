@@ -635,3 +635,39 @@ func TestDropKeepsATaskItCannotRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A review whose end cannot be saved stays queued on disk with no debt: the claim right after it
+// must not lease it, by kind or by id, and the next call ends it.
+func TestReviewEndFailsOnce(t *testing.T) {
+	for name, body := range map[string]map[string]any{
+		"any":   {"worker": "w9"},
+		"kinds": {"worker": "w9", "kinds": []string{"review"}},
+		"id":    {"worker": "w9", "task": "T1.a-A.review"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := loopRig(t, t.TempDir(), 3)
+			r.candidate("T1.a-A", true)
+			r.reviewsOff(3)
+			fails := 1
+			r.diskFull(func(path string) bool {
+				if fails > 0 && strings.HasSuffix(path, "T1.a-A.review.json") {
+					fails--
+					return true
+				}
+				return false
+			})
+			if w, out := r.call("POST", tasksPath+"/claim", testProjectKey, body); w.Code != http.StatusServiceUnavailable {
+				t.Fatalf("a claim after the failed end: %d %v", w.Code, out)
+			}
+			if fails != 0 {
+				t.Fatal("the end was not tried")
+			}
+			if got := r.g.tasks.get("tauceti", "T1.a-A.review"); got.State != TaskCancelled || got.Error != reviewsOff {
+				t.Fatalf("the review after the disk came back: %s %q", got.State, got.Error)
+			}
+			if got := r.g.tasks.get("tauceti", "T1.a-A"); got.Stage != StageReady {
+				t.Fatalf("the candidate: stage %q", got.Stage)
+			}
+		})
+	}
+}

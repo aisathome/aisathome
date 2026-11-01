@@ -419,11 +419,12 @@ func claimOrder(ts []*Task) {
 	})
 }
 
-// owes: a task still owes the loop a step, because a write failed. Nothing is claimed meanwhile: a
-// round or review half made must not run before its chain says so.
-func owes(p *projectTasks) bool {
+// owes: a task still owes the loop a step, or a review could not be ended, because a write failed.
+// Nothing is claimed meanwhile: a round or review half made must not run before its chain says so,
+// nor a review the project turned off.
+func (s *taskStore) owes(p *projectTasks) bool {
 	for _, t := range p.byID {
-		if t.LoopPending != nil {
+		if t.LoopPending != nil || s.reviewEnds(t) {
 			return true
 		}
 	}
@@ -445,7 +446,7 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxCl
 	if err != nil {
 		return nil, err
 	}
-	if owes(p) {
+	if s.owes(p) {
 		return nil, terr(http.StatusServiceUnavailable, "the task queue could not save a step of the review loop; no work goes out until it has")
 	}
 	var t *Task

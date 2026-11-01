@@ -144,6 +144,8 @@ like a crash of that project's queue, and what is on disk stays the truth:
   cannot be written, no round is made. The debt stays on the task (`loop_pending`), is tried again
   at every call and every 30 s, and until it is paid `claim` answers 503 and no work goes out.
   `continue` answers 503 in that state too, but its request is saved: the round comes by itself.
+- A project's review that cannot be ended once its reviews are off holds `claim` the same way: it
+  is tried again at every call and every 30 s, and no work goes out until the end is saved.
 - A queue that cannot be read answers 503, never an empty list, and the ops page says so.
 
 The queue heals by itself once the disk can be written again: free the space or fix the directory;
