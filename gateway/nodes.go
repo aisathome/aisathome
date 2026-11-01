@@ -576,11 +576,6 @@ func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAc
 			}
 		}
 	}
-	// Context: about 3 bytes per token of what the node sees (English text averages nearer
-	// 4, so this errs towards more tokens; CJK text is about 3 bytes per token).
-	prompt := len(mustJSON(forNode(body)))/3 + 16
-	maxTok := requestMaxTokens(body, g.cfg.DefaultMaxTokens)
-	rt.need, rt.needMin = prompt+maxTok, prompt+min(maxTok, minOutputRoom)
 	return rt
 }
 

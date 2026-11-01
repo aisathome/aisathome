@@ -258,6 +258,33 @@ func TestRoutingByContext(t *testing.T) {
 	}
 }
 
+// A Standard node alone takes a real session's prompt of 65k on its 81,920: bytes/3 of the JSON
+// made that about 90k, and the request got a 400 (backlog item 1). " the" is one token of four
+// bytes, about what real prompts run. A prompt that does not fit is still refused, unsent.
+func TestStandardNodeAloneTakes65k(t *testing.T) {
+	var hits atomic.Int32
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.TokenizerFile = miniTokenizer
+		c.NodeTokens["standard-token"] = gateway.NodeToken{Operator: "standard"}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.startNodeCfg(ctx, node.Config{NodeID: "standard", Token: "standard-token", Upstream: countEngine(t, &hits).URL,
+		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2, Ctx: 81920}}})
+	r.waitNodes(t, 1)
+	req := func(tokens int) (int, string) {
+		b, _ := json.Marshal(map[string]any{"model": "deep", "max_tokens": 32000,
+			"messages": []any{map[string]any{"role": "user", "content": strings.Repeat(" the", tokens)}}})
+		return ask(t, r, "user-key", string(b))
+	}
+	if code, out := req(65000); code != 200 || hits.Load() != 1 {
+		t.Fatalf("65k on a node of 81,920: %d %.200s, %d requests reached it", code, out, hits.Load())
+	}
+	if code, out := req(78000); code != 400 || !strings.Contains(out, "context_length_exceeded") || hits.Load() != 1 {
+		t.Fatalf("78k with 4k of room on a node of 81,920: %d %.200s, %d requests reached it", code, out, hits.Load())
+	}
+}
+
 // Without consent and with no trusted node online, an agent request fails with a message
 // that points at the account page's box (owner, 2026-10-11).
 func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {

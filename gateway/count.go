@@ -324,14 +324,14 @@ func (m *genOut) empty() bool {
 func newMeter(nb map[string]any, cp *convPrint, tok *Tokenizer) *meter {
 	m := &meter{ready: make(chan struct{})}
 	if cp != nil {
-		m.prompt, m.args, m.hashes = cp.prompt, cp.args, cp.hashes
+		m.prompt, m.args, m.hashes, m.promptIDs = cp.prompt, cp.args, cp.hashes, cp.ids
 	}
 	go func() {
 		defer close(m.ready)
 		if cp == nil {
 			m.prompt, m.args = renderPrompt(nb)
 		}
-		if tok != nil {
+		if tok != nil && m.promptIDs == nil {
 			m.promptIDs = tok.Encode(m.prompt)
 		}
 	}()

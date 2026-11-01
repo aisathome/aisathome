@@ -62,7 +62,7 @@ func TestChatPrepareOrder(t *testing.T) {
 
 	// The route's context need comes from the bounded max_tokens.
 	big := prepared(t, g, c, "hi", map[string]any{"max_tokens": 1e9})
-	if want := len(mustJSON(forNode(big.req.body)))/3 + 16 + g.cfg.MaxMaxTokens; big.rt.need != want {
+	if want := promptEstimate(big.req.conv) + g.cfg.MaxMaxTokens; big.rt.need != want {
 		t.Fatalf("need %d, want %d", big.rt.need, want)
 	}
 }

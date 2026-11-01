@@ -183,6 +183,28 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 // request unservable.
 const minOutputRoom = 4096
 
+// promptEstimate is the context a rendered prompt takes on a node, in tokens.
+//
+// With a tokenizer it is the gateway's own count of the rendered prompt, which on 713 real
+// requests (up to 114,070 tokens) was never under llama-server's count and at most 47 over.
+// The margin of 1% and 16 tokens covers what the rendering leaves out (an image counts as its
+// markers); a request that still overflows has minOutputRoom left before the node refuses it.
+//
+// Without one it is bytes/3 of the same text, safe rather than near: real sessions run 3.1-3.7
+// bytes per token (non-ASCII Lean), English nearer 4, CJK about 3.
+func promptEstimate(cp *convPrint) int {
+	if cp.ids != nil {
+		return len(cp.ids) + len(cp.ids)/100 + 16
+	}
+	return len(cp.prompt)/3 + 16
+}
+
+// setPrompt sets the context the request needs from its rendered prompt and max_tokens.
+func (rt *route) setPrompt(cp *convPrint, maxTokens int) {
+	prompt := promptEstimate(cp)
+	rt.need, rt.needMin = prompt+maxTokens, prompt+min(maxTokens, minOutputRoom)
+}
+
 // fits reports whether model m has context for the request at threshold (0 = no need given).
 // A node that announces no context is assumed to fit; it reports an overflow if not.
 func fits(m protocol.ModelInfo, threshold int) bool {

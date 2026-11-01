@@ -52,6 +52,7 @@ type convPrint struct {
 	prompt string
 	args   templateArgs
 	hashes []uint64 // blockHashes(prompt)
+	ids    []int32  // the prompt's tokens, with a tokenizer: counted once, for routing and credit
 }
 
 // print renders and hashes nb, the request as a node gets it (forNode).

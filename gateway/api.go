@@ -360,13 +360,6 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 			queueWait = c.proj.QueueTimeoutSec
 		}
 	}
-	if c.overWait > 0 {
-		rt.onlySelf = true
-		if g.servesFor(rt) == 0 {
-			budgetError(w, c.overWait)
-			return nil, false
-		}
-	}
 	reqText := requestText(body) // before redaction: addresses the user wrote, for the guards
 	red := newRedactor()
 	// Nothing to hide only when the key itself belongs to the operator whose nodes serve it
@@ -384,7 +377,18 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	// Rendered and hashed once, as a node will get it: routing looks for the node that holds
 	// this conversation (routing.go), credit for what that node had cached (credit_http.go).
 	conv := g.pcache.print(forNode(body))
+	if g.tok != nil {
+		conv.ids = g.tok.Encode(conv.prompt)
+	}
+	rt.setPrompt(conv, requestMaxTokens(body, g.cfg.DefaultMaxTokens))
 	rt.who, rt.conv = keyHash(c.userKey), conv.hashes
+	if c.overWait > 0 { // past the budget, it may only use the requester's own node
+		rt.onlySelf = true
+		if g.servesFor(rt) == 0 {
+			budgetError(w, c.overWait)
+			return nil, false
+		}
+	}
 	req := &chatReq{user: c.acct.User, who: c.userKey, charge: c.charge, self: rt.self, want: want,
 		clientStream: clientStream, logprobs: wantsLogprobs(body), body: body, red: red, conv: conv,
 		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project}
