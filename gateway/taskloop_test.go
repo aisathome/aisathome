@@ -825,6 +825,60 @@ func TestReviewsEndWithChainsWaiting(t *testing.T) {
 	}
 }
 
+// A person's round moved the chain on from a candidate still in-review: when reviews go off the
+// candidate stops waiting, and the chain goes on saying what the round made it.
+func TestReviewsEndWithAPersonsRound(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	r.createFix("T1.a-P1", "fix_round", findingsPrereviewQwen) // queued
+	ids := []string{"T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9"}
+	for _, id := range ids {
+		r.candidate(id+".a-A", true)
+		r.createFix(id+".a-P1", "fix_round", findingsPrereviewQwen)
+		r.candidate(id+".a-P1", true) // passed: the newer candidate, in review too
+	}
+	r.reviewsOff(3)
+
+	if got := r.g.tasks.get("tauceti", "T1.a-A"); got.Stage != StageReady {
+		t.Fatalf("the candidate: stage %q", got.Stage)
+	}
+	if c := r.chainOf("T1.a-A"); c.Status != chainOperatorRound || c.Stop != "" {
+		t.Fatalf("a round still queued: chain %+v", c)
+	}
+	for _, id := range ids {
+		for _, task := range []string{id + ".a-A", id + ".a-P1"} {
+			if got := r.g.tasks.get("tauceti", task); got.Stage != StageReady {
+				t.Errorf("%s: stage %q", task, got.Stage)
+			}
+		}
+		if c := r.chainOf(id + ".a-A"); c.Candidate != id+".a-P1" || c.Status != StageReady || c.Stop != stopReviewEnded {
+			t.Errorf("%s: the newer candidate stays the chain's: %+v", id, c)
+		}
+	}
+}
+
+// A crash between the two writes of a freed candidate: the chain says ready, the task in-review.
+func TestCandidateFreedAfterACrash(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	r.reviewsOff(3)
+	s := r.g.tasks
+	s.mu.Lock()
+	p, err := s.load("tauceti")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := s.chain(p, "T1.a", r.now)
+	c.Status, c.Stop = StageReady, stopReviewEnded
+	if err := s.saveChain("tauceti", c); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+	if got, c := r.g.tasks.get("tauceti", "T1.a-A"), r.chainOf("T1.a-A"); got.Stage != StageReady || c.Candidate != "T1.a-A" || c.Status != StageReady || c.Stop != stopReviewEnded {
+		t.Fatalf("candidate %q, chain %+v", got.Stage, c)
+	}
+}
+
 // With the chain files unwritable, a candidate cannot be freed yet: no review goes out meanwhile,
 // and it is freed once the disk is back. Eight candidates: the order of a map must not decide it.
 func TestReviewsEndOnAFullDisk(t *testing.T) {

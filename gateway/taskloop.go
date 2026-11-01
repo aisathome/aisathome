@@ -308,13 +308,17 @@ func (s *taskStore) endReviews(p *projectTasks, now time.Time) {
 
 // candidateFreed: reviews went off with this candidate waiting for one, which will not come or
 // schedules nothing: it passed its checks, so it goes to the operator. Only from in-review: a
-// candidate the loop moved on stays where it is. Holds s.mu.
+// candidate the loop moved on stays where it is. A chain a person's round moved on keeps its status
+// and candidate; a chain that says ready already is a crash between the two writes. Holds s.mu.
 func (s *taskStore) candidateFreed(p *projectTasks, id string, now time.Time) error {
 	t, ok := p.byID[id]
 	if !ok || t.Stage != StageInReview {
 		return nil
 	}
 	s.log.Info("candidate no longer waits for a review", "project", t.Project, "task", id)
+	if c := s.chain(p, t.Chain, now); c.Status != StageInReview || c.Candidate != t.ID {
+		return s.setStage(t, StageReady, stopReviewEnded, now)
+	}
 	return s.candidateReady(p, t, stopReviewEnded, now)
 }
 
