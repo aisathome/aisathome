@@ -367,8 +367,20 @@ func TestTaskFindingsSourceAndParent(t *testing.T) {
 func loopRig(t *testing.T, dir string, limit int) *taskRig {
 	t.Helper()
 	r := newTaskRig(t, dir)
-	r.g.tasks.loop = func(string) (bool, int) { return true, limit }
+	r.g.tasks.loop = func(string) loopSetting { return loopSetting{true, true, limit} }
 	return r
+}
+
+// roundsRig is a task rig with automatic rounds and no reviews (TauCeti since decision 0017).
+func roundsRig(t *testing.T, dir string, limit int) *taskRig {
+	t.Helper()
+	r := newTaskRig(t, dir)
+	r.reviewsOff(limit)
+	return r
+}
+
+func (r *taskRig) reviewsOff(limit int) {
+	r.g.tasks.loop = func(string) loopSetting { return loopSetting{false, true, limit} }
 }
 
 // claimID takes one task by id (the test decides the order).
@@ -581,13 +593,11 @@ func TestLoopLimitSetting(t *testing.T) {
 		t.Fatal("limit 1 not held")
 	}
 	g := newTestGateway(t, Config{Projects: []Project{{ID: "a", KeySHA256: []string{keyHash("k1234567890123456789012")}, ReviewLoop: true},
-		{ID: "b", KeySHA256: []string{keyHash("k2234567890123456789012")}, ReviewLoop: true, MaxReviewRounds: 7}, {ID: "c", KeySHA256: []string{keyHash("k3234567890123456789012")}}}})
-	for p, want := range map[string]struct {
-		on bool
-		n  int
-	}{"a": {true, 3}, "b": {true, 7}, "c": {false, 3}, "gone": {false, 3}} {
-		if on, n := g.reviewLoop(p); on != want.on || n != want.n {
-			t.Errorf("project %s: %v %d", p, on, n)
+		{ID: "b", KeySHA256: []string{keyHash("k2234567890123456789012")}, ReviewLoop: true, MaxReviewRounds: 7}, {ID: "c", KeySHA256: []string{keyHash("k3234567890123456789012")}},
+		{ID: "d", KeySHA256: []string{keyHash("k4234567890123456789012")}, AutoRounds: true}}})
+	for p, want := range map[string]loopSetting{"a": {true, true, 3}, "b": {true, true, 7}, "c": {false, false, 3}, "d": {false, true, 3}, "gone": {false, false, 3}} {
+		if got := g.loopOf(p); got != want {
+			t.Errorf("project %s: %+v", p, got)
 		}
 	}
 }

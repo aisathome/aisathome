@@ -1,7 +1,8 @@
 // The review loop's bookkeeping (tasks.go, "The review loop"; owner 2026-10-31): per chain, how many
 // Qwen reviews and automatic rounds ran, what they cost, each verdict and why the loop stopped; and
 // what happens when a candidate, a review or an automatic round ends. The cap on automatic rounds
-// lives here, so a runner's restart or a new round id cannot get around it.
+// lives here, so a runner's restart or a new round id cannot get around it. Reviews and rounds are
+// two switches (decision 0017 ended the reviews and kept the rounds): loopSetting, project.go.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -229,10 +230,10 @@ func (s *taskStore) setStage(t *Task, stage, note string, now time.Time) error {
 
 // afterDone is what a finished task means for the loop. Holds s.mu.
 func (s *taskStore) afterDone(p *projectTasks, t *Task, fix *taskNew, now time.Time) error {
-	on, limit := s.loop(t.Project)
+	loop := s.loop(t.Project)
 	r := t.Result
 	if t.Kind == "review" {
-		return s.reviewDone(p, t, fix, on, limit, now)
+		return s.reviewDone(p, t, fix, loop, now)
 	}
 	passed := r.ChecksPassed != nil && *r.ChecksPassed
 	if t.CreatedBy == gatewayCreator {
@@ -246,13 +247,68 @@ func (s *taskStore) afterDone(p *projectTasks, t *Task, fix *taskNew, now time.T
 			}
 		}
 	}
-	if !on || t.Kind == "other" {
+	if !loop.rounds || t.Kind == "other" {
 		return nil
 	}
-	if passed {
+	switch {
+	case !passed:
+		return s.scheduleRound(p, t, t, fix, roundChecks, loop.limit, now)
+	case loop.reviews:
 		return s.queueReview(p, t, now)
 	}
-	return s.scheduleRound(p, t, t, fix, roundChecks, limit, now)
+	return s.candidateReady(p, t, stopPassed, now)
+}
+
+// Why a chain stopped at ready-for-operator.
+const (
+	stopPassed      = "passed"
+	stopReviewEnded = "passed its local checks; reviews are off"
+)
+
+// reviewsOff is why the sweep ends the loop's open reviews once a project has none.
+const reviewsOff = "reviews are off for this project"
+
+// candidateReady: a candidate waits for the operator. Holds s.mu.
+func (s *taskStore) candidateReady(p *projectTasks, t *Task, stop string, now time.Time) error {
+	c := s.chain(p, t.Chain, now)
+	c.Candidate, c.Status, c.Stop = t.ID, StageReady, stop
+	if err := s.saveChain(t.Project, c); err != nil {
+		return err
+	}
+	return s.setStage(t, StageReady, "", now)
+}
+
+// endReviews: reviews went off, so nothing waits for one. The open reviews end first, each with its
+// debt saved: a claim cannot lease one while a candidate's write waits for the disk. Holds s.mu.
+func (s *taskStore) endReviews(p *projectTasks, now time.Time) {
+	for _, t := range p.byID {
+		if p.stale {
+			return
+		}
+		if t.Kind == "review" && t.CreatedBy == gatewayCreator && !finished(t.State) && !s.loop(t.Project).reviews {
+			s.endTask(p, t, reviewsOff, now)
+		}
+	}
+	for _, t := range p.byID {
+		if p.stale {
+			return
+		}
+		if t.Stage == StageInReview && !s.loop(t.Project).reviews {
+			s.candidateFreed(p, t.ID, now)
+		}
+	}
+}
+
+// candidateFreed: reviews went off with this candidate waiting for one, which will not come or
+// schedules nothing: it passed its checks, so it goes to the operator. Only from in-review: a
+// candidate the loop moved on stays where it is. Holds s.mu.
+func (s *taskStore) candidateFreed(p *projectTasks, id string, now time.Time) error {
+	t, ok := p.byID[id]
+	if !ok || t.Stage != StageInReview {
+		return nil
+	}
+	s.log.Info("candidate no longer waits for a review", "project", t.Project, "task", id)
+	return s.candidateReady(p, t, stopReviewEnded, now)
 }
 
 // costRound: t's cost is not in the chain yet; it is from now on.
@@ -276,14 +332,14 @@ func (c *taskChain) hasRound(id, from, kind string) bool {
 // skipped: a re-check skipped a task. No model failed; the runner's recipe moves it to a fresh base,
 // and without one the operator decides. Holds s.mu.
 func (s *taskStore) skipped(p *projectTasks, t *Task, fix *taskNew, now time.Time) error {
-	on, limit := s.loop(t.Project)
+	loop := s.loop(t.Project)
 	switch {
-	case !on:
+	case !loop.rounds:
 		return s.loopStopped(p, t, t.Error, now)
 	case fix == nil:
 		return s.stopChain(p, t, t.Error, now)
 	default:
-		return s.scheduleRound(p, t, t, fix, roundFreshBase, limit, now)
+		return s.scheduleRound(p, t, t, fix, roundFreshBase, loop.limit, now)
 	}
 }
 
@@ -306,6 +362,9 @@ func (s *taskStore) stopChain(p *projectTasks, t *Task, why string, now time.Tim
 func (s *taskStore) loopStopped(p *projectTasks, t *Task, why string, now time.Time) error {
 	if t.CreatedBy != gatewayCreator {
 		return nil
+	}
+	if t.Kind == "review" && !s.loop(t.Project).reviews {
+		return s.candidateFreed(p, t.Parent, now)
 	}
 	if parent, ok := p.byID[t.Parent]; ok && t.Kind == "review" && parent.State == TaskDone {
 		return s.stopChain(p, parent, "the review did not finish: "+why, now)
@@ -361,7 +420,7 @@ func (s *taskStore) queueReview(p *projectTasks, t *Task, now time.Time) error {
 }
 
 // reviewDone records a finished review and, for the loop's own, acts on the verdict. Holds s.mu.
-func (s *taskStore) reviewDone(p *projectTasks, t *Task, fix *taskNew, on bool, limit int, now time.Time) error {
+func (s *taskStore) reviewDone(p *projectTasks, t *Task, fix *taskNew, loop loopSetting, now time.Time) error {
 	r, c := t.Result, s.chain(p, t.Chain, now)
 	v := chainVerdict{Task: t.ID, Verdict: "none", ModelMin: r.ModelMin, Prompt: r.PromptTokens, Compl: r.CompletionTokens,
 		Manual: t.CreatedBy != gatewayCreator, At: now.UTC()}
@@ -394,21 +453,23 @@ func (s *taskStore) reviewDone(p *projectTasks, t *Task, fix *taskNew, on bool, 
 			return err
 		}
 	}
-	if v.Manual || !on { // it records; it schedules nothing
+	if v.Manual { // it records; it schedules nothing
 		return nil
+	}
+	if !loop.reviews { // nor does a verdict that comes after reviews went off, but for a round a crash cut short
+		if ok && fix != nil && c.hasRound(fix.ID, parent.ID, roundQwen) {
+			return s.scheduleRound(p, t, parent, fix, roundQwen, loop.limit, now)
+		}
+		return s.candidateFreed(p, t.Parent, now)
 	}
 	if !ok || parent.State != TaskDone {
 		return s.stopChain(p, t, "the candidate's task is gone", now)
 	}
 	switch v.Verdict {
 	case "green":
-		c.Status, c.Stop = StageReady, "passed"
-		if err := s.saveChain(t.Project, c); err != nil {
-			return err
-		}
-		return s.setStage(parent, StageReady, "", now)
+		return s.candidateReady(p, parent, stopPassed, now)
 	case "red":
-		return s.scheduleRound(p, t, parent, fix, roundQwen, limit, now)
+		return s.scheduleRound(p, t, parent, fix, roundQwen, loop.limit, now)
 	default:
 		return s.stopChain(p, parent, "the review gave no verdict", now)
 	}

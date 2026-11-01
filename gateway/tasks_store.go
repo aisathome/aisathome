@@ -38,15 +38,15 @@ type taskStore struct {
 	now  func() time.Time
 	log  *slog.Logger
 	byPr map[string]*projectTasks
-	// loop: is the review loop on for a project, and its rounds per chain (the project's config).
-	loop func(project string) (bool, int)
+	// loop: the project's reviews and automatic rounds (its config).
+	loop func(project string) loopSetting
 	// write stores one file; a test stops it to crash between two writes.
 	write func(path string, raw []byte) error
 }
 
 func newTaskStore(dir string, log *slog.Logger) *taskStore {
 	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{},
-		loop:  func(string) (bool, int) { return false, defaultReviewRounds },
+		loop:  func(string) loopSetting { return loopSetting{limit: defaultReviewRounds} },
 		write: writeFileAtomic}
 }
 
@@ -210,11 +210,13 @@ func continues(t *Task, worker string, now time.Time) bool {
 	return false
 }
 
-// sweep does what the loop is still owed, returns the project's expired leases to the queue, and
-// fails a task whose lease expired on its last try when its worker has not taken it back within the
-// window. It stops at a failed write, leaving p stale. Holds s.mu.
+// sweep does what the loop is still owed, ends what waits for a review that a project turned off,
+// returns the project's expired leases to the queue, and fails a task whose lease expired on its
+// last try when its worker has not taken it back within the window. It stops at a failed write,
+// leaving p stale. Holds s.mu.
 func (s *taskStore) sweep(p *projectTasks, now time.Time) {
 	s.settleAll(p, now)
+	s.endReviews(p, now)
 	for _, t := range p.byID {
 		if p.stale {
 			return
@@ -636,6 +638,15 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	if reason == "" {
 		reason = "cancelled"
 	}
+	if err := s.endTask(p, t, reason, now); err != nil {
+		return nil, err
+	}
+	s.prune(p)
+	return t.view(false), nil
+}
+
+// endTask cancels an open task. Holds s.mu.
+func (s *taskStore) endTask(p *projectTasks, t *Task, reason string, now time.Time) error {
 	worker := ""
 	if t.Lease != nil {
 		worker = t.Lease.Worker
@@ -644,11 +655,10 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	t.event(now, "cancelled", worker, reason)
 	t.LoopPending = &loopPending{Step: owedStop, Why: "cancelled: " + reason}
 	if err := s.conclude(p, t, now); err != nil {
-		return nil, err
+		return err
 	}
-	s.prune(p)
-	s.log.Info("task cancelled", "project", project, "task", id, "worker", worker)
-	return t.view(false), nil
+	s.log.Info("task cancelled", "project", t.Project, "task", t.ID, "worker", worker)
+	return nil
 }
 
 // setMaxTries changes an open task's max_tries (n is 1 to maxMaxTries): not below the tries it

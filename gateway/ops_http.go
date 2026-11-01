@@ -129,7 +129,7 @@ func (g *Gateway) opsTasks(d *opsData, project string, now time.Time) {
 		return
 	}
 	ts, counts := g.tasks.list(project, nil, nil, "")
-	_, rounds := g.tasks.loop(project)
+	rounds := g.tasks.loop(project).limit
 	var parts []string
 	for _, st := range queueStates {
 		if counts[st] > 0 {

@@ -68,8 +68,11 @@ type Project struct {
 	// requests, so it may wait longer than they do. Default the gateway's queue_timeout_seconds.
 	QueueTimeoutSec int `json:"queue_timeout_seconds,omitempty"`
 	// ReviewLoop: a task that passes its checks gets a review task, and a red verdict a fix round
-	// (tasks.go, "The review loop"). MaxReviewRounds: automatic rounds per chain; 0 = 3.
+	// (tasks.go, "The review loop"). AutoRounds: no reviews, but what the gateway does with a task's
+	// end stays: a pass waits for the operator, a failed check or a skip gets its round. ReviewLoop
+	// includes it. MaxReviewRounds: automatic rounds per chain; 0 = 3.
 	ReviewLoop      bool `json:"review_loop,omitempty"`
+	AutoRounds      bool `json:"auto_rounds,omitempty"`
 	MaxReviewRounds int  `json:"max_review_rounds,omitempty"`
 }
 
@@ -81,14 +84,21 @@ type projectTable struct {
 	byID   map[string]*Project
 }
 
-// reviewLoop is the task store's view of a project's review loop.
-func (g *Gateway) reviewLoop(project string) (bool, int) {
+// loopSetting is the task store's view of a project's loop. reviews: candidates get a review task.
+// rounds: the gateway acts on a task's end at all. limit: automatic rounds per chain.
+type loopSetting struct {
+	reviews, rounds bool
+	limit           int
+}
+
+// loopOf is a project's loop.
+func (g *Gateway) loopOf(project string) loopSetting {
 	t := g.projects.Load()
 	if t == nil || t.byID[project] == nil {
-		return false, defaultReviewRounds
+		return loopSetting{limit: defaultReviewRounds}
 	}
 	p := t.byID[project]
-	return p.ReviewLoop, cmp.Or(p.MaxReviewRounds, defaultReviewRounds)
+	return loopSetting{p.ReviewLoop, p.ReviewLoop || p.AutoRounds, cmp.Or(p.MaxReviewRounds, defaultReviewRounds)}
 }
 
 // newProjectTable checks the projects of a config.

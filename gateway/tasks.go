@@ -42,7 +42,11 @@
 // task (`task`): a worker takes back the task whose lease it lost, to resume from its own
 // checkpoint.
 //
-// The review loop (owner 2026-10-31): when a project has
+// The review loop (owner 2026-10-31; decision 0017 ended the reviews for TauCeti): with auto_rounds on
+// and review_loop off, a task that ends with checks_passed is ready-for-operator at once, with no
+// review task, and everything below about failed checks, skips and the limit applies. A candidate
+// still in-review when reviews go off goes to ready-for-operator at the next sweep, its open review
+// cancelled; a verdict that arrives after that records and schedules nothing. When a project has
 // review_loop on, a task that ends with checks_passed gets a review task from the gateway, which a
 // runner executes (no model code here). Its `complete` carries a verdict. Green: the candidate is
 // ready-for-operator (a Codex review by the operator comes next; nothing here opens anything).

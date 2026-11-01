@@ -809,3 +809,60 @@ func TestTaskQueueOnAReadOnlyDisk(t *testing.T) {
 		t.Fatalf("a second round past the limit of 1: %v", n)
 	}
 }
+
+// Decision 0017, as a deploy does it: the project's config turns reviews off and the gateway
+// restarts with candidates waiting. Nothing stays in-review, no review can be claimed, and the
+// automatic rounds go on from the same count, up to the chain's limit.
+func TestTaskReviewsOffAcrossARestart(t *testing.T) {
+	l := newLoopGateway(t, 3)
+	const queued, running, failed = "T7-X.a-A", "T7-Y.a-A", "T7-Z.a-A"
+	retried := func(id string) map[string]any {
+		return map[string]any{"outcome": "fails: lake_build", "checks_passed": false,
+			"fix": map[string]any{"id": id, "kind": "attempt", "title": "Retry " + id, "created_by": "runner", "spec": map[string]any{"attempt": id}}}
+	}
+	l.create(t, queued, "attempt")
+	l.complete(t, queued, l.claim(t, queued), loopPassed)
+	l.create(t, running, "attempt")
+	l.complete(t, running, l.claim(t, running), loopPassed)
+	l.claim(t, running+".review")
+	l.create(t, failed, "attempt")
+	l.complete(t, failed, l.claim(t, failed), retried("T7-Z.a-P1"))
+	if p, ch := l.get(t, queued); p["stage"] != "in-review" || ch["status"] != "in-review" {
+		t.Fatalf("before: %v, chain %v", p, ch)
+	}
+
+	l.cfg.Projects[0].ReviewLoop, l.cfg.Projects[0].AutoRounds = false, true
+	l.restart(t)
+
+	for _, id := range []string{queued, running} {
+		if p, ch := l.get(t, id); p["stage"] != "ready-for-operator" || ch["status"] != "ready-for-operator" {
+			t.Errorf("%s: %v, chain %v", id, p, ch)
+		}
+		if rv, _ := l.get(t, id+".review"); rv["state"] != "cancelled" {
+			t.Errorf("%s's review: %v", id, rv)
+		}
+	}
+	if code, out := l.call(t, "POST", "/claim", map[string]any{"worker": "w2", "kinds": []string{"review"}}); code != 204 {
+		t.Fatalf("a review to claim: HTTP %d %v", code, out)
+	}
+	// The round that was queued runs on; it and the next count with the one before the restart.
+	l.complete(t, "T7-Z.a-P1", l.claim(t, "T7-Z.a-P1"), retried("T7-Z.a-P2"))
+	l.complete(t, "T7-Z.a-P2", l.claim(t, "T7-Z.a-P2"), retried("T7-Z.a-P3"))
+	l.complete(t, "T7-Z.a-P3", l.claim(t, "T7-Z.a-P3"), retried("T7-Z.a-P4"))
+	if p, ch := l.get(t, "T7-Z.a-P3"); p["stage"] != "needs-operator" || ch["auto_rounds"] != float64(3) {
+		t.Fatalf("at the limit: %v, chain %v", p, ch)
+	}
+	if p, _ := l.get(t, "T7-Z.a-P4"); p != nil {
+		t.Fatalf("a fourth round: %v", p)
+	}
+	// A candidate after the change: no review at all.
+	const fresh = "T7-V.a-A"
+	l.create(t, fresh, "attempt")
+	l.complete(t, fresh, l.claim(t, fresh), loopPassed)
+	if p, ch := l.get(t, fresh); p["stage"] != "ready-for-operator" || ch["reviews"] != float64(0) {
+		t.Fatalf("a new candidate: %v, chain %v", p, ch)
+	}
+	if rv, _ := l.get(t, fresh+".review"); rv != nil {
+		t.Fatalf("a new candidate's review: %v", rv)
+	}
+}

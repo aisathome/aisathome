@@ -114,6 +114,9 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `min_trust` | `"trusted"` keeps all its requests on trusted nodes. |
 | `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
 | `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
+| `auto_rounds` | The gateway acts on a task's end. A task that passes its local checks is `ready-for-operator`, with no review task. One that fails them gets the runner's recipe as an automatic round, a skipped one a fresh base. |
+| `review_loop` | As `auto_rounds` (which it includes), and a passing task gets a Qwen review task first; a green verdict makes it `ready-for-operator`, a red one a fix round. Off for TauCeti (decision 0017). Turned off with work under way, a candidate waiting at `in-review` becomes `ready-for-operator` at the queue's next call or sweep, the loop's open reviews are cancelled, and a verdict still owed records and schedules nothing. A review a person created stays as it is. |
+| `max_review_rounds` | Automatic rounds per chain, of any kind, default 3; past them the task is `needs-operator` and the recipe waits there for `continue`. |
 
 Make a key with:
 

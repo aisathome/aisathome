@@ -664,3 +664,242 @@ func TestListLeavesOutAWaitingRecipe(t *testing.T) {
 		t.Fatalf("summary %+v, task %+v", v.LoopPending, live.LoopPending)
 	}
 }
+
+// Without reviews (decision 0017) a candidate that passes goes to the operator at once: no review
+// task, and nothing for a worker to claim.
+func TestNoReviewsCandidateIsReady(t *testing.T) {
+	r := roundsRig(t, "", 3)
+	r.candidate("T1.a-A", true)
+	p, c := r.g.tasks.get("tauceti", "T1.a-A"), r.chainOf("T1.a-A")
+	if p.Stage != StageReady || p.QwenReview != nil || r.g.tasks.get("tauceti", "T1.a-A.review") != nil {
+		t.Fatalf("candidate %+v", p)
+	}
+	if c.Status != StageReady || c.Stop != stopPassed || c.Candidate != "T1.a-A" || c.Reviews != 0 || c.AutoRounds != 0 {
+		t.Fatalf("chain %+v", c)
+	}
+	if w, out := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w9"}); w.Code != http.StatusNoContent {
+		t.Fatalf("something was queued: %v", out)
+	}
+	// A debt paid again after a crash changes nothing.
+	r.owe("T1.a-A")
+	if p, c := r.g.tasks.get("tauceti", "T1.a-A"), r.chainOf("T1.a-A"); p.Stage != StageReady || c.Status != StageReady {
+		t.Fatalf("after a crash: %+v, chain %+v", p, c)
+	}
+	// A failed candidate is not ready; a result that does not say is no pass; other jobs have no stage.
+	r.candidate("T2.a-A", false)
+	r.create("T3.a-A", "attempt")
+	r.finishTask("T3.a-A", map[string]any{"outcome": "x"})
+	r.create("O1-x", "other")
+	r.finishTask("O1-x", map[string]any{"outcome": "x", "checks_passed": true})
+	for id, want := range map[string]string{"T2.a-A": StageNeedsOperator, "T3.a-A": StageNeedsOperator, "O1-x": ""} {
+		if got := r.g.tasks.get("tauceti", id).Stage; got != want {
+			t.Errorf("%s: stage %q, want %q", id, got, want)
+		}
+	}
+	// With neither switch, the gateway does nothing with a task's end, as before.
+	off := newTaskRig(t, "")
+	off.candidate("T1.a-A", true)
+	if got := off.g.tasks.get("tauceti", "T1.a-A").Stage; got != "" {
+		t.Fatalf("no loop: stage %q", got)
+	}
+}
+
+// Automatic retries after failed local checks stay without reviews, up to the chain's limit,
+// counted across rounds; the recipe past it waits for the operator, and a retry that passes is ready.
+func TestNoReviewsRetriesToTheLimit(t *testing.T) {
+	r := roundsRig(t, "", 3)
+	r.create("T1.a-A", "attempt")
+	r.failed("T1.a-A", retry("T1.a-P1", "attempt", ""))
+	r.failed("T1.a-P1", retry("T1.a-P2", "attempt", ""))
+	r.failed("T1.a-P2", retry("T1.a-P3", "attempt", ""))
+	if n := r.g.tasks.get("tauceti", "T1.a-P3"); n == nil || n.RoundKind != roundChecks || n.CreatedBy != gatewayCreator {
+		t.Fatalf("the third round: %+v", n)
+	}
+	r.failed("T1.a-P3", retry("T1.a-P4", "attempt", ""))
+	if r.g.tasks.get("tauceti", "T1.a-P4") != nil {
+		t.Fatal("a fourth automatic round")
+	}
+	c, p := r.chainOf("T1.a-A"), r.g.tasks.get("tauceti", "T1.a-P3")
+	if c.AutoRounds != 3 || c.Status != StageNeedsOperator || !strings.Contains(c.Stop, "limit of 3") {
+		t.Fatalf("chain %+v", c)
+	}
+	if p.Stage != StageNeedsOperator || p.NextFix == nil || p.NextFix.ID != "T1.a-P4" {
+		t.Fatalf("the recipe waits: %+v", p)
+	}
+	r = roundsRig(t, "", 3)
+	r.create("T2.a-A", "attempt")
+	r.failed("T2.a-A", retry("T2.a-P1", "attempt", ""))
+	r.candidate("T2.a-P1", true)
+	if p, c := r.g.tasks.get("tauceti", "T2.a-P1"), r.chainOf("T2.a-A"); p.Stage != StageReady || c.Status != StageReady || c.AutoRounds != 1 || c.Candidate != "T2.a-P1" {
+		t.Fatalf("the retry that passes: %+v, chain %+v", p, c)
+	}
+	if r.g.tasks.get("tauceti", "T2.a-P1.review") != nil {
+		t.Fatal("the retry got a review")
+	}
+	// A failure with no recipe from the runner stops at the operator, and says so.
+	r.create("T3.a-A", "attempt")
+	r.failed("T3.a-A", nil)
+	if c := r.chainOf("T3.a-A"); c.Status != StageNeedsOperator || !strings.Contains(c.Stop, "gave no round") {
+		t.Fatalf("no recipe: chain %+v", c)
+	}
+	// A re-check's skip still moves to a fresh base.
+	r.create("T4.a-A", "attempt")
+	r.skip("T4.a-A", retry("T4.a-AB1", "attempt", ""))
+	if n := r.g.tasks.get("tauceti", "T4.a-AB1"); n == nil || n.RoundKind != roundFreshBase {
+		t.Fatalf("the fresh base: %+v", n)
+	}
+}
+
+// Reviews go off with chains under way: nothing stays in-review, whatever state its review is in, the
+// verdicts on record stay, and a person's review and every other stage are left alone.
+func TestReviewsEndWithChainsWaiting(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true) // its review queued
+	r.candidate("T2.a-A", true) // its review running
+	lease := r.claimID("w1", "T2.a-A.review")
+	r.candidate("T3.a-A", true) // its review gone
+	r.candidate("T4.a-A", true) // moved on before: stays
+	r.verdict("T4.a-A.review", "green", nil)
+	r.candidate("T5.a-A", true)
+	r.redRound("T5.a-A", "T5.a-P1")
+	r.create("T6.a-A", "attempt")
+	r.failed("T6.a-A", nil)
+	r.candidate("T7.a-A", true)
+	r.createReview("T7.a-A.second.review", "T7.a-A") // a person's
+	r.candidate("T8.a-A", true)                      // the operator took over: its open review frees nothing
+	s := r.g.tasks
+	s.mu.Lock()
+	p, err := s.load("tauceti")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.drop(p.byID["T3.a-A.review"]) {
+		t.Fatal("drop")
+	}
+	if err := s.stopChain(p, p.byID["T8.a-A"], "the operator's", r.now); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+
+	r.reviewsOff(3)
+	if w, out := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w9", "kinds": []string{"review"}}); w.Code != http.StatusOK ||
+		out["task"].(map[string]any)["id"] != "T7.a-A.second.review" {
+		t.Fatalf("a claim for a review: %d %v", w.Code, out)
+	}
+	for _, id := range []string{"T1.a-A", "T2.a-A", "T3.a-A", "T7.a-A"} {
+		c := r.chainOf(id)
+		if got := r.g.tasks.get("tauceti", id); got.Stage != StageReady || c.Status != StageReady || c.Stop != stopReviewEnded {
+			t.Errorf("%s: stage %q, chain %+v", id, got.Stage, c)
+		}
+	}
+	for _, id := range []string{"T1.a-A.review", "T2.a-A.review"} {
+		if got := r.g.tasks.get("tauceti", id); got.State != TaskCancelled || got.Error != reviewsOff {
+			t.Errorf("%s: %s %q", id, got.State, got.Error)
+		}
+	}
+	// The running review's worker hears that its task ended, and nothing else moves.
+	if w := r.lease("T2.a-A.review", "complete", "w1", lease, map[string]any{"result": map[string]any{"outcome": "qwen review: red"}}); w.Code < 400 {
+		t.Fatalf("a verdict after the end: HTTP %d", w.Code)
+	}
+	if p := r.g.tasks.get("tauceti", "T4.a-A"); p.Stage != StageReady || p.QwenReview.Verdict != "green" {
+		t.Fatalf("a chain that had moved on: %+v", p)
+	}
+	if c := r.chainOf("T4.a-A"); c.Stop != stopPassed {
+		t.Fatalf("a chain that had moved on: %+v", c)
+	}
+	if p := r.g.tasks.get("tauceti", "T5.a-A"); p.Stage != StageFixScheduled {
+		t.Fatalf("the round goes on: %+v", p)
+	}
+	for _, id := range []string{"T6.a-A", "T8.a-A"} {
+		if p := r.g.tasks.get("tauceti", id); p.Stage != StageNeedsOperator {
+			t.Fatalf("needs-operator stays: %+v", p)
+		}
+	}
+	if c := r.chainOf("T8.a-A"); c.Status != StageNeedsOperator || c.Stop != "the operator's" {
+		t.Fatalf("needs-operator stays: %+v", c)
+	}
+	// The round that ran on passes: ready, no review.
+	r.candidate("T5.a-P1", true)
+	if p := r.g.tasks.get("tauceti", "T5.a-P1"); p.Stage != StageReady || r.g.tasks.get("tauceti", "T5.a-P1.review") != nil {
+		t.Fatalf("the round that passed: %+v", p)
+	}
+}
+
+// With the chain files unwritable, a candidate cannot be freed yet: no review goes out meanwhile,
+// and it is freed once the disk is back. Eight candidates: the order of a map must not decide it.
+func TestReviewsEndOnAFullDisk(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	ids := []string{"T1.a-A", "T2.a-A", "T3.a-A", "T4.a-A", "T5.a-A", "T6.a-A", "T7.a-A", "T8.a-A"}
+	for _, id := range ids {
+		r.candidate(id, true)
+	}
+	r.reviewsOff(3)
+	r.diskFull(isChainFile)
+	if w, out := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w9", "kinds": []string{"review"}}); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a claim with the disk full: %d %v", w.Code, out)
+	}
+	r.diskBack()
+	for _, id := range ids {
+		if got := r.g.tasks.get("tauceti", id); got.Stage != StageReady {
+			t.Errorf("%s: stage %q", id, got.Stage)
+		}
+	}
+	if w, out := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w9", "kinds": []string{"review"}}); w.Code != http.StatusNoContent {
+		t.Fatalf("a review after the disk came back: %d %v", w.Code, out)
+	}
+}
+
+// A review that ended before reviews went off and whose step waited: its verdict is recorded, and red
+// schedules nothing (decision 0017). With reviews on, a review that did not finish still stops the chain.
+func TestReviewsEndWithAVerdictOwed(t *testing.T) {
+	r := loopRig(t, t.TempDir(), 3)
+	r.candidate("T1.a-A", true)
+	r.reviewsOff(3)
+	s := r.g.tasks
+	s.mu.Lock()
+	p, err := s.load("tauceti")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rv := p.byID["T1.a-A.review"]
+	rv.State, rv.Result = TaskDone, &TaskResult{Outcome: "qwen review: red"}
+	rv.Review = &TaskReview{Verdict: "red", By: "qwen-judge", Judge: judgeQwen}
+	rv.LoopPending = &loopPending{Step: owedDone, Fix: &taskNew{ID: "T1.a-P1", Kind: "fix_round", Title: "x", FindingsSource: findingsPrereviewQwen}}
+	s.mu.Unlock()
+	got, c := r.g.tasks.get("tauceti", "T1.a-A"), r.chainOf("T1.a-A")
+	if got.Stage != StageReady || got.QwenReview == nil || got.QwenReview.Verdict != "red" || c.Reviews != 1 || c.AutoRounds != 0 || r.g.tasks.get("tauceti", "T1.a-P1") != nil {
+		t.Fatalf("candidate %+v, chain %+v", got, c)
+	}
+
+	// A crash cut a round short: counted, not made. It goes on, and the candidate does not read as ready.
+	r = loopRig(t, t.TempDir(), 3)
+	r.candidate("T3.a-A", true)
+	r.reviewsOff(3)
+	s = r.g.tasks
+	s.mu.Lock()
+	if p, err = s.load("tauceti"); err != nil {
+		t.Fatal(err)
+	}
+	fix := &taskNew{ID: "T3.a-P1", Kind: "fix_round", Title: "x", FindingsSource: findingsPrereviewQwen, CreatedBy: "runner", Spec: json.RawMessage(`{"attempt":"T3.a-P1"}`)}
+	rv = p.byID["T3.a-A.review"]
+	rv.State, rv.Result = TaskDone, &TaskResult{Outcome: "qwen review: red"}
+	rv.Review = &TaskReview{Verdict: "red", By: "qwen-judge", Judge: judgeQwen}
+	rv.LoopPending = &loopPending{Step: owedDone, Fix: fix}
+	cc := p.chains["T3.a"]
+	cc.AutoRounds, cc.Status = 1, StageFixScheduled
+	cc.Rounds = append(cc.Rounds, chainRound{Task: fix.ID, Kind: roundQwen, From: "T3.a-A", At: r.now})
+	s.mu.Unlock()
+	got, c = r.g.tasks.get("tauceti", "T3.a-A"), r.chainOf("T3.a-A")
+	if got.Stage != StageFixScheduled || c.Status != StageFixScheduled || c.AutoRounds != 1 || r.g.tasks.get("tauceti", "T3.a-P1") == nil {
+		t.Fatalf("the round a crash left: %+v, chain %+v", got, c)
+	}
+
+	r = loopRig(t, t.TempDir(), 3)
+	r.candidate("T2.a-A", true)
+	if w, _ := r.call("POST", tasksPath+"/T2.a-A.review/cancel", testProjectKey, map[string]any{"reason": "stopped by hand"}); w.Code != 200 {
+		t.Fatalf("cancel: %d", w.Code)
+	}
+	if got := r.g.tasks.get("tauceti", "T2.a-A"); got.Stage != StageNeedsOperator {
+		t.Fatalf("with reviews on, a cancelled review stops the chain: %q", got.Stage)
+	}
+}

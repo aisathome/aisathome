@@ -131,6 +131,13 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **Automatic rounds no longer need reviews.** A project's new `auto_rounds` keeps what the gateway
+  does with a task's end without `review_loop`: a task that passes its local checks is
+  `ready-for-operator` with no review task, one that fails them gets its automatic round up to
+  `max_review_rounds`, and a skipped one a fresh base. A project that turns `review_loop` off
+  with work under way loses nothing: candidates waiting at `in-review` become
+  `ready-for-operator`, the open reviews the gateway made are cancelled, and a verdict still
+  owed is recorded and schedules nothing. (gateway)
 - People wait at most 1 second, not 8, before a science request gives up its node (`preempt_after_seconds`
   default 1). A science step takes about 70 s, so the longer wait rarely let it finish. (gateway, live since 2026-10-25)
 
