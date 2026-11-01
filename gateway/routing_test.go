@@ -2,9 +2,12 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -343,4 +346,87 @@ func BenchmarkHeld(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c.held("alice", ph, now)
 	}
+}
+
+// piiRoute is the route of a message with an email address, on a key that may use any node.
+func (s *stickyRig) piiRoute() *route {
+	body := map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "write to ola.nordmann@example.no"}}}
+	return s.g.routeFor("deep", body, KeyInfo{User: "alice", MinTrust: "any"}, "", false)
+}
+
+// Personal data does not wait for a trusted node that is not there: the 503 and its reason come
+// at once, and no untrusted node ever gets it. A long wait here is the bug, so the deadline is
+// far off; a trusted node that is only busy keeps the wait.
+func TestPersonalDataFailsFast(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*stickyRig)
+	}{
+		{"only untrusted nodes", func(s *stickyRig) { s.node("v", "vol", false, 0) }},
+		{"the trusted node is held", func(s *stickyRig) {
+			s.node("v", "vol", false, 0)
+			s.node("t", "op", true, 0).held = true
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStickyRig(t)
+			s.g.start = time.Now().Add(-2 * startupGrace)
+			tc.set(s)
+			rt := s.piiRoute()
+			start := time.Now()
+			n, _, why := s.g.pickWait(context.Background(), rt, start.Add(time.Minute))
+			if n != nil || time.Since(start) > 5*time.Second {
+				t.Fatalf("node %v after %v", n, time.Since(start))
+			}
+			w := httptest.NewRecorder()
+			s.g.unavailable(w, rt, why)
+			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "60" ||
+				!strings.Contains(w.Body.String(), "no trusted node serving") || !strings.Contains(w.Body.String(), "personal data") {
+				t.Fatalf("HTTP %d: %s", w.Code, w.Body)
+			}
+			if v := s.g.node["v"]; v.inflight != 0 {
+				t.Fatalf("an untrusted node got personal data: %d in flight", v.inflight)
+			}
+		})
+	}
+}
+
+// The wait stays where something can still come: a busy trusted node, the minutes after a
+// restart while trusted nodes reconnect, and a key's own min_trust.
+func TestPersonalDataWaitsForWhatCanCome(t *testing.T) {
+	wait := func(t *testing.T, s *stickyRig, rt *route, d time.Duration) {
+		t.Helper()
+		start := time.Now()
+		n, _, _ := s.g.pickWait(context.Background(), rt, start.Add(d))
+		if n != nil || time.Since(start) < d {
+			t.Fatalf("node %v after %v, want the whole wait of %v", n, time.Since(start), d)
+		}
+	}
+	t.Run("a busy trusted node", func(t *testing.T) {
+		s := newStickyRig(t)
+		s.g.start = time.Now().Add(-2 * startupGrace)
+		s.node("t", "op", true, 0).inflight = 1
+		wait(t, s, s.piiRoute(), 200*time.Millisecond)
+	})
+	t.Run("a key's min_trust", func(t *testing.T) {
+		s := newStickyRig(t)
+		s.g.start = time.Now().Add(-2 * startupGrace)
+		s.node("v", "vol", false, 0)
+		wait(t, s, &route{want: "deep", trusted: true, exclude: map[*nodeConn]bool{}}, 200*time.Millisecond)
+	})
+	t.Run("after a restart", func(t *testing.T) { // a volunteer's node reconnected first
+		s := newStickyRig(t)
+		s.node("v", "vol", false, 0)
+		got := make(chan *nodeConn, 1)
+		go func() {
+			n, _, _ := s.g.pickWait(context.Background(), s.piiRoute(), time.Now().Add(10*time.Second))
+			got <- n
+		}()
+		time.Sleep(100 * time.Millisecond)
+		trusted := s.node("t", "op", true, 0)
+		s.g.signal()
+		if n := <-got; n != trusted {
+			t.Fatalf("got %v, want the trusted node that reconnected", n)
+		}
+	})
 }

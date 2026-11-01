@@ -434,9 +434,12 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 				return nil, "", unknownModel
 			}
 		}
-		// A retry waits only if another allowed node serves the model (it is just busy);
-		// otherwise there is nothing to wait for.
-		if len(rt.exclude) > 0 && g.servesFor(rt) == 0 {
+		// A retry waits only if another allowed node serves the model (it is just busy), and
+		// so does personal data, which only a trusted node may see, once nodes have had the
+		// time to reconnect after a restart. Otherwise there is nothing to wait for. A key's
+		// own min_trust keeps its wait: with a why, the route exists for this one message.
+		settled := time.Since(g.start) >= startupGrace
+		if (len(rt.exclude) > 0 || (rt.why != "" && settled)) && g.servesFor(rt) == 0 {
 			return nil, "", timedOut
 		}
 		if !waiting {

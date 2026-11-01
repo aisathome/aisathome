@@ -99,6 +99,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A message with personal data fails at once when no trusted node is online.** It used to wait
+  out the whole queue time, 30 s by default, for the same 503. The reason is unchanged, and such a
+  message still never goes to an untrusted node. In the two minutes after a gateway start it
+  waits as before, while nodes reconnect. (gateway)
+
 - **The gateway no longer refuses prompts a node can hold.** It estimated a prompt as a third of
   its JSON, which ran 1.06-1.47 x real tokens on steps and up to 3.2 x on compaction summaries,
   whose reasoning the model never sees. It now counts the rendered prompt with its tokenizer,
