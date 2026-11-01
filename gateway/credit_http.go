@@ -236,7 +236,7 @@ func (g *Gateway) leaderboard(now time.Time) map[string]any {
 	if rows == nil {
 		rows = []boardRow{}
 	}
-	online := g.NodeCount()
+	online := g.nodesOnline()
 	return map[string]any{
 		"updated": now.UTC().Format(time.RFC3339),
 		"credit_per_token": map[string]any{"output": CreditPerOutputToken, "prompt": CreditPerPromptToken,

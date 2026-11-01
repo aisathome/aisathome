@@ -151,10 +151,16 @@ func copyCounts(m map[string]*useCount) map[string]useCount {
 
 // handleStats serves GET /v1/stats without authentication.
 func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
-	nodes, slots, busy, paused := 0, 0, 0, 0
+	// A held node gets no requests, so it counts in held and in nothing else: online, slots and
+	// busy are what really serves, and what a runner may size its work by.
+	nodes, slots, busy, paused, held := 0, 0, 0, 0, 0
 	models := map[string]bool{}
 	g.mu.Lock()
 	for _, n := range g.node {
+		if n.held {
+			held++
+			continue
+		}
 		nodes++
 		n.mu.Lock()
 		busy += n.inflight
@@ -204,7 +210,7 @@ func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=15")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"updated": now.Format(time.RFC3339),
-		"nodes":   map[string]any{"online": nodes, "slots": slots, "busy": busy, "paused": paused},
+		"nodes":   map[string]any{"online": nodes, "slots": slots, "busy": busy, "paused": paused, "held": held},
 		"models":  roles,
 		"today":   today,
 		"total":   total,

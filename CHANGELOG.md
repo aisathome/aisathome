@@ -99,6 +99,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **Held nodes no longer count as online.** `/v1/stats` has a new `nodes.held`; `online`, `slots`,
+  `busy`, `paused` and `models` leave held nodes out, as do the leaderboard's count and the daily
+  history from now on. A hold raises a `node-held` warning with its rule and time, and
+  `/account/ops` lists holds. A runner that sizes its work by `slots` no longer counts a node that
+  gets no requests. (gateway)
+
 - **A message with personal data fails at once when no trusted node is online.** It used to wait
   out the whole queue time, 30 s by default, for the same 503. The reason is unchanged, and such a
   message still never goes to an untrusted node. In the two minutes after a gateway start it

@@ -16,6 +16,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -286,6 +288,13 @@ func (s *AccountStore) isHeld(nodeID string) bool {
 	return s.held[nodeID]
 }
 
+// nodeHolds lists the holds in the accounts file.
+func (s *AccountStore) nodeHolds() []NodeHold {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.f.NodeHolds)
+}
+
 // nodeTotal counts node tokens over all accounts.
 func (s *AccountStore) nodeTotal() int {
 	s.mu.Lock()
@@ -342,6 +351,38 @@ func (g *Gateway) nodesFromLocked(ip, id string) int {
 	return c
 }
 
+// holds lists every hold on record, oldest first, the node connected or not: a hold nobody
+// looked at must not vanish because the node left. A hold the accounts file has not recorded
+// yet counts too.
+func (g *Gateway) holds() []NodeHold {
+	byNode := map[string]NodeHold{}
+	if g.accounts != nil {
+		for _, p := range g.unrec.list() {
+			byNode[p.Node] = p
+		}
+		for _, p := range g.accounts.nodeHolds() {
+			byNode[p.Node] = p
+		}
+	} else {
+		g.held.Range(func(_, v any) bool {
+			p := v.(NodeHold)
+			byNode[p.Node] = p
+			return true
+		})
+	}
+	out := make([]NodeHold, 0, len(byNode))
+	for _, p := range byNode {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].At.Equal(out[j].At) {
+			return out[i].At.Before(out[j].At)
+		}
+		return out[i].Node < out[j].Node
+	})
+	return out
+}
+
 // nodeHeld reports whether a guard holds node id (accounts file, or memory without one). A
 // hold the accounts file has not recorded yet counts too: the file alone would lift it.
 func (g *Gateway) nodeHeld(id string) bool {
@@ -355,8 +396,8 @@ func (g *Gateway) nodeHeld(id string) bool {
 // holdNode stops n after a guard fired on its answer. The record holds no content.
 func (g *Gateway) holdNode(n *nodeConn, rule, reqID string) {
 	g.log.Warn("guard stopped a node's answer; node held", "node", n.id, "operator", n.operator, "rule", rule, "req", reqID)
+	p := NodeHold{Node: n.id, Operator: n.operator, Rule: rule, At: time.Now().UTC()}
 	if g.accounts != nil {
-		p := NodeHold{Node: n.id, Operator: n.operator, Rule: rule, At: time.Now().UTC()}
 		if err := g.accounts.HoldNode(p); err != nil {
 			g.log.Error("HOLD NOT RECORDED: writing the node's hold to the accounts file failed; it is held in "+
 				"memory and retried until recorded, and a restart before then lets it serve again", "node", n.id, "err", err)
@@ -366,7 +407,7 @@ func (g *Gateway) holdNode(n *nodeConn, rule, reqID string) {
 			}
 		}
 	} else {
-		g.held.Store(n.id, true)
+		g.held.LoadOrStore(n.id, p) // the first hold stands, as in the accounts file
 	}
 	g.mu.Lock()
 	n.held = true

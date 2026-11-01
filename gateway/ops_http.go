@@ -89,6 +89,12 @@ type opsNode struct {
 	Trusted, Paused, Held                        bool
 }
 
+// opsHold is one row of the held nodes card.
+type opsHold struct {
+	Node, Rule, Since, Ago string
+	Connected              bool
+}
+
 type opsData struct {
 	shell
 	Project     string
@@ -103,6 +109,8 @@ type opsData struct {
 	CISince     string
 	Candidates  []opsCandidate
 	Nodes       []opsNode
+	Online      int       // of Nodes, not held
+	Holds       []opsHold // every hold on record, connected or not
 	Cost        string
 	CostNote    string
 	Now         string
@@ -286,7 +294,7 @@ func pct(x *float64) string {
 func (g *Gateway) opsData(project string, now time.Time) opsData {
 	d := opsData{Project: project, Now: now.UTC().Format("2006-01-02 15:04"), ProjectList: g.opsProjects()}
 	s := g.pstatus.get(project)
-	d.Warnings = health(s, g.NodeCount(), now)
+	d.Warnings = g.healthOf(project, now)
 	warned := map[string]bool{}
 	for _, w := range d.Warnings {
 		if w.Attempt != "" {
@@ -343,6 +351,17 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 		}
 	}
 	d.Nodes = g.opsNodes(contracts)
+	connected := map[string]bool{}
+	for _, n := range d.Nodes {
+		connected[n.ID] = true
+		if !n.Held {
+			d.Online++
+		}
+	}
+	for _, p := range g.holds() {
+		d.Holds = append(d.Holds, opsHold{Node: p.Node, Rule: p.Rule, Since: p.At.UTC().Format("01-02 15:04"),
+			Ago: ago(now.Sub(p.At)), Connected: connected[p.Node]})
+	}
 	g.opsTasks(&d, project, now)
 	return d
 }
@@ -403,6 +422,7 @@ tr.warn td:first-child{box-shadow:inset 3px 0 var(--warn);padding-left:.6rem}
 </style>`
 
 var opsTmpl = newPage("ops", template.FuncMap{
+	"sub": func(a, b int) int { return a - b },
 	"badge": func(state string) string {
 		switch state {
 		case "running", "leased":
@@ -426,6 +446,11 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <p class="mut small">Project <strong>{{.Project}}</strong>{{if .Received}} · runner status received {{.Received}} (made {{.Generated}} UTC){{end}} · page at {{.Now}} UTC, reloads every minute.</p>
 {{if .Warnings}}<div class="card err" role="alert" id="warnings"><h2>Warnings</h2><ul class="warn-list">{{range .Warnings}}<li data-rule="{{.Rule}}">{{.Text}}</li>{{end}}</ul></div>
 {{else}}<div class="card ok" id="warnings"><p>No warnings.</p></div>{{end}}
+{{if .Holds}}<div class="card" id="holds"><h2>Held nodes ({{len .Holds}})</h2>
+<p class="mut small">A guard stopped their answers: they serve nothing until cleared with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>.</p>
+<div class="table-wrap"><table><tr><th>Node</th><th>Rule</th><th>Held since</th></tr>
+{{range .Holds}}<tr data-hold="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if not .Connected}} <span class="badge offline">offline</span>{{end}}</td><td data-label="Rule">{{.Rule}}</td>
+<td data-label="Held since">{{.Since}} UTC, {{.Ago}}</td></tr>{{end}}</table></div></div>{{end}}
 {{with .Status}}
 <div class="card"><div class="card-head"><h2>Runner</h2>{{if .Runner.Paused}}<span class="badge paused">paused</span>{{end}}</div>
 <div class="kvs"><span>Queue service: <strong>{{.Runner.Service}}</strong></span><span>Free disk: <strong>{{printf "%.0f" .Runner.FreeGB}} GB</strong></span>
@@ -461,7 +486,7 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{if .Finished}}<div class="card" id="finished"><h2>Finished</h2><div class="table-wrap"><table><tr><th>Attempt</th><th>State</th><th class="num">Steps</th><th class="num">Minutes</th><th>Outcome</th></tr>
 {{range .Finished}}<tr data-attempt="{{.Attempt}}"><td data-label="Attempt"><code>{{.Attempt}}</code>{{if .TaskType}} <span class="mut small">{{.TaskType}}</span>{{end}}</td><td data-label="State"><span class="badge {{badge .State}}">{{.State}}</span></td>
 <td data-label="Steps" class="num">{{.Steps}}{{if .StepCap}} of {{.StepCap}}{{end}}</td><td data-label="Minutes" class="num">{{.Used}}</td><td data-label="Outcome">{{.Outcome}}</td></tr>{{end}}</table></div></div>{{end}}
-<div class="card" id="nodes"><h2>Nodes online ({{len .Nodes}})</h2>
+<div class="card" id="nodes"><h2>Nodes online ({{.Online}}){{if gt (len .Nodes) .Online}} · {{sub (len .Nodes) .Online}} held{{end}}</h2>
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Version</th><th>Protocol</th><th class="num">Busy</th><th class="num">Science</th><th>Connected</th><th>Contract ends</th></tr>
 {{range .Nodes}}<tr data-node="{{.ID}}"><td data-label="Node"><code>{{.ID}}</code>{{if .Trusted}} <span class="mut small">trusted</span>{{end}}{{if .Paused}} <span class="badge paused">paused</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}</td>
 <td data-label="Version">{{if .Version}}<code>{{.Version}}</code>{{else}}<span class="mut">unknown</span>{{end}}</td><td data-label="Protocol">{{.Protocol}}</td>

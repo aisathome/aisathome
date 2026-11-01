@@ -44,6 +44,7 @@ const (
 	ruleCIBackoff    = "ci-backoff"
 	ruleContract     = "contract"
 	ruleNoNodes      = "no-nodes"
+	ruleNodeHeld     = "node-held"
 	ruleCandidate    = "candidate-waiting"
 	ruleStatusStale  = "status-stale"
 	ruleStatusAbsent = "no-status"
@@ -141,7 +142,18 @@ func health(s *storedStatus, nodesOnline int, now time.Time) []healthWarning {
 	return out
 }
 
+// holdWarnings is one warning per hold, while it stands. A project's key reads warnings too:
+// they name the rule and the time, not the node (the page has that).
+func holdWarnings(holds []NodeHold) []healthWarning {
+	var out []healthWarning
+	for _, p := range holds {
+		out = append(out, healthWarning{Rule: ruleNodeHeld, Text: fmt.Sprintf("A guard holds a node since %s UTC (rule %s): "+
+			"it serves nothing until the operator clears it.", p.At.UTC().Format("01-02 15:04"), p.Rule)})
+	}
+	return out
+}
+
 // healthOf is the warnings for project id now.
 func (g *Gateway) healthOf(id string, now time.Time) []healthWarning {
-	return health(g.pstatus.get(id), g.NodeCount(), now)
+	return append(holdWarnings(g.holds()), health(g.pstatus.get(id), g.nodesOnline(), now)...)
 }

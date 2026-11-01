@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aisathome/aisathome/gateway"
 )
 
 func TestOpsPageShowsAFakeRunnersStatus(t *testing.T) {
@@ -103,4 +105,52 @@ func TestOpsPageShowsAFakeRunnersStatus(t *testing.T) {
 	if len(got.Warnings) < 5 {
 		t.Fatalf("GET warnings: %+v", got)
 	}
+}
+
+// A hold shows on the page with its rule and time, the node connected or gone, and in the
+// warnings; the node leaves the count online. Clearing it takes all of that away.
+func TestOpsPageShowsHolds(t *testing.T) {
+	a := newAcctRigWith(t, 100, nil, withProjects)
+	admin, _ := a.signIn(t, 1)
+	at := time.Date(2026, 10, 31, 22, 13, 37, 0, time.UTC)
+	for _, id := range []string{"node-0", "n-0ff11ce0"} {
+		if err := a.store.HoldNode(gateway.NodeHold{Node: id, Operator: "op", Rule: "file-upload", At: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var page string
+	waitFor(t, func() bool {
+		_, page = a.get(t, "/account/ops", admin)
+		return strings.Contains(page, "Nodes online (0) · 1 held")
+	})
+	for _, want := range []string{`id="holds"`, "Held nodes (2)", `data-hold="node-0"`, `data-hold="n-0ff11ce0"`, `data-rule="node-held"`,
+		"since 10-31 22:13 UTC (rule file-upload)", `<span class="badge offline">offline</span>`, "file-upload", "10-31 22:13 UTC"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("the page lacks %q: %s", want, page)
+		}
+	}
+	if strings.Count(page, `<span class="badge offline">offline</span>`) != 1 {
+		t.Fatalf("only the node that left is offline: %s", page)
+	}
+	if !strings.Contains(page, `data-rule="no-nodes"`) { // the only node is held
+		t.Fatalf("every node is held and no warning says so: %s", page)
+	}
+	var st struct {
+		Nodes map[string]int `json:"nodes"`
+	}
+	resp := a.do(t, "GET", "/v1/stats", "", "")
+	json.NewDecoder(resp.Body).Decode(&st)
+	resp.Body.Close()
+	if st.Nodes["online"] != 0 || st.Nodes["held"] != 1 || st.Nodes["slots"] != 0 {
+		t.Fatalf("stats %v", st.Nodes)
+	}
+	for _, id := range []string{"node-0", "n-0ff11ce0"} {
+		if err := a.store.ClearNode(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, func() bool {
+		_, page = a.get(t, "/account/ops", admin)
+		return !strings.Contains(page, `id="holds"`) && !strings.Contains(page, "node-held") && strings.Contains(page, "Nodes online (1)")
+	})
 }

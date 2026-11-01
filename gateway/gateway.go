@@ -57,7 +57,7 @@ type Gateway struct {
 	keysSum  [32]byte   // hash of the keys file last read; guarded by keysMu
 	lim      *limiter
 	shares   []shareEntry    // recent placements, for the share cap; guarded by mu
-	held     sync.Map        // node id → true: held by a guard, without an accounts file
+	held     sync.Map        // node id → NodeHold: held by a guard, without an accounts file
 	unrec    unrecordedHolds // guard holds the accounts file has not recorded yet
 	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
 	pcache   *prefixCache    // what each node served whom lately, for cached prompt tokens
@@ -192,7 +192,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if sample == 0 {
 		sample = time.Minute
 	}
-	g.every(sample, func() { g.hist.sample(g.NodeCount(), time.Now()) })
+	g.every(sample, func() { g.hist.sample(g.nodesOnline(), time.Now()) })
 	return g, nil
 }
 

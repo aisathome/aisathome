@@ -18,11 +18,25 @@ import (
 	"github.com/coder/websocket"
 )
 
-// NodeCount returns the number of connected nodes.
+// NodeCount returns the number of connected nodes, held ones included.
 func (g *Gateway) NodeCount() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return len(g.node)
+}
+
+// nodesOnline counts the connected nodes that a guard does not hold: what the public statistics
+// and the health warnings call online. A held node gets no requests.
+func (g *Gateway) nodesOnline() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	c := 0
+	for _, n := range g.node {
+		if !n.held {
+			c++
+		}
+	}
+	return c
 }
 
 type nodeConn struct {

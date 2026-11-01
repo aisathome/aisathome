@@ -156,7 +156,7 @@ the disk returns; the worker takes them back without losing a try.
 Without authentication, for the website (aggregates only: never users, keys, nodes or
 operators):
 
-- `GET /v1/stats`: nodes online, slots, busy and paused now; today's (UTC) requests and tokens,
+- `GET /v1/stats`: nodes online, slots, busy, paused and held now (a held node counts only in `held`); today's (UTC) requests and tokens,
   in all, per class (`today.classes`) and per project (`today.projects`, with `node_seconds`),
   each with `preempted` (of its requests, those stopped for a person's) when not zero; totals
   since the usage log began (`total`, with `total.projects`).
@@ -257,7 +257,7 @@ aisathome-gateway accounts routing trusted-only   # emergency: everything to tru
 aisathome-gateway accounts ban gh:12345           # also deletes the account's node tokens
 ```
 
-A guard's hold is written to the accounts file. If that write fails, the node stays held in
+A hold shows on `/account/ops` (card "Held nodes": node, rule, since when, connected or not) and in `accounts nodes`, and raises a `node-held` health warning with its rule and time until it is cleared. A guard's hold is written to the accounts file. If that write fails, the node stays held in
 memory and the gateway retries every few seconds, logging `HOLD NOT RECORDED` each minute
 until it succeeds; `node-clear` works once the hold is in the file. A restart before then
 forgets the hold. More than 1024 unrecorded holds hold every node until a restart.
