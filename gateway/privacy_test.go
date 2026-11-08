@@ -165,6 +165,12 @@ func TestPIIDetection(t *testing.T) {
 		{"Amex 3782 822463 10005", true},
 		{"Mastercard 5555555555554444", true},
 		{"card 4111-1111-1111-1111", true}, // dashes between digits are separators, not a minus
+		// the Codex review of 21f1ddd: a card next to a short "/" operand, a path, and networks an
+		// issuer table missed (Diners 3095, 13-digit Maestro), all Luhn-valid
+		{"card 4111111111111111/12/27", true},
+		{"GET /cards/4111111111111111", true},
+		{"Diners 30950000000000", true},
+		{"Maestro 6759000000005", true},
 	} {
 		if got := hasPII(msg(c.text)); got != c.want {
 			t.Errorf("%q: got %v want %v", c.text, got, c.want)
@@ -201,13 +207,13 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 	}
 	for _, c := range []string{
 		"(33445726437815 / 116459807114612), (82894103493547 / 116459807114612)", // the prove2me Gram data
-		"x = 4111111111111111 / 3",           // a numerator with a card's prefix and Luhn
-		"y = 7 / 4111111111111111",           // and a denominator
-		"pi is about 3.4111111111111111",     // a decimal's digits
-		"v = 4111111111111111.5",             // the digits before a decimal point
-		"offset -4111111111111111 bytes",     // a negative number
-		"step_start timestamp " + ts + " ok", // a millisecond timestamp: no card starts with 1
-		"id " + nodate,                       // no birth date
+		"x = 4111111111111111 / 1164598071146",                                   // a numerator with a card's form, over a long number
+		"y = 1164598071146/4111111111111111",                                     // and a denominator
+		"pi is about 3.4111111111111111",                                         // a decimal's digits
+		"v = 4111111111111111.5",                                                 // the digits before a decimal point
+		"offset -4111111111111111 bytes",                                         // a negative number
+		"step_start timestamp " + ts + " ok",                                     // a millisecond timestamp: no card starts with 1
+		"id " + nodate,                                                           // no birth date
 	} {
 		if k := piiKind(msg(c)); k != "" {
 			t.Errorf("%q: flagged as %s", c, k)

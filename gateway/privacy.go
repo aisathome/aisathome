@@ -405,15 +405,15 @@ const (
 )
 
 // piiKind is the kind of the first personal data found in the message texts ("" = none): an
-// email address, a payment card number (a card's issuer prefix and length, and Luhn), an IBAN
-// (mod 97) or a Norwegian national identity number (a birth date and mod 11).
+// email address, a payment card number (13 to 19 digits and Luhn), an IBAN (mod 97) or a
+// Norwegian national identity number (a birth date and mod 11).
 //
-// Numbers in mathematics and code are not card or identity numbers: a numerator or
-// denominator ("33445726437815 / 116459807114612", a prove2me definition), a decimal's digits
-// or a negative number. Luhn alone passes one long number in ten, so before the issuer check
-// such a definition, or a log of 13-digit millisecond timestamps (all start with 1), sent the
-// request to trusted nodes only, and with none online every later request of that session failed
-// (2026-11-07).
+// Luhn passes one long number in ten, so a prove2me definition's exact rationals, or a log of
+// millisecond timestamps, sent a whole agent session to trusted nodes only, and with none online
+// every later request of it failed (2026-11-07). Only what cannot be a card is left out, so a
+// real card is never missed (Codex review of 21f1ddd: an issuer table and any "/" did): a number
+// in a fraction of two long numbers, a decimal's digits, a negative number, and a 13-digit number
+// that starts with 1 (a millisecond timestamp; no network issues 13-digit cards there).
 func piiKind(body map[string]any) string {
 	kind := ""
 	eachText(body, func(s string) {
@@ -451,12 +451,35 @@ func piiKind(body map[string]any) string {
 	return kind
 }
 
-// inArithmetic reports whether s[i:j], a run of digits, is an operand in arithmetic: next to a
-// fraction bar (spaces allowed between), inside a decimal ("0.5623…", "3.14…"), or a negative
-// number (a minus sign not between digits, which would be a separator).
+// fractionOperand is the shortest run of digits on the other side of a fraction bar that makes
+// a number an operand: exact rationals in mathematics are long on both sides, while a card's
+// expiry date ("4111…/12/27") or a path ("/cards/4111…") is not.
+const fractionOperand = 10
+
+// inArithmetic reports whether s[i:j], a run of digits, is an operand in arithmetic: one side of
+// a fraction whose other side is a long number too (spaces allowed around the bar), inside a
+// decimal ("0.5623…", "3.14…"), or a negative number (a minus sign not between digits, which
+// would be a separator).
 func inArithmetic(s string, i, j int) bool {
+	digits := func(t string) int {
+		n := 0
+		for n < len(t) && t[n] >= '0' && t[n] <= '9' {
+			n++
+		}
+		return n
+	}
 	before, after := strings.TrimRight(s[:i], " "), strings.TrimLeft(s[j:], " ")
-	if strings.HasSuffix(before, "/") || strings.HasPrefix(after, "/") {
+	if strings.HasSuffix(before, "/") {
+		b := strings.TrimRight(before[:len(before)-1], " ")
+		k := len(b)
+		for k > 0 && b[k-1] >= '0' && b[k-1] <= '9' {
+			k--
+		}
+		if len(b)-k >= fractionOperand {
+			return true
+		}
+	}
+	if strings.HasPrefix(after, "/") && digits(strings.TrimLeft(after[1:], " ")) >= fractionOperand {
 		return true
 	}
 	if i > 0 && s[i-1] == '.' && i > 1 && s[i-2] >= '0' && s[i-2] <= '9' {
@@ -471,32 +494,15 @@ func inArithmetic(s string, i, j int) bool {
 	return false
 }
 
-// cardNumber reports whether d (digits only) could be a payment card number: a length and
-// issuer prefix that a card network issues (Visa, Mastercard, American Express, Discover,
-// Diners, JCB, UnionPay, Maestro), and the Luhn check.
+// cardNumber reports whether d (digits only) could be a payment card number: 13 to 19 digits
+// and the Luhn check, except a 13-digit number that starts with 1 (a millisecond timestamp
+// between 2001 and 2286; 13-digit cards are Visa's, which start with 4).
 func cardNumber(d string) bool {
 	n := len(d)
 	if n < 13 || n > 19 || !luhn(d) {
 		return false
 	}
-	p := func(k int) int { v, _ := strconv.Atoi(d[:k]); return v }
-	switch {
-	case d[0] == '4': // Visa
-		return n == 13 || n == 16 || n == 19
-	case p(2) >= 51 && p(2) <= 55, p(4) >= 2221 && p(4) <= 2720: // Mastercard
-		return n == 16
-	case p(2) == 34 || p(2) == 37: // American Express
-		return n == 15
-	case p(2) == 36 || p(2) == 38 || p(2) == 39 || (p(3) >= 300 && p(3) <= 305): // Diners
-		return n >= 14 && n <= 19
-	case p(4) >= 3528 && p(4) <= 3589: // JCB
-		return n >= 16 && n <= 19
-	case d[0] == '6': // Discover, UnionPay, Maestro
-		return n >= 16 && n <= 19
-	case p(2) == 50 || (p(2) >= 56 && p(2) <= 58): // Maestro
-		return n >= 13 && n <= 19
-	}
-	return false
+	return !(n == 13 && d[0] == '1')
 }
 
 func eachText(body map[string]any, f func(string)) {
