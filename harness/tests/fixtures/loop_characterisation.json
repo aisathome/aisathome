@@ -1,0 +1,2725 @@
+{
+ "about": "Reference records of the session loop for scripted sessions (tests/fake_opencode.py): what run_session leaves behind, normalised (clock-dependent fields removed). tests/test_loop_characterisation.py must reproduce them; a mismatch is a change of behaviour.",
+ "prompts": {
+  "FIRST_EDIT_NUDGE": "FIRST EDIT: write the target now.",
+  "LOOP_NUDGE": "LOOP: `{signature}` came back the same {count} times.",
+  "RESUME_PROMPT": "RESUME: you were interrupted by a machine stop; go on."
+ },
+ "scenarios": {
+  "first_edit_nudge": {
+   "calls": [
+    {
+     "message": "PROMPT 30 steps 10 min",
+     "n": 0,
+     "session": null
+    },
+    {
+     "message": "FIRST EDIT: write the target now.",
+     "n": 1,
+     "session": "ses_fake0"
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_2_0",
+      "messageID": "msg_0_2",
+      "state": {
+       "input": {
+        "command": "grep -rn foo ."
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_3_0",
+      "messageID": "msg_0_3",
+      "state": {
+       "input": {
+        "command": "grep -rn bar ."
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_1_1_0",
+      "messageID": "msg_1_1",
+      "state": {
+       "input": {
+        "command": "true"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "text": "RESULT: done",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "prompt.md": "PROMPT 30 steps 10 min",
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 27
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": {
+      "at_step": 3,
+      "between_steps": true,
+      "fired": true,
+      "model_s": 3,
+      "step": 2,
+      "targets": [
+       "Foo/Bar.lean"
+      ]
+     },
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 4,
+     "network_like_commands": [],
+     "new_tool_calls": 4,
+     "resumed": 0,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": -15,
+       "first_edit_nudge": true,
+       "suspend_interrupted": false,
+       "timed_out": false
+      },
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 1947,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 4,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 5,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 500,
+     "tokens_out": 50,
+     "tokens_reasoning": 0,
+     "tool_calls": 4,
+     "wall_cap_min": 10
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_2",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 2,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_3",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 3,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_1_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": true,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 4,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_1_2",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 5,
+     "tool_s": 0.0
+    }
+   ],
+   "tree_diff": "?? Foo/\n"
+  },
+  "followup_step_limit": {
+   "calls": [
+    {
+     "message": "PROMPT 5 steps 10 min",
+     "n": 0,
+     "session": null
+    },
+    {
+     "message": "Operator note: this message starts a new budget of 5 steps, and your tools are enabled again. The earlier \"CRITICAL - MAXIMUM STEPS REACHED\" notice in this session applied only to that one earlier request and no longer applies: use your tools as usual.\n\nFOLLOWUP: fix it.",
+     "n": 1,
+     "session": "ses_fake0"
+    },
+    {
+     "message": "You stopped, but no limit stopped you: 4 of your steps are left and your tools work. No summary is wanted. Go on with your next tool call and finish the task as your instructions say.",
+     "n": 2,
+     "session": "ses_fake0"
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_2_0",
+      "messageID": "msg_0_2",
+      "state": {
+       "input": {
+        "command": "ls -la"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "text": "CRITICAL - MAXIMUM STEPS REACHED\n\nThe maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "text": "I have reached the maximum steps, so here is my summary.",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_2_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_2_1_0",
+      "messageID": "msg_2_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_2_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_2_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_2_2",
+      "text": "RESULT: done",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_2_2",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "followup1.md": "Operator note: this message starts a new budget of 5 steps, and your tools are enabled again. The earlier \"CRITICAL - MAXIMUM STEPS REACHED\" notice in this session applied only to that one earlier request and no longer applies: use your tools as usual.\n\nFOLLOWUP: fix it.",
+    "prompt.md": "PROMPT 5 steps 10 min",
+    "run.round1.json": {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 2,
+     "network_like_commands": [],
+     "new_tool_calls": 2,
+     "resumed": 0,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 2,
+     "step_cap": 5,
+     "step_continue": false,
+     "steps": 3,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 300,
+     "tokens_out": 30,
+     "tokens_reasoning": 0,
+     "tool_calls": 2,
+     "wall_cap_min": 10
+    },
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 4
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 2,
+     "network_like_commands": [],
+     "new_tool_calls": 2,
+     "resumed": 0,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 2,
+     "step_cap": 5,
+     "step_continue": false,
+     "steps": 3,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 300,
+     "tokens_out": 30,
+     "tokens_reasoning": 0,
+     "tool_calls": 2,
+     "wall_cap_min": 10
+    },
+    {
+     "awake_ceiling_min": 30,
+     "base_steps": 3,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 1918,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "followup_no_tool_calls": false,
+     "followup_round": 1,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 2,
+     "network_like_commands": [],
+     "new_tool_calls": 1,
+     "resumed": 0,
+     "round_steps": 3,
+     "round_tool_calls": 1,
+     "round_tools": 2,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 1918,
+       "exit": 0,
+       "step_continue": true,
+       "suspend_interrupted": false,
+       "timed_out": false
+      },
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 2437,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 3,
+     "step_cap": 5,
+     "step_continue": true,
+     "step_notice": {
+      "unread": true
+     },
+     "steps": 6,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 600,
+     "tokens_out": 60,
+     "tokens_reasoning": 0,
+     "tool_calls": 3,
+     "wall_cap_min": 10
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_2",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 2,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_0_3",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 3,
+     "tool_s": 0.0
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_1_1",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 2,
+     "segment": 1,
+     "step": 4,
+     "tool_s": 0.0
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_2_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": true,
+     "retries": 0,
+     "round": 2,
+     "segment": 2,
+     "step": 5,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_2_2",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 2,
+     "segment": 2,
+     "step": 6,
+     "tool_s": 0.0
+    }
+   ],
+   "tree_diff": ""
+  },
+  "gateway_error": {
+   "calls": [
+    {
+     "message": "PROMPT 30 steps 10 min",
+     "n": 0,
+     "session": null
+    },
+    {
+     "message": "RESUME: you were interrupted by a model-gateway error; go on.",
+     "n": 1,
+     "session": "ses_fake0"
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "error": {
+      "data": {
+       "message": "503 busy",
+       "statusCode": 503
+      },
+      "name": "APIError"
+     },
+     "sessionID": "ses_fake0",
+     "type": "error"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_1_1_0",
+      "messageID": "msg_1_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "text": "RESULT: done",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "prompt.md": "PROMPT 30 steps 10 min",
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 29
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [
+      "{\"type\": \"error\", \"timestamp\": 0, \"sessionID\": \"ses_fake0\", \"error\": {\"name\": \"APIError\", \"data\": {\"message\": \"503 busy\", \"statusCode\": 503}}}"
+     ],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 2,
+     "network_like_commands": [],
+     "new_tool_calls": 2,
+     "resumed": 1,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": 1,
+       "gateway_interrupted": true,
+       "suspend_interrupted": false,
+       "timed_out": false
+      },
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 783,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 2,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 3,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 300,
+     "tokens_out": 30,
+     "tokens_reasoning": 0,
+     "tool_calls": 2,
+     "wall_cap_min": 10
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 1,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_1_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": true,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 2,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_1_2",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 3,
+     "tool_s": 0.0
+    }
+   ],
+   "tree_diff": ""
+  },
+  "loop_guard": {
+   "calls": [
+    {
+     "message": "PROMPT 30 steps 10 min",
+     "n": 0,
+     "session": null
+    },
+    {
+     "message": "LOOP: `grep class Finite` came back the same 5 times.",
+     "n": 1,
+     "session": "ses_fake0"
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "grep -rn 'class Finite' ."
+       },
+       "metadata": {
+        "exit": 1
+       },
+       "output": "",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_2_0",
+      "messageID": "msg_0_2",
+      "state": {
+       "input": {
+        "command": "grep -rn 'class Finite' ."
+       },
+       "metadata": {
+        "exit": 1
+       },
+       "output": "",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_3_0",
+      "messageID": "msg_0_3",
+      "state": {
+       "input": {
+        "command": "grep -rn 'class Finite' ."
+       },
+       "metadata": {
+        "exit": 1
+       },
+       "output": "",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_4",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_4_0",
+      "messageID": "msg_0_4",
+      "state": {
+       "input": {
+        "command": "grep -rn 'class Finite' ."
+       },
+       "metadata": {
+        "exit": 1
+       },
+       "output": "",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_4",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_5",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_5_0",
+      "messageID": "msg_0_5",
+      "state": {
+       "input": {
+        "command": "grep -rn 'class Finite' ."
+       },
+       "metadata": {
+        "exit": 1
+       },
+       "output": "",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_5",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_1_1_0",
+      "messageID": "msg_1_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "text": "RESULT: done",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "prompt.md": "PROMPT 30 steps 10 min",
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 25
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": {
+      "at_step": 5,
+      "count": 5,
+      "fired": true,
+      "signature": "grep class Finite"
+     },
+     "model": "agent",
+     "model_options": null,
+     "model_s": 6,
+     "network_like_commands": [],
+     "new_tool_calls": 6,
+     "resumed": 0,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": -15,
+       "loop_nudge": true,
+       "suspend_interrupted": false,
+       "timed_out": false
+      },
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 3315,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 6,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 7,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 700,
+     "tokens_out": 70,
+     "tokens_reasoning": 0,
+     "tool_calls": 6,
+     "wall_cap_min": 10
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_2",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 2,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_3",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 3,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_4",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 4,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_5",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 5,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_1_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": true,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 6,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_1_2",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 7,
+     "tool_s": 0.0
+    }
+   ],
+   "tree_diff": ""
+  },
+  "plain": {
+   "calls": [
+    {
+     "message": "PROMPT 30 steps 10 min",
+     "n": 0,
+     "session": null
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_2_0",
+      "messageID": "msg_0_2",
+      "state": {
+       "input": {
+        "command": "cat Foo/Bar.lean"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_2",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_3_0",
+      "messageID": "msg_0_3",
+      "state": {
+       "input": {
+        "command": "lake build Foo.Bar"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "Build completed",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_3",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_4",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_4",
+      "text": "RESULT: done",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_4",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "prompt.md": "PROMPT 30 steps 10 min",
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 30
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 4,
+     "network_like_commands": [],
+     "new_tool_calls": 3,
+     "resumed": 0,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 3,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 4,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 400,
+     "tokens_out": 40,
+     "tokens_reasoning": 0,
+     "tool_calls": 3,
+     "wall_cap_min": 10
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_2",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 2,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.1,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_3",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 3,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_0_4",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 4,
+     "tool_s": 0.0
+    }
+   ],
+   "tree_diff": "?? Foo/\n"
+  },
+  "resume": {
+   "calls": [
+    {
+     "message": "PROMPT 30 steps 10 min",
+     "n": 0,
+     "session": null
+    },
+    {
+     "message": "RESUME: you were interrupted by a machine stop; go on.",
+     "n": 1,
+     "session": "ses_fake0"
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "ls"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_1_1_0",
+      "messageID": "msg_1_1",
+      "state": {
+       "input": {
+        "command": "git status"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "x",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "text": "RESULT: done",
+      "type": "text"
+     },
+     "sessionID": "ses_fake0",
+     "type": "text"
+    },
+    {
+     "part": {
+      "messageID": "msg_1_2",
+      "reason": "stop",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "prompt.md": "PROMPT 30 steps 10 min",
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 29
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 1,
+     "network_like_commands": [],
+     "new_tool_calls": 1,
+     "resumed": 0,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 1,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 1,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 100,
+     "tokens_out": 10,
+     "tokens_reasoning": 0,
+     "tool_calls": 1,
+     "wall_cap_min": 10
+    },
+    {
+     "awake_ceiling_min": 30,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": null,
+     "errors": [],
+     "events_start": 0,
+     "exit": 0,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 2,
+     "network_like_commands": [],
+     "new_tool_calls": 1,
+     "resumed": 1,
+     "segments": [
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      },
+      {
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 641,
+       "exit": 0,
+       "suspend_interrupted": false,
+       "timed_out": false
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 2,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 3,
+     "task": "task-1",
+     "timed_out": false,
+     "tokens_cache_read": 0,
+     "tokens_in": 300,
+     "tokens_out": 30,
+     "tokens_reasoning": 0,
+     "tool_calls": 2,
+     "wall_cap_min": 10
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_1_1",
+     "model_s": 1.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": true,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 2,
+     "tool_s": 0.1
+    },
+    {
+     "build_s": 0.0,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "stop",
+     "message_id": "msg_1_2",
+     "model_s": 0.5,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 1,
+     "step": 3,
+     "tool_s": 0.0
+    }
+   ],
+   "tree_diff": ""
+  },
+  "time_cap": {
+   "calls": [
+    {
+     "message": "PROMPT 30 steps 1 min",
+     "n": 0,
+     "session": null
+    }
+   ],
+   "events": [
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "type": "step-start"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_start"
+    },
+    {
+     "part": {
+      "callID": "call_0_1_0",
+      "messageID": "msg_0_1",
+      "state": {
+       "input": {
+        "command": "lake build Foo.Bar"
+       },
+       "metadata": {
+        "exit": 0
+       },
+       "output": "Build completed",
+       "status": "completed"
+      },
+      "tool": "bash",
+      "type": "tool"
+     },
+     "sessionID": "ses_fake0",
+     "type": "tool_use"
+    },
+    {
+     "part": {
+      "messageID": "msg_0_1",
+      "reason": "tool-calls",
+      "tokens": {
+       "cache": {
+        "read": 0,
+        "write": 0
+       },
+       "input": 100,
+       "output": 10,
+       "reasoning": 0
+      },
+      "type": "step-finish"
+     },
+     "sessionID": "ses_fake0",
+     "type": "step_finish"
+    }
+   ],
+   "files": {
+    "prompt.md": "PROMPT 30 steps 1 min",
+    "session.json": "{}"
+   },
+   "opencode_config": {
+    "$schema": "https://opencode.ai/config.json",
+    "agent": {
+     "build": {
+      "steps": 30
+     }
+    },
+    "autoupdate": false,
+    "model": "test/agent",
+    "permission": {
+     "external_directory": "allow",
+     "webfetch": "deny",
+     "websearch": "deny"
+    },
+    "provider": {
+     "test": {
+      "models": {
+       "agent": {
+        "limit": {
+         "context": 131072,
+         "output": 32768
+        },
+        "name": "agent"
+       }
+      },
+      "name": "Test endpoint",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+       "apiKey": "dummy",
+       "baseURL": "http://127.0.0.1:9/v1"
+      }
+     }
+    },
+    "share": "disabled",
+    "tools": {
+     "webfetch": false,
+     "websearch": false
+    }
+   },
+   "runs": [
+    {
+     "awake_ceiling_min": 3,
+     "base_url": "http://127.0.0.1:9/v1",
+     "cap": "time",
+     "errors": [],
+     "events_start": 0,
+     "exit": -15,
+     "first_edit_nudge": null,
+     "lock_wait_s": 0,
+     "loop_nudge": null,
+     "model": "agent",
+     "model_options": null,
+     "model_s": 70,
+     "network_like_commands": [],
+     "new_tool_calls": 1,
+     "resumed": 0,
+     "segments": [
+      {
+       "cap": "time",
+       "context": 131072,
+       "context_source": "default (/v1/models: URLError)",
+       "events_offset": 0,
+       "exit": -15,
+       "suspend_interrupted": false,
+       "timed_out": true
+      }
+     ],
+     "session": "ses_fake0",
+     "session_usage": {
+      "assistant_messages": 0,
+      "cached_read": 0,
+      "completion": 0,
+      "max_prompt": 0,
+      "prompt": 0,
+      "reasoning": 0
+     },
+     "shell_commands": 1,
+     "step_cap": 30,
+     "step_continue": false,
+     "steps": 1,
+     "task": "task-1",
+     "timed_out": true,
+     "tokens_cache_read": 0,
+     "tokens_in": 100,
+     "tokens_out": 10,
+     "tokens_reasoning": 0,
+     "tool_calls": 1,
+     "wall_cap_min": 1
+    }
+   ],
+   "steps": [
+    {
+     "build_s": 0.1,
+     "completion_tokens": 10,
+     "errors": 0,
+     "finish_reason": "tool-calls",
+     "message_id": "msg_0_1",
+     "model_s": 70.0,
+     "preempted": false,
+     "prompt_tokens": 100,
+     "resumed": false,
+     "retries": 0,
+     "round": 1,
+     "segment": 0,
+     "step": 1,
+     "tool_s": 0.1
+    }
+   ],
+   "tree_diff": ""
+  }
+ }
+}

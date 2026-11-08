@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "aisathome-harness"
+version = "0.1.0"
+description = "Run an open model behind any OpenAI-compatible endpoint as an agent on outside projects' tasks, check the results mechanically, keep the evidence."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["aisathome_harness*"]
+
+[tool.setuptools.package-data]
+"aisathome_harness.lean" = ["playbooks/*.md"]
+"aisathome_harness.sandbox" = ["buildslot.sh"]
