@@ -236,6 +236,7 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 		"timestamp " + ns,                                                        // and nanoseconds
 		"id " + nodate,                                                           // no birth date
 		"drwxr-xr-x 3 1000 1000 4096 Nov  8 16:55 .cache",                        // ls -l columns (2026-11-08, a prove2me session)
+		"total 411 111 111 111 116 bytes",                                        // thousands separated by spaces
 	} {
 		if k := piiKind(msg(c)); k != "" {
 			t.Errorf("%q: flagged as %s", c, k)
