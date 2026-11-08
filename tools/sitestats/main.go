@@ -161,6 +161,7 @@ func reportCmd(args []string, w io.Writer) error {
 	file := fl.String("file", "/var/lib/aisathome/sitestats/stats.json", "the aggregates file")
 	days := fl.Int("days", 7, "number of UTC days, up to today")
 	top := fl.Int("top", 15, "rows in the top lists")
+	page := fl.String("page", "", "only this page's referring domains (a path, e.g. /science/tauceti/)")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
@@ -172,22 +173,92 @@ func reportCmd(args []string, w io.Writer) error {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return err
 	}
+	if *page != "" {
+		ReportPage(w, &s, *page, *days, *top, time.Now())
+		return nil
+	}
 	Report(w, &s, *days, *top, time.Now())
 	return nil
 }
 
-// Report prints the last days (oldest first) and the top pages, referrers and bots over them.
-func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
+// lastDays returns the last days' keys, oldest first, up to now's UTC day.
+func lastDays(days int, now time.Time) []string {
 	if days < 1 {
 		days = 1
 	}
-	fmt.Fprintf(w, "Site statistics for %s, last %d UTC days (updated %s UTC)\n\n", s.Host, days, s.Updated.UTC().Format("2006-01-02 15:04"))
+	keys := make([]string, 0, days)
+	for i := days - 1; i >= 0; i-- {
+		keys = append(keys, now.UTC().AddDate(0, 0, -i).Format(time.DateOnly))
+	}
+	return keys
+}
+
+// ReportPage prints one page's views and referring domains, per day and summed over the days.
+func ReportPage(w io.Writer, s *Stats, page string, days, top int, now time.Time) {
+	if p, ok := normalizePath(page); ok {
+		page = p
+	}
+	keys := lastDays(days, now)
+	fmt.Fprintf(w, "Referring domains for %s on %s, last %d UTC days (updated %s UTC)\n\n", page, s.Host, len(keys), s.Updated.UTC().Format("2006-01-02 15:04"))
+	fmt.Fprintf(w, "%-10s  %6s  %8s  %s\n", "day", "views", "referred", "top domains")
+	refs := map[string]int{}
+	views, referred := 0, 0
+	for _, key := range keys {
+		d := s.Days[key]
+		if d == nil {
+			d = &Day{}
+		}
+		n := 0
+		for k, v := range d.PageReferrers[page] {
+			refs[k] += v
+			n += v
+		}
+		views += d.Pages[page]
+		referred += n
+		fmt.Fprintf(w, "%-10s  %6d  %8d  %s\n", key, d.Pages[page], n, inline(d.PageReferrers[page], 3))
+	}
+	fmt.Fprintf(w, "%-10s  %6d  %8d\n", "total", views, referred)
+	fmt.Fprintln(w, "(referred: views with a referring domain other than ours; the rest came without one or from our own pages)")
+	fmt.Fprintf(w, "\nReferring domains\n")
+	printTop(w, refs, top)
+}
+
+// inline renders the n largest counts as "a 3, b 2".
+func inline(m map[string]int, n int) string {
+	var parts []string
+	for i, k := range topKeys(m) {
+		if i == n {
+			parts = append(parts, fmt.Sprintf("+%d more", len(m)-n))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s %d", k, m[k]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func printTop(w io.Writer, m map[string]int, top int) {
+	if len(m) == 0 {
+		fmt.Fprintln(w, "  (none)")
+		return
+	}
+	for i, k := range topKeys(m) {
+		if i == top {
+			fmt.Fprintf(w, "  ... %d more\n", len(m)-top)
+			break
+		}
+		fmt.Fprintf(w, "  %6d  %s\n", m[k], k)
+	}
+}
+
+// Report prints the last days (oldest first) and the top pages, referrers and bots over them.
+func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
+	keys := lastDays(days, now)
+	fmt.Fprintf(w, "Site statistics for %s, last %d UTC days (updated %s UTC)\n\n", s.Host, len(keys), s.Updated.UTC().Format("2006-01-02 15:04"))
 	fmt.Fprintf(w, "%-10s  %6s  %8s  %5s  %5s  %5s  %5s\n", "day", "views", "visitors", "feed", "404", "bots", "tests")
 	var sum Day
 	pages, refs, bots := map[string]int{}, map[string]int{}, map[string]int{}
-	today := now.UTC()
-	for i := days - 1; i >= 0; i-- {
-		key := today.AddDate(0, 0, -i).Format(time.DateOnly)
+	pageRefs, referred := map[string]map[string]int{}, map[string]int{}
+	for _, key := range keys {
 		d := s.Days[key]
 		if d == nil {
 			d = &Day{}
@@ -202,6 +273,15 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 		}
 		for k, v := range d.Referrers {
 			refs[k] += v
+		}
+		for p, m := range d.PageReferrers {
+			if pageRefs[p] == nil {
+				pageRefs[p] = map[string]int{}
+			}
+			for k, v := range m {
+				pageRefs[p][k] += v
+				referred[p] += v
+			}
 		}
 		fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d\n", key, d.PageViews, d.Visitors, d.Feed, d.NotFound, nb, d.Tests)
 		sum.PageViews += d.PageViews
@@ -221,17 +301,18 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 		m     map[string]int
 	}{{"Pages", pages}, {"Referring domains", refs}, {"Bots", bots}} {
 		fmt.Fprintf(w, "\n%s\n", t.title)
-		if len(t.m) == 0 {
-			fmt.Fprintln(w, "  (none)")
-			continue
+		printTop(w, t.m, top)
+	}
+	fmt.Fprintf(w, "\nReferring domains by page (views with a referring domain; -page PATH for one page)\n")
+	if len(referred) == 0 {
+		fmt.Fprintln(w, "  (none)")
+	}
+	for i, p := range topKeys(referred) {
+		if i == top {
+			fmt.Fprintf(w, "  ... %d more\n", len(referred)-top)
+			break
 		}
-		for i, k := range topKeys(t.m) {
-			if i == top {
-				fmt.Fprintf(w, "  ... %d more\n", len(t.m)-top)
-				break
-			}
-			fmt.Fprintf(w, "  %6d  %s\n", t.m[k], k)
-		}
+		fmt.Fprintf(w, "  %6d  %s  %s\n", referred[p], p, inline(pageRefs[p], 5))
 	}
 }
 

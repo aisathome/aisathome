@@ -17,6 +17,11 @@
 //     a 404 is never stored by path);
 //   - referrers: the referring site's domain only (for example "reddit.com"), never the full
 //     address, its path or query; our own domains are not counted;
+//   - page_referrers: the same referring domains per page (for example: 3 views of
+//     "/science/tauceti/" came from "reddit.com"), counted only with the page views above, so
+//     never for a 404, a bot or our tests. At most 20 domains per page and day are named:
+//     while counting up to 40 are held, and beyond that (and at the end of each run) the
+//     domains with the fewest views on that page are added together under "(other)";
 //   - visitors: an estimate of unique visitors, see below;
 //   - feed: requests for the RSS feed (/devlog/rss.xml);
 //   - not_found: answers 404, as one number;
@@ -40,7 +45,7 @@
 //
 //	aisathome-sitestats run -host aisathome.org -log /run/sitestats/log/access.log \
 //	    -state /run/sitestats/state -out /var/lib/aisathome/sitestats/stats.json
-//	aisathome-sitestats report [-days 7] [-file stats.json]
+//	aisathome-sitestats report [-days 7] [-file stats.json] [-page /science/tauceti/]
 //
 // SPDX-License-Identifier: Apache-2.0
 package main

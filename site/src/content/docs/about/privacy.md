@@ -47,7 +47,8 @@ no outside service. The chat, the API and the account pages are not counted.
   kept only in the server's memory, never on disk or in backups. About once a minute they
   are counted and deleted.
 - What we keep, per day: views per page (without anything after a `?`), the domain of the
-  site that linked here (for example `reddit.com`, never the full address), how many 404s,
+  site that linked here (for example `reddit.com`, never the full address), also per page
+  (for example: 3 views of one page came from `reddit.com`), how many 404s,
   how many requests came from known bots and from our own tests, and an estimate of unique
   visitors.
 - For that estimate the server makes a hash of your IP address and browser name together

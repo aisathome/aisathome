@@ -31,6 +31,9 @@ type Day struct {
 	NotFound  int            `json:"not_found,omitempty"`
 	Bots      map[string]int `json:"bots,omitempty"`
 	Tests     int            `json:"tests,omitempty"`
+
+	// Page path (a key of Pages) -> referring domain -> page views.
+	PageReferrers map[string]map[string]int `json:"page_referrers,omitempty"`
 }
 
 // State lives on the tmpfs only: where the log was read up to, and the current day's salt
@@ -50,6 +53,12 @@ const (
 	other        = "(other)"
 	feedPath     = "/devlog/rss.xml"
 )
+
+// Per page, at most maxPageReferrers named referring domains a day. Up to twice as many are
+// held while counting; then (and at the end of each run) the domains with the fewest views
+// are added together under "(other)", so a burst of one-off spam domains cannot push out a
+// site that sends real traffic.
+const maxPageReferrers = 20
 
 // Paths on the website host that are not the static site (served by the gateway, or the
 // staging password gate), and asset directories that are not pages.
@@ -169,9 +178,11 @@ func (a *Aggregator) Add(raw []byte) {
 		return
 	}
 	d.PageViews++
-	d.Pages = bump(d.Pages, p, maxPaths)
+	var page string
+	d.Pages, page = bump(d.Pages, p, maxPaths)
 	if ref := referrerDomain(l.header("Referer"), a.Host); ref != "" {
-		d.Referrers = bump(d.Referrers, ref, maxReferrers)
+		d.Referrers, _ = bump(d.Referrers, ref, maxReferrers)
+		d.addPageReferrer(page, ref)
 	}
 	ip := l.Request.ClientIP
 	if ip == "" {
@@ -212,6 +223,11 @@ func (a *Aggregator) newDay(day string) {
 func (a *Aggregator) Finish(now time.Time) {
 	if today := now.UTC().Format(time.DateOnly); a.State.Day < today {
 		a.newDay(today)
+	}
+	for _, d := range a.Stats.Days {
+		for _, m := range d.PageReferrers {
+			keepTop(m, maxPageReferrers)
+		}
 	}
 	a.State.Seen = a.State.Seen[:0]
 	for h := range a.seen {
@@ -326,7 +342,8 @@ func stripPort(h string) string {
 	return h
 }
 
-func bump(m map[string]int, k string, limit int) map[string]int {
+// bump counts k, or "(other)" once m holds limit keys; it returns the key it counted.
+func bump(m map[string]int, k string, limit int) (map[string]int, string) {
 	if m == nil {
 		m = map[string]int{}
 	}
@@ -334,5 +351,41 @@ func bump(m map[string]int, k string, limit int) map[string]int {
 		k = other
 	}
 	m[k]++
-	return m
+	return m, k
+}
+
+// addPageReferrer counts a page view from domain ref under page (a key of d.Pages).
+func (d *Day) addPageReferrer(page, ref string) {
+	if d.PageReferrers == nil {
+		d.PageReferrers = map[string]map[string]int{}
+	}
+	m := d.PageReferrers[page]
+	if m == nil {
+		m = map[string]int{}
+		d.PageReferrers[page] = m
+	}
+	m[ref]++
+	if len(m) > 2*maxPageReferrers {
+		keepTop(m, maxPageReferrers)
+	}
+}
+
+// keepTop keeps the n domains with the most views (ties: alphabetical) and adds the rest
+// together under "(other)".
+func keepTop(m map[string]int, n int) {
+	if _, ok := m[other]; len(m) <= n || (ok && len(m) <= n+1) {
+		return
+	}
+	kept := 0
+	for _, k := range topKeys(m) {
+		if k == other {
+			continue
+		}
+		if kept < n {
+			kept++
+			continue
+		}
+		m[other] += m[k]
+		delete(m, k)
+	}
 }

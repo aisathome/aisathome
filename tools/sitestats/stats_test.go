@@ -243,6 +243,104 @@ func TestCapsKeepTheFileSmall(t *testing.T) {
 	}
 }
 
+func TestReferringDomainsPerPage(t *testing.T) {
+	a := newAgg()
+	tc := "/science/tauceti/"
+	for i, ref := range []string{"https://www.reddit.com/r/gridcoin/comments/abc/?share=x", "https://old.reddit.com/r/x/",
+		"https://www.reddit.com/", "https://news.ycombinator.com/item?id=1"} {
+		uri := tc
+		if i == 0 {
+			uri = tc + "index.html?utm_source=secretquery"
+		}
+		a.Add(line(req{ip: "203.0.113.1", ua: firefox, uri: uri, ref: ref}))
+	}
+	a.Add(line(req{ip: "203.0.113.2", ua: chrome, uri: "/devlog/", ref: "https://reddit.com/"}))
+	a.Add(line(req{ip: "203.0.113.3", ua: chrome, uri: tc})) // no referrer: a view, not a referred one
+	// Not counted per page: our own domains, bots, our tests, a 404, a non-page, other hosts.
+	a.Add(line(req{ip: "203.0.113.4", ua: firefox, uri: tc, ref: "https://aisathome.org/"}))
+	a.Add(line(req{ip: "203.0.113.4", ua: firefox, uri: tc, ref: "https://chat.aisathome.org/c/1"}))
+	a.Add(line(req{ip: "192.0.2.1", ua: googlebot, uri: tc, ref: "https://bot.example/"}))
+	a.Add(line(req{ip: "192.0.2.1", ua: "Mozilla/5.0 (compatible; SomeNewCrawler/1.0)", uri: tc, ref: "https://crawler.example/"}))
+	a.Add(line(req{ip: "192.0.2.2", ua: chrome + " aisathome-test", uri: tc, ref: "https://test.example/"}))
+	a.Add(line(req{ip: "203.0.113.5", ua: firefox, uri: "/nope/", ref: "https://missing.example/", status: 404}))
+	a.Add(line(req{ip: "203.0.113.5", ua: firefox, uri: "/favicon.svg", ref: "https://asset.example/"}))
+	a.Add(line(req{ip: "203.0.113.5", ua: firefox, uri: tc, ref: "https://other-host.example/", host: "chat.aisathome.org"}))
+	a.Finish(day1)
+
+	d := a.Stats.Days["2026-10-19"]
+	want := map[string]map[string]int{
+		tc:         {"reddit.com": 2, "old.reddit.com": 1, "news.ycombinator.com": 1},
+		"/devlog/": {"reddit.com": 1},
+	}
+	if fmt.Sprint(d.PageReferrers) != fmt.Sprint(want) {
+		t.Errorf("page_referrers %v, want %v", d.PageReferrers, want)
+	}
+	if d.Pages[tc] != 7 || d.NotFound != 1 || d.Referrers["reddit.com"] != 3 {
+		t.Errorf("the site-wide counts changed: %+v", d)
+	}
+	out, _ := json.Marshal(a.Stats.Days)
+	for _, bad := range []string{"aisathome.org", "secretquery", "comments", "item?id", "/nope/", "bot.example",
+		"crawler.example", "test.example", "missing.example", "asset.example", "other-host.example"} {
+		if strings.Contains(string(out), bad) {
+			t.Errorf("the output contains %q: %s", bad, out)
+		}
+	}
+	if !strings.Contains(string(out), `"page_referrers":{"/devlog/":{"reddit.com":1}`) {
+		t.Errorf("JSON field: %s", out)
+	}
+}
+
+func TestPageReferrersAreCappedAndKeepTheRealOnes(t *testing.T) {
+	a := newAgg()
+	tc := "/science/tauceti/"
+	// A referrer-spam burst first, then real traffic from a few sites, then more spam.
+	for i := range 3 * maxPageReferrers {
+		a.Add(line(req{ip: "198.51.100.1", ua: firefox, uri: tc, ref: fmt.Sprintf("https://spam%d.example/", i)}))
+	}
+	for i := range 5 {
+		a.Add(line(req{ip: "203.0.113.1", ua: firefox, uri: tc, ref: "https://reddit.com/"}))
+		a.Add(line(req{ip: "203.0.113.2", ua: chrome, uri: tc, ref: fmt.Sprintf("https://site%d.example/", i%2)}))
+	}
+	for i := range 100 {
+		a.Add(line(req{ip: "198.51.100.1", ua: firefox, uri: tc, ref: fmt.Sprintf("https://late%d.example/", i)}))
+		if m := a.Stats.Days["2026-10-19"].PageReferrers[tc]; len(m) > 2*maxPageReferrers+1 {
+			t.Fatalf("%d domains held while counting", len(m))
+		}
+	}
+	a.Finish(day1)
+	m := a.Stats.Days["2026-10-19"].PageReferrers[tc]
+	total := 0
+	for _, v := range m {
+		total += v
+	}
+	if len(m) != maxPageReferrers+1 || total != 3*maxPageReferrers+10+100 {
+		t.Fatalf("%d domains (want %d + other), %d views (want %d): %v", len(m), maxPageReferrers, total, 3*maxPageReferrers+110, m)
+	}
+	if m["reddit.com"] != 5 || m["site0.example"] != 3 || m["site1.example"] != 2 {
+		t.Errorf("the real referrers were folded away: %v", m)
+	}
+	if m[other] < 3*maxPageReferrers {
+		t.Errorf("(other) %d", m[other])
+	}
+	// A page with few domains is left as it is.
+	keep := map[string]int{"a.example": 1, other: 4}
+	keepTop(keep, 1)
+	if len(keep) != 2 || keep[other] != 4 {
+		t.Errorf("keepTop changed a small map: %v", keep)
+	}
+}
+
+func TestPageReferrersFollowThePathCap(t *testing.T) {
+	a := newAgg()
+	for i := range maxPaths + 3 {
+		a.Add(line(req{ip: "203.0.113.1", ua: firefox, uri: fmt.Sprintf("/p%d/", i), ref: "https://reddit.com/"}))
+	}
+	d := a.Stats.Days["2026-10-19"]
+	if len(d.PageReferrers) != maxPaths+1 || d.PageReferrers[other]["reddit.com"] != 3 {
+		t.Errorf("%d pages with referrers, (other) %v", len(d.PageReferrers), d.PageReferrers[other])
+	}
+}
+
 // Run end to end on a file: new lines are counted once, read lines are freed, a partial line
 // waits, the salt stays in the state directory and never reaches the output.
 func TestRunReadsFreesAndContinues(t *testing.T) {
@@ -340,15 +438,41 @@ func TestRunReadsFreesAndContinues(t *testing.T) {
 func TestReport(t *testing.T) {
 	s := &Stats{Host: host, Updated: day1, Days: map[string]*Day{
 		"2026-10-18": {PageViews: 3, Visitors: 2, Pages: map[string]int{"/": 2, "/devlog/": 1}, Bots: map[string]int{"Googlebot": 4}},
-		"2026-10-19": {PageViews: 5, Visitors: 4, Pages: map[string]int{"/": 5}, Referrers: map[string]int{"reddit.com": 2}, Tests: 7},
+		"2026-10-19": {PageViews: 5, Visitors: 4, Pages: map[string]int{"/": 5}, Referrers: map[string]int{"reddit.com": 2}, Tests: 7,
+			PageReferrers: map[string]map[string]int{"/": {"reddit.com": 2}}},
 	}}
 	var b bytes.Buffer
 	Report(&b, s, 2, 10, day1)
 	got := b.String()
 	for _, want := range []string{"2026-10-18       3         2", "2026-10-19       5         4", "total            8         6",
-		"       7  /", "       2  reddit.com", "       4  Googlebot"} {
+		"       7  /", "       2  reddit.com", "       4  Googlebot", "Referring domains by page", "       2  /  reddit.com 2"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestReportPage(t *testing.T) {
+	tc := "/science/tauceti/"
+	s := &Stats{Host: host, Updated: day1, Days: map[string]*Day{
+		"2026-10-17": {Pages: map[string]int{tc: 50}, PageReferrers: map[string]map[string]int{tc: {"old.example": 50}}},
+		"2026-10-18": {Pages: map[string]int{tc: 4}, PageReferrers: map[string]map[string]int{tc: {"reddit.com": 3}}},
+		"2026-10-19": {Pages: map[string]int{tc: 6, "/": 9}, PageReferrers: map[string]map[string]int{
+			tc: {"reddit.com": 2, "news.ycombinator.com": 1, "a.example": 1, "b.example": 1}, "/": {"elsewhere.example": 9}}},
+	}}
+	var b bytes.Buffer
+	ReportPage(&b, s, "/science/tauceti/index.html", 2, 10, day1)
+	got := b.String()
+	for _, want := range []string{"Referring domains for " + tc, "2026-10-18       4         3  reddit.com 3",
+		"2026-10-19       6         5  reddit.com 2, a.example 1, b.example 1, +1 more", "total           10         8",
+		"       5  reddit.com", "       1  news.ycombinator.com"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("page report lacks %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"old.example", "elsewhere.example"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("page report shows %q (another day or page):\n%s", bad, got)
 		}
 	}
 }
