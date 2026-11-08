@@ -598,8 +598,9 @@ func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAc
 	if hasTools(body) {
 		rt.tools = true
 	}
-	if hasPII(body) {
+	if kind := piiKind(body); kind != "" {
 		if !rt.trusted {
+			rt.pii = kind
 			rt.why = "requests that look like they contain personal data go only to trusted nodes"
 		}
 		rt.trusted = true

@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -161,11 +162,84 @@ func TestPIIDetection(t *testing.T) {
 		{"new file mode 100644\nindex 00000000000..5ea936f9122\n--- /dev/null", false}, // git's null hash
 		{"deleted file mode 100644\nindex 5ea936f9122..0000000000000\n", false},        // 13 zeros pass Luhn
 		{"zeros 0000 0000 0000 0000", false},
+		{"Amex 3782 822463 10005", true},
+		{"Mastercard 5555555555554444", true},
+		{"card 4111-1111-1111-1111", true}, // dashes between digits are separators, not a minus
 	} {
 		if got := hasPII(msg(c.text)); got != c.want {
 			t.Errorf("%q: got %v want %v", c.text, got, c.want)
 		}
 	}
+}
+
+// Numbers in mathematics and code are not personal data (2026-11-07: a prove2me definition's
+// exact rationals sent a whole agent session to trusted nodes only, and with none online every
+// request after it failed). Each case passes Luhn, so only the new rules keep it out.
+func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
+	msg := func(s string) map[string]any {
+		return map[string]any{"messages": []any{map[string]any{"role": "tool", "content": s}}}
+	}
+	// a 13-digit millisecond timestamp (2026) that passes Luhn
+	ts := ""
+	for v := int64(1794069970000); v < 1794069971000 && ts == ""; v++ {
+		if s := fmt.Sprint(v); luhn(s) {
+			ts = s
+		}
+	}
+	// an 11-digit number with valid mod-11 control digits but no birth date (day 99)
+	nodate := ""
+	for v := 990180000; v < 990190000 && nodate == ""; v++ {
+		for k := 0; k < 100; k++ {
+			if s := fmt.Sprintf("%09d%02d", v, k); fodselsnummer11(s) {
+				nodate = s
+				break
+			}
+		}
+	}
+	if ts == "" || nodate == "" {
+		t.Fatal("could not construct the test numbers")
+	}
+	for _, c := range []string{
+		"(33445726437815 / 116459807114612), (82894103493547 / 116459807114612)", // the prove2me Gram data
+		"x = 4111111111111111 / 3",           // a numerator with a card's prefix and Luhn
+		"y = 7 / 4111111111111111",           // and a denominator
+		"pi is about 3.4111111111111111",     // a decimal's digits
+		"v = 4111111111111111.5",             // the digits before a decimal point
+		"offset -4111111111111111 bytes",     // a negative number
+		"step_start timestamp " + ts + " ok", // a millisecond timestamp: no card starts with 1
+		"id " + nodate,                       // no birth date
+	} {
+		if k := piiKind(msg(c)); k != "" {
+			t.Errorf("%q: flagged as %s", c, k)
+		}
+	}
+	if k := piiKind(msg("card 4111111111111111")); k != piiCard {
+		t.Errorf("a card number: kind %q", k)
+	}
+	if k := piiKind(msg("mail ola.nordmann@example.no")); k != piiEmail {
+		t.Errorf("an email address: kind %q", k)
+	}
+}
+
+// fodselsnummer11 is the mod-11 check alone, as the gateway had it before the date check.
+func fodselsnummer11(d string) bool {
+	n := make([]int, 11)
+	for i := range n {
+		n[i] = int(d[i] - '0')
+	}
+	ctrl := func(w []int, upto int) int {
+		s := 0
+		for i := 0; i < upto; i++ {
+			s += w[i] * n[i]
+		}
+		if c := 11 - s%11; c != 11 {
+			return c
+		}
+		return 0
+	}
+	k1 := ctrl([]int{3, 7, 6, 1, 8, 9, 4, 5, 2}, 9)
+	k2 := ctrl([]int{5, 4, 3, 2, 7, 6, 5, 4, 3, 2}, 10)
+	return k1 != 10 && k2 != 10 && k1 == n[9] && k2 == n[10]
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }

@@ -378,11 +378,22 @@ func TestPersonalDataFailsFast(t *testing.T) {
 			if n != nil || time.Since(start) > 5*time.Second {
 				t.Fatalf("node %v after %v", n, time.Since(start))
 			}
+			var logs strings.Builder
+			s.g.log = slog.New(slog.NewTextHandler(&logs, nil))
 			w := httptest.NewRecorder()
 			s.g.unavailable(w, rt, why)
 			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "60" ||
 				!strings.Contains(w.Body.String(), "no trusted node serving") || !strings.Contains(w.Body.String(), "personal data") {
 				t.Fatalf("HTTP %d: %s", w.Code, w.Body)
+			}
+			// It names what it found, so a false positive is not mistaken for an outage (2026-11-07)
+			if !strings.Contains(w.Body.String(), "(an email address)") {
+				t.Fatalf("the answer does not say what was found: %s", w.Body)
+			}
+			// and the refusal leaves a trace, by reason, without the text
+			if l := logs.String(); !strings.Contains(l, `msg="request refused" reason=personal_data`) ||
+				!strings.Contains(l, `personal_data="an email address"`) || strings.Contains(l, "ola.nordmann") {
+				t.Fatalf("refusal log: %q", l)
 			}
 			if v := s.g.node["v"]; v.inflight != 0 {
 				t.Fatalf("an untrusted node got personal data: %d in flight", v.inflight)

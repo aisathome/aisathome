@@ -52,6 +52,7 @@ type route struct {
 	want        string
 	trusted     bool   // only trusted nodes, or the requester's own
 	why         string // why trusted is set, for the error message ("" = the key's min_trust)
+	pii         string // the kind of personal data that set trusted (piiKind), "" = none
 	trustedOnly bool   // the operator's emergency switch: trusted nodes only, not even one's own
 	operator    string // only nodes of this operator ("" = any), e.g. a key's or front end's only_operator
 	self        string // the requesting account's operator name: its own nodes count as trusted for it
@@ -554,15 +555,26 @@ func (g *Gateway) largestCtx(rt *route) int {
 	return best
 }
 
-// unavailable answers a request that could not be placed, with an honest reason.
+// unavailable answers a request that could not be placed, with an honest reason, and logs the
+// refusal by reason (never the request's text): before 2026-11-08 refusals left no trace, and two
+// sessions refused for 50 minutes each looked like a node outage.
 func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 	want := rt.want
+	reason := ""
+	defer func() {
+		if reason != "" && g.log != nil {
+			g.log.Info("request refused", "reason", reason, "model", want, "personal_data", rt.pii,
+				"class", rt.class, "project", rt.project)
+		}
+	}()
 	switch why {
 	case clientGone:
 		return
 	case unknownModel:
+		reason = "unknown_model"
 		apiError(w, http.StatusNotFound, fmt.Sprintf("model %q is not served on this network", want))
 	case tooLong:
+		reason = "too_long"
 		loose := *rt
 		loose.need, loose.exclude = 0, nil
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
@@ -570,10 +582,12 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				rt.needMin, g.largestCtx(&loose)),
 			"type": "invalid_request_error", "code": "context_length_exceeded"}})
 	case queueFull:
+		reason = "queue_full"
 		w.Header().Set("Retry-After", "10")
 		apiError(w, http.StatusServiceUnavailable, "too many requests are waiting; try again shortly")
 	default:
 		if g.servesNow(want) == 0 {
+			reason = "no_node"
 			w.Header().Set("Retry-After", "60")
 			apiError(w, http.StatusServiceUnavailable, fmt.Sprintf(
 				"no node serving %q is online right now; AIs@home runs on volunteer machines, try again later", want))
@@ -583,27 +597,41 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 		loose.exclude = nil
 		if g.servesFor(&loose) == 0 {
 			w.Header().Set("Retry-After", "60")
+			reason = "trusted_only"
 			which, because := "trusted node", "this request may only go to such nodes"
 			switch {
 			case rt.onlySelf:
+				reason = "own_nodes_only"
 				which, because = "node of your own", "your account is set to use only your own nodes"
 			case rt.operator != "":
+				reason = "operator_nodes_only"
 				which = "node of your own"
 			case rt.trustedOnly:
+				reason = "trusted_only_mode"
 				because = "the network is in trusted-only mode for now"
+			case rt.pii != "":
+				// Say what was found, so a false positive can be told apart from an outage.
+				reason = "personal_data"
+				apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no trusted node serving %q is online right now, "+
+					"and this request may only go to one: it looks like it contains personal data (%s). If it does not, "+
+					"rewrite that part (for example, split a long number) or try again later", want, rt.pii))
+				return
 			case rt.trusted && rt.why != "":
 				because = rt.why
 			case rt.tools && !rt.trusted:
 				// Name the actual reason: the account's own node being offline is not a key problem.
 				// (Its own node online but busy is counted above and gets the busy answer.)
 				if g.ownNodesOffline(rt) {
+					reason = "own_node_offline"
 					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
 						"your own node is offline, and no maintainer node serving %q is online. Start your node, or try again later", want))
 					return
 				}
+				reason = "tools_need_trust"
 				which = "trusted node, or volunteer node past its probation,"
 				because = "requests with tools go to volunteer nodes only with an API key that allows them"
 				if !rt.consent {
+					reason = "tools_no_consent"
 					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
 						"requests with tools go only to your own node or the maintainer's, and none serving %q is online. "+
 						"Create a key with \"Run requests through nodes operated by other people\" ticked on your account page, or try again later", want))
@@ -613,6 +641,7 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 			apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no %s serving %q is online right now (%s)", which, want, because))
 			return
 		}
+		reason = "busy"
 		w.Header().Set("Retry-After", "10")
 		apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("all nodes serving %q are busy; try again shortly", want))
 	}

@@ -393,36 +393,110 @@ var (
 	ibanRe  = regexp.MustCompile(`\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?\b`)
 )
 
-// hasPII reports whether any message text contains an email address, a payment card number
-// (Luhn), an IBAN (mod 97) or a Norwegian national identity number (mod 11).
-func hasPII(body map[string]any) bool {
-	found := false
+// hasPII reports whether any message text contains personal data (piiKind).
+func hasPII(body map[string]any) bool { return piiKind(body) != "" }
+
+// The kinds piiKind names, for the error message and the refusal log (never the value).
+const (
+	piiEmail = "an email address"
+	piiCard  = "a payment card number"
+	piiIBAN  = "an IBAN"
+	piiFnr   = "a Norwegian national identity number"
+)
+
+// piiKind is the kind of the first personal data found in the message texts ("" = none): an
+// email address, a payment card number (a card's issuer prefix and length, and Luhn), an IBAN
+// (mod 97) or a Norwegian national identity number (a birth date and mod 11).
+//
+// Numbers in mathematics and code are not card or identity numbers: a numerator or
+// denominator ("33445726437815 / 116459807114612", a prove2me definition), a decimal's digits
+// or a negative number. Luhn alone passes one long number in ten, so before the issuer check
+// such a definition, or a log of 13-digit millisecond timestamps (all start with 1), sent the
+// request to trusted nodes only, and with none online every later request of that session failed
+// (2026-11-07).
+func piiKind(body map[string]any) string {
+	kind := ""
 	eachText(body, func(s string) {
-		if found {
+		if kind != "" {
 			return
 		}
 		if emailRe.MatchString(s) {
-			found = true
+			kind = piiEmail
 			return
 		}
-		for _, m := range digitRe.FindAllString(s, -1) {
-			d := strings.NewReplacer(" ", "", "-", "").Replace(m)
+		for _, loc := range digitRe.FindAllStringIndex(s, -1) {
+			d := strings.NewReplacer(" ", "", "-", "").Replace(s[loc[0]:loc[1]])
 			if strings.Trim(d, "0") == "" {
 				continue // git's null hash in a diff of a new file (index 00000000000..3446d1c680f): both checks pass zeros
 			}
-			if (len(d) >= 13 && len(d) <= 19 && luhn(d)) || (len(d) == 11 && fodselsnummer(d)) {
-				found = true
+			if inArithmetic(s, loc[0], loc[1]) {
+				continue
+			}
+			if cardNumber(d) {
+				kind = piiCard
+				return
+			}
+			if len(d) == 11 && fodselsnummer(d) {
+				kind = piiFnr
 				return
 			}
 		}
 		for _, m := range ibanRe.FindAllString(s, -1) {
 			if iban(strings.ReplaceAll(m, " ", "")) {
-				found = true
+				kind = piiIBAN
 				return
 			}
 		}
 	})
-	return found
+	return kind
+}
+
+// inArithmetic reports whether s[i:j], a run of digits, is an operand in arithmetic: next to a
+// fraction bar (spaces allowed between), inside a decimal ("0.5623…", "3.14…"), or a negative
+// number (a minus sign not between digits, which would be a separator).
+func inArithmetic(s string, i, j int) bool {
+	before, after := strings.TrimRight(s[:i], " "), strings.TrimLeft(s[j:], " ")
+	if strings.HasSuffix(before, "/") || strings.HasPrefix(after, "/") {
+		return true
+	}
+	if i > 0 && s[i-1] == '.' && i > 1 && s[i-2] >= '0' && s[i-2] <= '9' {
+		return true // the digits after a decimal point
+	}
+	if j+1 < len(s) && s[j] == '.' && s[j+1] >= '0' && s[j+1] <= '9' {
+		return true // the digits before one
+	}
+	if i > 0 && s[i-1] == '-' && (i == 1 || s[i-2] < '0' || s[i-2] > '9') {
+		return true
+	}
+	return false
+}
+
+// cardNumber reports whether d (digits only) could be a payment card number: a length and
+// issuer prefix that a card network issues (Visa, Mastercard, American Express, Discover,
+// Diners, JCB, UnionPay, Maestro), and the Luhn check.
+func cardNumber(d string) bool {
+	n := len(d)
+	if n < 13 || n > 19 || !luhn(d) {
+		return false
+	}
+	p := func(k int) int { v, _ := strconv.Atoi(d[:k]); return v }
+	switch {
+	case d[0] == '4': // Visa
+		return n == 13 || n == 16 || n == 19
+	case p(2) >= 51 && p(2) <= 55, p(4) >= 2221 && p(4) <= 2720: // Mastercard
+		return n == 16
+	case p(2) == 34 || p(2) == 37: // American Express
+		return n == 15
+	case p(2) == 36 || p(2) == 38 || p(2) == 39 || (p(3) >= 300 && p(3) <= 305): // Diners
+		return n >= 14 && n <= 19
+	case p(4) >= 3528 && p(4) <= 3589: // JCB
+		return n >= 16 && n <= 19
+	case d[0] == '6': // Discover, UnionPay, Maestro
+		return n >= 16 && n <= 19
+	case p(2) == 50 || (p(2) >= 56 && p(2) <= 58): // Maestro
+		return n >= 13 && n <= 19
+	}
+	return false
 }
 
 func eachText(body map[string]any, f func(string)) {
@@ -460,11 +534,25 @@ func luhn(d string) bool {
 	return sum%10 == 0
 }
 
-// fodselsnummer checks the two mod-11 control digits of a Norwegian national identity number.
+// fodselsnummer checks a Norwegian national identity number: a birth date (day plus 40 for a
+// D-number; month plus 40 for an H-number, plus 80 for a synthetic test number) and the two
+// mod-11 control digits. The control digits alone pass about one 11-digit number in 120.
 func fodselsnummer(d string) bool {
 	n := make([]int, 11)
 	for i := range n {
 		n[i] = int(d[i] - '0')
+	}
+	day, month := n[0]*10+n[1], n[2]*10+n[3]
+	if day > 40 {
+		day -= 40
+	}
+	if month > 80 {
+		month -= 80
+	} else if month > 40 {
+		month -= 40
+	}
+	if day < 1 || day > 31 || month < 1 || month > 12 {
+		return false
 	}
 	ctrl := func(w []int, upto int) int {
 		s := 0
