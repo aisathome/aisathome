@@ -59,6 +59,21 @@ jobs:
             ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0 --model go.mod | tee "$RUNNER_TEMP/dry-run.txt"
           grep -q '^tier: big: 1 x 196608 tokens' "$RUNNER_TEMP/dry-run.txt"
 
+  harness:
+    # harness/ (the Python package aisathome_harness): its offline tests. Standard library only, so the
+    # runner's own Python 3.12 (Ubuntu 24.04) runs them; no third-party action, nothing installed.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: harness tests (offline)
+        working-directory: harness
+        run: |
+          python3 -c 'import sys; assert sys.version_info[:2] >= (3, 12), sys.version'
+          python3 -m unittest discover -s tests -t . -v
+
   site:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

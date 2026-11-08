@@ -18,6 +18,7 @@ production-ready.
 | `gateway/` | `aisathome-gateway`: the OpenAI-compatible API, routing with queueing and failover, accounts and sign-in, self-registered volunteer nodes, metering and credit |
 | `protocol/` | The gateway ↔ node protocol (`PROTOCOL.md`) and its Go types |
 | `site/` | The website and docs (Astro + Starlight) |
+| `harness/` | `aisathome_harness` (Python): runs an open model behind any OpenAI-compatible endpoint as an agent on outside projects' tasks, checks the results mechanically and keeps the evidence ([harness/README.md](harness/README.md)) |
 | `e2e/` | End-to-end tests (user → gateway → node → mock engine) |
 | `tools/sitestats/` | The website's visitor statistics: daily counts from the web server's log, no cookies, no IPs kept (what it counts: `doc.go`) |
 | `docs/` | For operators and maintainers: [running a gateway](docs/gateway.md), [credit](docs/credit.md), [releasing](docs/RELEASING.md) |
