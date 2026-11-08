@@ -6,6 +6,7 @@
 // (src/data/science-insights.ts) in its place, adding "Working on now". Styles are global
 // (prefixed .sci-) because the rendered HTML is not part of this template.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Aside } from '@astrojs/starlight/components';
 import { science as s } from '../../data/science';
 import { renderScience } from '../../data/science-insights';
 
@@ -30,8 +31,12 @@ const tauceti = {
 		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
 	]}
 >
+	<Aside type="danger" title="Paused since 7 November 2026">
+		At the request of Tau Ceti’s maintainers, we have stopped sending pull requests written by {s.model} to Tau Ceti for now.
+		We closed the ones still open. The record below stays as it was.
+	</Aside>
 	<p>
-		{s.model}, an open-weight model on the AIs@home network, sends pull requests to <a href={s.projectURL}>Tau Ceti</a>, a library of
+		{s.model}, an open-weight model on the AIs@home network, sent pull requests to <a href={s.projectURL}>Tau Ceti</a>, a library of
 		formal mathematics checked by its own review. For the library as a whole, see Tau Ceti’s{' '}
 		<a href={tauceti.statistics} data-tauceti-link="statistics">statistics</a>,{' '}
 		<a href={tauceti.progress} data-tauceti-link="progress">progress</a> and{' '}
