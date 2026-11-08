@@ -19,9 +19,10 @@
 //     address, its path or query; our own domains are not counted;
 //   - page_referrers: the same referring domains per page (for example: 3 views of
 //     "/science/tauceti/" came from "reddit.com"), counted only with the page views above, so
-//     never for a 404, a bot or our tests. At most 20 domains per page and day are named:
-//     while counting up to 40 are held, and beyond that (and at the end of each run) the
-//     domains with the fewest views on that page are added together under "(other)";
+//     never for a 404, a bot or our tests. While the UTC day runs, up to 100 domains per page
+//     are counted exactly (new ones beyond that go under "(other)"); once the day is over,
+//     the 20 with the most views that day keep their names and the rest are added together
+//     under "(other)";
 //   - visitors: an estimate of unique visitors, see below;
 //   - feed: requests for the RSS feed (/devlog/rss.xml);
 //   - not_found: answers 404, as one number;

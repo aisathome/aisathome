@@ -54,11 +54,15 @@ const (
 	feedPath     = "/devlog/rss.xml"
 )
 
-// Per page, at most maxPageReferrers named referring domains a day. Up to twice as many are
-// held while counting; then (and at the end of each run) the domains with the fewest views
-// are added together under "(other)", so a burst of one-off spam domains cannot push out a
-// site that sends real traffic.
-const maxPageReferrers = 20
+// Referring domains per page: while the UTC day runs, exact counts for up to
+// maxPageReferrersToday domains per page (new ones beyond go under "(other)"), so the day's
+// biggest referrers are known from the whole day's counts. Once the day is over, only the
+// maxPageReferrers domains with the most views keep their names; the rest are added together
+// under "(other)".
+const (
+	maxPageReferrers      = 20
+	maxPageReferrersToday = 100
+)
 
 // Paths on the website host that are not the static site (served by the gateway, or the
 // staging password gate), and asset directories that are not pages.
@@ -219,12 +223,17 @@ func (a *Aggregator) newDay(day string) {
 }
 
 // Finish ends a run: when the UTC day has changed, the old salt and hashes are destroyed even
-// without new traffic. It also copies the hashes back into the state for the next run.
+// without new traffic, and the past days' referring domains per page are cut to the top
+// maxPageReferrers. It also copies the hashes back into the state for the next run.
 func (a *Aggregator) Finish(now time.Time) {
-	if today := now.UTC().Format(time.DateOnly); a.State.Day < today {
+	today := now.UTC().Format(time.DateOnly)
+	if a.State.Day < today {
 		a.newDay(today)
 	}
-	for _, d := range a.Stats.Days {
+	for key, d := range a.Stats.Days {
+		if key >= today {
+			continue // still counting
+		}
 		for _, m := range d.PageReferrers {
 			keepTop(m, maxPageReferrers)
 		}
@@ -359,15 +368,7 @@ func (d *Day) addPageReferrer(page, ref string) {
 	if d.PageReferrers == nil {
 		d.PageReferrers = map[string]map[string]int{}
 	}
-	m := d.PageReferrers[page]
-	if m == nil {
-		m = map[string]int{}
-		d.PageReferrers[page] = m
-	}
-	m[ref]++
-	if len(m) > 2*maxPageReferrers {
-		keepTop(m, maxPageReferrers)
-	}
+	d.PageReferrers[page], _ = bump(d.PageReferrers[page], ref, maxPageReferrersToday)
 }
 
 // keepTop keeps the n domains with the most views (ties: alphabetical) and adds the rest

@@ -290,37 +290,64 @@ func TestReferringDomainsPerPage(t *testing.T) {
 	}
 }
 
-func TestPageReferrersAreCappedAndKeepTheRealOnes(t *testing.T) {
+// Driven run by run (Finish after every minute, as the timer does): the top 20 of a past day
+// come from the whole day's counts, not from whoever was ahead when a run ended.
+func TestPageReferrersKeepTheDaysBiggestRunByRun(t *testing.T) {
 	a := newAgg()
 	tc := "/science/tauceti/"
-	// A referrer-spam burst first, then real traffic from a few sites, then more spam.
-	for i := range 3 * maxPageReferrers {
-		a.Add(line(req{ip: "198.51.100.1", ua: firefox, uri: tc, ref: fmt.Sprintf("https://spam%d.example/", i)}))
+	at := day1
+	view := func(ref string) {
+		a.Add(line(req{at: at, ip: "203.0.113.1", ua: firefox, uri: tc, ref: ref}))
 	}
-	for i := range 5 {
-		a.Add(line(req{ip: "203.0.113.1", ua: firefox, uri: tc, ref: "https://reddit.com/"}))
-		a.Add(line(req{ip: "203.0.113.2", ua: chrome, uri: tc, ref: fmt.Sprintf("https://site%d.example/", i%2)}))
+	for i := range maxPageReferrers { // 20 domains with 2 views each, early
+		view(fmt.Sprintf("https://early%02d.example/", i))
+		view(fmt.Sprintf("https://early%02d.example/", i))
 	}
-	for i := range 100 {
-		a.Add(line(req{ip: "198.51.100.1", ua: firefox, uri: tc, ref: fmt.Sprintf("https://late%d.example/", i)}))
-		if m := a.Stats.Days["2026-10-19"].PageReferrers[tc]; len(m) > 2*maxPageReferrers+1 {
-			t.Fatalf("%d domains held while counting", len(m))
-		}
+	a.Finish(at)
+	for range 100 { // then reddit.com, one view a minute
+		at = at.Add(time.Minute)
+		view("https://www.reddit.com/r/gridcoin/")
+		a.Finish(at)
+	}
+	m := a.Stats.Days["2026-10-19"].PageReferrers[tc]
+	if m["reddit.com"] != 100 || len(m) != maxPageReferrers+1 {
+		t.Fatalf("during the day: reddit.com %d, %d domains: %v", m["reddit.com"], len(m), m)
+	}
+	a.Finish(time.Date(2026, 10, 20, 0, 1, 0, 0, time.UTC)) // the day is over
+	m = a.Stats.Days["2026-10-19"].PageReferrers[tc]
+	if m["reddit.com"] != 100 || len(m) != maxPageReferrers+1 || m[other] != 2 || m["early00.example"] != 2 || m["early19.example"] != 0 {
+		t.Errorf("after the day: %v", m)
+	}
+}
+
+func TestPageReferrersAreCapped(t *testing.T) {
+	a := newAgg()
+	tc := "/science/tauceti/"
+	// More one-off spam domains than the day's cap, then real traffic from known sites.
+	for i := range maxPageReferrersToday + 50 {
+		a.Add(line(req{ip: "198.51.100.1", ua: firefox, uri: tc, ref: fmt.Sprintf("https://spam%03d.example/", i)}))
 	}
 	a.Finish(day1)
 	m := a.Stats.Days["2026-10-19"].PageReferrers[tc]
+	if len(m) != maxPageReferrersToday+1 || m[other] != 50 {
+		t.Fatalf("today: %d domains, (other) %d", len(m), m[other])
+	}
+	for i := range 4 {
+		a.Add(line(req{ip: "203.0.113.1", ua: firefox, uri: tc, ref: "https://spam000.example/"}))
+		a.Add(line(req{ip: "203.0.113.2", ua: chrome, uri: tc, ref: fmt.Sprintf("https://new%d.example/", i)}))
+	}
+	a.Finish(day1.Add(time.Minute))
+	if m := a.Stats.Days["2026-10-19"].PageReferrers[tc]; len(m) != maxPageReferrersToday+1 || m["spam000.example"] != 5 || m[other] != 54 {
+		t.Fatalf("today, full: %d domains, spam000 %d, (other) %d", len(m), m["spam000.example"], m[other])
+	}
+	a.Finish(time.Date(2026, 10, 20, 0, 0, 30, 0, time.UTC))
+	m = a.Stats.Days["2026-10-19"].PageReferrers[tc]
 	total := 0
 	for _, v := range m {
 		total += v
 	}
-	if len(m) != maxPageReferrers+1 || total != 3*maxPageReferrers+10+100 {
-		t.Fatalf("%d domains (want %d + other), %d views (want %d): %v", len(m), maxPageReferrers, total, 3*maxPageReferrers+110, m)
-	}
-	if m["reddit.com"] != 5 || m["site0.example"] != 3 || m["site1.example"] != 2 {
-		t.Errorf("the real referrers were folded away: %v", m)
-	}
-	if m[other] < 3*maxPageReferrers {
-		t.Errorf("(other) %d", m[other])
+	if len(m) != maxPageReferrers+1 || total != maxPageReferrersToday+50+8 || m["spam000.example"] != 5 {
+		t.Errorf("after the day: %d domains, %d views: %v", len(m), total, m)
 	}
 	// A page with few domains is left as it is.
 	keep := map[string]int{"a.example": 1, other: 4}
