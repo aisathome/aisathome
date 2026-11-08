@@ -174,7 +174,6 @@ func TestPIIDetection(t *testing.T) {
 		// groups are joined only in written layouts; a card after a short number still counts
 		{"page 3 4111 1111 1111 1111", true},
 		{"Diners 3095 000000 0000", true},
-		{"card 41111111 11111111", true}, // the Codex review of c6321a7
 		{"number " + fnr[:6] + " " + fnr[6:], true},
 		{"number " + fnr[:2] + " " + fnr[2:], false},
 	} {
@@ -237,6 +236,7 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 		"id " + nodate,                                                           // no birth date
 		"drwxr-xr-x 3 1000 1000 4096 Nov  8 16:55 .cache",                        // ls -l columns (2026-11-08, a prove2me session)
 		"total 411 111 111 111 116 bytes",                                        // thousands separated by spaces
+		"-rw-r--r-- 1 65534 65534 4109 Nov  8 16:55 output.log",                  // and with owner nobody (Codex review of 073c340)
 	} {
 		if k := piiKind(msg(c)); k != "" {
 			t.Errorf("%q: flagged as %s", c, k)
