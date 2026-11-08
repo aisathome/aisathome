@@ -495,14 +495,16 @@ func inArithmetic(s string, i, j int) bool {
 }
 
 // cardNumber reports whether d (digits only) could be a payment card number: 13 to 19 digits
-// and the Luhn check, except a 13-digit number that starts with 1 (a millisecond timestamp
-// between 2001 and 2286; 13-digit cards are Visa's, which start with 4).
+// and the Luhn check, except a number that starts with 1 and is not 15 digits long. Those are
+// timestamps in milli-, micro- or nanoseconds (13, 16 and 19 digits, 2001 to 2286); the only
+// cards that start with 1 are UATP's (the airlines'), which have 15 digits (Codex review of
+// 9c299ec).
 func cardNumber(d string) bool {
 	n := len(d)
 	if n < 13 || n > 19 || !luhn(d) {
 		return false
 	}
-	return !(n == 13 && d[0] == '1')
+	return d[0] != '1' || n == 15
 }
 
 func eachText(body map[string]any, f func(string)) {

@@ -185,12 +185,22 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 	msg := func(s string) map[string]any {
 		return map[string]any{"messages": []any{map[string]any{"role": "tool", "content": s}}}
 	}
-	// a 13-digit millisecond timestamp (2026) that passes Luhn
-	ts := ""
-	for v := int64(1794069970000); v < 1794069971000 && ts == ""; v++ {
-		if s := fmt.Sprint(v); luhn(s) {
-			ts = s
+	// Luhn-valid numbers from start upwards: timestamps in ms, µs and ns (2026), and a UATP-like
+	// 15-digit number starting with 1
+	luhnFrom := func(start int64) string {
+		for v := start; v < start+1000; v++ {
+			if s := fmt.Sprint(v); luhn(s) {
+				return s
+			}
 		}
+		return ""
+	}
+	ts, us, ns, uatp := luhnFrom(1794069970000), luhnFrom(1794069970000000), luhnFrom(1794069970000000000), luhnFrom(135410014004000)
+	if us == "" || ns == "" || uatp == "" {
+		t.Fatal("could not construct the timestamps")
+	}
+	if k := piiKind(msg("UATP " + uatp)); k != piiCard {
+		t.Errorf("a 15-digit number starting with 1 (UATP): kind %q", k)
 	}
 	// an 11-digit number with valid mod-11 control digits but no birth date (day 99)
 	nodate := ""
@@ -213,6 +223,8 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 		"v = 4111111111111111.5",                                                 // the digits before a decimal point
 		"offset -4111111111111111 bytes",                                         // a negative number
 		"step_start timestamp " + ts + " ok",                                     // a millisecond timestamp: no card starts with 1
+		"timestamp " + us,                                                        // in microseconds (the Codex review of 9c299ec)
+		"timestamp " + ns,                                                        // and nanoseconds
 		"id " + nodate,                                                           // no birth date
 	} {
 		if k := piiKind(msg(c)); k != "" {
