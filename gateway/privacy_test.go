@@ -171,6 +171,11 @@ func TestPIIDetection(t *testing.T) {
 		{"GET /cards/4111111111111111", true},
 		{"Diners 30950000000000", true},
 		{"Maestro 6759000000005", true},
+		// groups are joined only in written layouts; a card after a short number still counts
+		{"page 3 4111 1111 1111 1111", true},
+		{"Diners 3095 000000 0000", true},
+		{"number " + fnr[:6] + " " + fnr[6:], true},
+		{"number " + fnr[:2] + " " + fnr[2:], false},
 	} {
 		if got := hasPII(msg(c.text)); got != c.want {
 			t.Errorf("%q: got %v want %v", c.text, got, c.want)
@@ -199,6 +204,9 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 	if us == "" || ns == "" || uatp == "" {
 		t.Fatal("could not construct the timestamps")
 	}
+	if !cardNumber("3100010004096") {
+		t.Fatal("the ls -l columns below no longer pass the card check joined; the case tests nothing")
+	}
 	if k := piiKind(msg("UATP " + uatp)); k != piiCard {
 		t.Errorf("a 15-digit number starting with 1 (UATP): kind %q", k)
 	}
@@ -226,6 +234,7 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 		"timestamp " + us,                                                        // in microseconds (the Codex review of 9c299ec)
 		"timestamp " + ns,                                                        // and nanoseconds
 		"id " + nodate,                                                           // no birth date
+		"drwxr-xr-x 3 1000 1000 4096 Nov  8 16:55 .cache",                        // ls -l columns (2026-11-08, a prove2me session)
 	} {
 		if k := piiKind(msg(c)); k != "" {
 			t.Errorf("%q: flagged as %s", c, k)

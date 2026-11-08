@@ -425,19 +425,12 @@ func piiKind(body map[string]any) string {
 			return
 		}
 		for _, loc := range digitRe.FindAllStringIndex(s, -1) {
-			d := strings.NewReplacer(" ", "", "-", "").Replace(s[loc[0]:loc[1]])
-			if strings.Trim(d, "0") == "" {
-				continue // git's null hash in a diff of a new file (index 00000000000..3446d1c680f): both checks pass zeros
-			}
 			if inArithmetic(s, loc[0], loc[1]) {
 				continue
 			}
-			if cardNumber(d) {
-				kind = piiCard
-				return
-			}
-			if len(d) == 11 && fodselsnummer(d) {
-				kind = piiFnr
+			groups := strings.FieldsFunc(s[loc[0]:loc[1]], func(r rune) bool { return r == ' ' || r == '-' })
+			if k := idIn(groups); k != "" {
+				kind = k
 				return
 			}
 		}
@@ -492,6 +485,51 @@ func inArithmetic(s string, i, j int) bool {
 		return true
 	}
 	return false
+}
+
+// idIn looks for a card or identity number in a run of digit groups (the run split at single
+// spaces and dashes). Groups are joined only in the layouts people write these numbers in: a card
+// in groups of four (the last one shorter), as Amex 4-6-5 or Diners 4-6-4; an identity number as
+// 6+5. Other joins are numbers side by side, such as a directory listing's columns ("drwxr-xr-x
+// 3 1000 1000 4096": links, owner, group, size), which joined pass Luhn. Each run of consecutive
+// groups is tried, so a card after a short number ("page 3 4111 1111 1111 1111") still counts.
+func idIn(groups []string) string {
+	for i := range groups {
+		for j := i + 1; j <= len(groups); j++ {
+			g := groups[i:j]
+			d := strings.Join(g, "")
+			if strings.Trim(d, "0") == "" {
+				continue // git's null hash in a diff of a new file (index 00000000000..3446d1c680f): both checks pass zeros
+			}
+			if cardLayout(g) && cardNumber(d) {
+				return piiCard
+			}
+			if len(d) == 11 && (len(g) == 1 || len(g) == 2 && len(g[0]) == 6) && fodselsnummer(d) {
+				return piiFnr
+			}
+		}
+	}
+	return ""
+}
+
+// cardLayout reports whether digit groups are laid out as a card number is written: unbroken,
+// in groups of four with a shorter last group, or Amex/Diners style (4-6-5, 4-6-4).
+func cardLayout(g []string) bool {
+	if len(g) == 1 {
+		return true
+	}
+	if len(g[0]) != 4 {
+		return false
+	}
+	if len(g) == 3 && len(g[1]) == 6 && (len(g[2]) == 5 || len(g[2]) == 4) {
+		return true
+	}
+	for _, x := range g[1 : len(g)-1] {
+		if len(x) != 4 {
+			return false
+		}
+	}
+	return len(g[len(g)-1]) <= 4
 }
 
 // cardNumber reports whether d (digits only) could be a payment card number: 13 to 19 digits
