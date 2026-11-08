@@ -174,6 +174,7 @@ func TestPIIDetection(t *testing.T) {
 		// groups are joined only in written layouts; a card after a short number still counts
 		{"page 3 4111 1111 1111 1111", true},
 		{"Diners 3095 000000 0000", true},
+		{"card 41111111 11111111", true}, // the Codex review of c6321a7
 		{"number " + fnr[:6] + " " + fnr[6:], true},
 		{"number " + fnr[:2] + " " + fnr[2:], false},
 	} {

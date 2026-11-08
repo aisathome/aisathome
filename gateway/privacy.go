@@ -489,8 +489,8 @@ func inArithmetic(s string, i, j int) bool {
 
 // idIn looks for a card or identity number in a run of digit groups (the run split at single
 // spaces and dashes). Groups are joined only in the layouts people write these numbers in: a card
-// in groups of four (the last one shorter), as Amex 4-6-5 or Diners 4-6-4; an identity number as
-// 6+5. Other joins are numbers side by side, such as a directory listing's columns ("drwxr-xr-x
+// in groups of one length (the last one shorter), as Amex 4-6-5 or Diners 4-6-4; an identity
+// number as 6+5. Other joins are numbers side by side, such as a directory listing's columns ("drwxr-xr-x
 // 3 1000 1000 4096": links, owner, group, size), which joined pass Luhn. Each run of consecutive
 // groups is tried, so a card after a short number ("page 3 4111 1111 1111 1111") still counts.
 func idIn(groups []string) string {
@@ -513,23 +513,25 @@ func idIn(groups []string) string {
 }
 
 // cardLayout reports whether digit groups are laid out as a card number is written: unbroken,
-// in groups of four with a shorter last group, or Amex/Diners style (4-6-5, 4-6-4).
+// Amex/Diners style (4-6-5, 4-6-4), or in groups of one length of at least four with a last group
+// no longer than the others (4-4-4-4, 4-4-4-4-3, 8-8; the Codex review of c6321a7).
 func cardLayout(g []string) bool {
 	if len(g) == 1 {
 		return true
 	}
-	if len(g[0]) != 4 {
-		return false
-	}
-	if len(g) == 3 && len(g[1]) == 6 && (len(g[2]) == 5 || len(g[2]) == 4) {
+	if len(g) == 3 && len(g[0]) == 4 && len(g[1]) == 6 && (len(g[2]) == 5 || len(g[2]) == 4) {
 		return true
 	}
+	w := len(g[0])
+	if w < 4 {
+		return false
+	}
 	for _, x := range g[1 : len(g)-1] {
-		if len(x) != 4 {
+		if len(x) != w {
 			return false
 		}
 	}
-	return len(g[len(g)-1]) <= 4
+	return len(g[len(g)-1]) <= w
 }
 
 // cardNumber reports whether d (digits only) could be a payment card number: 13 to 19 digits
