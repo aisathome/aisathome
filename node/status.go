@@ -34,8 +34,7 @@ const (
 // a request on another node (it fails before any output).
 const ErrPausedMsg = "node paused"
 
-// RestartCommand restarts the engine by hand when the agent may not (no restart trigger).
-const RestartCommand = "sudo systemctl restart aisathome-llama"
+// RestartCommand (platform_*.go) restarts the engine by hand when the agent may not.
 
 // ErrRestartUnavailable means the agent has no way to restart the engine itself.
 var ErrRestartUnavailable = errors.New("this agent cannot restart the engine; run: " + RestartCommand)

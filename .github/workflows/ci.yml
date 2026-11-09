@@ -59,6 +59,73 @@ jobs:
             ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0 --model go.mod | tee "$RUNNER_TEMP/dry-run.txt"
           grep -q '^tier: big: 1 x 196608 tokens' "$RUNNER_TEMP/dry-run.txt"
 
+  windows:
+    # The node agent on Windows, without a GPU: vet, build and unit tests of the node packages,
+    # then the agent as a real Windows service with its default files under %ProgramData%.
+    # There is no engine and no gateway, so the agent runs, serves its local UI and reports
+    # "not connected". windows-2025 is windows-latest today, pinned like ubuntu-24.04 above.
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: go vet (node)
+        run: go vet ./node/... ./protocol/...
+      - name: go build (node)
+        run: go build ./node/...
+      - name: go test (node)
+        # No -race: on Windows it needs cgo and a C toolchain. The check job runs the same
+        # tests with it on Linux.
+        run: go test -count=1 ./node/... ./protocol/...
+      - name: the agent as a Windows service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'svc')
+          $bin = Join-Path $dir 'aisathome-node.exe'
+          go build -o $bin ./node/cmd/aisathome-node
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+          # The default folder (node.WindowsLayout): config, password, state and log.
+          $data = Join-Path $env:ProgramData 'AIsAtHome'
+          New-Item -ItemType Directory -Force $data | Out-Null
+          Set-Content -Encoding ascii (Join-Path $data 'node.json') `
+            '{"node_id":"ci-windows","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"ci","upstream":"http://127.0.0.1:1","models":[{"name":"ci","slots":1,"ctx":4096}]}'
+          Set-Content -Encoding ascii (Join-Path $data 'ui-password') 'ci-password-0123456789'
+          # No -config: the service must find its config in the default folder.
+          New-Service -Name aisathome-node -BinaryPathName "`"$bin`"" -StartupType Manual | Out-Null
+          Start-Service aisathome-node
+          $out = ''
+          $answered = $false
+          for ($i = 0; $i -lt 30 -and -not $answered; $i++) {
+            Start-Sleep -Seconds 1
+            $out = & $bin status -json | Out-String
+            # Exit 1: an agent answered and is not connected (3: nothing answered yet).
+            $answered = $LASTEXITCODE -eq 1
+          }
+          $log = Join-Path $data 'logs\node.log'
+          if (-not $answered) {
+            if (Test-Path $log) { Get-Content $log }
+            throw "the service's agent did not answer on 127.0.0.1:7381 (last exit $LASTEXITCODE)"
+          }
+          $st = $out | ConvertFrom-Json
+          if ($st.node_id -ne 'ci-windows' -or $st.connected -or -not $st.controls.enabled) {
+            throw "unexpected status (want ci-windows, not connected, controls on): $out"
+          }
+          Stop-Service aisathome-node
+          $svc = Get-CimInstance Win32_Service -Filter "Name='aisathome-node'"
+          if ($svc.State -ne 'Stopped' -or $svc.ExitCode -ne 0) {
+            throw "after Stop-Service: state $($svc.State), exit code $($svc.ExitCode)"
+          }
+          Get-Content $log
+          if (-not (Select-String -Quiet -Path $log -Pattern 'msg=starting')) { throw "no start line in $log" }
+          if (-not (Test-Path (Join-Path $data 'state.json'))) { throw 'no state file in the default folder' }
+          Remove-Service aisathome-node
+          exit 0
+
   harness:
     # harness/ (the Python package aisathome_harness): its offline tests. Standard library only, so the
     # runner's own Python 3.12 (Ubuntu 24.04) runs them; no third-party action, nothing installed.

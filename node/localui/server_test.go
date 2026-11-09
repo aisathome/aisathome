@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -63,11 +64,31 @@ func (f *fakeAgent) RestartEngine() error {
 }
 func (f *fakeAgent) isPaused() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.paused }
 
-// fakeSMI is a stand-in nvidia-smi printing one RTX 4090.
-func fakeSMI(t *testing.T) string {
-	p := filepath.Join(t.TempDir(), "nvidia-smi")
-	os.WriteFile(p, []byte("#!/bin/sh\necho '0, NVIDIA GeForce RTX 4090, 23545, 24564, 39, 9, 56.75, 450.00'\n"), 0o755)
-	return p
+// fakeSMIEnv makes this test binary act as nvidia-smi (TestMain), so the stand-in runs on
+// Windows too, where a shell script cannot.
+const fakeSMIEnv = "AISATHOME_TEST_FAKE_NVIDIA_SMI"
+
+func TestMain(m *testing.M) {
+	switch os.Getenv(fakeSMIEnv) {
+	case "4090":
+		fmt.Println("0, NVIDIA GeForce RTX 4090, 23545, 24564, 39, 9, 56.75, 450.00")
+		os.Exit(0)
+	case "broken":
+		fmt.Fprintln(os.Stderr, "Failed to initialize NVML")
+		os.Exit(9)
+	}
+	os.Exit(m.Run())
+}
+
+// fakeSMI returns a stand-in nvidia-smi for this test: "4090" prints one RTX 4090, "broken"
+// fails as a broken driver does.
+func fakeSMI(t *testing.T, mode string) string {
+	t.Setenv(fakeSMIEnv, mode)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return exe
 }
 
 type env struct {
@@ -84,7 +105,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	a := &fakeAgent{connected: true}
-	ui := New(a, Options{PasswordFile: pw, NvidiaSMI: fakeSMI(t)})
+	ui := New(a, Options{PasswordFile: pw, NvidiaSMI: fakeSMI(t, "4090")})
 	srv := httptest.NewServer(ui.Handler()) // listens on 127.0.0.1
 	t.Cleanup(srv.Close)
 	return &env{srv: srv, agent: a, ui: ui, pw: pw}
@@ -396,9 +417,7 @@ func TestStatusAndGPU(t *testing.T) {
 	if len(g.GPUs) != 0 || g.Note == "" {
 		t.Fatalf("missing nvidia-smi: %+v", g)
 	}
-	broken := filepath.Join(t.TempDir(), "nvidia-smi")
-	os.WriteFile(broken, []byte("#!/bin/sh\necho 'Failed to initialize NVML' >&2; exit 9\n"), 0o755)
-	if g := newGPUProbe(broken).get(context.Background()); len(g.GPUs) != 0 || !strings.Contains(g.Note, "failed") {
+	if g := newGPUProbe(fakeSMI(t, "broken")).get(context.Background()); len(g.GPUs) != 0 || !strings.Contains(g.Note, "failed") {
 		t.Fatalf("failing nvidia-smi: %+v", g)
 	}
 	gs := parseGPUs("0, NVIDIA GeForce RTX 3090, 100, 24576, 45, [N/A], [N/A], 350.00\n1, RTX A4000, 5, 16376, 30, 0, 14.1, 140.00\ngarbage\n")

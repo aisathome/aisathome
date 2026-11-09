@@ -9,6 +9,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **The node agent runs as a Windows service.** Started by the Service Control Manager, it
+  stops cleanly on Stop and at shutdown, and logs to `%ProgramData%\AIsAtHome\logs\node.log`
+  (8 MB, one older file kept). On Windows its config, password and state default to
+  `%ProgramData%\AIsAtHome` (`node.json`, `ui-password`, `state.json`). A first step towards
+  Windows nodes; there is no Windows installer or engine yet. Linux is unchanged. (node)
 - **Interruptions no longer use up a science task's tries.** A task its worker gives back
   (`.../fail` with `"requeue": true`, as the runner does when its spot instance stops) keeps its
   try: the next claim continues it and counts one `interruptions` instead. A lease that expires

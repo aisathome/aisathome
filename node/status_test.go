@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -161,7 +162,8 @@ func TestStatePersistsAcrossRestart(t *testing.T) {
 	if len(st.Events) < 2 || st.Events[0].Kind != "paused" || st.Events[1].Kind != "request_failed" {
 		t.Fatalf("events not restored newest first: %+v", st.Events)
 	}
-	if fi, err := os.Stat(state); err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows has no mode bits: the folder's permissions (set by the installer) protect it.
+	if fi, err := os.Stat(state); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("state file mode: %v %v", fi.Mode(), err)
 	}
 

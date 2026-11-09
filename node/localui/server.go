@@ -34,9 +34,6 @@ import (
 // DefaultPort is the local UI's port unless configured otherwise.
 const DefaultPort = 7381
 
-// DefaultPasswordFile is where the installer puts the UI password (root:aisathome 0640).
-const DefaultPasswordFile = "/etc/aisathome-node/ui-password"
-
 // AccountURL is the account page that lists a volunteer's nodes.
 const AccountURL = "https://aisathome.org/account"
 

@@ -56,7 +56,7 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 	c := &http.Client{Timeout: 5 * time.Second}
 	resp, err := c.Get("http://" + Addr(*port) + "/api/status")
 	if err != nil {
-		fmt.Fprintf(stderr, "no node agent answers on %s: is it running? (systemctl status aisathome-node)\n", Addr(*port))
+		fmt.Fprintf(stderr, "no node agent answers on %s: is it running? (%s)\n", Addr(*port), node.StatusCommand)
 		return ExitUnreachable
 	}
 	defer resp.Body.Close()
