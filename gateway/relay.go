@@ -425,6 +425,7 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 	if !rl.req.logprobs { // not asked for: a node that sends them anyway does not reach the client with them
 		data = dropLogprobs(data)
 	}
+	data = withModel(data, rl.model) // the client sees which model answered, not only the role it asked for
 	outs := [][]byte{data}
 	if gd := rl.gd; gd != nil {
 		var big bool

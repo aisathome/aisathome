@@ -36,10 +36,10 @@ GitHub Actions from the tagged source, in public, by the workflow
 
 | | Needed | Why |
 |---|---|---|
-| GPU | RTX 30, 40 or 50 series with 16 GB or more (16 GB: no screen on the card) | The model and its context need about 15 GB (80k, 16 GB cards) or 18 GB (192k, 24 GB cards); the build targets these three generations |
+| GPU | RTX 30, 40 or 50 series with 16 GB or more (16 GB: at most a light desktop on the card) | The model and its context need about 14 GB (`UD-Q3_K_XL`, 80k, 16 GB cards) or 18 GB (`UD-IQ4_XS`, 192k, 24 GB cards); the build targets these three generations |
 | NVIDIA driver | 525.60.13 or newer; **570.26 or newer for RTX 50** | CUDA 12.x programs run on any 12.x driver from 525 on; the RTX 50 series needs CUDA 12.8's driver |
 | Linux | x86_64 with AVX2, systemd, glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer) | The build image is Ubuntu 22.04 |
-| Disk | about 17 GB free in `/var/lib` | The model is 14.3 GB |
+| Disk | about 17 GB free in `/var/lib` | The model is 13.1 GB (16 GB cards) or 14.3 GB |
 
 The installer checks all of this before it changes anything (`./install.sh --dry-run`).
 

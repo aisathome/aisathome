@@ -19,8 +19,15 @@ with the chat. If a key leaks, revoke it on the same page.
 |---|---|
 | `deep` | Qwen3.8 27B, general chat |
 | `agent` | The same model, for coding agents and tool calls |
+| `qwen3.8-27b` | Qwen3.8 27B as `UD-IQ4_XS` (about 4 bits), on 24 GB cards, 192k context |
+| `qwen3.8-27b-q3` | Qwen3.8 27B as `UD-Q3_K_XL` (about 3 bits), on 16 GB cards, 80k context; scores a little lower ([model settings](/node/presets/)) |
 
-`GET /v1/models` lists what the network serves right now.
+`GET /v1/models` lists what the network serves right now. `deep` and `agent` go to either
+file; the answer's `model` field names the one that answered. A conversation stays on the file
+it started on: once it has an answer, its later requests go only to nodes running that file,
+and if none is online the request fails with a message saying so (try again later, or start a
+new conversation) rather than switching files midway. Ask for `qwen3.8-27b` or
+`qwen3.8-27b-q3` to choose a file yourself.
 
 ## Try it with curl
 

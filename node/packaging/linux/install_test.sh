@@ -55,21 +55,29 @@ lacks() { [[ "$out" != *"$2"* ]] || fail "$1: unexpected '$2'"; }
 ok() { [[ $code -eq 0 ]] || fail "$1: exit $code, want 0"; }
 usage_err() { [[ $code -eq 2 ]] || fail "$1: exit $code, want 2"; }
 
-# The tier follows the card's size: big (192k) on 24 GB and more, standard (80k) on 16 GB.
+# The tier follows the card's size: big (UD-IQ4_XS, 192k) on 24 GB and more, standard
+# (UD-Q3_K_XL, 80k) on 16 GB. Each tier's file answers under its own model name.
 # card <total MiB> <free MiB> [name]: one fake GPU.
 card() { echo "0, GPU-fake-0, ${3:-NVIDIA GeForce RTX 3090}, $1, $2"; }
+hf=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502
+q3sha=8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e iq4sha=40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199
 check_tier() {  # check_tier <FAKE_MEM> <tier> <ctx>
+  local file name
+  case "$2" in standard) file=UD-Q3_K_XL name=qwen3.8-27b-q3 ;; big) file=UD-IQ4_XS name=qwen3.8-27b ;; esac
   run FAKE_MEM="$1" -- --dry-run
   ok "tier $2 ($1)"
   has "tier $2 ($1)" "tier: $2: 1 x $3 tokens, KV q4_0"
+  has "tier $2 ($1)" "the $2 tier ($file, $(( $3 / 1024 ))k context)"
+  has "tier $2 ($1)" "model: $hf/Qwen3.8-27B-$file.gguf "
+  has "tier $2 ($1)" "--alias $name "
+  has "tier $2 ($1)" '"name": "'"$name"'", "roles": ["deep", "agent"], "slots": 1, "ctx": '"$3"
   has "tier $2 ($1)" "-np 1 --kv-unified-per-slot $3 "
   has "tier $2 ($1)" "-ctk q4_0 -ctv q4_0 "
-  has "tier $2 ($1)" '"slots": 1, "ctx": '"$3"
   has "tier $2 ($1)" "--reasoning-budget 8192 "; has "tier $2 ($1)" "--cache-ram 2048 "; has "tier $2 ($1)" "--host 127.0.0.1 "
   has "tier $2 ($1)" "at least 20 tokens/s after a 32000-token prompt"
 }
 run -- --dry-run
-ok default; has default "GPU 0: NVIDIA GeForce RTX 3090, 24576 MiB: the big tier (192k context)"
+ok default; has default "GPU 0: NVIDIA GeForce RTX 3090, 24576 MiB: the big tier (UD-IQ4_XS, 192k context)"
 has default "memory: 24126 MiB free, the big tier needs 18500: fits"
 check_tier "$(card 24576 24126)" big 196608
 check_tier "$(card 24564 21979 'NVIDIA GeForce RTX 4090')" big 196608
@@ -80,15 +88,22 @@ check_tier "$(card 20475 20000 'NVIDIA RTX 4000 Ada Generation')" standard 81920
 # Too small a card, or too little free memory for the tier: a clear stop, never a smaller tier.
 run FAKE_MEM="$(card 12282 11900 'NVIDIA GeForce RTX 4070')" -- --dry-run
 [[ $code -eq 1 ]] || fail "12 GB card: exit $code, want 1"; has "12 GB card" "has 12282 MiB of memory; the network needs a card with 16 GB or more"
-run FAKE_MEM="$(card 16303 15199 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
-[[ $code -eq 1 ]] || fail "16 GB with a display: exit $code, want 1"
-has "16 GB with a display" "has 15199 MiB free; the standard tier (80k context) needs 15200 MiB free"
-has "16 GB with a display" "Connect the monitor to the motherboard's graphics"; lacks "16 GB with a display" "tier: big"
-run FAKE_MEM="$(card 16303 15200 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
-ok "16 GB at the limit"; has "16 GB at the limit" "the standard tier needs 15200: fits"
+# Standard: 14,300 MiB free (UD-Q3_K_XL at 81,920 peaks at about 14,030): a 16 GB card with a
+# desktop of about 1.5 GB passes (15,839 MiB visible to CUDA on an RTX 5070 Ti), 2 GB does not.
+run FAKE_MEM="$(card 16303 14299 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
+[[ $code -eq 1 ]] || fail "16 GB with a heavy desktop: exit $code, want 1"
+has "16 GB with a heavy desktop" "has 14299 MiB free; the standard tier (UD-Q3_K_XL, 80k context) needs 14300 MiB free"
+has "16 GB with a heavy desktop" "room for a light desktop only (about 1.5 GB"
+has "16 GB with a heavy desktop" "connect the monitor to the motherboard's graphics"; lacks "16 GB with a heavy desktop" "tier: big"
+run FAKE_MEM="$(card 16303 13791 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
+[[ $code -eq 1 ]] || fail "16 GB with a 2 GB desktop: exit $code, want 1"
+run FAKE_MEM="$(card 16303 14300 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
+ok "16 GB at the limit"; has "16 GB at the limit" "the standard tier needs 14300: fits"
+run FAKE_MEM="$(card 16303 14339 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run
+ok "16 GB with a 1.5 GB desktop"; has "16 GB with a 1.5 GB desktop" "tier: standard: 1 x 81920 tokens"
 run FAKE_MEM="$(card 24576 17000)" -- --dry-run
 [[ $code -eq 1 ]] || fail "24 GB, busy desktop: exit $code, want 1"
-has "24 GB, busy desktop" "has 17000 MiB free; the big tier (192k context) needs 18500 MiB free"; lacks "24 GB, busy desktop" "standard tier"
+has "24 GB, busy desktop" "has 17000 MiB free; the big tier (UD-IQ4_XS, 192k context) needs 18500 MiB free"; lacks "24 GB, busy desktop" "standard tier"
 # An update: the memory this node's own running llama-server holds counts as free.
 run FAKE_MEM="$(card 24576 5000)" FAKE_MAINPID=4242 FAKE_APPS="GPU-fake-0, 4242, 18300\nGPU-fake-0, 999, 700" -- --dry-run
 ok "update frees own memory"; has "update frees own memory" "memory: 23300 MiB free (incl. 18300 MiB of this node's running llama-server)"
@@ -96,7 +111,7 @@ run FAKE_MEM="$(card 24576 5000)" FAKE_MAINPID=4242 FAKE_APPS="GPU-fake-1, 4242,
 [[ $code -eq 1 ]] || fail "own memory on another GPU: exit $code, want 1"
 # Several GPUs: the largest card is used (on a tie, the freer one), and llama-server is pinned to it.
 run FAKE_MEM="0, GPU-aaa, NVIDIA GeForce RTX 4080, 16376, 15000\n1, GPU-bbb, NVIDIA GeForce RTX 3090, 24576, 24000" -- --dry-run
-ok "two GPUs"; has "two GPUs" "GPU 1: NVIDIA GeForce RTX 3090, 24576 MiB: the big tier (192k context); llama-server uses only this GPU"
+ok "two GPUs"; has "two GPUs" "GPU 1: NVIDIA GeForce RTX 3090, 24576 MiB: the big tier (UD-IQ4_XS, 192k context); llama-server uses only this GPU"
 has "two GPUs" "Environment=CUDA_VISIBLE_DEVICES=GPU-bbb"
 run FAKE_MEM="0, GPU-aaa, NVIDIA GeForce RTX 3090, 24576, 20000\n1, GPU-bbb, NVIDIA GeForce RTX 3090, 24576, 24000" -- --dry-run
 ok "two equal GPUs"; has "two equal GPUs" "CUDA_VISIBLE_DEVICES=GPU-bbb"
@@ -222,11 +237,15 @@ usage_err "plain http release URL"
 # The pinned model and a generated node.json, from the repository (no bundle): a dry run
 # shows the download plan and checks the free disk space.
 run -- --dry-run --node-id test-node
-ok "model plan"; has "model plan" "model: https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-IQ4_XS.gguf"
-has "model plan" "sha256 40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199, 14.3 GB"
+ok "model plan"; has "model plan" "model: $hf/Qwen3.8-27B-UD-IQ4_XS.gguf"
+has "model plan" "sha256 $iq4sha, 14.3 GB"
 has "model plan" "disk: 102.4 GB free"; lacks "model plan" "compute capability"
 has "model plan" '"node_id": "test-node"'; has "model plan" '"gateway_url": "wss://api.aisathome.org/v1/node/connect"'
 has "model plan" '"name": "qwen3.8-27b", "roles": ["deep", "agent"], "slots": 1, "ctx": 196608'
+run FAKE_MEM="$(card 16303 15841 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run --node-id test-node
+ok "model plan, standard"; has "model plan, standard" "model: $hf/Qwen3.8-27B-UD-Q3_K_XL.gguf (sha256 $q3sha, 13.1 GB)"
+has "model plan, standard" '"name": "qwen3.8-27b-q3", "roles": ["deep", "agent"], "slots": 1, "ctx": 81920'
+lacks "model plan, standard" "IQ4_XS.gguf"
 # Sizes print with a decimal point in any locale (a comma locale gave "16,5 GB").
 comma_locale="$(locale -a 2>/dev/null | grep -m1 -iE '^(nb_NO|de_DE|fr_FR)\.utf-?8$' || true)"
 if [[ -n "$comma_locale" ]]; then
@@ -243,13 +262,29 @@ ok "--model skips the download"; lacks "--model skips the download" "example.org
 run -- --dry-run --model /etc/hostname
 [[ $code -eq 1 ]] || fail "--model, another file: exit $code, want 1"
 has "--model, another file" "/etc/hostname is not the network's model"; has "--model, another file" "the pinned Qwen3.8-27B-UD-IQ4_XS.gguf has 14252845984"
-eval "$(sed -n '/^check_model_file() {/,/^}/p' "$installer")"
+run FAKE_MEM="$(card 16303 15841)" -- --dry-run --model /etc/hostname
+[[ $code -eq 1 ]] || fail "--model, another file, standard: exit $code, want 1"
+has "--model, another file, standard" "the pinned Qwen3.8-27B-UD-Q3_K_XL.gguf has 13146393504"
+# The other tier's file (sparse files of the pinned sizes): refused with the tier's own file named.
+truncate -s 14252845984 "$tmp/iq4.gguf"; truncate -s 13146393504 "$tmp/q3.gguf"
+run FAKE_MEM="$(card 16303 15841)" -- --dry-run --model "$tmp/iq4.gguf"
+[[ $code -eq 1 ]] || fail "--model, big tier's file on a 16 GB card: exit $code, want 1"
+has "--model, big file, standard card" "$tmp/iq4.gguf is the big tier's model (UD-IQ4_XS, 192k context); this card is in the standard tier, which runs Qwen3.8-27B-UD-Q3_K_XL.gguf"
+has "--model, big file, standard card" "--download-only <dir> --tier standard"
+run -- --dry-run --model "$tmp/q3.gguf"
+[[ $code -eq 1 ]] || fail "--model, standard tier's file on a 24 GB card: exit $code, want 1"
+has "--model, standard file, big card" "is the standard tier's model (UD-Q3_K_XL, 80k context); this card is in the big tier, which runs Qwen3.8-27B-UD-IQ4_XS.gguf"
+run FAKE_MEM="$(card 16303 15841)" -- --dry-run --model "$tmp/q3.gguf"
+ok "--model, the standard tier's file"; has "--model, the standard tier's file" "--alias qwen3.8-27b-q3 "
+run -- --dry-run --model "$tmp/iq4.gguf"
+ok "--model, the big tier's file"; has "--model, the big tier's file" "--alias qwen3.8-27b "
+eval "$(sed -n '/^check_model_file() {/,/^}/p;/^tier_model() {/,/^}/p;/^tier_text() /p;/^tier_ctx() /p' "$installer")"
 die() { echo "$1"; exit 1; }
 out="$(model_size=4096 model_sha="$osha" model_name=own-model.gguf check_model_file "$tmp/own-model.gguf" 1 2>&1)"; code=$?
 ok "check_model_file, the pinned file"; has "check_model_file, the pinned file" "(verified)"
 out="$(model_size=4096 model_sha="$(printf 'a%.0s' {1..64})" model_name=own-model.gguf check_model_file "$tmp/own-model.gguf" 1 2>&1)"; code=$?
 [[ $code -ne 0 ]] || fail "check_model_file, same size, other hash: accepted"; has "check_model_file, other hash" "is not the network's model: sha256 $osha"
-unset -f check_model_file die
+unset -f check_model_file tier_model tier_text tier_ctx die
 run -- --dry-run --model /nonexistent.gguf
 [[ $code -eq 1 ]] || fail "missing model file: exit $code, want 1"; has "missing model file" "no model file"
 run FAKE_MEM="$(card 16303 15841)" -- --dry-run --gateway-url wss://gw.example.org:8443/v1/node/connect --node-id n1
@@ -408,7 +443,7 @@ die() { echo "$1"; return 1; }
 out="$(export PATH="$e:$PATH" FAKE_JOURNAL=$'llama_kv_cache: CUDA0 KV buffer size = 1440.00 MiB\nggml_backend_cuda_buffer_type_alloc_buffer: allocating 480.00 MiB on device 0: cudaMalloc failed: out of memory'; tier=standard; engine_fits "2026-10-23 10:00:00")"; code=$?
 out+=$'\n'"$(cat "$e/systemctl.log")"
 [[ $code -eq 1 ]] || fail "engine out of memory: exit $code, want 1"
-has "engine out of memory" "ran out of GPU memory while loading the standard tier"; has "engine out of memory" "Connect the monitor to the motherboard"
+has "engine out of memory" "ran out of GPU memory while loading the standard tier"; has "engine out of memory" "connect the monitor to the motherboard"
 has "engine out of memory" "systemctl disable --now aisathome-node aisathome-llama"
 # A long log after the match (systemd restarting the engine for minutes): a "grep -q" would end
 # early, journalctl would get SIGPIPE, and under pipefail the check would pass silently
@@ -546,6 +581,27 @@ run "${m[@]}" FAKE_DF_KB=1000 -- --download-only "$tmp/dl3"
 [[ $code -eq 1 ]] || fail "download, no disk space: exit $code, want 1"; has "download, no disk space" "not enough disk space on $tmp/dl3"
 run "${m[@]}" -- --download-only "$tmp/nonexistent"
 usage_err "--download-only without a directory"
+# --download-only picks the tier's file: --tier, else this machine's card. (No real download:
+# too little disk space stops it after the choice.)
+run FAKE_DF_KB=1000 -- --download-only "$tmp/dl3" --tier standard
+[[ $code -eq 1 ]] || fail "download --tier standard: exit $code, want 1"
+has "download --tier standard" "model: the standard tier's Qwen3.8-27B-UD-Q3_K_XL.gguf"; has "download --tier standard" "need 15.3 GB"
+lacks "download --tier standard" "GPU 0:"
+run FAKE_DF_KB=1000 -- --download-only "$tmp/dl3" --tier big
+has "download --tier big" "model: the big tier's Qwen3.8-27B-UD-IQ4_XS.gguf"
+run FAKE_DF_KB=1000 FAKE_MEM="$(card 16303 15841)" -- --download-only "$tmp/dl3"
+has "download, 16 GB card" "the standard tier (UD-Q3_K_XL, 80k context)"; has "download, 16 GB card" "model: the standard tier's Qwen3.8-27B-UD-Q3_K_XL.gguf"
+run FAKE_DF_KB=1000 FAKE_MEM="$(card 16303 1000)" -- --download-only "$tmp/dl3"
+has "download, busy 16 GB card" "model: the standard tier's"  # free memory matters at install, not for the download
+# Without a card and without --tier there is nothing to choose by.
+ns="$tmp/nosmi"; mkdir "$ns"
+for c in bash dirname env python3 hostname; do ln -s "$(command -v "$c")" "$ns/$c"; done
+out="$(env -i PATH="$ns" bash "$installer" --download-only "$tmp/dl3" 2>&1)"; code=$?
+usage_err "download without a card"; has "download without a card" "add --tier standard (16 GB cards) or --tier big (24 GB and more)"
+run -- --dry-run --tier standard
+usage_err "--tier without --download-only"; has "--tier without --download-only" "--tier is for --download-only"
+run -- --download-only "$tmp/dl3" --tier huge
+usage_err "--tier huge"; has "--tier huge" "--tier must be standard"
 
 # The prebuilt bundle: install.sh next to bin/llama-server, lib/ and BUILD-INFO (fakes).
 b="$tmp/bundle"

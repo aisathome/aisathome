@@ -27,11 +27,11 @@ Requirements:
 
 - x86_64 with AVX2, systemd, glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer);
 - an NVIDIA GPU with compute capability 8.6, 8.9 or 12.0 (RTX 30, 40, 50 series) with 16 GB
-  or more, and enough of it free for its tier (below): 15,200 MiB on a 16 GB card (no screen
-  on it), 18,500 MiB on 24 GB and more;
+  or more, and enough of it free for its tier (below): 14,300 MiB on a 16 GB card (room for a
+  light desktop of about 1.5 GB), 18,500 MiB on 24 GB and more;
 - a decode speed of at least 20 tokens/s after a 32,000-token prompt (measured at install);
 - NVIDIA driver **525.60.13 or newer**, and **570.26 or newer** on an RTX 50;
-- about 16.5 GB free in `/var/lib` (the 14.3 GB model plus 2 GB).
+- about 16.5 GB free in `/var/lib` (the tier's model, 13.1 or 14.3 GB, plus 2 GB).
 
 What is in it (`BUILD-INFO` has the exact values):
 
@@ -56,20 +56,29 @@ bundle for a test install.
 
 ### The model
 
-Without `--model`, the installer downloads `Qwen3.8-27B-UD-IQ4_XS.gguf` from
-`unsloth/Qwen3.8-27B-GGUF`, pinned to commit `4ca720788d1e01f1bff70c033e0d0028fd02e502`, and
-checks it against SHA-256 `40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199`
-(14,252,845,984 bytes, the file the tiers were measured with; hash and size are the file's LFS
-pointer at that commit on the Hugging Face Hub). It replaced `UD-Q4_K_M` (16.5 GB) in v0.3.0.
-It goes straight to `/var/lib/aisathome-node/models/model.gguf`:
+Without `--model`, the installer downloads the tier's file from `unsloth/Qwen3.8-27B-GGUF`,
+pinned to commit `4ca720788d1e01f1bff70c033e0d0028fd02e502`, and checks its SHA-256 (hash and
+size are the file's LFS pointer at that commit on the Hugging Face Hub; the files the tiers
+were measured with):
+
+| Tier | File | Bytes | SHA-256 | Model name (`--alias`, `node.json`) |
+|---|---|---|---|---|
+| standard | `Qwen3.8-27B-UD-Q3_K_XL.gguf` | 13,146,393,504 | `8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e` | `qwen3.8-27b-q3` |
+| big | `Qwen3.8-27B-UD-IQ4_XS.gguf` | 14,252,845,984 | `40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199` | `qwen3.8-27b` |
+
+`UD-IQ4_XS` replaced `UD-Q4_K_M` (16.5 GB) in v0.3.0; 16 GB cards run `UD-Q3_K_XL` since the
+release after it. The file goes straight to `/var/lib/aisathome-node/models/model.gguf`:
 
 - an interrupted download resumes from `model.gguf.part` on the next run;
 - a wrong checksum deletes the download, so the next run starts clean;
 - an existing `model.gguf` with the right checksum is kept (checked, about a minute);
 - `--download-only <dir>` only downloads and checks, without root, e.g. on a slow line
-  before installing with `--model <dir>/Qwen3.8-27B-UD-IQ4_XS.gguf`;
-- `--model` accepts only the pinned file (size, then SHA-256): the network never mixes model
-  files, because the model check cannot tell `UD-IQ4_XS` from `UD-Q4_K_M` reliably;
+  before installing with `--model <dir>/<file>`. It takes the tier of this machine's card, or
+  `--tier standard|big` on a machine without it;
+- `--model` accepts only the tier's pinned file (size, then SHA-256), and names the tier a
+  file of the other tier belongs to. A tier never mixes model files, because the model check
+  cannot tell close quants apart reliably (`UD-IQ4_XS` from `UD-Q4_K_M`, for one); the two
+  tiers' files answer under different names, so they need a reference each;
 - `MODEL_URL`, `MODEL_SHA256` and `MODEL_SIZE` (all three) choose another file.
 
 ### node.json
@@ -140,13 +149,16 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
 
 ## Model settings
 
-Every node runs the same model file, one request at a time, with a context set by the card's
+Every node runs one request at a time, with a model file and a context set by the card's
 size only (two tiers). The installer picks the tier; there is nothing to choose.
 
-| Tier | Cards (nvidia-smi total) | Context | KV | Free GPU memory needed before start |
-|---|---|---|---|---|
-| standard | 15,500 to 22,999 MiB (16 GB class) | 1 × 81,920 | `q4_0` | 15,200 MiB: no screen on the card, or under about 650 MB of desktop |
-| big | 23,000 MiB and more (24 GB+) | 1 × 196,608 | `q4_0` | 18,500 MiB |
+| Tier | Cards (nvidia-smi total) | Model | Context | KV | Free GPU memory needed before start |
+|---|---|---|---|---|---|
+| standard | 15,500 to 22,999 MiB (16 GB class) | `UD-Q3_K_XL` | 1 × 81,920 | `q4_0` | 14,300 MiB: room for a light desktop, about 1.5 GB on a 16 GB card |
+| big | 23,000 MiB and more (24 GB+) | `UD-IQ4_XS` | 1 × 196,608 | `q4_0` | 18,500 MiB |
+
+The gateway keeps a conversation on the model file it started on, so a chat or an agent
+session never switches between the two files midway; both serve the roles `deep` and `agent`.
 
 - **It must fit; it is never shrunk.** The installer reads the card's free memory (the memory
   of this node's own running `llama-server` counts as free on an update) and stops with a
@@ -156,12 +168,17 @@ size only (two tiers). The installer picks the tier; there is nothing to choose.
 - **Speed test.** After the model has loaded and before the agent connects, the installer
   sends a 32,000-token prompt to `llama-server` and reads its decode speed for 256 tokens. Below
   20 tokens/s it stops and disables the node. A short prompt would misrank cards: an RTX 5070
-  Ti writes 47 tokens/s at 200 tokens but 29 at 32k and 17 at 78k with `q4_0` KV.
-- **Measured** with `UD-IQ4_XS` and llama.cpp v0.5.0 (2026-10-22/23): standard on an RTX 5070 Ti,
-  15,070 MiB after load and 15,098 at the peak of a 77k prompt, loads with 640 MiB held by a
-  simulated display and fails at start with 768 MiB; big: 256k on an RTX 3090 used 19,202 MiB
-  at the peak, hard needles 77/80 at ~195k and 62/80 at ~247k (hence 192k). `q8_0` KV does not
-  fit 80k in 16 GB.
+  Ti writes 47 tokens/s at 200 tokens but 29 at 32k and 17 at 78k with `q4_0` KV (`UD-IQ4_XS`;
+  `UD-Q3_K_XL`: 49, 30 at 32k, 17 at 80k).
+- **Measured** with llama.cpp v0.5.0. Standard, `UD-Q3_K_XL` on an RTX 5070 Ti (15,839 MiB
+  visible to CUDA; 2026-10-31): `llama-server`'s peak at a prompt filling 95% of the context is
+  13,659 MiB at 65,536 and 14,211 at 90,112, so about 14,030 at 81,920; with memory held by
+  other programs, 90,112 ran with 1.5 GB held and 81,920 failed at start with 2.0 GB. The
+  14,300 MiB check leaves about 270 MiB at the peak on that card. (`UD-IQ4_XS` at 81,920, the
+  standard tier before: 15,098 MiB at the peak of a 77k prompt, loads with 640 MiB held and
+  fails at start with 768 MiB.) Big, `UD-IQ4_XS` (2026-10-22/23): 256k on an RTX 3090 used
+  19,202 MiB at the peak, hard needles 77/80 at ~195k and 62/80 at ~247k (hence 192k).
+  `q8_0` KV with `UD-IQ4_XS` does not fit 80k in 16 GB.
 
 For testing only, `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE`, `REASONING_BUDGET` (`-1` =
 unlimited), `CACHE_RAM_MIB`, `MODEL_ALIAS` and `MIN_DECODE_TPS` (`0`: measure, never refuse)

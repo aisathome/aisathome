@@ -388,6 +388,30 @@ func (m *meter) output() (gen, next string) {
 	return m.render(&m.genOut, true)
 }
 
+// conversations is the conversation, the answer included, in each form a later prompt of it can
+// start with (session.go): next as output gives it (a tool result follows, and the client sends
+// the reasoning back); with empty reasoning (a client that does not send it back: the template
+// renders an empty thinking part); and once a new user message follows, without the thinking
+// part at all, as the template drops earlier turns' reasoning unless reasoning is preserved.
+// Duplicates may occur.
+func (m *meter) conversations(next string) []string {
+	out := []string{m.prompt + next}
+	calls := make([]toolCall, len(m.calls))
+	for k, c := range m.calls {
+		calls[k] = *c
+	}
+	content := m.content.String()
+	answer := strings.TrimSpace(content) + renderCalls(content, calls) + "<|im_end|>\n"
+	if m.args.thinking {
+		out = append(out, m.prompt+"\n</think>\n\n"+answer)
+	}
+	const start = "<|im_start|>assistant\n"
+	if i := strings.LastIndex(m.prompt, start); !m.args.preserve && i >= 0 {
+		out = append(out, m.prompt[:i+len(start)]+answer)
+	}
+	return out
+}
+
 // render is o as the model generated it after this prompt. closeThink: the end of thinking
 // was generated (an answer that broke off during its reasoning has none yet).
 func (m *meter) render(o *genOut, closeThink bool) (gen, next string) {

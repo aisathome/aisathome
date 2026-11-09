@@ -9,6 +9,18 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **A conversation stays on the model file it started on.** The two tiers serve the roles
+  `deep` and `agent` from different files under different names (`qwen3.8-27b` on 24 GB cards,
+  `qwen3.8-27b-q3` on 16 GB). Once a chat or an agent session has an answer, the gateway sends
+  its later requests only to nodes serving the model that answered, for 24 hours after its
+  last answer: it waits for one as for any busy node, and if none is online after the queue
+  time it answers 503 with "this conversation started on ..." instead of switching files
+  midway. Clients send no common session id, so the gateway recognises a conversation as its
+  prompt cache does, from hashes of the rendered prompt, keeping no text. Requests that start a
+  conversation, or that name a model, are routed as before. (gateway)
+- **`install.sh --download-only <dir> --tier standard|big`** downloads the file of a tier on a
+  machine without the card; without `--tier` it takes the tier of this machine's card. (node)
+
 - **The node agent runs as a Windows service.** Started by the Service Control Manager, it
   stops cleanly on Stop and at shutdown, and logs to `%ProgramData%\AIsAtHome\logs\node.log`
   (8 MB, one older file kept). On Windows its config, password and state default to
@@ -155,6 +167,18 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **16 GB cards run `UD-Q3_K_XL` at 81,920 tokens, with room for a desktop.** The standard
+  tier downloads its own pinned file (13.1 GB) and answers as `qwen3.8-27b-q3`; it needs
+  14,300 MiB free instead of 15,200, so a desktop of about 1.5 GB may stay on the card (measured
+  on an RTX 5070 Ti: it ran with 1.5 GB held by other programs and failed at start with 2.0 GB;
+  `UD-IQ4_XS` left about 640 MiB). It costs a little quality: HumanEval 92.7% against 96.3%,
+  hard needles at 32k 77/80 against 80/80; decode after a 32k prompt is 30 tokens/s on that
+  card. 24 GB cards keep `UD-IQ4_XS` at 196,608 as `qwen3.8-27b`. An installed 16 GB node
+  downloads the new file on its next update; `--model` refuses the other tier's file and says
+  which tier it belongs to. (node)
+- **Answers name the model that answered.** A streamed chunk whose `model` is not the
+  answering node's model name gets it, as the assembled answer already did, so a request for
+  `deep` shows `qwen3.8-27b` or `qwen3.8-27b-q3`. (gateway)
 - **Automatic rounds no longer need reviews.** A project's new `auto_rounds` keeps what the gateway
   does with a task's end without `review_loop`: a task that passes its local checks is
   `ready-for-operator` with no review task, one that fails them gets its automatic round up to

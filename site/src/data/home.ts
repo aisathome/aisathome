@@ -52,7 +52,7 @@ export const cards = [
 	{
 		title: 'Run a node',
 		href: '/node/',
-		text: 'An NVIDIA GPU with 16 GB (no screen on it) or 24 GB, Linux, about an hour. Voluntary and unpaid.',
+		text: 'An NVIDIA GPU with 16 GB (a light desktop at most) or 24 GB, Linux, about an hour. Voluntary and unpaid.',
 	},
 ];
 

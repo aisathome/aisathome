@@ -380,6 +380,8 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	g.countPrompt(conv)
 	rt.setPrompt(conv, requestMaxTokens(body, g.cfg.DefaultMaxTokens))
 	rt.who, rt.conv = keyHash(c.userKey), conv.hashes
+	// A request that continues a session stays on the model that answered it (session.go).
+	rt.model = g.binds.model(rt.who, conv.prompt, want, time.Now())
 	if c.overWait > 0 { // past the budget, it may only use the requester's own node
 		rt.onlySelf = true
 		if g.servesFor(rt) == 0 {
@@ -409,6 +411,8 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 				preemptedError(w)
 			case attempt == 0:
 				g.unavailable(w, rt, why)
+			case rt.model != "":
+				apiError(w, http.StatusBadGateway, fmt.Sprintf("request failed on all available nodes serving %q, the model this conversation started on", rt.model))
 			default:
 				apiError(w, http.StatusBadGateway, "request failed on all available nodes")
 			}

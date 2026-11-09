@@ -42,9 +42,9 @@ can check, such as Lean proofs. The agent harness is in [`harness/`](harness/REA
 
 Linux, an NVIDIA GPU with 16 GB or more and the NVIDIA driver. Get a node token on your
 [account page](https://aisathome.org/account), download the prebuilt bundle from the releases
-and run `sudo ./install.sh`. Every node runs one model file, one request at a time; the
-context follows the card: 80k on 16 GB cards (without a screen on them), 192k on 24 GB and
-more. Step by step:
+and run `sudo ./install.sh`. Every node runs one request at a time; the model file and the
+context follow the card: `UD-Q3_K_XL` with 80k on 16 GB cards (a light desktop may stay on
+them), `UD-IQ4_XS` with 192k on 24 GB and more. Step by step:
 [aisathome.org/node](https://aisathome.org/node/).
 
 ## Quick start (local development)

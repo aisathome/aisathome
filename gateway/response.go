@@ -182,6 +182,30 @@ func dropLogprobs(raw []byte) []byte {
 	return out
 }
 
+// withModel makes a streamed chunk name model, the name the answering node offers its model
+// under (qwen3.8-27b, qwen3.8-27b-q3), so that a request for a role ("deep") shows which model
+// answered. llama-server already names the model it was asked for, which the gateway sets to
+// that name (run), and such chunks pass unchanged; a chunk that names another (an engine's own
+// file name, say) or none is rewritten. Unparseable chunks pass unchanged.
+func withModel(raw []byte, model string) []byte {
+	want, _ := json.Marshal(model)
+	if model == "" || bytes.Contains(raw, append([]byte(`"model":`), want...)) {
+		return raw
+	}
+	var c map[string]any
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber() // numbers pass as written
+	if d.Decode(&c) != nil || c == nil {
+		return raw
+	}
+	c["model"] = model
+	out, err := json.Marshal(c)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
 var engineStatusRe = regexp.MustCompile(`engine returned \d{3}`)
 
 // errCategory reduces an error from a node to a fixed category. Node text is untrusted and

@@ -94,6 +94,9 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, sent *delivered, n *n
 		tail = next
 	}
 	matched := g.pcache.servedHashed(n.id, keyHash(who), mt.hashes, mt.prompt, tail, now, rec.Outcome != outcomeBlocked)
+	if ended {
+		g.bindSession(keyHash(who), mt, tail, n.modelInfo(rec.Model), now)
+	}
 	if g.tok != nil {
 		b := 0
 		for _, id := range mt.promptIDs {
@@ -108,6 +111,12 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, sent *delivered, n *n
 	t.Cached = min(t.Cached, t.Prompt)
 	rec.Tokens = &t
 	g.countOutput(rec, mt, sent, nodeU, maxTokens)
+}
+
+// bindSession records that model m answered the conversation mt metered (tail: the answer as
+// the next prompt shows it after a tool result), so that the session stays on m (session.go).
+func (g *Gateway) bindSession(who string, mt *meter, tail string, m protocol.ModelInfo, now time.Time) {
+	g.binds.bind(who, mt.conversations(tail), m, now)
 }
 
 // countOutput sets rec's completion tokens and credit. An answer that ended counts all the

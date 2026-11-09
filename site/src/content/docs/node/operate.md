@@ -99,7 +99,7 @@ driver (Ubuntu: `sudo ubuntu-drivers install`), reboot, and run the installer ag
 bundle is built for the RTX 30, 40 and 50 series only. Build llama.cpp yourself for your
 GPU.
 
-**`not enough disk space`.** The model needs 14.3 GB plus about 2 GB in `/var/lib`. Free
+**`not enough disk space`.** The model needs 13.1 GB (16 GB cards) or 14.3 GB, plus about 2 GB in `/var/lib`. Free
 some space and run the installer again; a started download resumes.
 
 **`model checksum mismatch`.** The downloaded model is not the pinned file (a corrupt
@@ -128,12 +128,17 @@ it keeps the downloaded model. The installer stops `llama-server` in this case, 
 keeps running on the CPU. If the newest installer still says this while `nvidia-smi` works,
 tell us and include the output of `grep nvidia /proc/devices`.
 
-**`... MiB free; the standard tier (80k context) needs 15200 MiB free`** (or the big tier,
-18,500). A screen or programs use too much of the card's memory for its tier; the installer
-does not shrink the context. On a 16 GB card, connect the monitor to the motherboard's
-graphics (integrated GPU) or run the computer without a desktop; close programs that use
-the GPU (`nvidia-smi` lists them), then run the installer again. A desktop with a browser
-often takes 1-2 GB.
+**`... MiB free; the standard tier (UD-Q3_K_XL, 80k context) needs 14300 MiB free`** (or the
+big tier, 18,500). A screen or programs use too much of the card's memory for its tier; the
+installer does not shrink the context. Close programs that use the GPU (`nvidia-smi` lists
+them), or connect the monitor to the motherboard's graphics (integrated GPU), then run the
+installer again. On a 16 GB card the desktop and other programs may use about 1.5 GB; a
+desktop with a browser often takes 1-2 GB.
+
+**`... is the big tier's model ...; this card is in the standard tier`** (or the other way
+round). The file given with `--model` belongs to the other tier. Leave out `--model` and the
+installer downloads the right file, or download it with `--download-only <dir> --tier
+standard` (16 GB cards) or `--tier big` (24 GB and more).
 
 **`llama-server ran out of GPU memory while loading`.** The same, found when the model
 loaded: something took GPU memory after the check. The installer stopped the node; free the

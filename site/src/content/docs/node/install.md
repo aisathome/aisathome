@@ -8,8 +8,8 @@ the NVIDIA driver) or **building llama.cpp yourself**. Both end with the same se
 
 ## Prebuilt bundle
 
-You need an RTX 30, 40 or 50 series card with 16 GB or more (a 16 GB card without a screen
-on it: see [what you need](/node/#what-you-need)), the NVIDIA driver 525.60.13 or newer
+You need an RTX 30, 40 or 50 series card with 16 GB or more (on a 16 GB card, at most a light
+desktop: see [what you need](/node/#what-you-need)), the NVIDIA driver 525.60.13 or newer
 (570.26 or newer for an RTX 50), an x86_64 Linux with systemd and glibc 2.35 or newer
 (Ubuntu 22.04, Debian 12 or newer), and about 17 GB of free disk space in `/var/lib`.
 
@@ -43,13 +43,13 @@ The installer then:
 
 - checks the NVIDIA driver, the GPU and the free disk space, and stops with a clear message
   if one is not right;
-- picks the [tier](/node/presets/) from the card's size (16 GB: standard, 80k context;
-  24 GB and more: big, 192k) and checks that the card has enough **free** memory for it. If a
-  screen or other programs use too much, it stops and says what to do; it never picks a
-  smaller context;
-- downloads the model (Qwen3.8 27B `UD-IQ4_XS`, 14.3 GB) from Hugging Face, pinned to one
-  exact file, and checks its SHA-256. An interrupted download resumes when you run the
-  installer again;
+- picks the [tier](/node/presets/) from the card's size (16 GB: standard, `UD-Q3_K_XL` with
+  80k context; 24 GB and more: big, `UD-IQ4_XS` with 192k) and checks that the card has enough
+  **free** memory for it. If a screen or other programs use too much, it stops and says what
+  to do; it never picks a smaller context;
+- downloads the tier's model file (Qwen3.8 27B: `UD-Q3_K_XL`, 13.1 GB, or `UD-IQ4_XS`,
+  14.3 GB) from Hugging Face, pinned to one exact file, and checks its SHA-256. An interrupted
+  download resumes when you run the installer again;
 - writes `node.json` for the tier and the gateway `wss://api.aisathome.org/v1/node/connect`
   (`--gateway-url` for another);
 - creates the `aisathome` user, the two services, a watchdog that restarts a hung
@@ -60,9 +60,11 @@ The installer then:
   games during the install, or the test measures them too.
 
 Add `--enable-at-boot` to start the node at boot. On a slow connection, download the model
-first without root: `./install.sh --download-only ~/models`, then install with
-`--model ~/models/Qwen3.8-27B-UD-IQ4_XS.gguf` (the file is moved). `--model` takes only
-that exact file: the network runs one model file.
+first without root: `./install.sh --download-only ~/models` picks the file for this
+machine's card (on another machine, add `--tier standard` for a 16 GB card or `--tier big`
+for 24 GB and more), then install with `--model ~/models/<file>` as it prints, for example
+`--model ~/models/Qwen3.8-27B-UD-Q3_K_XL.gguf` (the file is moved). `--model` takes only the
+exact file of the card's tier; the other tier's file is refused with a message.
 
 ### 3. Check
 
@@ -145,6 +147,7 @@ pass `--node-config node.json`:
 }
 ```
 
-Don’t put the token in the file: the installer asks for it. Keep `slots` and `ctx` as the
-installer would write them for your tier (`--dry-run` prints them). Add `--dry-run` to see the
+Don’t put the token in the file: the installer asks for it. Keep `name`, `slots` and `ctx` as
+the installer would write them for your tier (`--dry-run` prints them): this is the big tier;
+on a 16 GB card the name is `qwen3.8-27b-q3` and `ctx` is 81920. Add `--dry-run` to see the
 `llama-server` command without installing.

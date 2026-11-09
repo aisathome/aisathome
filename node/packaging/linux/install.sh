@@ -8,16 +8,19 @@
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --enable-at-boot, --keep-token, --dry-run, --download-only <dir>.
+#   --enable-at-boot, --keep-token, --dry-run, --download-only <dir> [--tier standard|big].
 #
-# Without --model, the pinned model is downloaded from Hugging Face, resumed if interrupted
-# and checked against its SHA-256 (a --model file must be that same file). --download-only <dir>
-# only does that (no root needed). Without --node-config, node.json is written from --node-id
+# Without --model, the tier's pinned model is downloaded from Hugging Face, resumed if
+# interrupted and checked against its SHA-256 (a --model file must be that same file).
+# --download-only <dir> only does that (no root needed), for the tier of this machine's card or
+# the one --tier names (standard: 16 GB cards, big: 24 GB and more), so it also works on a
+# machine without the card. Without --node-config, node.json is written from --node-id
 # (default: the host name), --gateway-url and the tier. The bundle checks the NVIDIA driver and
 # GPU first. --node-release downloads aisathome-node for this machine's architecture from a
 # GitHub release of aisathome/aisathome and checks it against that release's SHA256SUMS.
-# Tier, from the card's size: standard (16 GB cards, 80k context, needs a nearly free card:
-# headless) or big (24 GB+, 192k); see README.md. A short speed test runs after the install.
+# Tier, from the card's size: standard (16 GB cards: UD-Q3_K_XL, 80k context, room for a light
+# desktop) or big (24 GB+: UD-IQ4_XS, 192k); see README.md. A short speed test runs after the
+# install.
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
 # without installing (no root needed). The node token is read from stdin (never from argv):
 # paste it when asked, or: cat token.txt | sudo ./install.sh ...
@@ -37,13 +40,13 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
-node_id="" gateway_url="" download_only="" keep_token=0
+node_id="" gateway_url="" download_only="" keep_token=0 want_tier=""
 conf=/etc/aisathome-node
-preset="${PRESET:-}" alias="${MODEL_ALIAS:-qwen3.8-27b}"
+preset="${PRESET:-}" alias="${MODEL_ALIAS:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --llama-build) llama_build="$2"; shift 2 ;;
@@ -54,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --node-id) node_id="$2"; shift 2 ;;
     --gateway-url) gateway_url="$2"; shift 2 ;;
     --download-only) download_only="$2"; shift 2 ;;
+    --tier) want_tier="$2"; shift 2 ;;
     --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
     --keep-token) keep_token=1; shift ;;
@@ -62,23 +66,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Two tiers, chosen by the size of the card only (owner, 2026-10-22/23): one model for every
-# node, 1 request at a time, and a context set by the card, never by the machine's other load.
-#   standard  cards with 15.5 to 23 GB (16 GB class): 1 x 80k  (81,920),  KV q4_0
-#   big       cards with 23 GB or more (24 GB+):      1 x 192k (196,608), KV q4_0
+# Two tiers, chosen by the size of the card only (owner, 2026-10-22/23 and 2026-11-09): one model
+# file per tier, 1 request at a time, and a context set by the card, never by the machine's
+# other load.
+#   standard  cards with 15.5 to 23 GB (16 GB class): UD-Q3_K_XL, 1 x 80k  (81,920),  KV q4_0
+#   big       cards with 23 GB or more (24 GB+):      UD-IQ4_XS,  1 x 192k (196,608), KV q4_0
+# The two files answer under different model names (tier_alias), so a client and the gateway
+# can tell which one answered; both serve the roles "deep" and "agent".
 # When the tier does not fit in the card's free memory, the installer stops with a message; it
 # never picks a smaller context. Per-slot context means one long request cannot starve the
 # others (a single shared pool can: "Context size has been exceeded" on 2026-10-08).
-# Measured with UD-IQ4_XS and llama.cpp v0.5.0 (research notes, tiers, 2026-10-22/23):
-#   standard: RTX 5070 Ti, 15,070 MiB after load and 15,098 at the peak of a 77k prompt; loads
-#     and serves a 78k prompt with 15,090 MiB free, failed at start (CUDA out of memory) with
-#     15,066. RTX 4080 SUPER: llama-server holds 15,110 MiB; served a 78k prompt with 15,162
-#     free (47 left). q8_0 KV does not fit 80k (nor 72k) in 16 GB. Hard needles at 75k: 24/24.
-#   big: RTX 4090, 1 x 192k: llama-server holds 18,060 MiB after load, 18,246 at the peak of
-#     a 190k prompt. 256k on an RTX 3090 fit in 19,202 MiB; hard needles 77/80 at ~195k
-#     (62/80 at ~247k, hence 192k), decode 16.7 tokens/s at 195k.
+# Measured with llama.cpp v0.5.0 and these flags (research notes, tiers, 2026-10-22/23, and
+# 16 GB, 2026-10-31 and 2026-11-09):
+#   standard, UD-Q3_K_XL: RTX 5070 Ti (15,839 MiB visible to CUDA), llama-server's own peak
+#     at a 95% full context is 13,659 MiB at 65,536 and 14,211 at 90,112, so about 14,030 at
+#     81,920. With other programs holding memory on the card, 81,920 needs less than 90,112,
+#     which ran with 1.5 GB held; 81,920 failed at start with 2.0 GB held. Decode 29.6
+#     tokens/s after a 32k prompt. (UD-IQ4_XS at 81,920 peaks at about 15,100 MiB: it left
+#     only about 640 MiB for a desktop.)
+#   big, UD-IQ4_XS: RTX 4090, 1 x 192k: llama-server holds 18,060 MiB after load, 18,246 at
+#     the peak of a 190k prompt. 256k on an RTX 3090 fit in 19,202 MiB; hard needles 77/80 at
+#     ~195k (62/80 at ~247k, hence 192k), decode 16.7 tokens/s at 195k.
 # tier_min_free (MiB): what nvidia-smi must report free on the card before llama-server starts
-# (the peaks above plus a margin; more SMs take a little more memory).
+# (the peaks above plus a margin; more SMs take a little more memory). Standard: 14,300 leaves
+# about 270 MiB at the peak on the RTX 5070 Ti and lets a desktop of about 1.5 GB stay on it.
 # Explicit environment variables (SLOTS, CTX_PER_SLOT, KV_TYPE) override the tier, for
 # testing only; the free-memory check is then skipped.
 # --preset / PRESET: the old single setting (long-context); accepted and ignored.
@@ -86,9 +97,18 @@ case "$preset" in
   ""|long-context|auto) ;;
   *) die "unknown preset '$preset'; presets are gone: the tier follows the card (standard: 80k on 16 GB cards, big: 192k on 24 GB+)" 2 ;;
 esac
+case "$want_tier" in
+  ""|standard|big) ;;
+  *) die "--tier must be standard (16 GB cards) or big (24 GB and more)" 2 ;;
+esac
+[[ -z "$want_tier" || -n "$download_only" ]] ||
+  die "--tier is for --download-only; an install takes the tier from the card" 2
 tier_ctx() { case "$1" in standard) echo 81920 ;; big) echo 196608 ;; esac; }
 tier_kv() { echo q4_0; }
-tier_min_free() { case "$1" in standard) echo 15200 ;; big) echo 18500 ;; esac; }
+tier_min_free() { case "$1" in standard) echo 14300 ;; big) echo 18500 ;; esac; }
+# tier_alias: the model name the tier's nodes answer under (llama-server's --alias and the
+# node's "models" entry). MODEL_ALIAS replaces it (testing).
+tier_alias() { case "$1" in standard) echo qwen3.8-27b-q3 ;; big) echo qwen3.8-27b ;; esac; }
 # tier_for_total <MiB>: the tier for a card with this much memory, or "" (too small).
 tier_for_total() {
   if (( $1 >= 23000 )); then echo big; elif (( $1 >= 15500 )); then echo standard; fi
@@ -119,29 +139,42 @@ case "$kv_type" in ""|q8_0|q4_0|f16) ;; *) die "KV_TYPE must be q8_0, q4_0 or f1
 # Releases come from GitHub; AISATHOME_RELEASE_URL points elsewhere (a mirror, or file:// in tests).
 release_base="${AISATHOME_RELEASE_URL:-https://github.com/aisathome/aisathome/releases}"
 [[ "$release_base" =~ ^(https|file):// ]] || die "AISATHOME_RELEASE_URL must start with https:// or file://" 2
-[[ "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
+[[ -z "$alias" || "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
 
-# The network's one model (owner, 2026-10-22): Qwen3.8 27B UD-IQ4_XS from unsloth, pinned to a
-# commit of the Hugging Face repository and checked by SHA-256. Sha256 and size are the file's
-# LFS pointer at that commit (Checked 2026-10-23: the Hub API's paths-info and the resolve
-# URL's x-linked-etag / x-linked-size headers), the same file the tiers were measured with.
-# It replaced UD-Q4_K_M (16.5 GB, sha256 322e194f...) in v0.3.0. The model check cannot tell
-# the two apart reliably (IQ4_XS against the Q4_K_M reference was caught on 71-84% of checks),
-# so the network never mixes them: one file, one reference (recorded 2026-10-23 for this file).
-# MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace it, all three together (testing).
-pin_url=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/Qwen3.8-27B-UD-IQ4_XS.gguf
-pin_sha=40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199
-pin_size=14252845984
+# The network's models, one per tier (owner, 2026-10-22 and 2026-11-09): Qwen3.8 27B from
+# unsloth, pinned to a commit of the Hugging Face repository and checked by SHA-256. Sha256 and
+# size are each file's LFS pointer at that commit (Checked 2026-10-23 for UD-IQ4_XS: the Hub
+# API's paths-info and the resolve URL's x-linked-etag / x-linked-size headers; UD-Q3_K_XL:
+# the Hub's file tree, 2026-10-18), the same files the tiers were measured with. UD-IQ4_XS
+# replaced UD-Q4_K_M (16.5 GB, sha256 322e194f...) in v0.3.0. The model check cannot tell
+# close quants apart reliably (IQ4_XS against the Q4_K_M reference was caught on 71-84% of
+# checks), so a tier never mixes files: one file, one model name, one reference.
+# tier_model <tier>: "<url> <sha256> <bytes>" of the tier's file.
+tier_model() {
+  local base=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502
+  case "$1" in
+    standard) echo "$base/Qwen3.8-27B-UD-Q3_K_XL.gguf 8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e 13146393504" ;;
+    big) echo "$base/Qwen3.8-27B-UD-IQ4_XS.gguf 40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199 14252845984" ;;
+  esac
+}
+# MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace the tier's file, all three together
+# (testing).
 if [[ -n "${MODEL_URL:-}${MODEL_SHA256:-}${MODEL_SIZE:-}" ]] &&
    [[ -z "${MODEL_URL:-}" || -z "${MODEL_SHA256:-}" || -z "${MODEL_SIZE:-}" ]]; then
   die "set MODEL_URL, MODEL_SHA256 and MODEL_SIZE together" 2
 fi
-model_url="${MODEL_URL:-$pin_url}" model_sha="${MODEL_SHA256:-$pin_sha}" model_size="${MODEL_SIZE:-$pin_size}"
-[[ "$model_url" =~ ^(https|file)://[^[:space:]]+$ ]] || die "MODEL_URL must start with https:// or file://" 2
-[[ "$model_sha" =~ ^[0-9a-f]{64}$ ]] || die "MODEL_SHA256 must be 64 lowercase hex digits" 2
-[[ "$model_size" =~ ^[1-9][0-9]{0,14}$ ]] || die "MODEL_SIZE must be a positive number of bytes" 2
-model_name="${model_url##*/}"; model_name="${model_name%%\?*}"
-[[ "$model_name" =~ ^[A-Za-z0-9._-]+\.gguf$ ]] || model_name=model.gguf
+[[ -z "${MODEL_URL:-}" || "$MODEL_URL" =~ ^(https|file)://[^[:space:]]+$ ]] || die "MODEL_URL must start with https:// or file://" 2
+[[ -z "${MODEL_SHA256:-}" || "$MODEL_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "MODEL_SHA256 must be 64 lowercase hex digits" 2
+[[ -z "${MODEL_SIZE:-}" || "$MODEL_SIZE" =~ ^[1-9][0-9]{0,14}$ ]] || die "MODEL_SIZE must be a positive number of bytes" 2
+model_url="" model_sha="" model_size=0 model_name=""
+# set_model <tier>: the model file and model name for the tier (after the tier is known).
+set_model() {
+  read -r model_url model_sha model_size <<<"$(tier_model "$1")"
+  [[ -z "${MODEL_URL:-}" ]] || model_url="$MODEL_URL" model_sha="$MODEL_SHA256" model_size="$MODEL_SIZE"
+  model_name="${model_url##*/}"; model_name="${model_name%%\?*}"
+  [[ "$model_name" =~ ^[A-Za-z0-9._-]+\.gguf$ ]] || model_name=model.gguf
+  alias="${alias:-$(tier_alias "$1")}"
+}
 # Disk space kept free beyond the model: the binaries (about 1.5 GB) and some slack.
 reserve=$((2 * 1024 * 1024 * 1024))
 
@@ -326,13 +359,16 @@ pick_tier() {
   [[ -n "$tier" ]] ||
     die "GPU $gpu_idx ($gpu_name) has $gpu_total MiB of memory; the network needs a card with 16 GB or more (standard tier: 80k context on 16 GB cards; big tier: 192k on 24 GB and more)."
   [[ $gpu_count -eq 1 ]] || gpu_pin="Environment=CUDA_VISIBLE_DEVICES=$gpu_uuid"
-  echo "GPU $gpu_idx: $gpu_name, $gpu_total MiB: the $tier tier ($(( $(tier_ctx "$tier") / 1024 ))k context)${gpu_pin:+; llama-server uses only this GPU}" >&2
+  echo "GPU $gpu_idx: $gpu_name, $gpu_total MiB: the $tier tier ($(tier_text "$tier"))${gpu_pin:+; llama-server uses only this GPU}" >&2
 }
+
+# tier_text <tier>: the tier's model file and context, for messages.
+tier_text() { local f; f="$(tier_model "$1")"; f="${f%% *}"; f="${f##*/Qwen3.8-27B-}"; echo "${f%.gguf}, $(( $(tier_ctx "$1") / 1024 ))k context"; }
 
 # fit_advice: what to do when the tier does not fit in the card's free memory.
 fit_advice() {
   if [[ "$tier" = standard ]]; then
-    echo "On a 16 GB card the standard tier needs the card almost to itself: no screen on it, or a very light desktop (under about 650 MB). Connect the monitor to the motherboard's graphics (integrated GPU), or run this computer without a desktop, close other programs that use the GPU (nvidia-smi lists them), and run the installer again."
+    echo "On a 16 GB card the standard tier leaves room for a light desktop only (about 1.5 GB in all for the screen and other programs). Close programs that use the GPU (nvidia-smi lists them; a browser can take several hundred MB), or connect the monitor to the motherboard's graphics (integrated GPU), and run the installer again."
   else
     echo "Close programs that use the GPU (nvidia-smi lists them; a desktop with a browser can take 2 GB) or connect the monitor to the motherboard's graphics, and run the installer again."
   fi
@@ -346,7 +382,7 @@ check_fit() {
     return 0
   fi
   (( gpu_free >= need )) ||
-    die "GPU $gpu_idx ($gpu_name) has $gpu_free MiB free; the $tier tier ($(( $(tier_ctx "$tier") / 1024 ))k context) needs $need MiB free. $(fit_advice)"
+    die "GPU $gpu_idx ($gpu_name) has $gpu_free MiB free; the $tier tier ($(tier_text "$tier")) needs $need MiB free. $(fit_advice)"
   echo "memory: $gpu_free MiB free${gpu_own:+$( (( gpu_own > 0 )) && echo " (incl. $gpu_own MiB of this node's running llama-server)")}, the $tier tier needs $need: fits" >&2
 }
 
@@ -393,13 +429,20 @@ speed_check() {
   fi
 }
 
-# check_model_file <file> <hash 0|1>: a --model file must be the pinned model (size, and with 1
-# the SHA-256 too): the network never mixes quants.
+# check_model_file <file> <hash 0|1>: a --model file must be the tier's pinned model (size, and
+# with 1 the SHA-256 too): a tier never mixes quants. The other tier's file gets its own message.
 check_model_file() {
-  local size got
+  local size got other t
   size="$(stat -c %s "$1")"
-  [[ "$size" = "$model_size" ]] ||
+  if [[ "$size" != "$model_size" ]]; then
+    for t in standard big; do
+      [[ "$t" != "${tier:-}" ]] || continue
+      read -r _ _ other <<<"$(tier_model "$t")"
+      [[ "$size" = "$other" ]] &&
+        die "$1 is the $t tier's model ($(tier_text "$t")); this card is in the ${tier:-other} tier, which runs ${model_name}. Leave out --model and the installer downloads it, or download it with --download-only <dir> --tier ${tier:-<tier>}."
+    done
     die "$1 is not the network's model: $size bytes, the pinned ${model_name} has $model_size. Leave out --model and the installer downloads it."
+  fi
   [[ "$2" = 1 ]] || return 0
   echo "model: checking $1 (about a minute)" >&2
   got="$(sha256sum "$1" | cut -d' ' -f1)"
@@ -702,6 +745,16 @@ gen_node_config() {
 if [[ -n "$download_only" ]]; then
   [[ -d "$download_only" ]] || die "--download-only: no directory $download_only" 2
   [[ -z "$model" ]] || die "use --download-only or --model, not both" 2
+  # The tier's file: --tier, else the tier of this machine's card.
+  if [[ -n "$want_tier" ]]; then
+    tier="$want_tier"
+  else
+    command -v nvidia-smi >/dev/null ||
+      die "--download-only: no NVIDIA card here to choose the model by; add --tier standard (16 GB cards) or --tier big (24 GB and more)" 2
+    pick_tier
+  fi
+  set_model "$tier"
+  echo "model: the $tier tier's $model_name" >&2
   fetch_model "$download_only/$model_name"
   echo "Downloaded. Install with --model $download_only/$model_name (the file is moved)." >&2
   exit 0
@@ -713,6 +766,7 @@ fi
 [[ $bundle = 0 ]] || check_bundle
 pick_tier
 check_fit
+set_model "$tier"
 set_engine
 if [[ -n "$model" ]]; then
   [[ -f "$model" ]] || die "no model file: $model"

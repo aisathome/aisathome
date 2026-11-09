@@ -50,6 +50,7 @@ func (g *Gateway) signal() {
 // is a new connection and may be tried.
 type route struct {
 	want        string
+	model       string // only nodes serving this model name: the session's (session.go); "" = any serving want
 	trusted     bool   // only trusted nodes, or the requester's own
 	why         string // why trusted is set, for the error message ("" = the key's min_trust)
 	pii         string // the kind of personal data that set trusted (piiKind), "" = none
@@ -89,7 +90,7 @@ func (rt *route) usable(n *nodeConn, now time.Time, threshold int) bool {
 		return false
 	}
 	for _, m := range n.models {
-		if serves(m, rt.want) && fits(m, threshold) {
+		if rt.offers(m) && fits(m, threshold) {
 			return true
 		}
 	}
@@ -231,6 +232,12 @@ func fits(m protocol.ModelInfo, threshold int) bool {
 // serves reports whether m offers the model or role want.
 func serves(m protocol.ModelInfo, want string) bool { return m.Name == want || contains(m.Roles, want) }
 
+// offers reports whether m may serve rt: it offers the model or role asked for, and it is the
+// session's model if the request continues a session.
+func (rt *route) offers(m protocol.ModelInfo) bool {
+	return serves(m, rt.want) && (rt.model == "" || m.Name == rt.model)
+}
+
 // thresholdLocked is the context the request needs on this network now: need if any allowed
 // node that is not paused fits it, otherwise needMin. A paused node (held ones are not
 // allowed) may stay paused for hours: waiting for its larger context would time out while a
@@ -247,7 +254,7 @@ func (g *Gateway) thresholdLocked(rt *route, now time.Time) int {
 			continue
 		}
 		for _, m := range n.models {
-			if serves(m, rt.want) && fits(m, rt.need) {
+			if rt.offers(m) && fits(m, rt.need) {
 				return rt.need
 			}
 		}
@@ -279,7 +286,7 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 	threshold := g.thresholdLocked(rt, now)
 	take := func(n *nodeConn) (string, bool) {
 		for _, m := range n.models {
-			if !serves(m, rt.want) || !fits(m, threshold) {
+			if !rt.offers(m) || !fits(m, threshold) {
 				continue
 			}
 			// Reserve the slot here, under the lock: checking now and registering the
@@ -529,7 +536,7 @@ func (g *Gateway) servesFor(rt *route) int {
 			continue
 		}
 		for _, m := range n.models {
-			if serves(m, rt.want) && fits(m, threshold) {
+			if rt.offers(m) && fits(m, threshold) {
 				c++
 				break
 			}
@@ -546,7 +553,7 @@ func (g *Gateway) largestCtx(rt *route) int {
 	for _, n := range g.node {
 		if rt.allows(n, now) {
 			for _, m := range n.models {
-				if serves(m, rt.want) {
+				if rt.offers(m) {
 					best = max(best, m.Ctx)
 				}
 			}
@@ -564,7 +571,7 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 	defer func() {
 		if reason != "" && g.log != nil {
 			g.log.Info("request refused", "reason", reason, "model", want, "personal_data", rt.pii,
-				"class", rt.class, "project", rt.project)
+				"class", rt.class, "project", rt.project, "session_model", rt.model)
 		}
 	}()
 	switch why {
@@ -586,6 +593,19 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 		w.Header().Set("Retry-After", "10")
 		apiError(w, http.StatusServiceUnavailable, "too many requests are waiting; try again shortly")
 	default:
+		if rt.model != "" {
+			// The request continues a session: no other model may answer it (session.go), and the
+			// answers below name the model it is held to.
+			want = rt.model
+			if g.servesNow(want) == 0 {
+				reason = "session_model_offline"
+				w.Header().Set("Retry-After", "60")
+				apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("this conversation started on %q, and no node serving "+
+					"that model is online right now. A conversation stays on the model it started on, so that its answers "+
+					"do not change model midway; try again later, or start a new conversation", want))
+				return
+			}
+		}
 		if g.servesNow(want) == 0 {
 			reason = "no_node"
 			w.Header().Set("Retry-After", "60")

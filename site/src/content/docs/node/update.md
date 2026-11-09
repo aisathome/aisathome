@@ -28,8 +28,9 @@ The installer keeps:
 - the token, the node id and the gateway (from `/etc/aisathome-node/node.json`); pass
   `--node-id` or `--gateway-url` to change them;
 - the model, which it checks again (about a minute); a release that pins another model
-  downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; the old file is replaced
-  once the new one is verified, so you need about 16 GB free in `/var/lib` for the update);
+  downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; after v0.3.0, a 16 GB
+  card's tier runs `UD-Q3_K_XL`, 13.1 GB, in its place; the old file is replaced once the new
+  one is verified, so you need about 16 GB free in `/var/lib` for the update);
 - the local UI's password, the counters and whether the node starts at boot.
 
 It checks the card for its [tier](/node/presets/) again (the memory your running node

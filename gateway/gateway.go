@@ -62,6 +62,7 @@ type Gateway struct {
 	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
 	counting chan struct{}   // prompts being counted before routing (countPrompt)
 	pcache   *prefixCache    // what each node served whom lately, for cached prompt tokens
+	binds    *sessionBinds   // which model answered each conversation: a session stays on it (session.go)
 	credit   *creditLedger
 	statsOut statsCache    // the leaderboard and the BOINC-format exports
 	stop     chan struct{} // closed by Close: ends background work
@@ -117,7 +118,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), use: uw, lim: newLimiter(), start: time.Now(),
-		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), credit: newCreditLedger(),
+		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(),
 		pstatus: newProjectStatuses(cfg.StateDir, log), psci: newProjectScience(cfg.StateDir),
 		tasks: newTaskStore(cfg.StateDir, log)}
 	if cfg.TasksNow != nil {

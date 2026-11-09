@@ -14,16 +14,18 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
 
 - An NVIDIA GPU with **16 GB or more**. The context depends on the card
   ([model settings](/node/presets/)):
-  - **16 GB** (RTX 4080, 5070 Ti, 5080 class): 80k context, and only **headless**: the screen
-    must not run on that card (connect it to the motherboard's graphics), or only a very
-    light desktop (under about 650 MB of GPU memory);
-  - **24 GB and more** (RTX 3090, 4090, 5090 class): 192k context.
+  - **16 GB** (RTX 4080, 5070 Ti, 5080 class): 80k context with the 3-bit model file
+    (`UD-Q3_K_XL`), and at most a **light desktop** on that card: about 1.5 GB of GPU memory
+    for the screen and other programs. A heavier desktop needs the screen on the
+    motherboard's graphics;
+  - **24 GB and more** (RTX 3090, 4090, 5090 class): 192k context with the 4-bit file
+    (`UD-IQ4_XS`).
 - A card fast enough on long prompts: the installer measures it and needs at least
   20 tokens/s after a 32,000-token prompt (slower 16 GB cards such as the RTX 4060 Ti and
   5060 Ti do not pass).
 - Linux with systemd and the NVIDIA driver (`nvidia-smi` works).
 - About 17 GB of disk for the model. With the prebuilt bundle, the install is mostly the
-  14 GB download; building llama.cpp yourself takes about an hour.
+  13-14 GB download; building llama.cpp yourself takes about an hour.
 - A **node token**: sign in on [your account page](/account) and choose **Add a node**
   (up to 10 per account; at most 10 of them connected from one internet address). The network
   takes 25 nodes for now; when it is full, the page says so.
