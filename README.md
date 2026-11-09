@@ -1,14 +1,28 @@
 # AIs@home
 
-**Experimental.** Open-weight AI models served by volunteers' GPUs instead of a big
+**Experimental, in pilot.** Open-weight AI models served by volunteers' GPUs instead of a big
 company's data centre. Volunteers run a node on their own GPU; a gateway (the project
 server) takes requests from the chat and the OpenAI-compatible API and routes them to
 nodes. Anyone can run a gateway. Site and docs: <https://aisathome.org>.
 
 **Hardened, not confidential.** Whoever runs a node can read the prompts it serves. The
-gateway strips identities, hides well-known secret formats, keeps requests that look like
-personal data on the operator's own nodes, and stores no prompts or answers. Not
+gateway strips identities, hides well-known secret formats, sends requests that look like
+personal data only to trusted nodes, and stores no prompts or answers. Not
 production-ready.
+
+## Use it
+
+- **Chat:** [chat.aisathome.org](https://chat.aisathome.org). Accounts are limited during the
+  pilot; new ones get in as room appears.
+- **API:** OpenAI-compatible at `https://api.aisathome.org/v1`, with a key from your
+  [account page](https://aisathome.org/account). Models: `deep` (Qwen3.8 27B, general chat) and
+  `agent` (the same model, for coding agents and tool calls). Each account has a daily limit.
+  Guide: [aisathome.org/use/api](https://aisathome.org/use/api/).
+
+## Science
+
+The network can also run an open model as an agent on outside projects whose results a machine
+can check, such as Lean proofs. The agent harness is in [`harness/`](harness/README.md).
 
 ## Repository
 
@@ -44,7 +58,8 @@ curl -H "Authorization: Bearer dev-user-key-change-me" http://localhost:8080/v1/
   -d '{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Tests: `go vet ./... && go test -race ./...`; the installer has `node/packaging/linux/install_test.sh`.
+Tests: `go vet ./... && go test -race ./...`; the installer has `node/packaging/linux/install_test.sh`;
+the harness: `cd harness && python3 -m unittest discover -s tests` (Python 3.12, standard library).
 
 ## Run a gateway
 
@@ -56,7 +71,8 @@ sign-in: [docs/gateway.md](docs/gateway.md). Credit and the BOINC-format statist
 
 A `v*` tag builds the node and gateway binaries, `llama-server` with CUDA, the node bundle
 and `SHA256SUMS` into a draft GitHub release; a manual run of the release workflow builds
-without publishing. What a release contains and how it is built:
+without publishing. The harness is versioned apart, with `harness-v*` tags that build nothing.
+What a release contains and how it is built:
 [aisathome.org/node/binaries](https://aisathome.org/node/binaries/); how to make one:
 [docs/RELEASING.md](docs/RELEASING.md).
 
