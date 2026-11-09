@@ -7,7 +7,9 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -115,37 +117,212 @@ class Evidence(unittest.TestCase):
             self.assertTrue((dest / "events.jsonl").exists())
 
 
-class Forwarder(unittest.TestCase):
-    def test_it_forwards_to_its_one_target(self):
-        """An echo server as the target, the forwarder in a thread, a client through it."""
-        echo = socket.socket()
-        echo.bind(("127.0.0.1", 0))
-        echo.listen()
-        tport = echo.getsockname()[1]
+def free_port() -> int:
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
 
-        def serve():
-            c, _ = echo.accept()
-            c.sendall(c.recv(100).upper())
-            c.close()
-        threading.Thread(target=serve, daemon=True).start()
-        probe = socket.socket()
-        probe.bind(("127.0.0.1", 0))
-        lport = probe.getsockname()[1]
-        probe.close()
+
+class Upstream:
+    """A one-endpoint HTTP server (TLS with `cert`): records each request head and body, answers `ok`."""
+
+    def __init__(self, cert: tuple[str, str] | None = None, gate: threading.Event | None = None):
+        self.seen: list[bytes] = []
+        self.gate = gate             # a stream: the first event, then the rest once the gate opens
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen()
+        self.port = self.sock.getsockname()[1]
+        self.ctx = None
+        if cert:
+            self.ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            self.ctx.load_cert_chain(*cert)
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                return
+            try:
+                if self.ctx:
+                    c = self.ctx.wrap_socket(c, server_side=True)
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    data += c.recv(65536)
+                head, body = data.split(b"\r\n\r\n", 1)
+                n = next((int(l.split(b":")[1]) for l in head.split(b"\r\n") if l.lower().startswith(b"content-length:")), 0)
+                while len(body) < n:
+                    body += c.recv(65536)
+                self.seen.append(head + b"\r\n\r\n" + body)
+                if self.gate:
+                    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: 1\n\n")
+                    self.gate.wait(5)
+                    c.sendall(b"data: 2\n\n")
+                    c.close()
+                    continue
+                c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok")
+                c.close()
+            except (OSError, ssl.SSLError):
+                pass
+
+    def close(self):
+        self.sock.close()
+
+
+class Forwarder(unittest.TestCase):
+    """The forwarder on localhost between a client (the model's side) and a recording endpoint."""
+
+    log: list = []
+
+    @classmethod
+    def setUpClass(cls):
+        # the forwarders' threads outlive each test: their log goes to a list for the whole class
+        cls.quiet = mock.patch.object(egress_forward, "print", create=True,
+                                      new=lambda *a, **k: Forwarder.log.append(" ".join(map(str, a))))
+        cls.quiet.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.quiet.stop()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.key = Path(self.tmp.name) / "key"
+        self.key.write_text("sk-secret-key-0123456789\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def start(self, up: Upstream, scheme: str = "http", prefix: str = "/v1", key: bool = True,
+              cafile: str | None = None, host: str = "127.0.0.1") -> int:
+        lport = free_port()
         loop_ = asyncio.new_event_loop()
-        threading.Thread(target=lambda: loop_.run_until_complete(
-            egress_forward.main_async(f"127.0.0.1:{lport}", f"127.0.0.1:{tport}")), daemon=True).start()
-        with mock.patch("sys.stdout", io.StringIO()):
-            for _ in range(100):
-                try:
-                    c = socket.create_connection(("127.0.0.1", lport), timeout=2)
-                    break
-                except OSError:
-                    threading.Event().wait(0.05)
-            c.sendall(b"hello")
-            self.assertEqual(c.recv(100), b"HELLO")
-            c.close()
-        echo.close()
+        threading.Thread(target=lambda: loop_.run_until_complete(egress_forward.main_async(
+            f"127.0.0.1:{lport}", f"{host}:{up.port}", scheme, prefix, str(self.key) if key else None, cafile)),
+            daemon=True).start()
+        for _ in range(100):
+            try:
+                socket.create_connection(("127.0.0.1", lport), timeout=2).close()
+                return lport
+            except OSError:
+                threading.Event().wait(0.05)
+        self.fail("forwarder did not start")
+
+    def ask(self, lport: int, request: bytes) -> bytes:
+        c = socket.create_connection(("127.0.0.1", lport), timeout=5)
+        c.sendall(request)
+        out = b""
+        while True:
+            d = c.recv(65536)
+            if not d:
+                break
+            out += d
+        c.close()
+        return out
+
+    REQ = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: api.example.org\r\nAuthorization: Bearer dummy\r\n"
+           b"Proxy-Authorization: x\r\nConnection: keep-alive, X-Drop\r\nX-Drop: 1\r\nExpect: 100-continue\r\n"
+           b"Content-Type: application/json\r\n"
+           b"Content-Length: 11\r\n\r\n{\"a\": \"b\"}\n")
+
+    def test_it_adds_the_key_and_pins_the_target(self):
+        up = Upstream()
+        lport = self.start(up)
+        answer = self.ask(lport, self.REQ)
+        self.assertTrue(answer.endswith(b"\r\n\r\nok"))
+        self.assertEqual(answer.split(b"\r\n\r\n")[0].split(b"\r\n"),         # the client never reuses the connection
+                         [b"HTTP/1.1 200 OK", b"Content-Length: 2", b"Connection: close"])
+        head, body = up.seen[0].split(b"\r\n\r\n", 1)
+        lines = head.split(b"\r\n")
+        self.assertEqual(lines[0], b"POST /v1/chat/completions HTTP/1.1")
+        self.assertIn(f"Host: 127.0.0.1:{up.port}".encode(), lines)
+        self.assertIn(b"Authorization: Bearer sk-secret-key-0123456789", lines)
+        self.assertEqual([l for l in lines if l.lower().startswith(b"authorization")], [b"Authorization: Bearer sk-secret-key-0123456789"])
+        self.assertIn(b"Connection: close", lines)
+        for gone in (b"proxy-authorization", b"x-drop", b"connection: keep-alive", b"host: api.example.org", b"expect"):
+            self.assertNotIn(gone, head.lower())
+        self.assertEqual(body, b'{"a": "b"}\n')
+        threading.Event().wait(0.2)
+        self.assertTrue(any("adds the key" in x for x in self.log))
+        self.assertFalse([x for x in self.log if "sk-secret" in x])     # never in the forwarder's log
+        up.close()
+
+    def test_a_stream_is_passed_on_as_it_comes(self):
+        """Server-sent events reach the client one by one (the model's time counts from the first chunk)."""
+        gate = threading.Event()
+        up = Upstream(gate=gate)
+        lport = self.start(up)
+        c = socket.create_connection(("127.0.0.1", lport), timeout=5)
+        c.sendall(self.REQ)
+        got = b""
+        while b"data: 1" not in got:
+            got += c.recv(65536)
+        self.assertNotIn(b"data: 2", got)
+        gate.set()
+        while b"data: 2" not in got:
+            got += c.recv(65536)
+        c.close()
+        up.close()
+
+    def test_without_a_key_the_client_s_authorization_is_still_dropped(self):
+        up = Upstream()
+        lport = self.start(up, key=False)
+        self.ask(lport, self.REQ)
+        self.assertNotIn(b"authorization", up.seen[0].lower())
+        up.close()
+
+    def test_requests_off_the_endpoint_s_api_are_refused(self):
+        """Absolute-form (another host), CONNECT, paths outside the base path or with dot segments: refused
+        before the endpoint is contacted, so the key goes nowhere."""
+        up = Upstream()
+        lport = self.start(up)
+        for line, status in ((b"GET http://evil.example/v1/models HTTP/1.1", b"400"),
+                             (b"CONNECT evil.example:443 HTTP/1.1", b"400"),
+                             (b"GET /admin HTTP/1.1", b"403"), (b"GET /v1/../admin HTTP/1.1", b"403"),
+                             (b"GET /v1/%2e%2e/admin HTTP/1.1", b"403"), (b"GET /v10/models HTTP/1.1", b"403"),
+                             (b"GET /v1/models HTTP/1.1\r\n folded: header", b"400")):
+            out = self.ask(lport, line + b"\r\nHost: x\r\n\r\n")
+            self.assertTrue(out.startswith(b"HTTP/1.1 " + status), (line, out[:40]))
+        self.assertEqual(up.seen, [])
+        self.assertTrue(self.ask(lport, b"GET /v1/models HTTP/1.1\r\nHost: x\r\n\r\n").endswith(b"ok"))
+        self.assertEqual(len(up.seen), 1)
+        up.close()
+
+    def test_a_key_that_could_break_a_header_is_refused(self):
+        for bad in ("", "two words", "line\r\nX-Evil: 1"):
+            self.key.write_text(bad)
+            with self.assertRaises(SystemExit, msg=repr(bad)):
+                egress_forward.read_key(str(self.key))
+
+    def test_an_unreachable_endpoint_is_a_502(self):
+        dead = free_port()
+        up = mock.Mock(port=dead)
+        lport = self.start(up)
+        self.assertTrue(self.ask(lport, self.REQ).startswith(b"HTTP/1.1 502"))
+
+    @unittest.skipUnless(shutil.which("openssl"), "needs openssl to make a test certificate")
+    def test_tls_to_the_endpoint_with_its_certificate_checked(self):
+        """The endpoint speaks TLS with a certificate for `localhost`: the forwarder checks it against the
+        given CA and the name, and the request arrives with the key; with the wrong name it is refused."""
+        d = Path(self.tmp.name)
+        cert, keyf = d / "cert.pem", d / "key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=localhost",
+                        "-addext", "subjectAltName=DNS:localhost", "-keyout", str(keyf), "-out", str(cert)],
+                       check=True, capture_output=True)
+        up = Upstream((str(cert), str(keyf)))
+        lport = self.start(up, scheme="https", cafile=str(cert), host="localhost")
+        self.assertTrue(self.ask(lport, self.REQ).endswith(b"ok"))
+        self.assertIn(b"Authorization: Bearer sk-secret-key-0123456789", up.seen[0])
+        self.assertIn(f"Host: localhost:{up.port}".encode(), up.seen[0])
+        # the same certificate under another name: the TLS check fails, the client gets a 502, no key sent
+        lport2 = self.start(up, scheme="https", cafile=str(cert), host="127.0.0.1")
+        self.assertTrue(self.ask(lport2, self.REQ).startswith(b"HTTP/1.1 502"))
+        self.assertEqual(len(up.seen), 1)
+        up.close()
 
 
 def fake_builder(tmp: Path, log, env=None):

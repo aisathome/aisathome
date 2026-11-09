@@ -191,6 +191,83 @@ class Session(Tmp):
                          "https://api.example.org/v1", None, "m", 10, 5)
         self.assertIn("B.lean", (self.root / "raw" / "model.diff").read_text())
 
+    def test_model_diff_of_a_crlf_file_applies_to_the_base(self):
+        """CRLF line ends survive into model.diff byte for byte, so the patch applies to the base."""
+        tree = self.root / "tree"
+        tree.mkdir()
+        (tree / "W.lean").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+        script = (f'import pathlib; pathlib.Path({str(tree / "W.lean")!r}).write_bytes(b"one\\r\\nTWO\\r\\nthree\\r\\n"); '
+                  + self.EV.replace("import sys, time; ", "import sys, time\n"))
+        s = self.make(script)
+        loop.snapshot_base(s.tree, s.state)
+        loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 5)
+        patch = (self.root / "raw" / "model.diff").read_bytes()
+        self.assertIn(b"+TWO\r\n", patch)
+        base = self.root / "base"
+        base.mkdir()
+        (base / "W.lean").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+        p = subprocess.run(["git", "apply", "-"], cwd=base, input=patch, capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((base / "W.lean").read_bytes(), b"one\r\nTWO\r\nthree\r\n")
+
+    def test_with_a_sandbox_that_adds_the_key_the_config_holds_no_key_path(self):
+        """The bundled sandbox's forwarder adds the key: opencode's config gets the forwarder's plain-HTTP
+        URL and a placeholder key, never the key file's path (nor the key)."""
+        key = self.root / "endpoint.key"
+        key.write_text("sk-endpoint-secret-42\n")
+        seen = []
+
+        class Sb:
+            def model_url(self, base_url):
+                return "http://api.example.org/v1"
+
+            def command(self_, m, sid):
+                seen.append((self.home / loop.CONFIG).read_text())
+                return [sys.executable, "-c", self.EV]
+            before = stop = close = lambda self_: None
+            export = lambda self_, sid: None
+        s = self.make(self.EV, sandbox=Sb())
+        s.command = None
+        s.__post_init__()
+        loop.run_session(s, "https://api.example.org/v1", str(key), "m", 10, 5)
+        cfg = json.loads(seen[0])["provider"]["endpoint"]["options"]
+        self.assertEqual(cfg, {"baseURL": "http://api.example.org/v1", "apiKey": "dummy"})
+        self.assertNotIn("sk-endpoint-secret", seen[0])
+
+    def test_the_key_is_masked_in_every_evidence_file(self):
+        """Should the key reach the model's output anyway (an endpoint that echoes it, a model that finds
+        it), no evidence file keeps it: masked at the same length, so event offsets stay valid."""
+        key = self.root / "endpoint.key"
+        key.write_text("sk-endpoint-secret-42\n")
+        leak = self.EV.replace("\\n\' % (", '\\n{\\"type\\":\\"text\\",\\"text\\":\\"sk-endpoint-secret-42\\"}\\n\' % (')
+        s = self.make(leak)
+        said = []
+        s.log = said.append
+        loop.run_session(s, "https://api.example.org/v1", str(key), "m", 10, 5)
+        ev = (s.raw / "events.jsonl").read_bytes()
+        self.assertIn(b"[REDACTED]", ev)
+        for f in s.raw.rglob("*"):
+            if f.is_file():
+                self.assertNotIn(b"sk-endpoint-secret-42", f.read_bytes(), f.name)
+        self.assertTrue(any("SECURITY" in m for m in said))
+        self.assertEqual(ev.count(b"\n"), 3)
+
+    def test_redact_reaches_nested_and_gzipped_files_and_keeps_sizes(self):
+        import gzip
+        from aisathome_harness import evidence
+        raw = self.root / "raw2"
+        (raw / "infra-try1").mkdir(parents=True)
+        (raw / "events.jsonl").write_bytes(b'{"x":"sk-abcdefgh-123"}\n')
+        (raw / "infra-try1" / "events.jsonl.gz").write_bytes(gzip.compress(b"key sk-abcdefgh-123 here"))
+        (raw / "clean.txt").write_text("nothing")
+        os.symlink(self.host_file, raw / "link")
+        self.host_file.write_text("sk-abcdefgh-123")          # outside: a symlink is not followed
+        self.assertEqual(evidence.redact(raw, "sk-abcdefgh-123"), 2)
+        self.assertEqual((raw / "events.jsonl").read_bytes(), b'{"x":"[REDACTED]*****"}\n')
+        self.assertEqual(gzip.decompress((raw / "infra-try1" / "events.jsonl.gz").read_bytes()), b"key [REDACTED]***** here")
+        self.assertEqual(self.host_file.read_text(), "sk-abcdefgh-123")
+        self.assertEqual(evidence.redact(raw, "short"), 0)       # placeholders are left alone
+
     def test_a_dirty_tree_is_not_started(self):
         s = self.make(self.EV)
         loop.snapshot_base(s.tree, s.state)
@@ -371,6 +448,27 @@ class Session(Tmp):
         self.assertEqual(len(calls), 1)
         self.assertEqual(m["retry_from"]["segment"], 1)
         self.assertEqual(m["steps"], 2)
+
+    def test_a_retried_followup_is_scored_on_its_own_attempt(self):
+        """A follow-up round consumed by endpoint errors after 3 steps, and its retry the same: the retry
+        counts its own 3 steps (not 6), so it is infrastructure again, not the model's."""
+        from aisathome_harness import rounds
+        s = self.make(self.EV, timing=loop.Timing(poll_s=0.05, max_resumes=0, gateway_backoff_s=0))
+        loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 20)
+        err = ('{"type":"error","timestamp":1,"sessionID":"ses_x","error":{"type":"provider.internal",'
+               '"message":"no node serving m","status":503}}')
+        three = ('import sys, time\nt = int(time.time()*1000)\n'
+                 'sys.stdout.write(\'{"type":"step_start","timestamp":%d,"sessionID":"ses_x"}\\n'
+                 '{"type":"step_finish","timestamp":%d,"sessionID":"ses_x","part":{}}\\n\' % (t, t) * 3)\n'
+                 f'sys.stdout.write({err!r} + "\\n")\n')
+        s.command = lambda m, sid: [sys.executable, "-c", three]
+        first = loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 20, followup="fix it")
+        self.assertEqual(first["round_steps"], 3)
+        self.assertEqual(rounds.classify_round(s.raw, first, "no_solution")["unscored"], "infra")
+        again = loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 20, resume=True, retry=True)
+        self.assertEqual((again["round_steps"], again["round_steps_all"]), (3, 6))
+        c = rounds.classify_round(s.raw, again, "no_solution")
+        self.assertEqual((c["unscored"], c["gateway_errors"], c["round_steps"]), ("infra", 1, 3))
 
     def test_run_json_is_written_atomically(self):
         s = self.make(self.EV)

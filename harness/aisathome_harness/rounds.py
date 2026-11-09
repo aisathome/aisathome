@@ -37,12 +37,14 @@ INFRA_MAX_STEPS = 5
 
 
 def round_errors(raw: Path, rm: dict, refusal: str | None = None) -> dict:
-    """The round's error events (from its events_start): {"gateway": n, "refused": n}; `refusal` is a
-    text that marks the endpoint refusing a request by policy (counted apart)."""
+    """The round's error events (from its events_start, or for a retried round from the retry's own start,
+    `retry_from`): {"gateway": n, "refused": n}; `refusal` is a text that marks the endpoint refusing a
+    request by policy (counted apart)."""
     out = {"gateway": 0, "refused": 0}
+    start = (rm.get("retry_from") or {}).get("events_offset", rm.get("events_start")) or 0
     try:
         with open(raw / evidence.EVENTS, "rb") as fh:
-            fh.seek(rm.get("events_start") or 0)
+            fh.seek(start)
             lines = fh.read().decode(errors="replace").splitlines()
     except OSError:
         return out
@@ -66,7 +68,8 @@ def classify_round(raw: Path, rm: dict, outcome: str, refusal: str | None = None
                    proved: str = "proved") -> dict:
     """{"unscored": kind or None, "gateway_errors", "refusals", "round_steps"}. `refused_kind` when the
     endpoint refused by policy; "infra" when endpoint errors consumed the round; None (scored) otherwise.
-    A proved round is always scored."""
+    A proved round is always scored. A retried round is judged on its retry alone (run.json's
+    `round_steps` and the errors from `retry_from`), never on the failed attempt before it."""
     errs = round_errors(raw, rm, refusal)
     steps = rm.get("round_steps", rm.get("steps")) or 0
     kind = None

@@ -65,7 +65,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import loop_guard, safefs, stepmetrics
+from . import evidence, loop_guard, safefs, stepmetrics
 from .hostgit import TreeGit
 
 DEFAULT_CONTEXT = 131072     # opencode's limit.context when the endpoint does not say
@@ -131,7 +131,8 @@ class Prompts:
 @dataclass
 class Provider:
     """How opencode names the endpoint: provider id (also the `-m <id>/<model>` prefix), display name,
-    and where the API key file is mounted in the container."""
+    and where a custom `command` mounts the API key file in its container (`key_path`). The bundled
+    sandbox never puts the key in the model's container: its forwarder adds it (Session.model_url)."""
     id: str = "endpoint"
     name: str = "OpenAI-compatible endpoint"
     key_path: str = "/run/harness/key"
@@ -166,8 +167,9 @@ def opencode_config(base_url: str, key_file: str | None, model: str, steps: int,
                     provider: Provider = DEFAULT_PROVIDER) -> dict:
     """opencode v2 config. `model_options` uses the v1 `options` form that v2 migrates: `reasoningEffort`
     becomes the request's `reasoning_effort`, and every other key (temperature, top_p, top_k, min_p,
-    presence_penalty, ...) is sent verbatim in the request body. Web tools are off; the key is read from
-    the mounted file, never written into the config."""
+    presence_penalty, ...) is sent verbatim in the request body. Web tools are off. With `key_file`, the
+    config names the key's path in the container (`provider.key_path`), never the key; without it (the
+    bundled sandbox, whose forwarder adds the key), a placeholder that the forwarder drops."""
     m: dict = {"name": model, "limit": {"context": context, "output": 32768}}
     if model_options:
         m["options"] = dict(model_options)
@@ -476,9 +478,12 @@ def checkpoint_diff(raw: Path, git: TreeGit) -> int:
     return len(d)
 
 
-def _atomic_write(path: Path, text: str):
+def _atomic_write(path: Path, text: str | bytes):
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text)
+    if isinstance(text, bytes):
+        tmp.write_bytes(text)
+    else:
+        tmp.write_text(text)
     tmp.replace(path)
 
 
@@ -719,6 +724,9 @@ class Session:
     collect: tuple[str, ...] = ()                 # files in `home` copied to `raw` at the end (safefs)
     meta: Callable[[], dict] | None = None        # the project's fields for run.json
     context: Callable[[str, str | None, str], tuple[int, str]] = gateway_context
+    # base URL -> the URL in opencode's config, when something outside the model's container adds the key
+    # (the bundled sandbox's forwarder): then the config holds no key path at all
+    model_url: Callable[[str], str] | None = None
     usage: Callable[[Path], dict] = session_usage
     segment: Callable[..., dict] | None = None    # override run_segment (tests)
     log: Callable[[str], None] | None = None
@@ -731,6 +739,7 @@ class Session:
             self.stop = self.stop or sb.stop
             self.export = self.export or sb.export
             self.close = self.close or sb.close
+            self.model_url = self.model_url or getattr(sb, "model_url", None)
         if self.command is None:
             raise ValueError("Session needs a command or a sandbox")
 
@@ -832,8 +841,13 @@ def run_session(s: Session, base_url: str, key_file: str | None, model: str, wal
         try:
             return _run_session(s, base_url, key_file, model, wall_min, steps, resume, followup, retry)
         finally:
-            if s.close:
-                s.close()
+            try:
+                if s.close:
+                    s.close()
+            finally:
+                n = evidence.redact_key(s.raw, key_file)
+                if n:
+                    s.say(f"SECURITY: the endpoint's key was in {n} evidence file(s); masked")
 
 
 def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume, followup, retry=False) -> dict:
@@ -958,8 +972,9 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         if left_steps <= 0:                  # the step cap is spent: no further step, whatever the stops
             break
         ctx, ctx_src = s.context(base_url, key_file, model)
+        inner_url, inner_key = (s.model_url(base_url), None) if s.model_url else (base_url, key_file)
         safefs.write_text(home, CONFIG, json.dumps(
-            opencode_config(base_url, key_file, model, left_steps, s.model_options, ctx, s.provider), indent=1))
+            opencode_config(inner_url, inner_key, model, left_steps, s.model_options, ctx, s.provider), indent=1))
         active_used = sum(s_.get("active_s", 0) for s_ in segments[budget["segment"] if budget else 0:])
         model_left = wall_min * 60 - model_time_s(events, budget["events_offset"] if budget else ev_start)
         left = T.awake_ceiling * wall_min * 60 - active_used
@@ -1076,7 +1091,11 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
     if fu_round:
         run_meta["followup_round"] = fu_round
         run_meta["base_steps"] = base_steps
-        run_meta["round_steps"] = run_meta["steps"] - base_steps
+        # a retried round is scored on its own attempt: the failed attempt's steps are not the retry's
+        # (`round_steps_all` keeps the whole round's)
+        run_meta["round_steps"] = run_meta["steps"] - (budget["steps"] if budget else base_steps)
+        if budget:
+            run_meta["round_steps_all"] = run_meta["steps"] - base_steps
         run_meta["round_tools"] = round_tools
         run_meta["round_tool_calls"] = run_meta["tool_calls"] - round_tools
         run_meta["followup_no_tool_calls"] = run_meta["round_tool_calls"] == 0

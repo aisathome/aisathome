@@ -50,6 +50,8 @@ class FakeDocker:
             return ok()
         if a[:2] == ["network", "rm"]:
             self.nets.pop(a[2], None)
+            for c in self.containers.values():
+                c["networks"].pop(a[2], None)
             return ok()
         if a[0] == "inspect":
             c = self.containers.get(a[-1])
@@ -60,6 +62,9 @@ class FakeDocker:
         if a[0] == "rm":
             self.containers.pop(a[-1], None)
             return ok()
+        if a[0] == "ps":
+            want = a[a.index("--filter") + 1].split("=", 1)[1]
+            return ok("\n".join(n for n, c in self.containers.items() if want in c["labels"]))
         if a[0] == "run":
             name = a[a.index("--name") + 1]
             labels = dict(x.split("=", 1) for x in (a[i + 1] for i, v in enumerate(a) if v == "--label"))
@@ -89,6 +94,11 @@ class Endpoints(unittest.TestCase):
 
     def test_one_forwarder_per_host_and_port(self):
         self.assertNotEqual(sandbox.forwarder_name("gw.example", 443), sandbox.forwarder_name("gw.example", 8443))
+
+    def test_long_host_names_with_one_prefix_do_not_share_a_forwarder(self):
+        common = "inference-gateway-of-a-rather-long-organisation-name"       # longer than any slug cut
+        a, b = f"{common}.one.example", f"{common}.two.example"
+        self.assertNotEqual(sandbox.forwarder_name(a, 443), sandbox.forwarder_name(b, 443))
 
 
 class Networks(unittest.TestCase):
@@ -123,7 +133,7 @@ class Networks(unittest.TestCase):
         na, nb = sandbox.ensure_session_network("p/A"), sandbox.ensure_session_network("p/B")
         ha = sandbox.ensure_egress("https://one.example/v1", "img", na)
         hb = sandbox.ensure_egress("https://two.example/v1", "img", nb)
-        fa, fb = sandbox.forwarder_name("one.example", 443), sandbox.forwarder_name("two.example", 443)
+        fa, fb = sandbox.forwarder_for("https://one.example/v1"), sandbox.forwarder_for("https://two.example/v1")
         self.assertEqual(self.d.nets[na]["members"], {fa})
         self.assertEqual(self.d.nets[nb]["members"], {fb})
         self.assertEqual(ha, ["--add-host", f"one.example:{self.d.containers[fa]['networks'][na]}"])
@@ -136,32 +146,83 @@ class Networks(unittest.TestCase):
         sandbox.remove_session_network("p/A")
         self.assertNotIn(na, self.d.nets)
         self.assertNotIn(na, self.d.containers[fa]["networks"])
+        # the last session of an endpoint closes: its forwarder (and the key it holds) goes too
+        sandbox.remove_session_network("p/C")
+        self.assertNotIn(fa, self.d.containers)
+        self.assertIn(fb, self.d.containers)
+
+    def test_long_host_names_keep_their_own_live_forwarders(self):
+        """Two endpoints whose names share a long prefix: the second never replaces the first's forwarder."""
+        common = "inference-gateway-of-a-rather-long-organisation-name"
+        na, nb = sandbox.ensure_session_network("p/A"), sandbox.ensure_session_network("p/B")
+        sandbox.ensure_egress(f"https://{common}.one.example/v1", "img", na)
+        sandbox.ensure_egress(f"https://{common}.two.example/v1", "img", nb)
+        sandbox.ensure_egress(f"https://{common}.one.example/v1", "img", na)
+        self.assertEqual(sum(1 for c in self.d.calls if c[0] == "run"), 2)
+        self.assertEqual(len(self.d.containers), 2)
+
+    def test_the_key_goes_to_the_forwarder_and_each_key_has_its_own(self):
+        """The forwarder mounts the key file and runs as the calling user (to read a 0600 file); another key
+        for the same endpoint, or a changed key, gets a forwarder of its own; no key: no mount, nobody."""
+        k1, k2 = Path(self.tmp.name) / "k1", Path(self.tmp.name) / "k2"
+        k1.write_text("first-secret-key\n")
+        k2.write_text("second-secret-key\n")
+        n = sandbox.ensure_session_network("p/A")
+        sandbox.ensure_egress("https://gw.example/v1", "img", n, str(k1))
+        f1 = self.d.containers[sandbox.forwarder_for("https://gw.example/v1", str(k1))]["argv"]
+        self.assertIn(f"{k1}:{sandbox.KEY_IN_FORWARDER}:ro", f1)
+        self.assertEqual(f1[f1.index("--key-file") + 1], sandbox.KEY_IN_FORWARDER)
+        self.assertEqual(f1[f1.index("-u") + 1], f"{os.getuid()}:{os.getgid()}")
+        self.assertNotIn("first-secret-key", " ".join(f1))
+        self.assertNotIn("first-secret-key", json.dumps(self.d.containers))     # nor in a label
+        sandbox.ensure_egress("https://gw.example/v1", "img", n, str(k2))
+        sandbox.ensure_egress("https://gw.example/v1", "img", n)
+        self.assertEqual(len({sandbox.forwarder_for("https://gw.example/v1", k) for k in (str(k1), str(k2), None)}), 3)
+        self.assertEqual(sum(1 for c in self.d.calls if c[0] == "run"), 3)
+        f0 = self.d.containers[sandbox.forwarder_for("https://gw.example/v1")]["argv"]
+        self.assertNotIn("--key-file", f0)
+        self.assertEqual(f0[f0.index("-u") + 1], "65534:65534")
+        old = sandbox.forwarder_for("https://gw.example/v1", str(k1))
+        k1.write_text("rotated-secret-key\n")
+        self.assertNotEqual(sandbox.forwarder_for("https://gw.example/v1", str(k1)), old)
+
+    def test_model_url_is_plain_http_to_the_forwarder(self):
+        self.assertEqual(sandbox.model_url("https://api.example.org/v1"), "http://api.example.org/v1")
+        self.assertEqual(sandbox.model_url("https://api.example.org:8443/x/v1/"), "http://api.example.org/x/v1")
+        self.assertEqual(sandbox.model_url("http://gw.example:8080"), "http://gw.example")
+        for bad in ("https://u:p@api.example.org/v1", "https://api.example.org/v1?key=1"):
+            with self.assertRaises(ValueError, msg=bad):
+                sandbox.model_url(bad)
 
     def test_same_host_other_port_gets_its_own_forwarder(self):
         n = sandbox.ensure_session_network("p/A")
         sandbox.ensure_egress("https://gw.example/v1", "img", n)
         sandbox.ensure_egress("https://gw.example:8443/v1", "img", n)
-        f443, f8443 = (self.d.containers[sandbox.forwarder_name("gw.example", p)] for p in (443, 8443))
+        f443, f8443 = (self.d.containers[sandbox.forwarder_for(u)] for u in ("https://gw.example/v1", "https://gw.example:8443/v1"))
         self.assertIn("gw.example:443", f443["argv"])
         self.assertIn("gw.example:8443", f8443["argv"])
-        self.assertIn("0.0.0.0:8443", f8443["argv"])
+        self.assertIn("0.0.0.0:80", f8443["argv"])          # plain HTTP from the sandbox, TLS onwards
+        self.assertEqual(f8443["argv"][f8443["argv"].index("--scheme") + 1], "https")
 
     def test_a_forwarder_running_for_another_target_is_replaced(self):
         n = sandbox.ensure_session_network("p/A")
         sandbox.ensure_egress("https://gw.example/v1", "img", n)
-        name = sandbox.forwarder_name("gw.example", 443)
-        self.d.containers[name]["labels"][f"{sandbox.PREFIX}.egress.target"] = "elsewhere.example:443"
+        name = sandbox.forwarder_for("https://gw.example/v1")
+        self.d.containers[name]["labels"][f"{sandbox.PREFIX}.egress.target"] = "https://elsewhere.example:443/v1"
         sandbox.ensure_egress("https://gw.example/v1", "img", n)
         self.assertEqual(sum(1 for c in self.d.calls if c[0] == "run"), 2)
-        self.assertEqual(self.d.containers[name]["labels"][f"{sandbox.PREFIX}.egress.target"], "gw.example:443")
+        self.assertEqual(self.d.containers[name]["labels"][f"{sandbox.PREFIX}.egress.target"], "https://gw.example:443/v1")
 
     def test_a_forwarder_for_another_target_or_version_is_replaced(self):
         n = sandbox.ensure_session_network("p/A")
         sandbox.ensure_egress("https://gw.example/v1", "img", n)
-        name = sandbox.forwarder_name("gw.example", 443)
+        name = sandbox.forwarder_for("https://gw.example/v1")
         self.d.containers[name]["labels"][f"{sandbox.PREFIX}.egress.version"] = "old"
         sandbox.ensure_egress("https://gw.example/v1", "img", n)
         self.assertEqual(sum(1 for c in self.d.calls if c[0] == "run"), 2)
+        self.d.containers[name]["labels"][f"{sandbox.PREFIX}.egress.key"] = "another-key"
+        sandbox.ensure_egress("https://gw.example/v1", "img", n)
+        self.assertEqual(sum(1 for c in self.d.calls if c[0] == "run"), 3)
 
 
 class Recipe(unittest.TestCase):
@@ -179,6 +240,7 @@ class Recipe(unittest.TestCase):
         self.elan = r / "elan"
         (self.elan / "bin").mkdir(parents=True)
         (r / "know").mkdir()
+        (r / "key").write_text("sk-the-endpoint-key-123\n")
 
     def tearDown(self):
         for p in self.patches:
@@ -195,7 +257,6 @@ class Recipe(unittest.TestCase):
                                  str(self.r / "key"), "m")
 
     def test_command(self):
-        (self.r / "key").write_text("k")
         sb = self.sandbox("proj/A01", "A01")
         argv = sb.command("hello", "ses_1")
         s = " ".join(argv)
@@ -204,7 +265,7 @@ class Recipe(unittest.TestCase):
         for want in ("--cap-drop=ALL", "no-new-privileges", f"--network {sb.network}", "--memory 6g", "--pids-limit 500",
                      "--cpus 4", "--add-host code.example:127.0.0.9", "--add-host api.example.org:10.0.0.",
                      f"-v {sb.home}:/home/sbx", f"-v {sb.tree}:{sb.tree}", f"-v {self.elan}:{self.elan}:ro",
-                     f"{sb.tree}/.lake/packages:{sb.tree}/.lake/packages:ro", f"{self.r / 'key'}:/run/harness/key:ro",
+                     f"{sb.tree}/.lake/packages:{sb.tree}/.lake/packages:ro",
                      f"-v {self.host.slot_dir}:/run/harness/slots", "/run/harness/buildslot.sh:ro",
                      f"{self.r / 'know'}:/home/sbx/knowledge:ro", "LEAN_NUM_THREADS=3", "BUILD_MIN_FREE_GB=3",
                      "PATH=/run/harness/bin:" + str(self.elan / "bin")):
@@ -213,6 +274,27 @@ class Recipe(unittest.TestCase):
         self.assertIn(f"/run/harness/buildslot.sh /run/harness/slots {self.elan}/bin/lake", wrapper)
         self.assertEqual(sorted(p.name for p in self.host.slot_dir.iterdir()), ["slot.1", "slot.2", "slot.3"])
         self.assertEqual(sorted(p.name for p in sb.home.iterdir()), ["knowledge"])   # the only host write in HOME
+
+    def test_the_key_never_enters_the_model_s_container(self):
+        """No mount of the key file and no key text in the model's `docker run`; the forwarder has it."""
+        sb = self.sandbox("proj/A01", "A01")
+        argv = " ".join(sb.command("hello", None))
+        self.assertNotIn(str(self.r / "key"), argv)
+        self.assertNotIn("sk-the-endpoint-key-123", argv)
+        self.assertNotIn("/run/harness/key", argv)
+        fw = self.d.containers[sandbox.forwarder_for(sb.base_url, str(self.r / "key"))]["argv"]
+        self.assertIn(f"{self.r / 'key'}:{sandbox.KEY_IN_FORWARDER}:ro", fw)
+        self.assertEqual(sb.model_url(sb.base_url), "http://api.example.org/v1")
+
+    def test_a_key_file_inside_the_model_s_tree_or_home_is_refused(self):
+        sb = self.sandbox("proj/A01", "A01")
+        (sb.home / "key").write_text("sk-in-home-000000\n")
+        sb.key_file = str(sb.home / "key")
+        with self.assertRaises(OSError):
+            sb.command("m", None)
+        sb.key_file = str(self.r / "missing-key")
+        with self.assertRaises(OSError):
+            sb.command("m", None)
 
     def test_concurrent_sessions_do_not_collide(self):
         a, b = self.sandbox("proj/A01", "A01"), self.sandbox("proj/A02", "A02")

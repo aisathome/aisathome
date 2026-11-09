@@ -90,12 +90,14 @@ class TreeGit:
         finally:
             idx.unlink(missing_ok=True)
 
-    def diff(self) -> str:
-        """The tree against the base as a binary patch (`git apply` takes it), new files included."""
+    def diff(self) -> bytes:
+        """The tree against the base as a binary patch (`git apply` takes it), new files included. Bytes,
+        exactly as git wrote them: decoding as text would turn a CRLF file's line ends into LF, and the
+        patch would no longer apply to the base."""
         def run(idx):
             self._git("add", "-A", "--", ".", index=idx)
             return self._git("diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", BASE_REF,
-                             index=idx).stdout
+                             index=idx, text=False).stdout
         return self._with_index(run)
 
     def changed(self, paths: list[str] = ()) -> list[str]:

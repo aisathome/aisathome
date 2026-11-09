@@ -9,4 +9,4 @@ behaviour (how a run spent its steps), loop_guard (stuck-loop detection), host (
 build slots, host-side commands), safefs and hostgit (host access to the model's files and tree),
 sandbox (the hardened container: networks, forwarder, recipe), lean (the Lean kit).
 """
-__version__ = "0.1.0"
+__version__ = "0.1.1"

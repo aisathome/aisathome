@@ -13,11 +13,17 @@ Idempotent resume: a command that runs a task again reads rounds.json and run.js
 where the task stands (a session still running or interrupted is resumed, a finished round that has no
 record is checked, a task with `final` is left alone). A record belongs to one run: it carries the run's
 finish time, the size of events.jsonl and the round-1 try, so a resumed round or a fresh try never
-reuses an older check. `stepmetrics` writes steps.jsonl. Standard library only.
+reuses an older check. `stepmetrics` writes steps.jsonl.
+
+No evidence file holds the endpoint's API key: the model never sees it (the sandbox's forwarder adds it),
+and as a second wall `redact_key` masks it in every file of the evidence directory after each session
+(same length, so byte offsets into events.jsonl stay valid). Standard library only.
 """
 from __future__ import annotations
 
+import gzip
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -27,6 +33,7 @@ RUN = "run.json"
 ROUNDS = "rounds.json"
 EVENTS = "events.jsonl"
 STEPS = stepmetrics.FILE
+MIN_SECRET = 8           # shorter "keys" (placeholders, test values) are not masked: they would wreck the evidence
 
 
 def events_size(raw: Path) -> int:
@@ -76,3 +83,49 @@ def archive_try(raw: Path, k: int, keep: tuple[str, ...] = (ROUNDS,)) -> Path:
             continue
         shutil.move(str(p), str(dest / p.name))
     return dest
+
+
+def mask(secret: bytes) -> bytes:
+    """The same number of bytes as `secret`, saying what it was."""
+    return (b"[REDACTED]" + b"*" * len(secret))[:len(secret)]
+
+
+def redact(raw: Path, secret: str | bytes) -> int:
+    """Mask `secret` in every regular file under `raw` (also inside .gz files; symlinks are not followed),
+    with a mask of the same length. Returns the number of files that held it."""
+    s = secret.encode() if isinstance(secret, str) else secret
+    if len(s) < MIN_SECRET or not Path(raw).is_dir():
+        return 0
+    found = 0
+    for d, dirs, files in os.walk(raw):
+        dirs[:] = [x for x in dirs if not os.path.islink(os.path.join(d, x))]
+        for name in files:
+            p = Path(d) / name
+            if p.is_symlink() or not p.is_file():
+                continue
+            data = p.read_bytes()
+            gz = name.endswith(".gz")
+            if gz:
+                try:
+                    data = gzip.decompress(data)
+                except (OSError, EOFError):
+                    continue
+            if s not in data:
+                continue
+            data = data.replace(s, mask(s))
+            tmp = p.with_name(f".{name}.redact.tmp")
+            tmp.write_bytes(gzip.compress(data) if gz else data)
+            tmp.replace(p)
+            found += 1
+    return found
+
+
+def redact_key(raw: Path, key_file: str | None) -> int:
+    """`redact` with the endpoint's key read from `key_file` (stripped, as it is sent); 0 without one."""
+    if not key_file:
+        return 0
+    try:
+        key = Path(key_file).read_bytes().strip()
+    except OSError:
+        return 0
+    return redact(raw, key)

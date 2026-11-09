@@ -3,12 +3,15 @@
 
 Network. Every session gets its own *internal* Docker network (`session_network`): no route out, Docker's
 DNS there answers no outside names, and no other session's container is on it. The one way out is the
-egress forwarder of the session's endpoint (egress_forward.py), a container `<PREFIX>-egress-<host>-<port>`
-on EGRESS_NET (an ordinary bridge) that is connected to each session network that uses that endpoint. The
-sandbox's /etc/hosts maps the endpoint's host name to the forwarder's address on its own network; the
-forwarder passes the TCP stream (TLS end to end) to that one host and port and nowhere else. So a session
-reaches only its own endpoint, and never another session. A literal IP address or a loopback name as the
-endpoint cannot be mapped this way and is refused (use a host name).
+egress forwarder of the session's endpoint (egress_forward.py), a container `<PREFIX>-egress-<host>-<port>-<hash>`
+on EGRESS_NET (an ordinary bridge) that is connected to each session network that uses that endpoint (one
+forwarder per endpoint URL and key). The sandbox's /etc/hosts maps the endpoint's host name to the
+forwarder's address on its own network, and the model's client talks plain HTTP to it (`model_url`); the
+forwarder adds the API key and sends the request to that one endpoint over TLS, and nowhere else. So a
+session reaches only its own endpoint, never another session, and never sees the key: it stays in the
+forwarder's container. A literal IP address or a loopback name as the endpoint cannot be mapped this way
+and is refused (use a host name). A forwarder that no session network uses any more is removed when the
+last session closes (`remove_session_network`), so no forwarder keeps an old key.
 
 On a shared host, a host firewall should also drop traffic from the session bridges to the host itself and
 every container's traffic to the cloud's instance metadata service. Session bridges are named
@@ -29,11 +32,13 @@ import fcntl
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 
 PREFIX = "harness"                     # container, network and label names start with it
@@ -44,6 +49,8 @@ FORWARDER = Path(__file__).resolve().parent / "egress_forward.py"
 LOCK = Path(tempfile.gettempdir()) / "aisathome-harness-egress.lock"
 HARDEN = ["--cap-drop=ALL", "--security-opt", "no-new-privileges"]
 LOOPBACK = ("localhost", "localhost.localdomain", "ip6-localhost")
+FORWARD_PORT = 80                      # the forwarder's plain-HTTP port on the session network
+KEY_IN_FORWARDER = "/run/egress/key"   # the key file inside the forwarder's container (never the model's)
 SETTINGS = ("PREFIX", "BRIDGE_PREFIX", "EGRESS_NET", "EGRESS_BRIDGE", "FORWARDER", "LOCK")
 
 
@@ -92,7 +99,8 @@ def ensure_session_network(key: str) -> str:
 
 
 def remove_session_network(key: str):
-    """Disconnect whatever is still attached (the forwarders) and remove the session's network."""
+    """Disconnect whatever is still attached (the forwarders), remove the session's network, and remove
+    the forwarders that no session network uses any more."""
     name, _ = session_network(key)
     p = _docker("network", "inspect", name, "--format", "{{json .Containers}}", check=False)
     if p.returncode != 0:
@@ -100,6 +108,20 @@ def remove_session_network(key: str):
     for c in (json.loads(p.stdout.strip() or "{}") or {}).values():
         _docker("network", "disconnect", "-f", name, c.get("Name", ""), check=False)
     _docker("network", "rm", name, check=False)
+    drop_idle_forwarders()
+
+
+def drop_idle_forwarders():
+    """Remove every forwarder attached to no session network (only to EGRESS_NET): it serves no session
+    and holds a key. Under the egress lock, so a session that is attaching one is never cut off."""
+    p = _docker("ps", "-a", "--filter", f"label={_label()}", "--format", "{{.Names}}", check=False)
+    if p.returncode != 0:
+        return
+    with _egress_lock():
+        for name in p.stdout.split():
+            f = _forwarder(name)
+            if f is not None and not set(f["networks"]) - {EGRESS_NET}:
+                _docker("rm", "-f", name, check=False)
 
 
 def target_of(base_url: str) -> tuple[str, int]:
@@ -120,9 +142,36 @@ def target_of(base_url: str) -> tuple[str, int]:
     return host, int(m.group(3) or (443 if m.group(1) == "https" else 80))
 
 
-def forwarder_name(host: str, port: int) -> str:
-    """One forwarder per endpoint host AND port: two endpoints on one host never share it."""
-    return f"{PREFIX}-egress-{slug(host)}-{port}"
+def endpoint_of(base_url: str) -> tuple[str, str, int, str]:
+    """(scheme, host, port, base path) of the endpoint URL; the host as `target_of` allows it."""
+    host, port = target_of(base_url)
+    u = urllib.parse.urlsplit(base_url)
+    if u.query or u.fragment or u.username or u.password:
+        raise ValueError(f"endpoint {base_url!r}: no user, query or fragment in the base URL")
+    return u.scheme, host, port, "/" + u.path.strip("/") if u.path.strip("/") else "/"
+
+
+def model_url(base_url: str) -> str:
+    """The base URL the model's client uses: plain HTTP to the endpoint's name (mapped to its forwarder,
+    which adds the key and speaks TLS to the endpoint), same base path."""
+    _, host, _, path = endpoint_of(base_url)
+    port = "" if FORWARD_PORT == 80 else f":{FORWARD_PORT}"
+    return f"http://{host}{port}{'' if path == '/' else path}"
+
+
+def key_fingerprint(key_file: str | None) -> str:
+    """A short hash of the key (not the key): a changed key gets a forwarder of its own."""
+    if not key_file:
+        return "nokey"
+    return hashlib.sha256(b"aisathome-harness-key\0" + Path(key_file).read_bytes().strip()).hexdigest()[:16]
+
+
+def forwarder_name(host: str, port: int, extra: str = "") -> str:
+    """One forwarder per endpoint host AND port (and `extra`: the scheme, base path and key): two endpoints
+    on one host never share it. The name ends in a hash of all of it, so two long host names that share
+    their first characters (the slug is cut) never share a forwarder either."""
+    h = hashlib.sha256(f"{host.lower()}:{port}|{extra}".encode()).hexdigest()[:10]
+    return f"{PREFIX}-egress-{slug(host, 30).rstrip('-.')}-{port}-{h}"
 
 
 def _version() -> str:
@@ -137,6 +186,21 @@ def _target_label() -> str:
     return f"{PREFIX}.egress.target"
 
 
+def _key_label() -> str:
+    return f"{PREFIX}.egress.key"
+
+
+class _egress_lock:
+    def __enter__(self):
+        lock = Path(LOCK)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(lock, "w")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+
+    def __exit__(self, *exc):
+        self.fh.close()
+
+
 def _forwarder(name: str) -> dict | None:
     """{"running", "networks": {name: address}, "labels"} of a forwarder container, or None when there is none."""
     p = _docker("inspect", "-f", "{{.State.Running}}\t{{json .NetworkSettings.Networks}}\t{{json .Config.Labels}}",
@@ -148,29 +212,40 @@ def _forwarder(name: str) -> dict | None:
             "networks": {k: (v or {}).get("IPAddress") for k, v in (json.loads(nets) or {}).items()}}
 
 
-def ensure_egress(base_url: str, image: str, network: str) -> list[str]:
-    """Start (or reuse) the forwarder for the endpoint, attach it to the session's `network` and return
-    the sandbox's --add-host args. `image` runs the forwarder (any image with python3). A forwarder of an
-    older version, or for another target, is replaced."""
-    host, port = target_of(base_url)
-    target = f"{host}:{port}"
+def forwarder_for(base_url: str, key_file: str | None = None) -> str:
+    """The forwarder's name for an endpoint URL and key file."""
+    scheme, host, port, path = endpoint_of(base_url)
+    return forwarder_name(host, port, f"{scheme}|{path}|{key_fingerprint(key_file)}")
+
+
+def ensure_egress(base_url: str, image: str, network: str, key_file: str | None = None) -> list[str]:
+    """Start (or reuse) the forwarder for the endpoint and its key, attach it to the session's `network`
+    and return the sandbox's --add-host args. `image` runs the forwarder (any image with python3 and CA
+    certificates). The key file is mounted into the forwarder only, which runs as the calling user so it
+    can read a key file only that user may read. A forwarder of an older version, or for another target or
+    key, is replaced."""
+    scheme, host, port, path = endpoint_of(base_url)
+    target, url = f"{host}:{port}", f"{scheme}://{host}:{port}{path}"
+    fp = key_fingerprint(key_file)
     _ensure_network(EGRESS_NET, EGRESS_BRIDGE, internal=False)
-    name = forwarder_name(host, port)
-    lock = Path(LOCK)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "w") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX)
+    name = forwarder_for(base_url, key_file)
+    key = ["-v", f"{key_file}:{KEY_IN_FORWARDER}:ro"] if key_file else []
+    user = f"{os.getuid()}:{os.getgid()}" if key_file else "65534:65534"
+    with _egress_lock():
         f = _forwarder(name)
         if not f or not f["running"] or f["labels"].get(_label()) != _version() \
-                or f["labels"].get(_target_label()) != target:
+                or f["labels"].get(_target_label()) != url or f["labels"].get(_key_label()) != fp:
             _docker("rm", "-f", name, check=False)
             _docker("run", "-d", "--name", name, "--restart", "unless-stopped",
-                    "--label", f"{_label()}={_version()}", "--label", f"{_target_label()}={target}",
-                    "--network", EGRESS_NET, "-u", "65534:65534", *HARDEN,
+                    "--label", f"{_label()}={_version()}", "--label", f"{_target_label()}={url}",
+                    "--label", f"{_key_label()}={fp}",
+                    "--network", EGRESS_NET, "-u", user, *HARDEN,
                     "--read-only", "--memory", "128m", "--memory-swap", "128m", "--pids-limit", "64",
                     "--sysctl", "net.ipv4.ip_unprivileged_port_start=0",
-                    "-v", f"{FORWARDER}:/opt/egress_forward.py:ro", "--entrypoint", "python3", image,
-                    "-I", "/opt/egress_forward.py", "--listen", f"0.0.0.0:{port}", "--target", target)
+                    "-v", f"{FORWARDER}:/opt/egress_forward.py:ro", *key, "--entrypoint", "python3", image,
+                    "-I", "/opt/egress_forward.py", "--listen", f"0.0.0.0:{FORWARD_PORT}", "--target", target,
+                    "--scheme", scheme, "--path-prefix", path,
+                    *(["--key-file", KEY_IN_FORWARDER] if key_file else []))
             f = _forwarder(name)
         if f is not None and network not in f["networks"]:
             _docker("network", "connect", network, name)

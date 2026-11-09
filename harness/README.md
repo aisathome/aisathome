@@ -25,10 +25,13 @@ an AIs@home gateway. Node operators do not need it.
   number of rounds. Rounds that the endpoint's failures consumed are kept apart from the model's own
   results and run again once.
 - **Evidence** (`evidence.py`, `stepmetrics.py`, `behaviour.py`): one directory per task with the
-  prompt, opencode's events, per-step metrics, the model's diff, run.json and rounds.json.
+  prompt, opencode's events, per-step metrics, the model's diff, run.json and rounds.json. After each
+  session the endpoint's key is masked in every evidence file, as a second wall.
 - **The sandbox** (`sandbox/`): per session, an internal Docker network with no route out and no other
-  session on it; the only exit is a forwarder to that session's endpoint (one per endpoint host and
-  port, TLS end to end). All capabilities dropped, no new privileges, memory and process caps, per-session
+  session on it; the only exit is a forwarder to that session's endpoint (one per endpoint and key). The
+  model's client speaks plain HTTP to the forwarder, which adds the API key and speaks TLS to the
+  endpoint (certificate checked), only to the endpoint's base path: the key never enters the model's
+  container. All capabilities dropped, no new privileges, memory and process caps, per-session
   copy-on-write overlays for shared build caches, web tools off. A `Recipe` says what a project needs in
   the container (image, toolchain mounts, environment, commands that take a build slot).
 - **The host** (`host.py`): the machine's limits and its shared build slots, used by the sandboxes and by
@@ -61,14 +64,16 @@ the cloud's instance metadata service; the sandbox's own network has no route ou
 
 ## Run one task
 
-You need Python 3.12, Docker, an image with opencode and your project's toolchain, and an endpoint:
-its base URL (e.g. `https://api.example.org/v1`), a model name, and a file holding the API key (it is
-mounted read-only into the container and never written to logs or config).
+You need Python 3.12, Docker, an image with opencode, python3, CA certificates and your project's
+toolchain, and an endpoint: its base URL (e.g. `https://api.example.org/v1`), a model name, and a file
+holding the API key. The key file is mounted only into the egress forwarder's container, which runs as
+your user (so a key file only you can read works) and adds the key to each request; it never enters the
+model's container and is never written to logs or config.
 
 1. Copy `template/adapter.py` and `template/PROJECT.md` into your project's own folder and fill in the
    steps: what the tasks are, how to set up the tree, the prompt, the check. The endpoint must be a host
    name, not an IP address (the sandbox reaches it through its forwarder, by name).
-2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@harness-v0.1.0#subdirectory=harness"`
+2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@harness-v0.1.1#subdirectory=harness"`
    or put this folder on `PYTHONPATH`.
 3. Run a task:
 

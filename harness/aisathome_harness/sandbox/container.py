@@ -13,12 +13,14 @@ its `state` directory (host-only), never in the model's HOME or tree. The model'
 
     /home/sbx                 the session's HOME (rw; opencode's config and database live here)
     <tree>                    the task's tree at the same path (rw)
-    /run/harness/key          the endpoint's API key file (ro), if any
     /run/harness/bin          wrappers that run slot commands through a build slot (ro, generated in state)
     /run/harness/slots        the host's build-slot lock files (rw: flock needs it)
     /run/harness/buildslot.sh the slot script (ro)
     ~/knowledge               the project's knowledge folder (ro), if any
     the recipe's mounts and overlays
+
+The endpoint's API key is never in the model's container: opencode talks plain HTTP to the session's egress
+forwarder (`model_url`), which holds the key and adds it to each request (sandbox.ensure_egress).
 
 Standard library only (Docker is driven through its CLI).
 """
@@ -60,7 +62,7 @@ class Recipe:
     overlays: list[tuple[Path, Path]] = field(default_factory=list)   # (shared lower dir, target in the container)
     slot_commands: dict[str, str] = field(default_factory=dict)       # name -> real path inside the container
     knowledge: Path | None = None
-    forwarder_image: str | None = None                 # runs the egress forwarder (python3); default: image
+    forwarder_image: str | None = None                 # runs the egress forwarder (python3, CA certificates); default: image
 
     def merged(self, **parts) -> "Recipe":
         """A copy with lists and dicts extended (e.g. by a toolchain's parts)."""
@@ -80,7 +82,7 @@ def container_name(key: str) -> str:
 
 class Sandbox:
     """One session's container on one host. Implements what loop.Session takes from a sandbox: command,
-    before, stop, export, close."""
+    before, stop, export, close, and model_url (the endpoint as the model's client sees it)."""
 
     def __init__(self, recipe: Recipe, host: Host, key: str, tree: Path, home: Path, state: Path,
                  base_url: str, key_file: str | None, model: str, provider: "loop.Provider | None" = None):
@@ -137,14 +139,11 @@ class Sandbox:
         # every source checked before anything is created: a refusal leaves no volume behind
         mounts = [(self._source(m.source), m) for m in r.mounts]
         lowers = [(self._source(lower, create=True), target) for lower, target in r.overlays]
-        key = self._source(Path(self.key_file).resolve()) if self.key_file else None
         v = ["-v", f"{self.home}:{HOME}", "-v", f"{self.tree}:{self.tree}"]
         for src, m in mounts:
             v += ["-v", f"{src}:{m.target}{':ro' if m.ro else ''}"]
         for i, (lower, target) in enumerate(lowers):
             v += sandbox.overlay_mount(self.volumes()[i], lower, self.state / "overlay" / str(i), Path(target))
-        if key:
-            v += ["-v", f"{key}:{self.provider.key_path}:ro"]
         if r.slot_commands:
             v += ["-v", f"{self._bin()}:{RUN}/bin:ro", "-v", f"{self.host.slot_dir}:{RUN}/slots",
                   "-v", f"{BUILDSLOT}:{RUN}/buildslot.sh:ro"]
@@ -160,13 +159,27 @@ class Sandbox:
         env = {"HOME": HOME, "BUILD_MIN_FREE_GB": str(self.host.build_min_free_gb), **r.env, "PATH": ":".join(path)}
         return sum((["-e", f"{k}={v}"] for k, v in env.items()), [])
 
+    def _key_file(self) -> str | None:
+        """The key file for the forwarder's mount: a file outside the model's tree and HOME, or refused."""
+        if not self.key_file:
+            return None
+        key = Path(self.key_file).resolve()
+        self._source(key)
+        if not key.is_file():
+            raise safefs.UnsafePath(f"key file {self.key_file} is missing or not a file")
+        return str(key)
+
     # --- the loop's interface
+    def model_url(self, base_url: str) -> str:
+        """The endpoint's URL in opencode's config: plain HTTP to the forwarder, which adds the key."""
+        return sandbox.model_url(base_url)
+
     def command(self, message: str, session_id: str | None) -> list[str]:
         """`docker run` for one segment: the session's network and forwarder, hardened, with limits."""
         self.before()
         sandbox.ensure_session_network(self.key)
         hosts = sandbox.sinkhole(self.recipe.sinkhole) + sandbox.ensure_egress(
-            self.base_url, self.recipe.forwarder_image or self.recipe.image, self.network)
+            self.base_url, self.recipe.forwarder_image or self.recipe.image, self.network, self._key_file())
         return sandbox.run_args(
             self.name, self.recipe.image, self.tree, loop.opencode_args(self.model, session_id, self.provider) + [message],
             network=self.network, user=self.recipe.user, cpu=["--cpus", str(self.host.cpus), "--cpu-shares", "128"],
