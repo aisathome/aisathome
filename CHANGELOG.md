@@ -28,6 +28,13 @@ and **(site)** are live on aisathome.org once deployed.
   (8 MB, one older file kept). On Windows its config, password and state default to
   `%ProgramData%\AIsAtHome` (`node.json`, `ui-password`, `state.json`). A first step towards
   Windows nodes; there is no Windows installer or engine yet. Linux is unchanged. (node)
+- **The node's setup steps in Go, for Windows** (`node/setup`): the tier table, the card choice
+  and free-memory check from `nvidia-smi`, the driver check (the minimum driver in the refusal),
+  the model download (resumed from a `.part` file over HTTP Range, SHA-256 over the whole file,
+  a disk-space check first) and the 32k-token speed test, whose refusal also names locked
+  clocks and power limits. Tested without a GPU on Linux and Windows. A test runs install.sh's
+  tier functions and fails when they and the Go table disagree, so the two platforms keep the
+  same tiers. Not used by the agent yet; Linux installs are unchanged. (node)
 - **Interruptions no longer use up a science task's tries.** A task its worker gives back
   (`.../fail` with `"requeue": true`, as the runner does when its spot instance stops) keeps its
   try: the next claim continues it and counts one `interruptions` instead. A lease that expires

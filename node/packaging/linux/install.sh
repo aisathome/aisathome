@@ -103,6 +103,8 @@ case "$want_tier" in
 esac
 [[ -z "$want_tier" || -n "$download_only" ]] ||
   die "--tier is for --download-only; an install takes the tier from the card" 2
+# The Windows node has the same table in Go (node/setup/tiers.go); its drift test runs these
+# tier_* functions and fails until both agree. Change both together.
 tier_ctx() { case "$1" in standard) echo 81920 ;; big) echo 196608 ;; esac; }
 tier_kv() { echo q4_0; }
 tier_min_free() { case "$1" in standard) echo 14300 ;; big) echo 18500 ;; esac; }
