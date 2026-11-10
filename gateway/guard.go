@@ -35,15 +35,17 @@ const (
 )
 
 // commandRules read only what a call runs: shell commands (the "command", "cmd" and "script"
-// arguments) and files written as shell scripts (a ".sh", ".bash", ".zsh" or ".ps1" path, or a
-// "#!" first line). Netcat is the case: as a command, netcat fed from a file, a here-document or a
-// pipe is a transfer whatever the order of its words ("nc < f host 443", "nc host < f 443",
-// "cat f | nc host 443"), while in a Lean or Python file "nc" is a name and "<" a comparison, which
-// held nodes for ordinary proofs (2026-10-31; code review 2026-11-10). A command word is at a line
-// start or after ; & | ( ` $( or a quote, also after sudo, exec, env, nohup, command or timeout.
+// arguments, strings in arrays too) and files written as shell scripts (a ".sh", ".bash", ".zsh"
+// or ".ps1" path, or a shell's "#!" line). Netcat is the case: as a command, netcat fed from a
+// file, a here-document or a pipe is a transfer whatever the order of its words ("nc < f host
+// 443", "nc host < f 443", "cat f | nc host 443"), while in a Lean or Python file "nc" is a name
+// and "<" a comparison, which held nodes for ordinary proofs (2026-10-31; code review
+// 2026-11-10). A command word is at a line start, after ; & | ( { ! ` $(, after then, do, else
+// or time, after a quote that opens "sh -c", and after variable assignments and sudo, exec, env,
+// nohup, command or timeout.
 const (
-	ncLead = `(?:^|[;&|(` + "`" + `'"]|\$\()\s*`
-	ncProg = `(?:(?:sudo|exec|env|nohup|command|timeout\s+\S+)\s+(?:-\S+\s+)*)*(?:\S*/)?(?:nc|ncat|netcat)(?:\.exe)?\b`
+	ncLead = `(?:^|[;&|({!` + "`" + `]|\$\(|\b(?:then|do|else|time)\s|\b(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-c\s+["'])\s*`
+	ncProg = `(?:\w+=\S*\s+|(?:sudo|exec|env|nohup|command|timeout\s+\S+)\s+(?:-\S+\s+)*)*(?:\S*/)?(?:nc|ncat|netcat)(?:\.exe)?\b`
 )
 
 var commandRules = []struct {
@@ -225,6 +227,31 @@ func checkToolCall(name, args, req string) guardHit {
 // stays at a line start.
 var cmdLines = strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "\r\n", "\n", "\r", "\n")
 
+// shellShebang is a first line that runs a shell (not Python's "#!/usr/bin/env python3").
+var shellShebang = regexp.MustCompile(`^#!\s*(?:\S*/)?(?:env\s+(?:-\S+\s+)*)?(?:ba|z|da|k|c|tc|fi|a)?sh\b|^#!\s*(?:\S*/)?(?:env\s+)?pwsh\b`)
+
+// stringsIn lists the strings in a JSON value: the value itself, or those in an array or object,
+// in order.
+func stringsIn(v any) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{x}
+	case []any:
+		var out []string
+		for _, e := range x {
+			out = append(out, stringsIn(e)...)
+		}
+		return out
+	case map[string]any:
+		var out []string
+		for _, e := range x {
+			out = append(out, stringsIn(e)...)
+		}
+		return out
+	}
+	return nil
+}
+
 // commandText is what commandRules read: the call's "command", "cmd" and "script" strings, and
 // the text of a file written as a shell script (a ".sh", ".bash", ".zsh" or ".ps1" path, or a "#!"
 // first line), one per line. Every value of a key given twice counts, whichever one a client
@@ -242,9 +269,9 @@ func commandText(name, args string) string {
 				ok = false
 				break
 			}
-			var v string
+			var v any
 			if key, isKey := k.(string); isKey && json.Unmarshal(raw, &v) == nil {
-				vals[key] = append(vals[key], v)
+				vals[key] = append(vals[key], stringsIn(v)...)
 			}
 		}
 	}
@@ -272,7 +299,7 @@ func commandText(name, args string) string {
 	}
 	for _, k := range []string{"content", "newString", "new_string"} {
 		for _, c := range vals[k] {
-			if script || strings.HasPrefix(c, "#!") {
+			if script || shellShebang.MatchString(c) {
 				b.WriteString(c)
 				b.WriteByte('\n')
 			}
