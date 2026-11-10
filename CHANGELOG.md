@@ -17,7 +17,9 @@ and **(site)** are live on aisathome.org once deployed.
   time it answers 503 with "this conversation started on ..." instead of switching files
   midway. Clients send no common session id, so the gateway recognises a conversation as its
   prompt cache does, from hashes of the rendered prompt, keeping no text. Requests that start a
-  conversation, or that name a model, are routed as before. (gateway)
+  conversation, or that name a model, are routed as before. A switch to another model by name
+  holds also when a tool loop goes on to a new user message (the session went back to the first
+  model). (gateway)
 - **`install.sh --download-only <dir> --tier standard|big`** downloads the file of a tier on a
   machine without the card; without `--tier` it takes the tier of this machine's card. (node)
 

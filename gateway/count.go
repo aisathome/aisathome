@@ -392,7 +392,9 @@ func (m *meter) output() (gen, next string) {
 // start with (session.go): next as output gives it (a tool result follows, and the client sends
 // the reasoning back); with empty reasoning (a client that does not send it back: the template
 // renders an empty thinking part); and once a new user message follows, without the thinking
-// part at all, as the template drops earlier turns' reasoning unless reasoning is preserved.
+// part at all, as the template drops earlier turns' reasoning unless reasoning is preserved:
+// the reasoning of every assistant turn, not only this answer's (in a tool loop the earlier
+// answers since the last user message carry theirs in this prompt, and lose it then too).
 // Duplicates may occur.
 func (m *meter) conversations(next string) []string {
 	out := []string{m.prompt + next}
@@ -407,9 +409,34 @@ func (m *meter) conversations(next string) []string {
 	}
 	const start = "<|im_start|>assistant\n"
 	if i := strings.LastIndex(m.prompt, start); !m.args.preserve && i >= 0 {
-		out = append(out, m.prompt[:i+len(start)]+answer)
+		out = append(out, withoutReasoning(m.prompt[:i+len(start)])+answer)
 	}
 	return out
+}
+
+// withoutReasoning is a rendered conversation with each assistant turn's thinking part removed,
+// as renderPrompt renders turns before the last user message (<think>, the reasoning, and the
+// </think> with the blank line after it).
+func withoutReasoning(p string) string {
+	const open, end = "<|im_start|>assistant\n<think>\n", "\n</think>\n\n"
+	if !strings.Contains(p, open) {
+		return p
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(p, open)
+		if i < 0 {
+			break
+		}
+		j := strings.Index(p[i+len(open):], end)
+		if j < 0 {
+			break
+		}
+		b.WriteString(p[:i] + "<|im_start|>assistant\n")
+		p = p[i+len(open)+j+len(end):]
+	}
+	b.WriteString(p)
+	return b.String()
 }
 
 // render is o as the model generated it after this prompt. closeThink: the end of thinking

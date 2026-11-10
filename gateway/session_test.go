@@ -346,6 +346,54 @@ func TestChatPrepareSessionModel(t *testing.T) {
 	}
 }
 
+// A switch of model by name in a tool loop holds: once a new user message follows, the template
+// drops the reasoning of every answer since the last user message, and the switched-to model's
+// answer must still be recognised in that form, or the older binding would route the session
+// silently back to the first model (Codex review, 2026-11-10).
+func TestSessionSwitchInToolLoopHolds(t *testing.T) {
+	g := newTestGateway(t, Config{})
+	defer g.Close()
+	c := &chatCaller{acct: KeyInfo{User: "alice"}, userKey: "alice", class: ClassAgent, charge: []string{"alice"}}
+	long := strings.Repeat("prove that the sum of the first n odd numbers is n squared. ", 60)
+	user := map[string]any{"role": "user", "content": long}
+	answer := func(job *chatJob, chunk string, m protocol.ModelInfo) {
+		t.Helper()
+		mt := newMeter(forNode(job.req.body), job.req.conv, nil)
+		<-mt.ready
+		mt.chunk([]byte(chunk))
+		_, tail := mt.output()
+		g.bindSession(keyHash("alice"), mt, tail, m, time.Now())
+	}
+	prep := func(model string, msgs ...any) *chatJob {
+		t.Helper()
+		job, ok := g.chatPrepare(httptest.NewRecorder(), c, map[string]any{"model": model, "messages": msgs})
+		if !ok {
+			t.Fatal("prepare failed")
+		}
+		return job
+	}
+	// Turn 1, for the role: the 24 GB model answers with a tool call.
+	first := prep("deep", user)
+	r1, r2 := "Try induction.", "The base case holds; now the step."
+	answer(first, fmt.Sprintf(`{"choices":[{"delta":{"reasoning_content":%q,"content":"","tool_calls":[{"index":0,"function":{"name":"bash","arguments":"{\"cmd\":\"ls\"}"}}]}}]}`, r1), modelIQ4)
+	asst1 := map[string]any{"role": "assistant", "content": "", "reasoning_content": r1,
+		"tool_calls": []any{map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "bash", "arguments": `{"cmd":"ls"}`}}}}
+	tool := map[string]any{"role": "tool", "content": "lemma.lean", "tool_call_id": "c1"}
+	// Turn 2, after the tool result: the client switches to the 16 GB model by name.
+	second := prep(modelQ3.Name, user, asst1, tool)
+	if second.rt.model != "" {
+		t.Fatalf("a request naming another model is held to %q", second.rt.model)
+	}
+	text := strings.Repeat("By induction on n, the sum is n squared. ", 20)
+	answer(second, fmt.Sprintf(`{"choices":[{"delta":{"reasoning_content":%q,"content":%q}}]}`, r2, text), modelQ3)
+	asst2 := map[string]any{"role": "assistant", "content": text, "reasoning_content": r2}
+	// Turn 3, a new user message, for the role again: it stays on the model it switched to.
+	third := prep("deep", user, asst1, tool, asst2, map[string]any{"role": "user", "content": "now in Lean"})
+	if third.rt.model != modelQ3.Name {
+		t.Fatalf("after the switch by name the next user turn is held to %q, want %q", third.rt.model, modelQ3.Name)
+	}
+}
+
 // Streamed chunks name the model that answered.
 func TestWithModel(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
