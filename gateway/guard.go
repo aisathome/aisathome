@@ -52,6 +52,11 @@ const (
 	ncAddress  = `(?:\s+` + ncWord + `)*\s+(?:` + ncWord + `\s+` + ncNumPort + `|` + ncHost + `\s+` + ncName + `)`
 	ncAfter    = `(?:\s+-[^\s<>]+|\s*(?:\d?>{1,2}&?|&>{1,2})\s*[^\s<>]+)*` // options and output redirections
 	ncRedirect = `\s*\d?<\s*\S`
+	// The input redirection can also come first or between host and port ("nc < f host 443",
+	// "nc host < f 443", code review 2026-11-10). There the host must look like one (a dotted name,
+	// an address or a variable), so a Lean or Python comparison like "h : nc < f x 3" stays text.
+	ncCommand = `\b(?:nc|ncat|netcat)(?:\.\w+)?["']?(?:\s+-[^\s<>]+)*`
+	ncIn      = `\s*\d?<\s*[^\s<>|;&]+`
 )
 
 // guardRules match dangerous tool calls. Credential paths are excused when the request
@@ -73,6 +78,7 @@ var guardRules = []struct {
 	{ruleUpload, "curl uploading a file", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
 	{ruleUpload, "wget posting a file", regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
 	{ruleUpload, "netcat sending a file to a host and port", regexp.MustCompile(`\b(?:nc|ncat|netcat)(?:\.\w+)?["']?` + ncAddress + ncAfter + ncRedirect)},
+	{ruleUpload, "netcat sending a file to a host and port", regexp.MustCompile(ncCommand + `(?:` + ncIn + `(?:\s+-[^\s<>]+)*\s+` + ncHost + `|\s+` + ncHost + ncIn + `)\s+(?:` + ncNumPort + `|` + ncName + `)`)},
 	{ruleUpload, "socat sending a file", regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`)},
 	{ruleUpload, "scp or rsync to a remote host", regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
 }
