@@ -292,6 +292,33 @@ class Forwarder(unittest.TestCase):
         self.assertEqual(len(up.seen), 1)
         up.close()
 
+    def test_control_bytes_cannot_split_off_a_second_request(self):
+        """A target that passes the base-path check but holds LF, TAB, CR, NUL or DEL could be split into two
+        requests by a lenient endpoint, the second to another path with the key (Codex review, 2026-11-10):
+        refused before the endpoint is contacted, as are bare CR/LF elsewhere in the head and control bytes
+        in a method or header value."""
+        up = Upstream()
+        lport = self.start(up)
+        smuggled = b"\nGET\t/admin\tHTTP/1.1\nX:"
+        for line in (b"GET /v1/models" + smuggled + b" HTTP/1.1",            # bare LF in the target
+                     b"GET /v1/models\t/admin HTTP/1.1",                       # TAB
+                     b"GET /v1/models\r/admin HTTP/1.1",                       # bare CR
+                     b"GET /v1/models\x00/admin HTTP/1.1",                     # NUL
+                     b"GET /v1/models\x7f/admin HTTP/1.1",                     # DEL
+                     b"GET /v1/models\x85 HTTP/1.1",                           # beyond ASCII
+                     b"GE\x00T /v1/models HTTP/1.1",                           # in the method
+                     b"GET /v1/models HTTP/1.1\nGET /admin HTTP/1.1",          # bare LF ends the request line
+                     b"GET /v1/models HTTP/1.1\r\nX-A: 1\nGET /admin HTTP/1.1",  # ... or a header line
+                     b"GET /v1/models HTTP/1.1\r\nX-A: 1\x00"):                # control byte in a value
+            out = self.ask(lport, line + b"\r\nHost: x\r\n\r\n")
+            self.assertTrue(out.startswith(b"HTTP/1.1 400"), (line, out[:40]))
+            with self.assertRaises(egress_forward.Refused, msg=repr(line)):
+                egress_forward.rewrite(line + b"\r\nHost: x", "api", "/v1", "k")
+        self.assertEqual(up.seen, [])
+        ok = egress_forward.rewrite(b"GET /v1/models?q=a%20b HTTP/1.1\r\nX-A: tab\there \x85", "api", "/v1", "k")
+        self.assertTrue(ok.startswith(b"GET /v1/models?q=a%20b HTTP/1.1\r\nHost: api\r\nX-A: tab\there \x85\r\n"))
+        up.close()
+
     def test_a_key_that_could_break_a_header_is_refused(self):
         for bad in ("", "two words", "line\r\nX-Evil: 1"):
             self.key.write_text(bad)

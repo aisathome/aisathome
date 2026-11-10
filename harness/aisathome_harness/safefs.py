@@ -135,11 +135,26 @@ def write_bytes(root: Path, rel: str | Path, data: bytes, mode: int = 0o644):
             pass
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=d)
         try:
-            os.write(fd, data)
-            os.fchmod(fd, mode)
-        finally:
-            os.close(fd)
+            try:
+                _write_all(fd, data)
+                os.fchmod(fd, mode)
+            finally:
+                os.close(fd)
+        except BaseException:
+            os.unlink(tmp, dir_fd=d)     # the target stays as it was
+            raise
         os.rename(tmp, parts[-1], src_dir_fd=d, dst_dir_fd=d)
+
+
+def _write_all(fd: int, data: bytes):
+    """All of data to fd: os.write may write less (a full disk, a quota, a signal); a write that makes no
+    progress raises, so a truncated file never replaces the target."""
+    view = memoryview(data)
+    while view:
+        n = os.write(fd, view)
+        if n <= 0:
+            raise OSError(errno.ENOSPC, f"short write: {len(view)} of {len(data)} bytes not written")
+        view = view[n:]
 
 
 def write_text(root: Path, rel: str | Path, text: str, mode: int = 0o644):

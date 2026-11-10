@@ -45,6 +45,8 @@ DROP = {"authorization", "proxy-authorization", "proxy-authenticate", "proxy-con
         "keep-alive", "upgrade", "te", "trailer", "expect"}
 CA_BUNDLES = ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem", "/etc/pki/tls/certs/ca-bundle.crt")
 TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+VISIBLE = re.compile(r"[\x21-\x7e]+")       # a request target: visible ASCII only
+CTL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")  # control bytes a header value must not hold (TAB may)
 
 
 class Refused(Exception):
@@ -76,10 +78,16 @@ def path_allowed(path: str, prefix: str) -> bool:
 
 
 def rewrite(head: bytes, host_header: str, prefix: str, key: str | None) -> bytes:
-    """The request head (without its final blank line) as it goes to the endpoint, or Refused."""
+    """The request head (without its final blank line) as it goes to the endpoint, or Refused.
+    Lines end in CRLF only: a bare CR or LF anywhere is refused, so is any byte in the method or target
+    outside visible ASCII (a TAB or LF there would let a lenient endpoint split off a second request,
+    to another path, with the key), and any control byte other than TAB in a header value."""
     lines = head.decode("latin-1").split("\r\n")
+    if any("\r" in ln or "\n" in ln for ln in lines):
+        raise Refused(400, "bare CR or LF in the request head")
     parts = lines[0].split(" ")
-    if len(parts) != 3 or not TOKEN.fullmatch(parts[0]) or parts[2] not in ("HTTP/1.1", "HTTP/1.0"):
+    if (len(parts) != 3 or not TOKEN.fullmatch(parts[0]) or not VISIBLE.fullmatch(parts[1])
+            or parts[2] not in ("HTTP/1.1", "HTTP/1.0")):
         raise Refused(400, "bad request line")
     method, target, version = parts
     if method == "CONNECT" or not target.startswith("/"):
@@ -91,9 +99,9 @@ def rewrite(head: bytes, host_header: str, prefix: str, key: str | None) -> byte
         if ln[:1] in (" ", "\t") or ":" not in ln:
             raise Refused(400, "bad header line")
         name, value = ln.split(":", 1)
-        if not TOKEN.fullmatch(name) or "\n" in value or "\r" in value:
+        if not TOKEN.fullmatch(name) or CTL.search(value):
             raise Refused(400, "bad header")
-        headers.append((name, value.strip()))
+        headers.append((name, value.strip(" \t")))   # OWS only (str.strip would also take \x85, \xa0)
     named = {t.strip().lower() for n, v in headers if n.lower() == "connection" for t in v.split(",")}
     out = [f"{method} {target} {version}", f"Host: {host_header}"]
     out += [f"{n}: {v}" for n, v in headers if n.lower() not in DROP and n.lower() not in named]

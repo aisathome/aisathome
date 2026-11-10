@@ -14,7 +14,7 @@ while :; do
   if [ "$avail" -ge "${BUILD_MIN_FREE_GB:-10}" ]; then
     i=1
     while [ "$i" -le "$n" ]; do
-      exec 9>>"$d/slot.$i"
+      exec 9<"$d/slot.$i"      # read only: the slot directory is mounted read-only
       if flock -n 9; then
         [ -n "${BUILDSLOT_LOG:-}" ] && echo "$t0 $(date +%s) slot$i" >> "$BUILDSLOT_LOG"
         "$@"

@@ -57,6 +57,35 @@ class ModelTime(Tmp):
         self.ev.write_text(first + line("step_start", 10_000) + line("step_finish", 12_000))
         self.assertAlmostEqual(loop.model_time_s(self.ev, len(first.encode())), 2)
 
+    def test_an_open_step_stops_counting_at_an_endpoint_error(self):
+        """After an error the model waits for opencode's retry: that wait is not model time, so neither the
+        cap inside a segment nor a stopped segment's open_step_s counts it (Codex review, 2026-11-10). A step
+        that finishes after an error counts as before."""
+        self.ev.write_text(line("step_start", 0) + line("step_finish", 1000) + line("step_start", 2000)
+                           + line("error", 3000, error={"message": "503"}))
+        self.assertAlmostEqual(loop.model_time_s(self.ev, now=600), 1)
+        self.assertAlmostEqual(loop.open_step_s(self.ev, now=600), 0)
+        self.assertAlmostEqual(loop.model_used_s(self.ev, 0, [{"events_offset": 0, "open_step_s": 30}]), 1)
+        with open(self.ev, "a") as f:
+            f.write(line("step_start", 400_000))         # opencode's retry: counted from its own start
+        self.assertAlmostEqual(loop.model_time_s(self.ev, now=410), 1 + 10)
+        with open(self.ev, "a") as f:
+            f.write(line("error", 401_000) + line("step_finish", 405_000))
+        self.assertAlmostEqual(loop.model_time_s(self.ev, now=900), 1 + 5)
+
+    def test_an_interrupted_step_counts_once(self):
+        """A segment's open_step_s counts while its events end in that open step; a checkpointed segment
+        whose step then finished (the run died after the checkpoint) is counted by its step_finish only."""
+        seg1 = line("step_start", 0) + line("step_finish", 1000) + line("step_start", 2000)   # stopped mid-step
+        seg2 = line("step_start", 50_000) + line("step_finish", 53_000)
+        self.ev.write_text(seg1 + seg2)
+        segs = [{"events_offset": 0, "open_step_s": 40}, {"events_offset": len(seg1.encode()), "open_step_s": 0}]
+        self.assertAlmostEqual(loop.model_used_s(self.ev, 0, segs), 1 + 3 + 40)
+        self.assertAlmostEqual(loop.model_used_s(self.ev, len(seg1.encode()), segs), 3)
+        finished = seg1 + line("step_finish", 9000)
+        self.ev.write_text(finished)
+        self.assertAlmostEqual(loop.model_used_s(self.ev, 0, [{"events_offset": 0, "open_step_s": 5}]), 1 + 7)
+
 
 class StepNotice(Tmp):
     NOTICE = "CRITICAL - " + loop.MAX_STEPS_MARK + "\n\nTools are disabled until next user input."

@@ -73,7 +73,7 @@ model's container and is never written to logs or config.
 1. Copy `template/adapter.py` and `template/PROJECT.md` into your project's own folder and fill in the
    steps: what the tasks are, how to set up the tree, the prompt, the check. The endpoint must be a host
    name, not an IP address (the sandbox reaches it through its forwarder, by name).
-2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@harness-v0.1.1#subdirectory=harness"`
+2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@harness-v0.1.2#subdirectory=harness"`
    or put this folder on `PYTHONPATH`.
 3. Run a task:
 

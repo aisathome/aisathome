@@ -12,7 +12,8 @@ runs it in segments and leaves the evidence in the task's evidence directory:
                                 while it runs; a resume reads it)
     run.round<N>.json           run.json of round N, kept when round N+1 (a follow-up) starts
     steps.jsonl                 one line per model step (stepmetrics)
-    model.diff                  the model's edits so far, every `checkpoint_s` and at the end
+    model.diff                  the model's edits so far, every `checkpoint_s` and at the end (absent,
+                                with `model_diff_failed` in run.json, when the final one failed)
     session.json                the session export with per-message token usage, if the project exports it
 
 A segment is one run of opencode in its container. A segment ends when opencode exits, or when the loop
@@ -74,6 +75,7 @@ LOCKWAIT = ".lockwait.log"                     # the build-slot wrapper's log, r
 MAX_STEPS_MARK = "MAXIMUM STEPS REACHED"
 STOP_SAYS_LIMIT = re.compile(r"(?i)\bmax(?:imum)?\.? steps|\bstep limit")
 STEP_TS = re.compile(rb'^\{"type":"(step_start|step_finish)","timestamp":(\d+)', re.M)
+STEP_ERR_TS = re.compile(rb'^\{"type":"(step_start|step_finish|error)","timestamp":(\d+)', re.M)
 # An aisathome gateway preempts a background step for a person's request and ends its stream with this
 # error; opencode retries the step, which then waits in the queue and reads its whole prompt again. Silence
 # after such an error is not a hang until well past the endpoint's own limits.
@@ -147,11 +149,12 @@ def gateway_context(base_url: str, key_file: str | None, model: str, timeout: fl
     """(context, source) for opencode's limit.context: the endpoint's /models `context_length` for
     `model` (an aisathome gateway reports the smallest context among the servers of that model).
     DEFAULT_CONTEXT when the call fails or the model has none. Asked again before every segment, so a
-    resume gets a changed value. The key is sent in a header only, never logged."""
+    resume gets a changed value. The key is sent in a header only, never logged, and not on a redirect."""
     try:
         req = urllib.request.Request(base_url.rstrip("/") + "/models")
         if key_file:
-            req.add_header("Authorization", "Bearer " + Path(key_file).read_text().strip())
+            # unredirected: a redirect (to another host, or to plain HTTP) never carries the key
+            req.add_unredirected_header("Authorization", "Bearer " + Path(key_file).read_text().strip())
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read())
         for m in data.get("data", []):
@@ -422,24 +425,69 @@ class LoopWatch:
 def model_time_s(events: Path, start: int = 0, now: float | None = None) -> float:
     """Seconds the model worked in events.jsonl from byte offset `start`: per step, the last
     step_start before its step_finish to that step_finish (a request retried after a queue timeout
-    has an earlier step_start of its own). With `now`, a step still open counts up to now; a step
-    left open by a stop (no step_finish before the next step_start) counts nothing."""
+    has an earlier step_start of its own). With `now`, a step still open counts up to now, unless an
+    endpoint error came after its start: an attempt that failed is the endpoint's, not the model's, and
+    the wait for opencode's retry is not model time either. A step left open by a stop (no step_finish
+    before the next step_start) counts nothing here; the stopped segment's `open_step_s` holds it
+    (model_used_s)."""
     try:
         with open(events, "rb") as fh:
             fh.seek(start)
             data = fh.read()
     except OSError:
         return 0.0
-    total, open_ts = 0.0, None
-    for m in STEP_TS.finditer(data):
+    total, open_ts = _closed_and_open(data)
+    if now is not None and open_ts is not None:
+        total += max(0.0, now - open_ts)
+    return total
+
+
+def _closed_and_open(data: bytes, pos: int = 0, endpos: int | None = None) -> tuple[float, float | None]:
+    """The finished steps' seconds in data[pos:endpos], and the start of a step still open at its end
+    (None when the last step finished, or an error event came after its start)."""
+    total, open_ts, failed = 0.0, None, False
+    for m in STEP_ERR_TS.finditer(data, pos, len(data) if endpos is None else endpos):
         ts = int(m.group(2)) / 1000
         if m.group(1) == b"step_start":
-            open_ts = ts
+            open_ts, failed = ts, False
+        elif m.group(1) == b"error":
+            failed = True                  # a step that still finishes counts as before
         elif open_ts is not None:
             total += max(0.0, ts - open_ts)
             open_ts = None
-    if now is not None and open_ts is not None:
-        total += max(0.0, now - open_ts)
+    return total, None if failed else open_ts
+
+
+def open_step_s(events: Path, start: int = 0, now: float | None = None) -> float:
+    """Seconds, up to `now`, of the step still open at the end of events.jsonl from byte offset `start`
+    (0 when the last step finished). run_segment records it for the step its segment's stop interrupted,
+    which model_time_s alone never counts afterwards (the next step_start supersedes it)."""
+    if now is None:
+        return 0.0
+    return max(0.0, model_time_s(events, start, now) - model_time_s(events, start))
+
+
+def model_used_s(events: Path, start: int, segments: list[dict]) -> float:
+    """The model time spent from byte offset `start`: its finished steps, and the steps that the segments
+    from there were stopped in the middle of (their `open_step_s`). A segment's open step counts only if
+    its events still end in an open step (a run that died after a checkpoint may have finished it, and
+    then model_time_s counts it)."""
+    total = model_time_s(events, start)
+    segs = [sg for sg in segments if sg.get("events_offset", -1) >= start]
+    if not any(sg.get("open_step_s") for sg in segs):
+        return total
+    try:
+        data = events.read_bytes()
+    except OSError:
+        return total
+    starts = sorted({sg["events_offset"] for sg in segs})
+    for sg in segs:
+        if not sg.get("open_step_s"):
+            continue
+        o = sg["events_offset"]
+        end = next((x for x in starts if x > o), len(data))
+        if _closed_and_open(data, o, end)[1] is not None:
+            total += sg["open_step_s"]
     return total
 
 
@@ -613,9 +661,12 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait()
+    end = time.time()
     seg.update({"exit": p.returncode, "active_s": round(time.monotonic() - m0),
-                "wall_s": round(time.time() - w0), "suspended_s": round(suspended),
-                "model_s": round(model_time_s(raw / "events.jsonl", start_size, time.time()))})
+                "wall_s": round(end - w0), "suspended_s": round(suspended),
+                "model_s": round(model_time_s(raw / "events.jsonl", start_size, end)),
+                # the step the stop interrupted, without the time the machine slept: the time cap counts it
+                "open_step_s": round(max(0.0, open_step_s(raw / "events.jsonl", start_size, end) - suspended), 1)})
     # A suspend can also surface only after the fact, as opencode aborting the session.
     with open(raw / "events.jsonl", "rb") as fh:
         fh.seek(start_size)
@@ -856,6 +907,11 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
     if not home.is_dir():
         raise SystemExit(f"[{s.task_id}] not prepared")
     s.state.mkdir(parents=True, exist_ok=True)
+    if s.before:
+        # a container left by an earlier run (the harness stopped, its container did not) goes first: it
+        # could still change the tree and HOME this run reads, edits and checkpoints, also when no segment
+        # runs (a spent budget)
+        s.before()
     git = s.git
     segments: list[dict] = []
     sid = None
@@ -963,9 +1019,11 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
     segment = s.segment or (lambda cmd, raw_, left, **kw: run_segment(
         cmd, raw_, left, timing=T, before=s.before, stop=s.stop, log=s.say, **kw))
 
-    def checkpoint():
+    def checkpoint() -> bool:
         if checkpoint_diff(raw, git) < 0:
             s.say("checkpoint: no diff (no base snapshot, or git failed)")
+            return False
+        return True
     while True:
         used_steps = event_stats(events)["steps"] - (budget["steps"] if budget else base_steps)
         left_steps = steps - used_steps
@@ -976,7 +1034,7 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         safefs.write_text(home, CONFIG, json.dumps(
             opencode_config(inner_url, inner_key, model, left_steps, s.model_options, ctx, s.provider), indent=1))
         active_used = sum(s_.get("active_s", 0) for s_ in segments[budget["segment"] if budget else 0:])
-        model_left = wall_min * 60 - model_time_s(events, budget["events_offset"] if budget else ev_start)
+        model_left = wall_min * 60 - model_used_s(events, budget["events_offset"] if budget else ev_start, segments)
         left = T.awake_ceiling * wall_min * 60 - active_used
         if left <= 0 or model_left <= 0:
             break
@@ -1009,7 +1067,11 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                     **({"retry_from": budget} if budget else {}),
                     "segments": done + [{"exit": None, "timed_out": False, "suspend_interrupted": True,
                                          "active_s": round(seg_active_s), "wall_s": round(seg_active_s),
-                                         "suspended_s": 0, "in_progress": True, **seg_meta}]})
+                                         "suspended_s": 0, "in_progress": True,
+                                         # if the run dies here, a resume still counts the open step
+                                         "open_step_s": round(open_step_s(events, seg_meta["events_offset"],
+                                                                          time.time()), 1),
+                                         **seg_meta}]})
                 checkpoint()
             except OSError as e:    # a checkpoint never stops the run
                 s.say(f"checkpoint failed: {e}")
@@ -1024,7 +1086,7 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
             sid = m.group(1) if m else None
         if seg.get("first_edit_nudge") and sid:
             nudged = {"step": nudge.step, "fired": True, "at_step": nudge.steps, "between_steps": nudge.last == b"step_finish",
-                      "model_s": round(model_time_s(events, ev_start)), "targets": nudge.targets}
+                      "model_s": round(model_used_s(events, ev_start, segments)), "targets": nudge.targets}
             s.say(f"no target file changed by step {nudge.steps}: first-edit nudge")
             nudge, message = None, s.prompts.first_edit
             continue
@@ -1054,7 +1116,12 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                 time.sleep(T.wake_wait_s)   # let the network come back after wake-up
             continue
         break
-    checkpoint()     # the tree as the session left it: model.diff matches what a check reads
+    # the tree as the session left it: model.diff matches what a check reads. If that fails, an earlier
+    # checkpoint's model.diff would pass for the final tree: it is removed, and run.json says so.
+    final_diff = checkpoint()
+    if not final_diff:
+        (raw / "model.diff").unlink(missing_ok=True)
+        s.say("final checkpoint failed: model.diff removed (it showed an earlier tree)")
     # export the session (all messages, per-message token usage as reported by the endpoint)
     usage = {}
     if sid and s.export:
@@ -1075,11 +1142,12 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                 # which cap ended it: "time" (the model's own time reached wall_cap_min) or
                 # "awake ceiling" (awake_ceiling x wall_cap_min awake); the step cap shows in `steps`
                 "cap": next((s_.get("cap", "time") for s_ in segments if s_.get("timed_out")), None),
-                "model_s": round(model_time_s(events, ev_start)),
+                "model_s": round(model_used_s(events, ev_start, segments)),
                 "events_start": ev_start, "awake_ceiling_min": T.awake_ceiling * wall_min,
                 "exit": segments[-1].get("exit") if segments else None, "session": sid,
                 "wall_cap_min": wall_min, "step_cap": steps, "lock_wait_s": lock_wait,
                 "first_edit_nudge": nudged, "loop_nudge": looped, "step_continue": told_on,
+                **({"model_diff_failed": True} if not final_diff else {}),
                 **({"step_notice": notice} if notice else {}),
                 **({"retry_from": budget} if budget else {}),
                 "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}

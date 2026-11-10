@@ -14,7 +14,8 @@ its `state` directory (host-only), never in the model's HOME or tree. The model'
     /home/sbx                 the session's HOME (rw; opencode's config and database live here)
     <tree>                    the task's tree at the same path (rw)
     /run/harness/bin          wrappers that run slot commands through a build slot (ro, generated in state)
-    /run/harness/slots        the host's build-slot lock files (rw: flock needs it)
+    /run/harness/slots        the host's build-slot lock files (ro: flock needs only a read descriptor, and
+                              the model can neither replace a lock file nor plant a link the host follows)
     /run/harness/buildslot.sh the slot script (ro)
     ~/knowledge               the project's knowledge folder (ro), if any
     the recipe's mounts and overlays
@@ -27,6 +28,7 @@ Standard library only (Docker is driven through its CLI).
 from __future__ import annotations
 
 import hashlib
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -54,7 +56,9 @@ class Mount:
 @dataclass
 class Recipe:
     image: str                                         # opencode as entrypoint, plus the project's toolchain
-    user: str = "1000:1000"
+    # uid:gid the model's container runs as: by default the invoking user's, who owns the tree and HOME the
+    # project prepared (a fixed 1000 could not write them on a host whose user is not 1000). Never root.
+    user: str = field(default_factory=lambda: f"{os.getuid()}:{os.getgid()}")
     mounts: list[Mount] = field(default_factory=list)
     env: dict = field(default_factory=dict)
     path: list[str] = field(default_factory=list)      # prepended to PATH, after the slot wrappers
@@ -86,6 +90,9 @@ class Sandbox:
 
     def __init__(self, recipe: Recipe, host: Host, key: str, tree: Path, home: Path, state: Path,
                  base_url: str, key_file: str | None, model: str, provider: "loop.Provider | None" = None):
+        if recipe.user.split(":")[0] in ("0", "root"):
+            raise ValueError("the model's container never runs as root: run the harness as an ordinary user, "
+                             "or set Recipe.user to one that owns the tree and HOME")
         self.recipe, self.host, self.key = recipe, host, key
         self.tree, self.home, self.state = Path(tree), Path(home), Path(state)
         self.base_url, self.key_file, self.model = base_url, key_file, model
@@ -145,7 +152,7 @@ class Sandbox:
         for i, (lower, target) in enumerate(lowers):
             v += sandbox.overlay_mount(self.volumes()[i], lower, self.state / "overlay" / str(i), Path(target))
         if r.slot_commands:
-            v += ["-v", f"{self._bin()}:{RUN}/bin:ro", "-v", f"{self.host.slot_dir}:{RUN}/slots",
+            v += ["-v", f"{self._bin()}:{RUN}/bin:ro", "-v", f"{self.host.slot_dir}:{RUN}/slots:ro",
                   "-v", f"{BUILDSLOT}:{RUN}/buildslot.sh:ro"]
         if r.knowledge and Path(r.knowledge).is_dir():
             safefs.mkdirs(self.home, "knowledge")       # the mount point, inside the model's HOME
@@ -186,8 +193,17 @@ class Sandbox:
             limit=sandbox.limits(self.host.limits()), hosts=hosts, volumes=self._mounts(), env=self._env())
 
     def before(self):
-        """Remove a leftover container of this session (it would hold the overlay volumes)."""
+        """Remove a leftover container of this session (it would hold the overlay volumes, and could still
+        change the tree). Raises if it is still there afterwards: nothing may read or run on that tree then."""
         subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
+        left = subprocess.run(["docker", "container", "inspect", "--format", "{{.Id}}", self.name],
+                              capture_output=True, text=True)
+        if left.returncode == 0:
+            raise RuntimeError(f"container {self.name} could not be removed: stop it before the session goes on")
+        err = (left.stderr or "").lower()
+        if not any(f"no such {kind}: {self.name.lower()}" in err for kind in ("container", "object")):
+            # Docker did not say that this container is absent (its daemon or context is unavailable?)
+            raise RuntimeError(f"cannot confirm that container {self.name} is gone: {(left.stderr or '').strip()[:200]}")
 
     def stop(self):
         subprocess.run(["docker", "kill", self.name], capture_output=True)

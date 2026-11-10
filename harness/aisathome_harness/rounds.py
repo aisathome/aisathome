@@ -83,14 +83,15 @@ def classify_round(raw: Path, rm: dict, outcome: str, refusal: str | None = None
 
 def gateway_probe(base_url: str, key_file: str | None, model: str, timeout: float = 60) -> bool:
     """One tiny agent-shaped request (a tool definition, max_tokens 1) to the endpoint: True on 200.
-    The key goes in a header only and is never printed."""
+    The key goes in a header only, never on a redirect, and is never printed."""
     body = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "ping"}],
             "tools": [{"type": "function", "function": {"name": "noop", "description": "does nothing",
                                                         "parameters": {"type": "object", "properties": {}}}}]}
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     if key_file:
-        req.add_header("Authorization", "Bearer " + Path(key_file).read_text().strip())
+        # unredirected: a redirect (to another host, or to plain HTTP) never carries the key
+        req.add_unredirected_header("Authorization", "Bearer " + Path(key_file).read_text().strip())
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status == 200

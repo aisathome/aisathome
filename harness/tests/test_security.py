@@ -9,11 +9,13 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from aisathome_harness import loop, safefs
+from aisathome_harness import loop, rounds, safefs
 from aisathome_harness.hostgit import TreeGit
 
 HERE = Path(__file__).resolve().parent
@@ -67,11 +69,75 @@ class SafeFs(Tmp):
             with self.assertRaises(ValueError, msg=bad):
                 safefs.write_text(self.home, bad, "x")
 
+    def test_a_short_write_never_leaves_a_truncated_file(self):
+        """os.write may write fewer bytes than asked (a full disk, a quota): the rest is written, and a write
+        that makes no progress fails with the target unchanged and no temporary file left (Codex review,
+        2026-11-10)."""
+        real = os.write
+        data = bytes(range(256)) * 40
+        with mock.patch.object(safefs.os, "write", lambda fd, b: real(fd, bytes(b[:1000]))):
+            safefs.write_bytes(self.home, "db", data)
+        self.assertEqual((self.home / "db").read_bytes(), data)
+        with mock.patch.object(safefs.os, "write", lambda fd, b: real(fd, bytes(b[:1000])) if len(b) == len(data) else 0):
+            with self.assertRaises(OSError):
+                safefs.write_bytes(self.home, "db", b"new" + data[3:])
+        self.assertEqual((self.home / "db").read_bytes(), data)
+        self.assertEqual(sorted(p.name for p in self.home.iterdir()), ["db"])
+
     def test_unlink_removes_the_link_only(self):
         os.symlink(self.host_file, self.home / "l")
         safefs.unlink(self.home, "l")
         self.assertTrue(self.host_file.exists())
         self.assertFalse(os.path.lexists(self.home / "l"))
+
+
+class KeyOnRedirect(Tmp):
+    """The host-side calls to the endpoint (its /models, the probe) send the key to the endpoint only: a
+    redirect to another host follows without it (Codex review, 2026-11-10)."""
+
+    def serve(self, handler) -> str:
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def test_a_redirect_does_not_carry_the_key(self):
+        seen = []
+
+        class Other(BaseHTTPRequestHandler):
+            def answer(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                body = json.dumps({"data": [{"id": "m", "context_length": 4242}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            do_GET = do_POST = answer
+
+            def log_message(self, *a):
+                pass
+        other = self.serve(Other)
+
+        class Endpoint(BaseHTTPRequestHandler):
+            def answer(self):
+                seen.append((self.path, "endpoint:" + str(self.headers.get("Authorization"))))
+                self.send_response(302)
+                self.send_header("Location", other + self.path)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            do_GET = do_POST = answer
+
+            def log_message(self, *a):
+                pass
+        endpoint = self.serve(Endpoint)
+        key = self.root / "key"
+        key.write_text("sk-endpoint-key-0123\n")
+        self.assertEqual(loop.gateway_context(endpoint + "/v1", str(key), "m"), (4242, "gateway /v1/models"))
+        self.assertTrue(rounds.gateway_probe(endpoint + "/v1", str(key), "m", timeout=5))
+        self.assertEqual(seen, [("/v1/models", "endpoint:Bearer sk-endpoint-key-0123"), ("/v1/models", None),
+                                ("/v1/chat/completions", "endpoint:Bearer sk-endpoint-key-0123"),
+                                ("/v1/chat/completions", None)])
 
 
 class StepNotice(Tmp):
@@ -431,6 +497,61 @@ class Session(Tmp):
             m = loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 1, resume=True)
         self.assertEqual(calls, [])
         self.assertEqual(m["steps"], 1)
+
+    def test_the_time_cap_counts_an_interrupted_step(self):
+        """A step the time cap stopped in the middle (no step_finish) spent model time: a resume gets none
+        of it back (Codex review, 2026-11-10). Its segment records it as open_step_s."""
+        long_step = ('import sys, time\n'
+                     'sys.stdout.write(\'{"type":"step_start","timestamp":%d,"sessionID":"ses_x"}\\n\' '
+                     '% ((time.time() - 70) * 1000)); sys.stdout.flush(); time.sleep(30)\n')
+        s = self.make(long_step)
+        m = loop.run_session(s, "https://api.example.org/v1", None, "m", 1, 5)     # 60 s of model time
+        self.assertEqual((m["timed_out"], m["cap"]), (True, "time"))
+        self.assertGreaterEqual(m["segments"][0]["open_step_s"], 70)
+        self.assertGreaterEqual(m["model_s"], 70)
+        calls = []
+        s.command = lambda msg, sid: calls.append(msg) or [sys.executable, "-c", self.EV]
+        loop.run_session(s, "https://api.example.org/v1", None, "m", 1, 5, resume=True)
+        self.assertEqual(calls, [])
+        # an interruption with time left: the next segment gets only what is left
+        rm = json.loads((s.raw / "run.json").read_text())
+        rm["segments"][0]["open_step_s"] = 45
+        (s.raw / "run.json").write_text(json.dumps(rm))
+        given = []
+        s.segment = lambda cmd, raw, left, **kw: given.append(kw["model_left_s"]) or loop.run_segment(
+            cmd, raw, left, timing=loop.Timing(poll_s=0.05), **kw)
+        loop.run_session(s, "https://api.example.org/v1", None, "m", 1, 5, resume=True)
+        self.assertEqual(len(given), 1)
+        self.assertAlmostEqual(given[0], 15, delta=1)
+
+    def test_a_leftover_container_goes_before_anything_reads_the_tree(self):
+        """A resume whose budget is spent runs no segment, yet checkpoints and exports: a container left by
+        the earlier run is removed first, so it cannot change the tree after the final diff (Codex review,
+        2026-11-10)."""
+        s = self.make(self.EV)
+        loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 1)
+        order = []
+        s.before = lambda: order.append("remove leftover container")
+        real = loop.checkpoint_diff
+        s.command = lambda m, sid: order.append("segment") or [sys.executable, "-c", self.EV]
+        with mock.patch.object(loop, "checkpoint_diff", lambda raw, git: order.append("checkpoint") or real(raw, git)):
+            loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 1, resume=True)
+        self.assertEqual(order, ["remove leftover container", "checkpoint"])
+
+    def test_a_failed_final_checkpoint_leaves_no_stale_diff(self):
+        """When the final diff cannot be made (git failed), an earlier checkpoint's model.diff would pass for
+        the final tree: it is removed and run.json says so (Codex review, 2026-11-10)."""
+        s = self.make(self.EV)
+        loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 5)
+        (s.raw / "model.diff").write_text("diff of an earlier tree\n")
+        with mock.patch.object(loop, "checkpoint_diff", lambda raw, git: -1):
+            m = loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 5, resume=True)
+        self.assertFalse((s.raw / "model.diff").exists())
+        self.assertTrue(m["model_diff_failed"])
+        self.assertTrue(json.loads((s.raw / "run.json").read_text())["model_diff_failed"])
+        m = loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 5, resume=True)
+        self.assertNotIn("model_diff_failed", m)
+        self.assertTrue((s.raw / "model.diff").exists())
 
     def test_a_retry_gets_its_own_budget(self):
         """A round whose awake time is spent: a resume runs nothing, a retry runs with fresh caps once."""

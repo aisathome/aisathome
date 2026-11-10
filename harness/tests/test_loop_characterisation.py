@@ -75,7 +75,7 @@ SCENARIOS = {
 }
 # run.json fields that depend on the clock or the machine, not on the loop's decisions
 VOLATILE = {"finished_at", "updated_at", "active_s", "wall_s", "suspended_s", "started_at", "awake_s"}
-SEG_VOLATILE = {"active_s", "wall_s", "suspended_s", "started_at", "model_s"}
+SEG_VOLATILE = {"active_s", "wall_s", "suspended_s", "started_at", "model_s", "open_step_s"}
 STEP_KEEP = ("round", "step", "message_id", "segment", "model_s", "tool_s", "build_s", "prompt_tokens",
              "completion_tokens", "finish_reason", "errors", "preempted", "retries", "resumed")
 

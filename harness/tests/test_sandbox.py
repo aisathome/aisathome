@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -233,7 +235,7 @@ class Recipe(unittest.TestCase):
         self.d = FakeDocker()
         self.patches = [mock.patch.object(sandbox, "_docker", self.d),
                         mock.patch.object(sandbox, "LOCK", r / "egress.lock"),
-                        mock.patch.object(container.subprocess, "run", lambda *a, **k: mock.Mock(returncode=0, stdout="", stderr=""))]
+                        mock.patch.object(container.subprocess, "run", self.docker_cli)]
         for p in self.patches:
             p.start()
         self.host = Host(state=r / "host", slots=3, cpus=4, memory_gb=6, pids=500, build_min_free_gb=3)
@@ -241,6 +243,19 @@ class Recipe(unittest.TestCase):
         (self.elan / "bin").mkdir(parents=True)
         (r / "know").mkdir()
         (r / "key").write_text("sk-the-endpoint-key-123\n")
+
+    stuck: set = set()      # containers `docker rm -f` cannot remove
+    daemon_down = ""        # the CLI's error when it cannot reach Docker
+
+    def docker_cli(self, argv, **kw):
+        """The docker CLI as container.py calls it: rm succeeds, and inspect finds only a stuck container."""
+        if argv[:3] == ["docker", "container", "inspect"]:
+            if self.daemon_down:
+                return mock.Mock(returncode=1, stdout="", stderr=self.daemon_down)
+            if argv[-1] in self.stuck:
+                return mock.Mock(returncode=0, stdout="abc\n", stderr="")
+            return mock.Mock(returncode=1, stdout="", stderr=f"Error: No such container: {argv[-1]}")
+        return mock.Mock(returncode=0, stdout="", stderr="")
 
     def tearDown(self):
         for p in self.patches:
@@ -266,7 +281,7 @@ class Recipe(unittest.TestCase):
                      "--cpus 4", "--add-host code.example:127.0.0.9", "--add-host api.example.org:10.0.0.",
                      f"-v {sb.home}:/home/sbx", f"-v {sb.tree}:{sb.tree}", f"-v {self.elan}:{self.elan}:ro",
                      f"{sb.tree}/.lake/packages:{sb.tree}/.lake/packages:ro",
-                     f"-v {self.host.slot_dir}:/run/harness/slots", "/run/harness/buildslot.sh:ro",
+                     f"-v {self.host.slot_dir}:/run/harness/slots:ro", "/run/harness/buildslot.sh:ro",
                      f"{self.r / 'know'}:/home/sbx/knowledge:ro", "LEAN_NUM_THREADS=3", "BUILD_MIN_FREE_GB=3",
                      "PATH=/run/harness/bin:" + str(self.elan / "bin")):
             self.assertIn(want, s)
@@ -274,6 +289,39 @@ class Recipe(unittest.TestCase):
         self.assertIn(f"/run/harness/buildslot.sh /run/harness/slots {self.elan}/bin/lake", wrapper)
         self.assertEqual(sorted(p.name for p in self.host.slot_dir.iterdir()), ["slot.1", "slot.2", "slot.3"])
         self.assertEqual(sorted(p.name for p in sb.home.iterdir()), ["knowledge"])   # the only host write in HOME
+
+    def test_the_container_runs_as_the_user_who_owns_the_tree(self):
+        """The project's workspace is made by the invoking user: by default the model's container (and the
+        export) runs as that user, not a fixed 1000 (Codex review, 2026-11-10); root is refused."""
+        with mock.patch.object(container.os, "getuid", return_value=1234), \
+                mock.patch.object(container.os, "getgid", return_value=1235):
+            sb = self.sandbox("proj/A01", "A01")
+            self.assertEqual(container.Recipe(image="img:1").user, "1234:1235")
+        argv = sb.command("hello", None)
+        self.assertEqual(argv[argv.index("-u") + 1], "1234:1235")
+        for root in ("0:0", "0", "root"):
+            with self.assertRaises(ValueError, msg=root):
+                container.Sandbox(container.Recipe(image="img:1", user=root), self.host, "proj/B", sb.tree, sb.home,
+                                  sb.state, "https://api.example.org/v1", None, "m")
+
+    def test_a_container_that_cannot_be_removed_stops_the_session(self):
+        """A leftover container that `docker rm -f` did not remove could still change the tree: before()
+        raises, so no segment, checkpoint or export runs on it (Codex review, 2026-11-10)."""
+        sb = self.sandbox("proj/A01", "A01")
+        sb.before()
+        self.stuck = {sb.name}
+        with self.assertRaises(RuntimeError):
+            sb.before()
+        with self.assertRaises(RuntimeError):
+            sb.command("hello", None)
+        self.stuck = set()
+        for down in ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.",
+                     "unable to resolve docker endpoint: open /home/u/.docker/contexts/meta/x/meta.json: "
+                     "no such file or directory",
+                     "Error: No such container: another-container"):
+            self.daemon_down = down                        # nothing confirms that this container is gone
+            with self.assertRaises(RuntimeError, msg=down):
+                sb.before()
 
     def test_the_key_never_enters_the_model_s_container(self):
         """No mount of the key file and no key text in the model's `docker run`; the forwarder has it."""
@@ -363,6 +411,44 @@ class Host_(unittest.TestCase):
             rc, out = h.shell("echo hi; exit 3", log=Path(d) / "log", slot=True)
             self.assertEqual((rc, out.strip()), (3, "hi"))
             self.assertIn("[exit 3", (Path(d) / "log").read_text())
+
+    @unittest.skipUnless(shutil.which("flock"), "needs flock(1)")
+    def test_slots_work_read_only_and_the_host_follows_no_link(self):
+        """The sandboxes see the slot directory read-only, so the model can neither replace a lock file nor
+        plant a link there (Codex review, 2026-11-10): buildslot.sh locks with a read descriptor, against the
+        host's own lock."""
+        script = Path(container.__file__).with_name("buildslot.sh")
+        with tempfile.TemporaryDirectory() as d:
+            h = Host(state=Path(d), slots=1, build_min_free_gb=0)
+            slots = h.slot_dir
+            os.chmod(slots / "slot.1", 0o444)
+            os.chmod(slots, 0o555)                         # as the container sees it (a read-only mount)
+            try:
+                env = {**os.environ, "BUILD_MIN_FREE_GB": "0"}
+                run = lambda **kw: subprocess.run(["sh", str(script), str(slots), "sh", "-c", "echo built"], env=env,
+                                                  capture_output=True, text=True, **kw)
+                r = run(timeout=10)
+                self.assertEqual((r.returncode, r.stdout.strip()), (0, "built"), r.stderr)
+                with h.slot():                              # the host holds the only slot: the build waits
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        run(timeout=1.5)
+            finally:
+                os.chmod(slots, 0o755)
+
+    def test_the_host_opens_no_slot_file_through_a_link(self):
+        """A link in the slot directory (planted while it was writable, by an older harness's sandbox) is
+        refused, never followed: the host creates and locks nothing elsewhere (Codex review, 2026-11-10)."""
+        with tempfile.TemporaryDirectory() as d:
+            h = Host(state=Path(d), slots=1, build_min_free_gb=0)
+            slots = h.slot_dir
+            victim = Path(d) / "victim"
+            (slots / "slot.1").unlink()
+            os.symlink(victim, slots / "slot.1")
+            with self.assertRaises(OSError):
+                h.slot_dir
+            with self.assertRaises(OSError), h.slot():
+                pass
+            self.assertFalse(victim.exists())
 
     def test_sized(self):
         h = Host.sized(Path("/tmp/x"), slots=4)

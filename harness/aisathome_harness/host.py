@@ -19,6 +19,7 @@ from __future__ import annotations
 import fcntl
 import os
 import shlex
+import stat
 import subprocess
 import time
 from contextlib import contextmanager
@@ -28,6 +29,17 @@ from pathlib import Path
 
 def default_state() -> Path:
     return Path(os.environ.get("AISATHOME_HARNESS_STATE") or Path.home() / ".local" / "state" / "aisathome-harness")
+
+
+def _open_slot(path: Path, create: bool = False) -> int:
+    """A build slot's lock file, opened read-only (flock needs no more) and never through a symlink: the
+    sandboxes see the slot directory read-only, and one written by an older harness is not trusted."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_CREAT if create else 0)   # a FIFO never blocks
+    fd = os.open(path, flags, 0o644)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(f"build slot {path} is not a regular file")
+    return fd
 
 
 def mem_available_gb() -> float:
@@ -82,7 +94,7 @@ class Host:
         d = self.state / "slots"
         d.mkdir(parents=True, exist_ok=True)
         for i in range(1, self.slots + 1):
-            (d / f"slot.{i}").touch(exist_ok=True)
+            os.close(_open_slot(d / f"slot.{i}", create=True))
         return d
 
     def limits(self) -> dict:
@@ -95,7 +107,7 @@ class Host:
         while True:
             if mem_available_gb() >= self.build_min_free_gb:
                 for i in range(1, self.slots + 1):
-                    fh = open(d / f"slot.{i}", "a")
+                    fh = os.fdopen(_open_slot(d / f"slot.{i}"), "rb")
                     try:
                         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:

@@ -7,6 +7,41 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+## [0.1.2]
+
+### Security
+
+- The egress forwarder refuses a request head with a bare CR or LF anywhere, a method or target with any
+  byte outside visible ASCII (a TAB, LF, CR, NUL or DEL in the target passed the base-path check, and a
+  lenient endpoint could split it into a second request, to another path, with the key), and a header
+  value with a control byte other than TAB. Header values lose only spaces and tabs at their ends.
+- The key no longer follows a redirect: the host-side calls to the endpoint (its /models for the context,
+  `rounds.gateway_probe`) sent it on to wherever the endpoint redirected, another host or plain HTTP.
+- The build-slot directory is mounted read-only into the model's container (`buildslot.sh` locks with a
+  read descriptor): the model could replace a lock file, so builds stopped sharing the slots, or plant a
+  link that the host then opened. The host opens slot files only as regular files, never through a link.
+
+### Fixed
+
+- `safefs.write_bytes` writes all the bytes: a short `os.write` (a full disk, a quota) left a truncated
+  file that replaced the target, which could be opencode's session database. A write that makes no
+  progress now fails, and the target stays as it was.
+- The time cap counts a step that a stop interrupted. Its model time was lost (only finished steps
+  counted), so a resume, also after the time cap itself stopped the run, got that time again. Each
+  segment records it as `open_step_s` (a checkpoint records it for a segment still running); run.json's
+  `model_s` includes it.
+- A container left by an earlier run is removed when a run starts: a resume whose budget was spent ran no
+  segment, so the old container could still change the tree after the final diff. If `docker rm -f`
+  cannot remove it, or Docker cannot confirm it is gone, the run stops (`Sandbox.before` raises)
+  instead of going on beside it.
+- An open step stops counting against the time cap at an endpoint error: the wait for opencode's retry
+  counted as model time (a failed attempt is still the endpoint's, as before).
+- A failed final checkpoint removes model.diff and sets `model_diff_failed` in run.json: an earlier
+  checkpoint's diff passed for the final tree.
+- The model's container runs as the invoking user by default (`Recipe.user`), not a fixed 1000:1000,
+  which could not write the tree and HOME a project prepared on a host whose user is not 1000. Root is
+  refused.
+
 ## [0.1.1]
 
 ### Security
