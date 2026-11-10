@@ -125,6 +125,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **Fewer false guard holds.** The netcat rule reads only shell commands and shell scripts, so
+  Lean or Python text such as `have nc : a < b` no longer holds a node; as a command, netcat fed
+  from a file, a here-document or a pipe is caught in any word order. A hold records its rule and
+  a reason in fixed words, never content, and an admin can clear it on `/account/ops` after
+  seeing both. (gateway)
+
 - **A node no longer waits forever on a gateway connection that went silent.** On 2026-11-10
   a node's connection stopped bringing anything from the gateway while its own writes still
   went through, and the agent waited 16 hours for the next request without noticing. The agent

