@@ -60,10 +60,14 @@ type AccountNode struct {
 // NodeHold records a node stopped by a guard (guard.go). It gets no requests until the
 // operator clears it (`accounts node-clear`); the record is the evidence, without content.
 type NodeHold struct {
-	Node     string    `json:"node"`
-	Operator string    `json:"operator"` // the account's pseudonym, or the config token's operator
-	Rule     string    `json:"rule"`     // which guard fired, e.g. "download-and-execute"
-	At       time.Time `json:"at"`
+	Node     string `json:"node"`
+	Operator string `json:"operator"` // the account's pseudonym, or the config token's operator
+	Rule     string `json:"rule"`     // which guard fired, e.g. "download-and-execute"
+	// Reason says which pattern of the rule fired, in the guard's own fixed words (guardRules),
+	// e.g. "netcat sending a file to a host and port": nothing of the request or the answer.
+	// Empty in holds recorded before it existed.
+	Reason string    `json:"reason,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 type nodeRef struct {
@@ -228,9 +232,24 @@ func (s *AccountStore) HoldNode(p NodeHold) error {
 
 // ClearNode lets a held node serve again (operator).
 func (s *AccountStore) ClearNode(nodeID string) error {
-	return s.Update(func(f *AccountsFile) error {
+	_, err := s.clearHold(nodeID, time.Time{})
+	return err
+}
+
+// errHoldChanged: the node's hold is not the one the operator saw (cleared and held again since).
+var errHoldChanged = errors.New("this node's hold changed since the page was loaded: reload it and look again")
+
+// clearHold is ClearNode returning the hold it lifted; with a non-zero at only the hold made
+// then, the one the operator saw (the ops page), so a newer hold is never cleared unseen.
+func (s *AccountStore) clearHold(nodeID string, at time.Time) (NodeHold, error) {
+	var lifted NodeHold
+	err := s.Update(func(f *AccountsFile) error {
 		for i, p := range f.NodeHolds {
 			if p.Node == nodeID {
+				if !at.IsZero() && !p.At.Equal(at) {
+					return errHoldChanged
+				}
+				lifted = p
 				f.NodeHolds = append(f.NodeHolds[:i], f.NodeHolds[i+1:]...)
 				return nil
 			}
@@ -238,6 +257,7 @@ func (s *AccountStore) ClearNode(nodeID string) error {
 		return fmt.Errorf("node %s is not held in the accounts file (a hold the gateway could not write "+
 			"yet is written within seconds once the file is writable: then clear it)", nodeID)
 	})
+	return lifted, err
 }
 
 // SetNodePref sets an account's node preference.
@@ -393,10 +413,11 @@ func (g *Gateway) nodeHeld(id string) bool {
 	return p
 }
 
-// holdNode stops n after a guard fired on its answer. The record holds no content.
-func (g *Gateway) holdNode(n *nodeConn, rule, reqID string) {
-	g.log.Warn("guard stopped a node's answer; node held", "node", n.id, "operator", n.operator, "rule", rule, "req", reqID)
-	p := NodeHold{Node: n.id, Operator: n.operator, Rule: rule, At: time.Now().UTC()}
+// holdNode stops n after a guard fired on its answer. Neither the log nor the record holds content.
+func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
+	g.log.Warn("guard stopped a node's answer; node held", "node", n.id, "operator", n.operator, "rule", hit.rule,
+		"reason", hit.why, "req", reqID)
+	p := NodeHold{Node: n.id, Operator: n.operator, Rule: hit.rule, Reason: hit.why, At: time.Now().UTC()}
 	if g.accounts != nil {
 		if err := g.accounts.HoldNode(p); err != nil {
 			g.log.Error("HOLD NOT RECORDED: writing the node's hold to the accounts file failed; it is held in "+

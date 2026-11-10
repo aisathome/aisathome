@@ -77,7 +77,8 @@ func TestAccountsNodeCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.HoldNode(gateway.NodeHold{Node: id, Operator: "acct-x", Rule: "download-and-execute", At: time.Now()})
+	store.HoldNode(gateway.NodeHold{Node: id, Operator: "acct-x", Rule: "download-and-execute",
+		Reason: "a download piped into a shell or interpreter", At: time.Now()})
 	run := func(args ...string) string {
 		var out, msg bytes.Buffer
 		if err := runAccounts(append([]string{"-file", file}, args...), &out, &msg); err != nil {
@@ -93,7 +94,7 @@ func TestAccountsNodeCommands(t *testing.T) {
 	}
 	run("nodes", "per-account", "2")
 	out := run("nodes")
-	for _, want := range []string{id + " gh:1 rig", "download-and-execute", "1 of 5 node tokens", "up to 2 per account", "new nodes are closed", "routing trusted-only"} {
+	for _, want := range []string{id + " gh:1 rig", "download-and-execute", "(a download piped into a shell or interpreter)", "1 of 5 node tokens", "up to 2 per account", "new nodes are closed", "routing trusted-only"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("nodes lacks %q:\n%s", want, out)
 		}

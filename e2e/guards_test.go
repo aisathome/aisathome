@@ -149,6 +149,20 @@ func TestGuardStopsDangerousToolCalls(t *testing.T) {
 	if _, page := a.get(t, "/account", s2); !strings.Contains(page, "badge held") {
 		t.Fatalf("the volunteer's page should show the node as held: %s", page)
 	}
+	// The hold says which pattern fired, in the guard's words: nothing of the prompt or the call.
+	var hold *gateway.NodeHold
+	a.store.Refresh()
+	for _, p := range a.store.Snapshot().NodeHolds {
+		if p.Node == id {
+			hold = &p
+		}
+	}
+	if hold == nil || hold.Rule != "download-and-execute" || hold.Reason != "a download piped into a shell or interpreter" {
+		t.Fatalf("hold record: %+v", hold)
+	}
+	if file, _ := os.ReadFile(a.file); strings.Contains(string(file), promptMarker) || strings.Contains(string(file), "evil.example") {
+		t.Fatal("the accounts file holds prompt or answer content")
+	}
 	// A held node gets nothing; a trusted node answers instead.
 	a.startNode(ctx, "home", "home-token", toolEngine(t), 2)
 	a.waitNodes(t, 2)

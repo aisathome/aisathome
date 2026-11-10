@@ -8,6 +8,8 @@ package e2e
 import (
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -153,4 +155,91 @@ func TestOpsPageShowsHolds(t *testing.T) {
 		_, page = a.get(t, "/account/ops", admin)
 		return !strings.Contains(page, `id="holds"`) && !strings.Contains(page, "node-held") && strings.Contains(page, "Nodes online (1)")
 	})
+}
+
+// The page's "Clear hold" button: an admin sees the rule and reason, posts the form from the
+// page, and the node serves again, as with `accounts node-clear`. Nobody else can, no other
+// site can make the admin's browser do it, and a hold newer than the page stays. The clear is
+// logged with node, rule and the admin's pseudonym only.
+func TestOpsPageClearsAHold(t *testing.T) {
+	logs := &syncBuf{}
+	logSink = logs
+	defer func() { logSink = io.Discard }()
+	a := newAcctRigWith(t, 100, nil, withProjects)
+	admin, _ := a.signIn(t, 1)
+	user, _ := a.signIn(t, 2)
+	at := time.Date(2026, 11, 10, 9, 41, 7, 123456789, time.UTC)
+	if err := a.store.HoldNode(gateway.NodeHold{Node: "node-0", Operator: "op", Rule: "file-upload",
+		Reason: "netcat sending a file to a host and port", At: at}); err != nil {
+		t.Fatal(err)
+	}
+	var page string
+	waitFor(t, func() bool {
+		_, page = a.get(t, "/account/ops", admin)
+		return strings.Contains(page, "Nodes online (0) · 1 held")
+	})
+	for _, want := range []string{`action="/account/ops/clear"`, `name="node" value="node-0"`,
+		`name="at" value="` + at.Format(time.RFC3339Nano) + `"`, "Clear hold", "file-upload", "netcat sending a file to a host and port"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("the page lacks %q: %s", want, page)
+		}
+	}
+	held := func() bool {
+		a.store.Refresh()
+		return len(a.store.Snapshot().NodeHolds) == 1
+	}
+	post := func(session, form, site, origin string) (int, string) {
+		req, _ := http.NewRequest("POST", a.gw.URL+"/account/ops/clear", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if session != "" {
+			req.Header.Set("Cookie", session)
+		}
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		req.Header.Set("Origin", origin)
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(b)
+	}
+	form := "node=node-0&at=" + url.QueryEscape(at.Format(time.RFC3339Nano))
+	for _, c := range []struct {
+		name, session, form, site, origin string
+		code                              int
+	}{
+		{"signed out", "", form, "same-origin", "null", 403},
+		{"not an admin", user, form, "same-origin", "null", 403},
+		{"cross-site, Sec-Fetch-Site", admin, form, "cross-site", "https://evil.test", 403},
+		{"cross-site, Origin only", admin, form, "", "https://evil.test", 403},
+		{"a newer hold than the page showed", admin, "node=node-0&at=" + url.QueryEscape(at.Add(time.Second).Format(time.RFC3339Nano)), "same-origin", "null", 409},
+		{"no time", admin, "node=node-0", "same-origin", "null", 400},
+	} {
+		if code, body := post(c.session, c.form, c.site, c.origin); code != c.code || !held() {
+			t.Fatalf("%s: HTTP %d (want %d), held %v: %s", c.name, code, c.code, held(), body)
+		}
+	}
+	if strings.Contains(logs.String(), "node hold cleared") {
+		t.Fatal("a refused clear was logged as done")
+	}
+	// The admin's own form (a real browser sends Origin: null with Sec-Fetch-Site).
+	if code, body := post(admin, form, "same-origin", "null"); code != 303 || held() {
+		t.Fatalf("the admin's clear: HTTP %d, held %v: %s", code, held(), body)
+	}
+	waitFor(t, func() bool {
+		_, page = a.get(t, "/account/ops", admin)
+		return !strings.Contains(page, `id="holds"`) && strings.Contains(page, "Nodes online (1)")
+	})
+	l := logs.String()
+	if !strings.Contains(l, "node hold cleared on the ops page") || !strings.Contains(l, "node=node-0") ||
+		!strings.Contains(l, "rule=file-upload") || !strings.Contains(l, "by=acct-") || strings.Contains(l, "gh:1") {
+		t.Fatalf("the clear's log line: %s", l)
+	}
+	// Cleared twice: the page says there is nothing to clear.
+	if code, body := post(admin, form, "same-origin", "null"); code != 409 || !strings.Contains(body, "not held") {
+		t.Fatalf("clearing again: HTTP %d %s", code, body)
+	}
 }

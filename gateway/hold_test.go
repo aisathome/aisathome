@@ -57,9 +57,9 @@ func TestHeldNodeIsNotOnline(t *testing.T) {
 	h2.paused = true
 
 	at := time.Now()
-	s.g.holdNode(h, "file-upload", "req-1")
-	s.g.holdNode(h, "credential-path", "req-2") // the first hold stands, as in the accounts file
-	s.g.holdNode(h2, "download-and-execute", "req-3")
+	s.g.holdNode(h, guardHit{"file-upload", "netcat sending a file to a host and port"}, "req-1")
+	s.g.holdNode(h, guardHit{rule: "credential-path"}, "req-2") // the first hold stands, as in the accounts file
+	s.g.holdNode(h2, guardHit{rule: "download-and-execute"}, "req-3")
 
 	w := httptest.NewRecorder()
 	s.g.handleStats(w, httptest.NewRequest("GET", "/v1/stats", nil))
@@ -84,7 +84,8 @@ func TestHeldNodeIsNotOnline(t *testing.T) {
 	}
 
 	holds := s.g.holds()
-	if len(holds) != 2 || holds[0].Node != "n-heldnode" || holds[0].Rule != "file-upload" || holds[1].Node != "n-heldtoo" {
+	if len(holds) != 2 || holds[0].Node != "n-heldnode" || holds[0].Rule != "file-upload" ||
+		holds[0].Reason != "netcat sending a file to a host and port" || holds[1].Node != "n-heldtoo" {
 		t.Fatalf("holds %+v", holds)
 	}
 	var texts []string
@@ -104,7 +105,7 @@ func TestHeldNodeIsNotOnline(t *testing.T) {
 // Only held nodes: nothing can answer, and the warning says so.
 func TestOnlyHeldNodesWarnNoNodes(t *testing.T) {
 	s := newStickyRig(t)
-	s.g.holdNode(s.node("h", "vol", false, 0), "file-upload", "req")
+	s.g.holdNode(s.node("h", "vol", false, 0), guardHit{rule: "file-upload"}, "req")
 	found := false
 	for _, w := range s.g.healthOf("tauceti", time.Now()) {
 		found = found || w.Rule == ruleNoNodes

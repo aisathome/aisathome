@@ -387,13 +387,13 @@ func (rl *relay) delivered(data []byte) {
 // block stops an answer a guard flagged: nothing more of it reaches the client, and the
 // node gets no requests until the operator clears it. Unlike fail it records the attempt
 // even without output, as blocked and with the rule.
-func (rl *relay) block(rule string) error {
+func (rl *relay) block(hit guardHit) error {
 	rl.stop()
-	rl.flag = rule
+	rl.flag = hit.rule
 	rl.record(outcomeBlocked, protocol.Usage{CompletionTokens: rl.relayed}, true)
-	rl.g.holdNode(rl.n, rule, rl.reqID)
+	rl.g.holdNode(rl.n, hit, rl.reqID)
 	rl.sseError(map[string]any{"message": "the answer was stopped by a safety check"})
-	return &guardError{rule}
+	return &guardError{hit.rule}
 }
 
 // onChunk meters and relays (or collects) one piece of the answer. A non-nil error ends
@@ -431,14 +431,14 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		var big bool
 		outs, big = gd.filter(data)
 		if gd.violation != "" {
-			return rl.block(gd.violation)
+			return rl.block(streamHit(gd.violation))
 		}
 		if big {
 			return rl.fail("failed", "the node sent more output than requested", errTooMuchOutput)
 		}
 		if gd.finish != nil { // a finish_reason after tool calls: they are complete
-			if rule := gd.check(); rule != "" {
-				return rl.block(rule)
+			if hit := gd.check(); hit.rule != "" {
+				return rl.block(hit)
 			}
 			outs = append(outs, gd.release()...)
 		}
@@ -480,8 +480,8 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	// freed when run returns.
 	var released [][]byte // tool calls the guard held back until they were complete
 	if gd := rl.gd; gd != nil {
-		if rule := gd.check(); rule != "" {
-			return rl.block(rule)
+		if hit := gd.check(); hit.rule != "" {
+			return rl.block(hit)
 		}
 		released = gd.release()
 		if rl.flag = gd.textFlag(); rl.flag != "" { // text is only flagged, not stopped
@@ -492,8 +492,8 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	if !rl.req.clientStream {
 		ans = assemble(rl.reqID, rl.model, rl.collected, u, rl.req.logprobs)
 		if rl.gd != nil { // what the client gets, not the pieces the guard saw
-			if rule := checkAssembled(ans, rl.gd.req); rule != "" {
-				return rl.block(rule)
+			if hit := checkAssembled(ans, rl.gd.req); hit.rule != "" {
+				return rl.block(hit)
 			}
 		}
 	}

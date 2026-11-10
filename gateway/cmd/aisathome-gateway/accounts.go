@@ -208,6 +208,15 @@ func runAccounts(args []string, out, msg io.Writer) error {
 	return fmt.Errorf("unknown command %q", a[0])
 }
 
+// holdLine is a hold's rule, time and, when recorded, the guard's reason (fixed words, no content).
+func holdLine(q gateway.NodeHold) string {
+	s := q.Rule + " " + q.At.Format("2006-01-02 15:04")
+	if q.Reason != "" {
+		s += " (" + q.Reason + ")"
+	}
+	return s
+}
+
 // listNodes prints every account's node tokens, the held nodes and the node settings.
 func listNodes(out io.Writer, f gateway.AccountsFile) error {
 	held := map[string]gateway.NodeHold{}
@@ -222,7 +231,7 @@ func listNodes(out io.Writer, f gateway.AccountsFile) error {
 			total++
 			p := "-"
 			if q, ok := held[n.ID]; ok {
-				p = q.Rule + " " + q.At.Format("2006-01-02 15:04")
+				p = holdLine(q)
 				delete(held, n.ID)
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", n.ID, a.ID, n.Name, n.Created.Format("2006-01-02"), p)
@@ -230,7 +239,7 @@ func listNodes(out io.Writer, f gateway.AccountsFile) error {
 	}
 	for _, q := range f.NodeHolds { // held nodes of config tokens, or of revoked tokens
 		if _, ok := held[q.Node]; ok {
-			fmt.Fprintf(tw, "%s\t%s\t\t\t%s %s\n", q.Node, q.Operator, q.Rule, q.At.Format("2006-01-02 15:04"))
+			fmt.Fprintf(tw, "%s\t%s\t\t\t%s\n", q.Node, q.Operator, holdLine(q))
 		}
 	}
 	tw.Flush()

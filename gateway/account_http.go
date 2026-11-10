@@ -57,6 +57,7 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/theme", smallForm(g.handleTheme))
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
 	mux.HandleFunc("GET /account/ops", g.handleOps)
+	mux.HandleFunc("POST /account/ops/clear", smallForm(g.handleOpsClear))
 	mux.HandleFunc("GET /account/assets/{name}", handleAsset)
 }
 

@@ -91,8 +91,9 @@ type opsNode struct {
 
 // opsHold is one row of the held nodes card.
 type opsHold struct {
-	Node, Rule, Since, Ago string
-	Connected              bool
+	Node, Rule, Reason, Since, Ago string
+	At                             string // the hold's time exactly, for the clear form
+	Connected, Recorded            bool   // Recorded: in the accounts file, so it can be cleared
 }
 
 type opsData struct {
@@ -119,6 +120,7 @@ type opsData struct {
 	TaskExport  int // finished tasks waiting for the export to the ledger
 	Forbidden   bool
 	SignedOut   bool
+	Error       string // a clear that failed
 	ProjectList []string
 }
 
@@ -358,23 +360,39 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 			d.Online++
 		}
 	}
+	recorded := map[string]bool{}
+	if g.accounts != nil {
+		for _, p := range g.accounts.nodeHolds() {
+			recorded[p.Node] = true
+		}
+	}
 	for _, p := range g.holds() {
-		d.Holds = append(d.Holds, opsHold{Node: p.Node, Rule: p.Rule, Since: p.At.UTC().Format("01-02 15:04"),
-			Ago: ago(now.Sub(p.At)), Connected: connected[p.Node]})
+		d.Holds = append(d.Holds, opsHold{Node: p.Node, Rule: p.Rule, Reason: p.Reason, Since: p.At.UTC().Format("01-02 15:04"),
+			Ago: ago(now.Sub(p.At)), At: p.At.UTC().Format(time.RFC3339Nano), Connected: connected[p.Node], Recorded: recorded[p.Node]})
 	}
 	g.opsTasks(&d, project, now)
 	return d
 }
 
+// opsAdmin: id may use /account/ops (accounts.admins, and the account active).
+func (g *Gateway) opsAdmin(id string) bool {
+	return slices.Contains(g.acfg.Admins, id) && g.accounts.active(id)
+}
+
 // handleOps serves GET /account/ops: admin accounts only (403 for everyone else).
 func (g *Gateway) handleOps(w http.ResponseWriter, r *http.Request) {
+	g.opsPage(w, r, http.StatusOK, "")
+}
+
+// opsPage renders the page; with failed set, for a form post that failed: that status, the
+// error at the top and no reload (it would get the form's address).
+func (g *Gateway) opsPage(w http.ResponseWriter, r *http.Request, status int, failed string) {
 	id, ok := g.session(r)
 	d := opsData{}
-	status := http.StatusOK
 	switch {
 	case !ok:
 		d.SignedOut, status = true, http.StatusForbidden
-	case !slices.Contains(g.acfg.Admins, id) || !g.accounts.active(id):
+	case !g.opsAdmin(id):
 		d.Forbidden, status = true, http.StatusForbidden
 	default:
 		project := r.URL.Query().Get("project")
@@ -386,10 +404,13 @@ func (g *Gateway) handleOps(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		d = g.opsData(project, time.Now())
+		d.Error = failed
 	}
-	d.shell = shell{Title: "Operations", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account/ops", Head: opsHead}
+	d.shell = shell{Title: "Operations", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account/ops", Head: opsRefresh + opsHead}
 	if d.SignedOut || d.Forbidden {
 		d.shell.Head = ""
+	} else if failed != "" {
+		d.shell.Head = opsHead
 	}
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
@@ -402,10 +423,42 @@ func (g *Gateway) handleOps(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// opsHead reloads the page every minute (no script) and adds its styles: on a phone each table
-// row becomes a block of label/value lines (data-label).
-const opsHead template.HTML = `<meta http-equiv="refresh" content="60">
-<style>
+// handleOpsClear serves POST /account/ops/clear: an admin lets a held node serve again, as
+// `accounts node-clear` does (the same store change), after seeing its rule on the page. The
+// form names the hold the page showed, by node and time; a newer hold of the node stays. The
+// clear is logged without content: which node, which rule, by whom (the admin's pseudonym).
+func (g *Gateway) handleOpsClear(w http.ResponseWriter, r *http.Request) {
+	id, ok := g.session(r)
+	if !ok || !g.opsAdmin(id) {
+		g.opsPage(w, r, http.StatusForbidden, "")
+		return
+	}
+	if !g.sameOrigin(r) {
+		g.opsPage(w, r, http.StatusForbidden, "That form did not come from this page: nothing was cleared.")
+		return
+	}
+	node := r.FormValue("node")
+	at, err := time.Parse(time.RFC3339Nano, r.FormValue("at"))
+	if node == "" || len(node) > 64 || err != nil {
+		g.opsPage(w, r, http.StatusBadRequest, "The form lacks the node or its hold's time: nothing was cleared.")
+		return
+	}
+	p, err := g.accounts.clearHold(node, at)
+	if err != nil {
+		g.opsPage(w, r, http.StatusConflict, err.Error())
+		return
+	}
+	g.log.Info("node hold cleared on the ops page", "node", p.Node, "rule", p.Rule, "held_at", p.At, "by", g.pseudonym(id))
+	g.sweepNodes() // it serves now, not at the next sweep
+	http.Redirect(w, r, g.acfg.PublicURL+"/account/ops", http.StatusSeeOther)
+}
+
+// opsRefresh reloads the page every minute (no script); opsHead adds its styles: on a phone each
+// table row becomes a block of label/value lines (data-label).
+const opsRefresh template.HTML = `<meta http-equiv="refresh" content="60">
+`
+
+const opsHead template.HTML = `<style>
 .ops .wrap,main.wrap{max-width:72rem}
 .ops table td,.ops table th{font-size:.9rem}
 .warn-list{margin:0;padding-left:1.2rem}.warn-list li{margin:.3rem 0}
@@ -443,14 +496,16 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <div class="card err" role="alert"><p>This page is for the project's admins only.</p></div>
 {{else}}<div class="ops">
 <h1>Operations</h1>
+{{if .Error}}<div class="card err" role="alert" id="ops-error"><p>{{.Error}}</p></div>{{end}}
 <p class="mut small">Project <strong>{{.Project}}</strong>{{if .Received}} · runner status received {{.Received}} (made {{.Generated}} UTC){{end}} · page at {{.Now}} UTC, reloads every minute.</p>
 {{if .Warnings}}<div class="card err" role="alert" id="warnings"><h2>Warnings</h2><ul class="warn-list">{{range .Warnings}}<li data-rule="{{.Rule}}">{{.Text}}</li>{{end}}</ul></div>
 {{else}}<div class="card ok" id="warnings"><p>No warnings.</p></div>{{end}}
 {{if .Holds}}<div class="card" id="holds"><h2>Held nodes ({{len .Holds}})</h2>
-<p class="mut small">A guard stopped their answers: they serve nothing until cleared with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>.</p>
-<div class="table-wrap"><table><tr><th>Node</th><th>Rule</th><th>Held since</th></tr>
-{{range .Holds}}<tr data-hold="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if not .Connected}} <span class="badge offline">offline</span>{{end}}</td><td data-label="Rule">{{.Rule}}</td>
-<td data-label="Held since">{{.Since}} UTC, {{.Ago}}</td></tr>{{end}}</table></div></div>{{end}}
+<p class="mut small">A guard stopped their answers: they serve nothing until cleared, here after reading the rule, or with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>.</p>
+<div class="table-wrap"><table><tr><th>Node</th><th>Rule</th><th>Held since</th><th></th></tr>
+{{range .Holds}}<tr data-hold="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if not .Connected}} <span class="badge offline">offline</span>{{end}}</td><td data-label="Rule">{{.Rule}}{{if .Reason}}<br><span class="mut small" data-reason>{{.Reason}}</span>{{end}}</td>
+<td data-label="Held since">{{.Since}} UTC, {{.Ago}}</td>
+<td data-label="Clear">{{if .Recorded}}<form method="post" action="/account/ops/clear"><input type="hidden" name="node" value="{{.Node}}"><input type="hidden" name="at" value="{{.At}}"><button class="btn ghost" aria-label="Clear the {{.Rule}} hold of {{.Node}}">Clear hold</button></form>{{else}}<span class="mut small">not recorded yet</span>{{end}}</td></tr>{{end}}</table></div></div>{{end}}
 {{with .Status}}
 <div class="card"><div class="card-head"><h2>Runner</h2>{{if .Runner.Paused}}<span class="badge paused">paused</span>{{end}}</div>
 <div class="kvs"><span>Queue service: <strong>{{.Runner.Service}}</strong></span><span>Free disk: <strong>{{printf "%.0f" .Runner.FreeGB}} GB</strong></span>

