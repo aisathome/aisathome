@@ -50,7 +50,7 @@ const (
 // Event is one entry in the agent's recent history: what happened, never request content.
 type Event struct {
 	Time  time.Time `json:"time"`
-	Kind  string    `json:"kind"` // started, connected, disconnected, refused, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested
+	Kind  string    `json:"kind"` // started, connected, disconnected, refused, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested, watchdog
 	Text  string    `json:"text,omitempty"`
 	Count int       `json:"count,omitempty"` // repeats folded into this entry (e.g. failed reconnects)
 }
@@ -240,6 +240,7 @@ func (a *Agent) setPaused(p bool) {
 		return
 	}
 	a.ps.Paused = p
+	a.linkAt = a.now() // the watchdog counts from here, not from before the pause
 	if p {
 		a.eventLocked("paused", "")
 	} else {

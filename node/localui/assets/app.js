@@ -21,7 +21,7 @@
 		return `${Math.floor(s / 86400)}d`;
 	};
 	const words = { serving: 'Serving', connected: 'Connected', paused: 'Paused', disconnected: 'Disconnected', offline: 'No agent' };
-	const badKinds = new Set(['disconnected', 'refused', 'engine_unhealthy', 'request_failed']);
+	const badKinds = new Set(['disconnected', 'refused', 'engine_unhealthy', 'request_failed', 'watchdog']);
 
 	let last = null;
 	let timer = null;

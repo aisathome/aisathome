@@ -63,6 +63,19 @@ type Config struct {
 	// its protocol version (the volunteer has to update the agent, or the gateway its range).
 	// Default 10 min.
 	RefusedRetry time.Duration `json:"-"`
+	// PingInterval and PingTimeout check that the gateway still answers: a WebSocket ping
+	// every PingInterval must get its pong within PingTimeout, or the node drops the
+	// connection and reconnects. Without it a connection whose far end went silent but kept
+	// the TCP connection open left the node waiting for 16 hours (2026-11-10). Defaults 15 s
+	// and 30 s; a negative PingInterval turns the pings off (tests only).
+	PingInterval time.Duration `json:"-"`
+	PingTimeout  time.Duration `json:"-"`
+	// Watchdog is how long the gateway link may stay dead (no message and no pong from the
+	// gateway) before the agent exits with an error, for its service manager to restart it.
+	// It does not count while the node is paused, while it stays away from the gateway on
+	// purpose (engine unhealthy, or waiting after a refusal) or while it stops. Default 5 min;
+	// negative turns it off (AISATHOME_WATCHDOG=off).
+	Watchdog time.Duration `json:"-"`
 
 	// Local UI and state (see status.go). StateFile keeps the pause switch, counters and
 	// events across restarts ("" = memory only). RestartTrigger is a file that a root-owned
@@ -94,6 +107,10 @@ type Agent struct {
 	lastRestart time.Time
 	push        func() // sends a heartbeat now; nil while disconnected
 	now         func() time.Time
+	// The watchdog's view (watchdog.go): when the gateway link last proved to work (or a
+	// deliberate break ended), and whether the node stays away from the gateway on purpose.
+	linkAt time.Time
+	away   bool
 
 	saveMu     sync.Mutex
 	saveFailed bool
@@ -118,6 +135,15 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	}
 	if cfg.RefusedRetry == 0 {
 		cfg.RefusedRetry = 10 * time.Minute
+	}
+	if cfg.PingInterval == 0 {
+		cfg.PingInterval = 15 * time.Second
+	}
+	if cfg.PingTimeout == 0 {
+		cfg.PingTimeout = 30 * time.Second
+	}
+	if cfg.Watchdog == 0 {
+		cfg.Watchdog = DefaultWatchdog
 	}
 	if id, ok := TokenNodeID(cfg.Token); ok && cfg.NodeID != id {
 		if cfg.NodeID != "" {
@@ -151,8 +177,15 @@ func TokenNodeID(token string) (string, bool) {
 }
 
 // Run connects to the gateway and serves until ctx is cancelled, reconnecting with backoff.
+// It also returns, with a *LinkDeadError, when the watchdog finds the gateway link dead for
+// longer than Config.Watchdog (watchdog.go).
 func (a *Agent) Run(ctx context.Context) error {
 	a.event("started", AgentVersion())
+	return a.watch(ctx, a.serve)
+}
+
+// serve is Run's reconnect loop.
+func (a *Agent) serve(ctx context.Context) error {
 	backoff := time.Second
 	for {
 		// Only offer capacity while the engine answers: a hung engine (e.g. after a CUDA
@@ -173,6 +206,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		var refused *RefusedError
 		if errors.As(err, &refused) {
 			wait = a.cfg.RefusedRetry
+			a.setAway(true) // a restart would not help: the agent or the gateway must change
 			a.log.Error("the gateway refused this node agent's protocol version",
 				"reason", refused.Reason, "protocol", protocol.Version, "agent", AgentVersion(), "retry_in", wait)
 			a.mu.Lock()
@@ -189,6 +223,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-time.After(wait):
 		}
+		a.setAway(false)
 		// Capped at 15 s: after an outage a node is back within seconds of the gateway
 		// (a 1-minute cap kept nodes away for up to a minute on 2026-10-08).
 		if backoff < 15*time.Second {
@@ -221,6 +256,7 @@ func (a *Agent) waitHealthy(ctx context.Context) error {
 	logged := false
 	for !a.healthy(ctx) {
 		if !logged {
+			a.setAway(true) // a restart of the agent would not heal the engine
 			a.log.Warn("engine not healthy; staying away from the gateway until it is", "upstream", a.cfg.Upstream)
 			a.event("engine_unhealthy", "waiting for the engine before connecting")
 			logged = true
@@ -232,6 +268,7 @@ func (a *Agent) waitHealthy(ctx context.Context) error {
 		}
 	}
 	if logged {
+		a.setAway(false)
 		a.log.Info("engine healthy again")
 		a.event("engine_healthy", "")
 	}
@@ -241,7 +278,11 @@ func (a *Agent) waitHealthy(ctx context.Context) error {
 func (a *Agent) session(ctx context.Context) error {
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+a.cfg.Token)
-	c, _, err := websocket.Dial(ctx, a.cfg.GatewayURL, &websocket.DialOptions{HTTPHeader: h})
+	// The handshake (dial, upgrade, hello, welcome) is bounded: a gateway, or something in
+	// between, that accepts the connection and then says nothing must not hold the node.
+	hctx, hcancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer hcancel()
+	c, _, err := websocket.Dial(hctx, a.cfg.GatewayURL, &websocket.DialOptions{HTTPHeader: h})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -266,17 +307,20 @@ func (a *Agent) session(ctx context.Context) error {
 		return err
 	}
 	var welcome protocol.Msg
-	if err := read(ctx, c, &welcome); err != nil || welcome.Type != protocol.TypeWelcome {
+	if err := read(hctx, c, &welcome); err != nil || welcome.Type != protocol.TypeWelcome {
 		var ce websocket.CloseError
 		if errors.As(err, &ce) && ce.Code == protocol.CloseUnsupportedProtocol {
 			return &RefusedError{Reason: ce.Reason}
 		}
 		return fmt.Errorf("no welcome from gateway: %v", err)
 	}
+	hcancel()
+	a.linkAlive()
 	// A gateway from before protocol versions sends none: it speaks version 1 with everyone.
 	a.log.Info("connected to gateway", "gateway", welcome.GatewayID, "protocol", cmp.Or(welcome.ProtocolVersion, protocol.Unversioned))
 
-	sctx, stop := context.WithCancel(ctx)
+	sctx, stopCause := context.WithCancelCause(ctx)
+	stop := func() { stopCause(nil) }
 	defer stop()
 	heartbeat := func() error {
 		a.mu.Lock()
@@ -322,6 +366,9 @@ func (a *Agent) session(ctx context.Context) error {
 			}
 		}
 	}()
+	if a.cfg.PingInterval > 0 {
+		go a.ping(sctx, c, stopCause)
+	}
 	go func() { // heartbeats
 		t := time.NewTicker(a.cfg.Heartbeat)
 		defer t.Stop()
@@ -341,8 +388,12 @@ func (a *Agent) session(ctx context.Context) error {
 	for {
 		var m protocol.Msg
 		if err := read(sctx, c, &m); err != nil {
+			if cause := context.Cause(sctx); cause != nil && !errors.Is(cause, context.Canceled) {
+				return cause // e.g. no pong: say why rather than "context canceled"
+			}
 			return err
 		}
+		a.linkAlive()
 		switch m.Type {
 		case protocol.TypeRequest:
 			a.mu.Lock()
@@ -372,6 +423,41 @@ func (a *Agent) session(ctx context.Context) error {
 		}
 	}
 }
+
+// handshakeTimeout bounds connecting to the gateway, up to its welcome.
+const handshakeTimeout = 30 * time.Second
+
+// ping checks that the gateway still answers, until sctx ends. The node only ever learnt of a
+// dead link from a failed write, and a write succeeds as long as something still accepts the
+// TCP data: a connection whose far end stopped answering without closing left the node
+// waiting for the next request for 16 hours (2026-11-10). A pong needs the gateway itself to
+// read and answer, so a missing one ends the session with errNoPong as its cause.
+func (a *Agent) ping(sctx context.Context, c *websocket.Conn, stop context.CancelCauseFunc) {
+	t := time.NewTicker(a.cfg.PingInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-sctx.Done():
+			return
+		case <-t.C:
+		}
+		pctx, cancel := context.WithTimeout(sctx, a.cfg.PingTimeout)
+		err := c.Ping(pctx)
+		cancel()
+		if sctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			a.log.Warn("the gateway did not answer a ping; reconnecting", "timeout", a.cfg.PingTimeout, "err", err)
+			stop(fmt.Errorf("%w within %s", errNoPong, a.cfg.PingTimeout))
+			return
+		}
+		a.linkAlive()
+	}
+}
+
+// errNoPong ends a session whose gateway did not answer a ping.
+var errNoPong = errors.New("no pong from the gateway")
 
 // RefusedError: the gateway does not accept this agent's protocol version. Reason is the
 // gateway's text for the volunteer (untrusted; shown as text only).

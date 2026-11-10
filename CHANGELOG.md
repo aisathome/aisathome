@@ -118,6 +118,16 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A node no longer waits forever on a gateway connection that went silent.** On 2026-11-10
+  a node's connection stopped bringing anything from the gateway while its own writes still
+  went through, and the agent waited 16 hours for the next request without noticing. The agent
+  now pings the gateway every 15 s and reconnects when no pong comes within 30 s, and
+  connecting, up to the gateway's welcome, gives up after 30 s. As a last resort a watchdog
+  ends the agent with an error when it has had no working link to the gateway for 5 minutes,
+  so that systemd, the Windows service or a start script restarts it. Time paused, while the
+  engine is unhealthy, or after the gateway refused the agent's version does not count.
+  `AISATHOME_WATCHDOG` changes the limit (`10m`, at least `1m`) or turns it off (`off`). (node)
+
 - **Held nodes no longer count as online.** `/v1/stats` has a new `nodes.held`; `online`, `slots`,
   `busy`, `paused` and `models` leave held nodes out, as do the leaderboard's count and the daily
   history from now on. A hold raises a `node-held` warning with its rule and time, and

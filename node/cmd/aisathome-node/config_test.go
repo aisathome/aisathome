@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/aisathome/aisathome/node"
 )
@@ -57,6 +58,23 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if _, err := loadConfig(writeConfig(t, `{"node_id":`), env(nil), node.LinuxLayout); err == nil {
 		t.Fatal("a broken config loaded")
+	}
+}
+
+// AISATHOME_WATCHDOG sets the watchdog: unset keeps the default, "off" turns it off, and a
+// limit short enough to catch a normal reconnect is refused.
+func TestWatchdogFromEnvironment(t *testing.T) {
+	p := writeConfig(t, `{"node_id":"n1"}`)
+	for v, want := range map[string]time.Duration{"": 0, "off": -1, "0": -1, "10m": 10 * time.Minute, " 2m ": 2 * time.Minute} {
+		cfg, err := loadConfig(p, env(map[string]string{"AISATHOME_WATCHDOG": v}), node.LinuxLayout)
+		if err != nil || cfg.Watchdog != want {
+			t.Errorf("AISATHOME_WATCHDOG=%q: %v, %v; want %v", v, cfg.Watchdog, err, want)
+		}
+	}
+	for _, v := range []string{"30s", "-5m", "soon"} {
+		if _, err := loadConfig(p, env(map[string]string{"AISATHOME_WATCHDOG": v}), node.LinuxLayout); err == nil {
+			t.Errorf("AISATHOME_WATCHDOG=%q accepted", v)
+		}
 	}
 }
 

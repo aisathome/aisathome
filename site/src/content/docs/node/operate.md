@@ -158,5 +158,14 @@ the installer downloads the right one.
 and that the machine can reach `api.aisathome.org` on port 443. A rejected token shows up
 in `journalctl -u aisathome-node`.
 
+**`watchdog: no word from the gateway`** in `journalctl -u aisathome-node`. The agent pings
+the gateway every 15 seconds and reconnects when an answer does not come within 30. If it has
+still had no working link after 5 minutes (time paused or with the engine unhealthy does not
+count), it exits with an error and systemd starts it again 5 seconds later. Now and then, for
+example during a gateway outage, this is harmless; if it repeats, the machine cannot keep a
+connection to `api.aisathome.org`. To change the limit or turn it off, add
+`Environment=AISATHOME_WATCHDOG=10m` (at least `1m`, or `off`) with
+`sudo systemctl edit aisathome-node`.
+
 **After suspend.** The node stops before suspend and starts again after resume. If the GPU
 was reset, the watchdog restarts `llama-server` within a few minutes.

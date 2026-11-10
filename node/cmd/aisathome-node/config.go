@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/aisathome/aisathome/node"
 )
@@ -31,6 +33,18 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 		if v := getenv(env); v != "" {
 			*field = v
 		}
+	}
+	// The watchdog (node.Config.Watchdog): a duration such as "10m", or "off".
+	switch v := strings.TrimSpace(getenv("AISATHOME_WATCHDOG")); v {
+	case "":
+	case "off", "0":
+		cfg.Watchdog = -1
+	default:
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute {
+			return cfg, fmt.Errorf("AISATHOME_WATCHDOG must be a duration of at least 1m (such as 10m) or \"off\", not %q", v)
+		}
+		cfg.Watchdog = d
 	}
 	// A Windows service has no drop-in: its state lives in the agent's folder. On Linux the
 	// layout has no state file, so the state stays in memory unless configured.
