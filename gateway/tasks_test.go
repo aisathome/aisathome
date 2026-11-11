@@ -256,6 +256,80 @@ func TestTaskInterruptedWithinClass(t *testing.T) {
 	}
 }
 
+// A task's order (owner 2026-11-11, prove2me's trial plan: calibration, then a comparison set, then
+// new leaves) places it within its class, lower first, after the class and after interrupted work;
+// equal orders go by age. It never lifts a task above a lower class. Out of range is refused, and a
+// repeated create with another order is another task's content (409).
+func TestTaskOrderField(t *testing.T) {
+	r := newTaskRig(t, "")
+	mk := func(id, kind string, order int) {
+		t.Helper()
+		n := newTask(id, kind)
+		if order != 0 {
+			n["order"] = order
+		}
+		if w, _ := r.call("POST", tasksPath, testProjectKey, n); w.Code != http.StatusCreated {
+			t.Fatalf("create %s: HTTP %d %s", id, w.Code, w.Body)
+		}
+	}
+	mk("N1", "attempt", 2)  // a new leaf
+	mk("K1", "attempt", 1)  // the comparison set
+	mk("C1", "attempt", -1) // calibration
+	mk("N2", "attempt", 2)
+	mk("K2", "attempt", 1)
+	mk("Z1", "attempt", 0) // no order: 0
+	mk("O1", "other", -5)  // a lower order in a later class stays in its class
+	r.createFix("F1", "fix_round", "review")
+	if got, want := r.listed("?state=queued"), "F1 C1 Z1 K1 K2 N1 N2 O1"; got != want {
+		t.Fatalf("queue %q, want %q", got, want)
+	}
+	if got := r.g.tasks.get("tauceti", "K1").Order; got != 1 {
+		t.Errorf("K1 order %d, want 1", got)
+	}
+	// claimed in that order; a requeued task goes first in its class whatever its order
+	if id, _ := r.claim("w1", 60); id != "F1" {
+		t.Fatalf("claimed %q, want F1", id)
+	}
+	if id, _ := r.claim("w1", 60); id != "C1" {
+		t.Fatalf("claimed %q, want C1", id)
+	}
+	if id, _ := r.claim("w1", 60); id != "Z1" {
+		t.Fatalf("claimed %q, want Z1", id)
+	}
+	n2, lease2 := "", ""
+	for _, want := range []string{"K1", "K2", "N1", "N2"} {
+		got, l := r.claim("w1", 60)
+		if got != want {
+			t.Fatalf("claimed %q, want %q", got, want)
+		}
+		n2, lease2 = got, l
+	}
+	if w := r.lease(n2, "fail", "w1", lease2, map[string]any{"requeue": true, "reason": "spot stop"}); w.Code != 200 {
+		t.Fatalf("requeue: HTTP %d %s", w.Code, w.Body)
+	}
+	mk("C2", "attempt", -3)
+	if got, want := r.listed("?state=queued"), "N2 C2 O1"; got != want {
+		t.Fatalf("after a requeue: queue %q, want %q", got, want)
+	}
+	// bounds and idempotence
+	for _, bad := range []int{maxTaskOrder + 1, -maxTaskOrder - 1} {
+		n := newTask("B1", "attempt")
+		n["order"] = bad
+		if w, _ := r.call("POST", tasksPath, testProjectKey, n); w.Code != http.StatusBadRequest {
+			t.Errorf("order %d: HTTP %d, want 400", bad, w.Code)
+		}
+	}
+	n := newTask("K1", "attempt")
+	n["order"] = 1
+	if w, _ := r.call("POST", tasksPath, testProjectKey, n); w.Code != http.StatusOK {
+		t.Errorf("repeated create, same order: HTTP %d %s", w.Code, w.Body)
+	}
+	n["order"] = 3
+	if w, _ := r.call("POST", tasksPath, testProjectKey, n); w.Code != http.StatusConflict {
+		t.Errorf("repeated create, other order: HTTP %d, want 409", w.Code)
+	}
+}
+
 // max_class: a worker with an interrupted first attempt asks only for what goes before it.
 func TestTaskClaimMaxClass(t *testing.T) {
 	r := newTaskRig(t, "")

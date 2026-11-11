@@ -31,7 +31,9 @@
 //	POST /v1/projects/{id}/tasks/{task}/continue    schedule the round waiting on a needs-operator task, with a note if any
 //
 // Claim order (the owner's work priority, 2026-10-29): by class, then within a class tasks that
-// were leased before and came back (an expired lease, a worker's requeue), then oldest first.
+// were leased before and came back (an expired lease, a worker's requeue), then by the task's
+// `order` (lower first, default 0; a project that runs its tasks in a planned sequence, such as
+// prove2me's calibration leaves before its comparison set, owner 2026-11-11), then oldest first.
 // Classes: 1 fix after a failed TauCeti review, 2 fix after a failed internal Codex review, 3 fix
 // after a failed internal Qwen review, 4 a Qwen review, 5 first attempts, 6 other work. A fix
 // round's findings_source says which of 1-3 (none: 1); a follow-up takes the class of the round
@@ -125,6 +127,8 @@ const (
 	// which holds its checkpoint (owner 2026-10-27: about 10 minutes).
 	affinityWindow      = 10 * time.Minute
 	maxTaskReviewDetail = 16 << 10
+	// maxTaskOrder bounds a task's order (Task.Order) either way.
+	maxTaskOrder = 1_000_000
 )
 
 // The claim classes, lower first (the owner's work priority, 2026-10-29).
@@ -220,7 +224,10 @@ type Task struct {
 	// "given_back" (any claim continues it) or "expired" (only PreferWorker's, until PreferUntil).
 	Interrupted string `json:"interrupted,omitempty"`
 	// Requeued: the task was leased before and came back to the queue; it is claimed first.
-	Requeued  bool        `json:"requeued,omitempty"`
+	Requeued bool `json:"requeued,omitempty"`
+	// Order: the client's place for the task within its class, lower first (claimOrder); 0 by
+	// default. Rounds and reviews the loop makes have 0.
+	Order     int         `json:"order,omitempty"`
 	Seq       int64       `json:"seq"` // creation order within the project
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
@@ -321,6 +328,7 @@ type taskNew struct {
 	PR        int             `json:"pr,omitempty"`
 	CreatedBy string          `json:"created_by"`
 	MaxTries  int             `json:"max_tries,omitempty"`
+	Order     int             `json:"order,omitempty"` // Task's
 	// FindingsSource and Parent: Task's.
 	FindingsSource string `json:"findings_source,omitempty"`
 	Parent         string `json:"parent,omitempty"`

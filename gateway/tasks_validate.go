@@ -141,6 +141,9 @@ func (n *taskNew) validate() error {
 	if n.PR < 0 || n.PR > 999999999 {
 		errs = append(errs, errors.New("pr: a pull request number"))
 	}
+	if n.Order < -maxTaskOrder || n.Order > maxTaskOrder {
+		errs = append(errs, fmt.Errorf("order: %d to %d (lower is claimed first)", -maxTaskOrder, maxTaskOrder))
+	}
 	if n.MaxTries < 0 || n.MaxTries > maxMaxTries {
 		errs = append(errs, fmt.Errorf("max_tries: 1 to %d (0: %d)", maxMaxTries, defaultMaxTries))
 	}

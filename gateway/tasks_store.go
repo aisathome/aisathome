@@ -360,7 +360,7 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	if t, ok := p.byID[n.ID]; ok {
 		if t.Kind != n.Kind || t.Title != n.Title || !bytes.Equal(t.Spec, spec) || t.BaseRef != n.BaseRef ||
 			t.PR != n.PR || t.CreatedBy != n.CreatedBy || t.MaxTries != maxTries ||
-			t.FindingsSource != n.FindingsSource || t.Parent != n.Parent {
+			t.FindingsSource != n.FindingsSource || t.Parent != n.Parent || t.Order != n.Order {
 			return nil, false, terr(http.StatusConflict, "task %s exists with other content; a new task needs a new id", n.ID)
 		}
 		return t.view(true), false, nil
@@ -371,7 +371,7 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	p.seq++
 	t := &Task{ID: n.ID, Project: project, Kind: n.Kind, Class: taskClass(n.Kind, n.FindingsSource), Title: n.Title, Spec: spec,
 		BaseRef: n.BaseRef, PR: n.PR, CreatedBy: n.CreatedBy, State: TaskQueued, MaxTries: maxTries, Seq: p.seq, CreatedAt: now,
-		FindingsSource: n.FindingsSource, Parent: n.Parent, Chain: chainFor(n.ID, n.Parent)}
+		FindingsSource: n.FindingsSource, Parent: n.Parent, Chain: chainFor(n.ID, n.Parent), Order: n.Order}
 	t.event(now, "created", "", n.CreatedBy)
 	if t.Kind == "fix_round" { // a person's round: above the automatic limit, and counted apart
 		if err := s.countPersonsRound(p, t, now); err != nil {
@@ -405,7 +405,8 @@ func admit(p *projectTasks) error {
 }
 
 // claimOrder sorts queued tasks: class, then requeued first within it (the owner's rule (a):
-// interrupted work resumes first only within its own class), then creation order.
+// interrupted work resumes first only within its own class), then the client's order, then
+// creation order.
 func claimOrder(ts []*Task) {
 	sort.Slice(ts, func(i, j int) bool {
 		a, b := ts[i], ts[j]
@@ -414,6 +415,9 @@ func claimOrder(ts []*Task) {
 		}
 		if a.Requeued != b.Requeued {
 			return a.Requeued
+		}
+		if a.Order != b.Order {
+			return a.Order < b.Order
 		}
 		return a.Seq < b.Seq
 	})

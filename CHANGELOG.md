@@ -35,6 +35,11 @@ and **(site)** are live on aisathome.org once deployed.
   clocks and power limits. Tested without a GPU on Linux and Windows. A test runs install.sh's
   tier functions and fails when they and the Go table disagree, so the two platforms keep the
   same tiers. Not used by the agent yet; Linux installs are unchanged. (node)
+- **A science task can carry an `order`.** Within its claim class, after interrupted work, a
+  queued task with a lower `order` (an integer, default 0) is claimed first, then oldest first as
+  before. A project that runs its tasks in a planned sequence sets it at create, for example
+  prove2me's trials: two calibration leaves, then a fixed comparison set, then new leaves. It
+  never lifts a task above a lower class, and rounds and reviews the loop makes have 0. (gateway)
 - **Interruptions no longer use up a science task's tries.** A task its worker gives back
   (`.../fail` with `"requeue": true`, as the runner does when its spot instance stops) keeps its
   try: the next claim continues it and counts one `interruptions` instead. A lease that expires

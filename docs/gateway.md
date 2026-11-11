@@ -130,6 +130,13 @@ their answers carry the served-by headers (above). Projects are read at start an
 removing a hash revokes the key. A config with an invalid project does not start (on SIGHUP the
 old config stays).
 
+A task is created with `kind`, `spec` (an object the worker reads, at most 64 KiB) and,
+optionally, `order`: within its claim class, after tasks that came back from a lease, lower
+`order` is claimed first (default 0), then oldest first. A project that runs a planned sequence
+sets it, as prove2me's trials do (calibration leaves first, then a comparison set, then new
+leaves). A project with neither `auto_rounds` nor `review_loop` gets nothing from the gateway at
+a task's end: its worker reports `complete` or `fail` and that is all.
+
 ### The task queue when the disk fails
 
 A project's task queue lives in `state_dir` (`tasks-<project>/` and `task-chains-<project>/`), one
