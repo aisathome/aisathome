@@ -224,6 +224,7 @@ class Sandbox:
         sandbox.drop_overlays(self.volumes())
 
     def drop(self):
-        """Everything of the session on the host: container, network, volumes and their files."""
+        """Everything of the session on the host: container, network, volumes and their files, also the
+        root-owned directories overlayfs leaves (removed as root in a container of the recipe's image)."""
         self.close()
-        sandbox.drop_overlays([], self.state / "overlay")
+        sandbox.drop_overlays([], self.state / "overlay", image=self.recipe.image)

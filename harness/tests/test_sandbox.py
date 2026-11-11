@@ -24,6 +24,7 @@ class FakeDocker:
 
     def __init__(self):
         self.calls, self.nets, self.containers = [], {}, {}
+        self.root_rm = []
         self.ip = 10
 
     def __call__(self, *args, check=True):
@@ -67,6 +68,18 @@ class FakeDocker:
         if a[0] == "ps":
             want = a[a.index("--filter") + 1].split("=", 1)[1]
             return ok("\n".join(n for n, c in self.containers.items() if want in c["labels"]))
+        if a[0] == "run" and "--entrypoint" in a and a[a.index("--entrypoint") + 1] == "rm":
+            # remove_as_root: root in the container may enter and empty mode-000 directories
+            self.root_rm.append(a)
+            src = next(x for x in a if x.startswith("type=bind,")).split(",")[1].split("=", 1)[1]
+            target = Path(src) / a[-1].removeprefix("/drop/")
+            if target.exists():
+                os.chmod(target, 0o700)
+                for d, dirs, _ in os.walk(target):
+                    for x in dirs:
+                        os.chmod(os.path.join(d, x), 0o700)
+                shutil.rmtree(target)
+            return ok()
         if a[0] == "run":
             name = a[a.index("--name") + 1]
             labels = dict(x.split("=", 1) for x in (a[i + 1] for i, v in enumerate(a) if v == "--label"))
@@ -361,6 +374,61 @@ class Recipe(unittest.TestCase):
         sb.close()
         self.assertNotIn(sb.network, self.d.nets)
         self.assertIn(("volume", "rm", "-f", sb.volumes()[0]), [c[:4] for c in self.d.calls])
+
+    def _overlay_residue(self, sb) -> Path:
+        """What a spot reboot mid-session leaves: overlayfs's work/work, mode 000 with a file in it (root's
+        on the runner; here the test user's, whom mode 000 locks out of listing it just the same)."""
+        w = sb.state / "overlay" / "0" / "work" / "work"
+        (w / "incompat").mkdir(parents=True)
+        (w / "incompat" / "volatile").write_text("x")
+        (sb.state / "overlay" / "0" / "upper").mkdir(parents=True)
+        os.chmod(w, 0)
+        self.addCleanup(lambda: w.exists() and os.chmod(w, 0o755))
+        return w
+
+    def test_drop_removes_root_owned_overlay_leftovers(self):
+        """2026-11-10, prove2me O02: after a spot reboot, prepare's removal of the state directory hit the
+        root-owned work/work that drop left behind (PermissionError), and the whole run ended. drop removes
+        it as root, in a container with only DAC_OVERRIDE, no network, and only the state directory mounted."""
+        sb = self.sandbox("proj/O02", "O02")
+        self._overlay_residue(sb)
+        sb.drop()
+        self.assertFalse((sb.state / "overlay").exists())
+        shutil.rmtree(sb.state)                 # what prepare does next: no PermissionError
+        (a,) = self.d.root_rm
+        self.assertEqual(a[a.index("--network") + 1], "none")
+        self.assertEqual(a[a.index("-u") + 1], "0:0")
+        self.assertIn("--cap-drop=ALL", a)
+        self.assertEqual([x for x in a if x.startswith("--cap-add")], ["--cap-add=DAC_OVERRIDE"])
+        self.assertIn("no-new-privileges", a)
+        self.assertIn(f"type=bind,src={sb.state.resolve()},dst=/drop", a)
+        self.assertEqual(a[-4:], ["-rf", "--one-file-system", "--", "/drop/overlay"])
+        self.assertEqual(a[a.index("--entrypoint") + 2], "img:1")
+
+    def test_drop_without_leftovers_needs_no_root(self):
+        sb = self.sandbox("proj/O03", "O03")
+        (sb.state / "overlay" / "0" / "upper").mkdir(parents=True)
+        sb.drop()
+        self.assertFalse((sb.state / "overlay").exists())
+        self.assertEqual(self.d.root_rm, [])
+
+    def test_drop_overlays_without_an_image_leaves_the_residue(self):
+        sb = self.sandbox("proj/O04", "O04")
+        w = self._overlay_residue(sb)
+        sandbox.drop_overlays([], sb.state / "overlay")
+        self.assertTrue(os.path.lexists(w))
+        self.assertEqual(self.d.root_rm, [])
+
+    def test_remove_as_root_unlinks_a_symlink_and_never_follows_it(self):
+        target = self.r / "elsewhere"
+        target.mkdir()
+        (target / "keep").write_text("k")
+        link = self.r / "state-link"
+        link.symlink_to(target)
+        self.assertTrue(sandbox.remove_as_root(link, "img:1"))
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue((target / "keep").exists())
+        self.assertEqual(self.d.root_rm, [])
 
     def test_mount_sources_in_the_tree_cannot_point_at_the_host(self):
         """The model moves .lake aside and leaves symlinks to host directories where the recipe mounts

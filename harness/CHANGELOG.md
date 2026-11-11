@@ -7,6 +7,16 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+### Fixed
+
+- `Sandbox.drop` removes the root-owned, mode-000 `work/work` directories that overlayfs leaves in a
+  session's state: after a spot reboot in the middle of a session they still held files, the ordinary
+  removal skipped them silently, and the project's next removal of the state directory failed with a
+  PermissionError (prove2me, 2026-11-10: one leaf's prepare ended a whole run). What an ordinary
+  removal leaves goes by `sandbox.remove_as_root`: `rm -rf --one-file-system` as root in a container
+  of the recipe's image, with no network, only DAC_OVERRIDE, no new privileges and only the state
+  directory mounted. `drop_overlays` does it when given an image; without one it behaves as before.
+
 ## [0.1.2]
 
 ### Security

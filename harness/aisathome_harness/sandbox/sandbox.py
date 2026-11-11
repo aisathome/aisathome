@@ -282,12 +282,39 @@ def overlay_mount(volume: str, lower: Path, state: Path, target: Path) -> list[s
     return ["--mount", f"type=volume,src={volume},dst={target},volume-nocopy"]
 
 
-def drop_overlays(volumes: list[str], state_root: Path | None = None):
-    """Remove overlay volumes and, with `state_root`, their files (disk)."""
+def drop_overlays(volumes: list[str], state_root: Path | None = None, image: str | None = None):
+    """Remove overlay volumes and, with `state_root`, their files (disk). overlayfs leaves root-owned,
+    mode 000 `work/work` directories that the invoking user can neither list nor empty (a spot reboot
+    in the middle of a session leaves them with files in them); with `image`, what an ordinary removal
+    leaves goes by `remove_as_root`. Without it, the leftovers stay, as before."""
     for v in volumes:
         _docker("volume", "rm", "-f", v, check=False)
     if state_root is not None and state_root.exists():
         shutil.rmtree(state_root, ignore_errors=True)
+        if image and (state_root.exists() or state_root.is_symlink()):
+            remove_as_root(state_root, image)
+
+
+def remove_as_root(path: Path, image: str) -> bool:
+    """Remove the host-only directory `path` as root in a throwaway container: no network, every
+    capability dropped except DAC_OVERRIDE (to enter and empty mode-000 directories), no new
+    privileges, only `path`'s parent mounted, and `rm -rf --one-file-system`, which follows no symlink
+    and crosses no mount. `image` needs `rm`. Never for the model's tree or HOME (the caller's rule; its
+    state directory holds the overlays' files). A symlink at `path` is not followed, only unlinked.
+    True when `path` is gone."""
+    path = Path(path)
+    if path.is_symlink():
+        path.unlink()
+        return True
+    if not path.exists():
+        return True
+    parent = path.parent.resolve()
+    if "," in str(parent) or ":" in str(parent) or path.name in ("", ".", ".."):
+        raise ValueError(f"cannot remove {path} as root: its path contains ',' or ':'")
+    _docker("run", "--rm", "--network", "none", "-u", "0:0", "--cap-drop=ALL", "--cap-add=DAC_OVERRIDE",
+            "--security-opt", "no-new-privileges", "--mount", f"type=bind,src={parent},dst=/drop",
+            "--entrypoint", "rm", image, "-rf", "--one-file-system", "--", f"/drop/{path.name}", check=False)
+    return not path.exists()
 
 
 def limits(policy: dict) -> list[str]:
