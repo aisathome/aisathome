@@ -53,7 +53,23 @@ function rounds(p: PR) {
 	return `<details class="sci-rounds" data-rounds><summary>${plural(p.rounds.length, 'review round')}</summary><ol>${items}</ol>${link}</details>`;
 }
 
-const status = (p: PR) => (p.state === 'merged' ? `Merged ${shortDay(p.merged!)}` : p.state === 'closed' ? 'Closed, not merged' : 'Open, in review');
+/**
+ * Tau Ceti's pause (since 2026-11-07): at its maintainers' request we stopped sending pull requests
+ * and closed the ones still open. The data says only that a pull request was closed, not by whom, so
+ * the ones we closed are listed here; while `paused`, a task that passed its local checks will not be
+ * sent. The page's notice (pages/science/tauceti.astro) says the same.
+ */
+export const pause = { paused: true, closedByUs: [24465, 25595, 25788, 25838] };
+const closedByUs = (p: PR) => p.state === 'closed' && pause.closedByUs.includes(p.number);
+
+const status = (p: PR) =>
+	p.state === 'merged'
+		? `Merged ${shortDay(p.merged!)}`
+		: p.state === 'closed'
+			? closedByUs(p)
+				? 'Closed by us: paused at Tau Ceti’s request'
+				: 'Closed, not merged'
+			: 'Open, in review';
 
 // The first review: approved, changes asked, or not reviewed yet.
 const firstReview = (p: PR) =>
@@ -109,7 +125,7 @@ function prRow(p: PR, k: SortKeys) {
 <th scope="row"><a href="${esc(p.url)}">#${p.number}</a>${taskId(p.task)}</th>
 <td class="title" data-sort-title>${esc(p.title)}<span class="meta">${meta.join(' · ')}</span>${rounds(p)}</td>
 <td class="date" data-label="Date"><time datetime="${isoDay(p.opened)}">${shortDay(p.opened)}</time></td>
-<td class="status"><span class="state state-${p.state}">${status(p)}</span><span class="meta"><span class="first" data-first-review="${first}">${firstText}</span><span class="fix" data-fix-rounds="${p.fixRounds}">${plural(
+<td class="status"><span class="state state-${p.state}"${closedByUs(p) ? ' data-closed-by="us"' : ''}>${status(p)}</span><span class="meta"><span class="first" data-first-review="${first}">${firstText}</span><span class="fix" data-fix-rounds="${p.fixRounds}">${plural(
 		p.fixRounds,
 		'fix round',
 	)}</span>${internalRounds(p)}</span></td>
@@ -155,7 +171,7 @@ function noPRStand(t: Pick<Task, 'task' | 'state'>, now: Now | null | undefined)
 				: ['queued', 'Queued again', runLabel(act.run)]
 		: t.state === 'failed'
 			? ['failed', 'Failed local checks', 'No pull request sent, not queued']
-			: ['checks-passed', 'Passed local checks', 'Waiting for internal review or to be sent'];
+			: ['checks-passed', 'Passed local checks', pause.paused ? 'Not sent: paused' : 'Waiting for internal review or to be sent'];
 }
 
 function taskRow(t: Task, now: Now | null | undefined, k: SortKeys) {

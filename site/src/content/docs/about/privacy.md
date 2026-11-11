@@ -3,6 +3,8 @@ title: Privacy
 description: How AIs@home handles your messages.
 ---
 
+*Last changed: 2026-11-11.*
+
 AIs@home is an experiment: chat with an open AI model that runs on volunteers' GPUs instead
 of a big company's data centre. Read this before you type anything you care about.
 
@@ -39,6 +41,9 @@ and sends the answer back the same way.
   can copy. Without a username you appear in totals only.
 - Your IP address is used in memory for rate limits and to limit nodes per address, and
   for a minute or so for the visitor statistics below; we do not store it.
+- To keep a conversation on the same model file, the gateway remembers, in memory only,
+  the length and hashes of each answered conversation and which model answered, never its
+  text, for 24 hours after the last answer.
 
 **Visitor statistics (this website only).** To know whether anyone reads the site, the
 server counts visits to its pages from its own web server log: no cookies, no JavaScript,

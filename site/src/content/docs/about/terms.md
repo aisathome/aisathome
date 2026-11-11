@@ -3,13 +3,15 @@ title: Terms of use
 description: Terms for using AIs@home and for running a node.
 ---
 
+*Last changed: 2026-10-12.*
+
 AIs@home is a volunteer-run, non-commercial experiment: open-weight AI models (currently
 Qwen3.8 27B) running on volunteers' GPUs instead of a big company's data centre. It is run
 by a private person in Norway ("we", "the maintainer"). The software is open source
 (Apache-2.0): https://github.com/aisathome/aisathome. There is no project token and nobody
 is paid.
 
-By using the chat (https://chat.aisathome.org), the API (https://api.aisathome.org) or
+By using the chat (https://chat.aisathome.org), the API (https://aisathome.org/use/api/) or
 running a node, you accept these terms. If you don't, don't use the service.
 
 ## 1. It is an experiment

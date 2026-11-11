@@ -107,7 +107,9 @@ cd ..
 ```
 
 `86;89` covers the RTX 30xx and 40xx series. A build for one of them only fails on the
-other with `no kernel image is available for execution on the device`.
+other with `no kernel image is available for execution on the device`. The RTX 50 series
+needs CUDA 12.8 or newer (`cuda-toolkit-12-8`, with driver 570.26 or newer) and `120` in the
+list: `"-DCMAKE_CUDA_ARCHITECTURES=86;89;120"`.
 
 ### 2. The node agent and the installer
 
@@ -115,21 +117,21 @@ other with `no kernel image is available for execution on the device`.
 git clone https://github.com/aisathome/aisathome && cd aisathome
 ```
 
-Until the first release is published, build the agent yourself. It needs Go 1.27 or newer
-from [go.dev/dl](https://go.dev/dl/) (distribution packages are usually older):
+The installer downloads the agent from the latest release with `--node-release latest` and
+checks it against the release’s `SHA256SUMS`. To build it yourself instead, you need Go 1.27
+or newer from [go.dev/dl](https://go.dev/dl/) (distribution packages are usually older):
 
 ```bash
 go build -o aisathome-node ./node/cmd/aisathome-node
 ```
 
-Once releases exist, `--node-release latest` downloads it instead and checks it against the
-release’s `SHA256SUMS`.
+and pass `--node-bin ./aisathome-node` in place of `--node-release latest` below.
 
 ### 3. Install
 
 ```bash
 sudo ./node/packaging/linux/install.sh --llama-build ../llama.cpp/build \
-  --node-bin ./aisathome-node
+  --node-release latest
 ```
 
 As with the bundle, the installer picks the tier, downloads and checks the model, writes

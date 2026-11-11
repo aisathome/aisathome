@@ -41,6 +41,7 @@ Windows is not supported yet.
 | RTX 3090 | Ubuntu 22.04 (rented VM) | 535.183.01 | prebuilt bundle | Install, download resume, connect, 1 × 128k in 18,302 MiB, about 42 tokens/s (2026-10-11). Needed a build fix: kernels must not be compressed for drivers before 570 |
 | RTX 3090 | Ubuntu 22.04.5 (rented VM) | 575.51.03 | prebuilt bundle | 2026-10-18: the installer's GPU rule did not match this driver, so `llama-server` ran on the CPU and the install stopped. With the rule the installer now adds, set by hand: install, connect, requests and a cancel through the gateway, local UI, uninstall; about 41 tokens/s. The fixed installer itself has not run on this driver yet |
 | RTX 4090, RTX 5090 | rented | 595 | the bundle's `llama-server` in containers, not through the installer | Runs; used for the model-check measurement (2026-10-11) |
+| RTX 5070 Ti | rented | – | the 16 GB tier's `llama-server` settings, not through the installer | 2026-10-31: `UD-Q3_K_XL` at 80k ran with 1.5 GB held by other programs, about 30 tokens/s after a 32k prompt. **16 GB tier: not yet run through the installer** |
 
 Other NVIDIA cards with 16 GB or more and other distributions may work; the installer checks what it needs and
 says what is missing. Tell us what worked for you: [contact@aisathome.org](mailto:contact@aisathome.org).

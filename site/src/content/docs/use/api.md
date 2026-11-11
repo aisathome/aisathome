@@ -56,7 +56,7 @@ Add a provider to `~/.config/opencode/opencode.json`:
       "models": {
         "agent": {
           "name": "AIs@home agent (Qwen3.8 27B)",
-          "limit": { "context": 32768, "output": 8192 }
+          "limit": { "context": 81920, "output": 8192 }
         }
       }
     }
@@ -65,7 +65,8 @@ Add a provider to `~/.config/opencode/opencode.json`:
 ```
 
 Set `context` to the `context_length` that `/v1/models` reports for `agent` (the context every
-node serving it can take, for example 32768):
+node serving it can take: 81920 while a 16 GB node serves it, 196608 while only 24 GB nodes
+do):
 
 ```bash
 curl -s https://api.aisathome.org/v1/models -H "Authorization: Bearer $AISATHOME_API_KEY"

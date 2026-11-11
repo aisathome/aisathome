@@ -8,7 +8,7 @@ export const links = {
 	terms: '/about/terms/',
 	docs: '/use/chat/',
 	github: 'https://github.com/aisathome/aisathome',
-	discussions: 'https://github.com/aisathome/aisathome/discussions',
+	issues: 'https://github.com/aisathome/aisathome/issues',
 	reddit: 'https://www.reddit.com/r/aisathome/',
 	contact: 'contact@aisathome.org',
 };
@@ -30,7 +30,7 @@ export const steps = [
 	},
 	{
 		title: 'A volunteer’s GPU answers',
-		text: 'Not a big company’s data centre: volunteers’ own GPUs, at home, run the model (currently Qwen3.8 27B) and write the answer. Anyone with an NVIDIA GPU of 16 GB (without a screen on it) or 24 GB and more can join; while the network is small, the maintainer adds a few of their own, some of them rented.',
+		text: 'Not a big company’s data centre: volunteers’ own GPUs, at home, run the model (currently Qwen3.8 27B) and write the answer. Anyone with an NVIDIA GPU of 16 GB (a light desktop at most) or 24 GB and more can join; while the network is small, the maintainer adds a few of their own, some of them rented.',
 	},
 	{
 		title: 'The answer comes back',
@@ -52,7 +52,7 @@ export const cards = [
 	{
 		title: 'Run a node',
 		href: '/node/',
-		text: 'An NVIDIA GPU with 16 GB (a light desktop at most) or 24 GB, Linux, about an hour. Voluntary and unpaid.',
+		text: 'An NVIDIA GPU with 16 GB (a light desktop at most) or 24 GB, Linux, a 14 GB download. Voluntary and unpaid.',
 	},
 ];
 

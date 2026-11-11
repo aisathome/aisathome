@@ -73,12 +73,12 @@ const icons: Record<string, string> = {
 		</section>
 
 		{science.merged > 0 && (
-			<section class="sci" aria-labelledby="b-sci" data-home-science>
+			<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
 				<p class="sci-kicker">Science</p>
 				<h2 id="b-sci">An open model on volunteer GPUs contributed to Tau Ceti</h2>
 				<p class="sci-text">
 					<strong class="sci-count" data-home-science-merged>{science.merged}</strong>{' '}
-					pull request{science.merged === 1 ? '' : 's'} by {science.model} merged into Tau Ceti, an open
+					<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, an open
 					library of formal mathematics where every change must pass the project’s own review. Failures are
 					counted too. Paused since 7 November 2026 at the maintainers’ request.
 				</p>
@@ -154,6 +154,36 @@ const icons: Record<string, string> = {
 		</section>
 	</div>
 </StarlightPage>
+
+<script is:inline>
+	// The merged count from the gateway's science data (the runner rebuilds it daily), when it is
+	// newer than the build's; any failure keeps the build's count.
+	(() => {
+		const box = document.querySelector('[data-home-science]');
+		const count = box?.querySelector('[data-home-science-merged]');
+		if (!box || !count || !window.fetch) return;
+		(async () => {
+			try {
+				const ctl = new AbortController();
+				const timer = setTimeout(() => ctl.abort(), 8000);
+				const res = await fetch('/v1/projects/tauceti/science', { signal: ctl.signal, headers: { accept: 'application/json' } });
+				clearTimeout(timer);
+				if (!res.ok) return;
+				const d = await res.json();
+				const at = Date.parse(d?.generated_at);
+				if (!Array.isArray(d?.prs) || Number.isNaN(at) || at <= (Date.parse(box.dataset.generated) || 0)) return;
+				const merged = d.prs.filter((p) => p?.state === 'merged').length;
+				if (!merged) return;
+				count.textContent = String(merged);
+				const noun = box.querySelector('[data-home-science-noun]');
+				if (noun) noun.textContent = merged === 1 ? 'pull request' : 'pull requests';
+				box.dataset.source = 'live';
+			} catch {
+				// keep the build's count
+			}
+		})();
+	})();
+</script>
 
 
 <style>

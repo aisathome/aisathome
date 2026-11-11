@@ -42,4 +42,7 @@ code (`src/data/science-insights.ts`, numbers from `science-stats.ts`; `science-
 has no data). Its styles are global (`.sci-` prefix) because the rendered HTML is not part of the
 template.
 `npm run check` fails if the JSON gains a field outside the public list. The home page's science
-section and the chart are left out while nothing is merged.
+section and the chart are left out while nothing is merged; in the browser the home page's merged
+count reads the same gateway data when it is newer than the build's. Who closed a pull request is
+not in the data: the ones we closed when Tau Ceti asked for a pause are listed in
+`science-render.ts` (`pause`), which also says that tasks that passed their checks are not sent.
