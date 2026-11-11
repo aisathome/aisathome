@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -244,5 +245,17 @@ func TestProjectConfigChecked(t *testing.T) {
 	other := Project{ID: "other", KeySHA256: []string{strings.ToUpper(h)}}
 	if _, err := newProjectTable([]Project{ok, other}); err == nil {
 		t.Error("one key for two projects was accepted")
+	}
+}
+
+// The ops page shows the first configured project by default, and lists them in the config's order:
+// prove2me (2026-11-11), configured after tauceti, sorted before it and took the page's default.
+func TestOpsProjectsKeepTheConfigOrder(t *testing.T) {
+	g := newTestGateway(t, Config{Projects: []Project{
+		{ID: "tauceti", KeySHA256: []string{keyHash(testProjectKey)}},
+		{ID: "prove2me", KeySHA256: []string{keyHash(otherProjectKey)}},
+	}})
+	if got := g.opsProjects(); !slices.Equal(got, []string{"tauceti", "prove2me"}) {
+		t.Fatalf("ops projects %v, want [tauceti prove2me]", got)
 	}
 }

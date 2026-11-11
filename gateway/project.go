@@ -82,6 +82,7 @@ var projectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 type projectTable struct {
 	byHash map[string]*Project // key SHA-256 → project
 	byID   map[string]*Project
+	ids    []string // in the config's order
 }
 
 // loopSetting is the task store's view of a project's loop. reviews: candidates get a review task.
@@ -137,6 +138,7 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 		}
 		pp := &p
 		t.byID[p.ID] = pp
+		t.ids = append(t.ids, p.ID)
 		for _, h := range p.KeySHA256 {
 			t.byHash[h] = pp
 		}

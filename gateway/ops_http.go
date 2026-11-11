@@ -207,18 +207,15 @@ type opsCandidate struct {
 	Attempt, Since, Waiting, Outcome string
 }
 
-// opsProject is the project the page shows: ?project=<id>, else the first configured one.
+// opsProjects are the projects the page can show, in the config's order: ?project=<id>, else the
+// first configured one. Not sorted: a second project (prove2me, 2026-11-11) sorted before tauceti
+// and took the page's default from it.
 func (g *Gateway) opsProjects() []string {
 	t := g.projects.Load()
 	if t == nil {
 		return nil
 	}
-	ids := make([]string, 0, len(t.byID))
-	for id := range t.byID {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids
+	return slices.Clone(t.ids)
 }
 
 func ago(d time.Duration) string {
