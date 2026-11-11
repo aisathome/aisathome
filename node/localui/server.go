@@ -26,9 +26,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/setupflow"
 )
 
 // DefaultPort is the local UI's port unless configured otherwise.
@@ -46,6 +48,22 @@ type Agent interface {
 	Pause()
 	Resume()
 	RestartEngine() error
+	StopEngine() error  // node.ErrNoEngineControl when the agent does not run the engine
+	StartEngine() error // the same
+}
+
+// Setup is the first-run setup (package setupflow) on a node whose agent runs its engine
+// (Windows); nil elsewhere, and then /setup does not exist.
+type Setup interface {
+	State() setupflow.State
+	CheckCard() error
+	Download() error
+	SpeedTest() error
+	Cancel()
+	Start(token, gateway string) error
+	ChangeToken(token, gateway string) error
+	Enter() error
+	Leave() error
 }
 
 // Options configure a Server.
@@ -54,15 +72,17 @@ type Options struct {
 	PasswordFile string // "" = controls off
 	NvidiaSMI    string // nvidia-smi command; "" = "nvidia-smi"
 	Log          *slog.Logger
+	Setup        Setup // the setup page; nil = none
 }
 
 // Server is the local UI.
 type Server struct {
-	agent Agent
-	opt   Options
-	auth  *auth
-	gpu   *gpuProbe
-	log   *slog.Logger
+	agentMu sync.Mutex
+	agent   Agent
+	opt     Options
+	auth    *auth
+	gpu     *gpuProbe
+	log     *slog.Logger
 }
 
 // New creates the UI server.
@@ -74,6 +94,20 @@ func New(a Agent, opt Options) *Server {
 		opt.Log = slog.New(slog.DiscardHandler)
 	}
 	return &Server{agent: a, opt: opt, auth: newAuth(opt.PasswordFile), gpu: newGPUProbe(opt.NvidiaSMI), log: opt.Log}
+}
+
+// SetAgent replaces the agent the UI shows and controls: the command builds a new one each time
+// the setup writes node.json, while the UI keeps listening.
+func (s *Server) SetAgent(a Agent) {
+	s.agentMu.Lock()
+	s.agent = a
+	s.agentMu.Unlock()
+}
+
+func (s *Server) cur() Agent {
+	s.agentMu.Lock()
+	defer s.agentMu.Unlock()
+	return s.agent
 }
 
 // Addr is the only address the UI listens on.
@@ -111,13 +145,35 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")
 	files := http.FileServerFS(static)
-	mux.Handle("GET /", files)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		// The installer's shortcut opens "/": while the node is not set up (or the volunteer
+		// runs the setup again) that is the setup page.
+		if (r.URL.Path == "/" || r.URL.Path == "/index.html") && s.inSetup() {
+			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+			return
+		}
+		if (r.URL.Path == "/setup.html" || r.URL.Path == "/setup.js") && s.opt.Setup == nil {
+			http.NotFound(w, r)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
-	mux.HandleFunc("POST /api/pause", s.control(func(w http.ResponseWriter) { s.agent.Pause(); s.ok(w) }))
-	mux.HandleFunc("POST /api/resume", s.control(func(w http.ResponseWriter) { s.agent.Resume(); s.ok(w) }))
+	mux.HandleFunc("POST /api/pause", s.control(func(w http.ResponseWriter, _ *http.Request) { s.cur().Pause(); s.ok(w) }))
+	mux.HandleFunc("POST /api/resume", s.control(func(w http.ResponseWriter, _ *http.Request) { s.cur().Resume(); s.ok(w) }))
 	mux.HandleFunc("POST /api/restart-engine", s.control(s.restart))
+	mux.HandleFunc("POST /api/stop-engine", s.control(s.engineCtl(true)))
+	mux.HandleFunc("POST /api/start-engine", s.control(s.engineCtl(false)))
+	if s.opt.Setup != nil {
+		mux.HandleFunc("GET /setup", func(w http.ResponseWriter, r *http.Request) {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/setup.html"
+			files.ServeHTTP(w, r2)
+		})
+		s.setupRoutes(mux)
+	}
 	return s.guard(mux)
 }
 
@@ -192,29 +248,50 @@ func (s *Server) ok(w http.ResponseWriter) { writeJSON(w, http.StatusOK, map[str
 // StatusResponse is the body of GET /api/status.
 type StatusResponse struct {
 	node.Status
-	GPU        GPUInfo  `json:"gpu"`
-	Controls   Controls `json:"controls"`
-	AccountURL string   `json:"account_url"`
+	GPU        GPUInfo          `json:"gpu"`
+	Controls   Controls         `json:"controls"`
+	AccountURL string           `json:"account_url"`
+	Setup      *setupflow.State `json:"setup,omitempty"` // the setup's state, on a node with a setup page
 }
 
-// Controls tells the page which controls it may show.
+// Controls tells the page which controls it may show, and the platform's commands.
 type Controls struct {
 	Enabled        bool   `json:"enabled"` // a password is set
 	SignedIn       bool   `json:"signed_in"`
 	Note           string `json:"note,omitempty"`
 	RestartCommand string `json:"restart_command"` // to run by hand when the agent cannot
+	StatusCommand  string `json:"status_command"`  // whether the agent's service runs
+	PasswordHint   string `json:"password_hint"`   // how to show the local password
+	// EngineControl: the agent runs the engine itself (Windows), so the page offers Stop
+	// engine and Start engine, and a restart does not restart the agent.
+	EngineControl bool `json:"engine_control"`
+}
+
+// inSetup reports whether "/" should be the setup page.
+func (s *Server) inSetup() bool {
+	if s.opt.Setup == nil {
+		return false
+	}
+	st := s.opt.Setup.State()
+	return !st.Configured || st.Mode == "setup"
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	st := s.agent.Status()
-	c := Controls{RestartCommand: node.RestartCommand}
+	st := s.cur().Status()
+	c := Controls{RestartCommand: node.RestartCommand, StatusCommand: node.StatusCommand,
+		PasswordHint: node.PasswordHint(s.opt.PasswordFile), EngineControl: st.EngineProcess != nil}
 	if _, err := s.auth.password(); err != nil {
 		c.Note = "Controls are off: " + err.Error()
 	} else {
 		c.Enabled = true
 		c.SignedIn = s.auth.valid(r)
 	}
-	writeJSON(w, http.StatusOK, StatusResponse{Status: st, GPU: s.gpu.get(r.Context()), Controls: c, AccountURL: AccountURL})
+	resp := StatusResponse{Status: st, GPU: s.gpu.get(r.Context()), Controls: c, AccountURL: AccountURL}
+	if s.opt.Setup != nil {
+		ss := s.opt.Setup.State()
+		resp.Setup = &ss
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -243,21 +320,25 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // control wraps a handler that changes the node: it needs a valid session.
-func (s *Server) control(h func(http.ResponseWriter)) http.HandlerFunc {
+func (s *Server) control(h func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.auth.valid(r) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "enter the local password first"})
 			return
 		}
-		h(w)
+		h(w, r)
 	}
 }
 
-func (s *Server) restart(w http.ResponseWriter) {
-	switch err := s.agent.RestartEngine(); {
+func (s *Server) restart(w http.ResponseWriter, _ *http.Request) {
+	a := s.cur()
+	switch err := a.RestartEngine(); {
 	case err == nil:
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true,
-			"message": "Restarting the engine. The agent restarts with it; this page is back in a few seconds and the node reconnects once the model is loaded."})
+		msg := "Restarting the engine. The agent restarts with it; this page is back in a few seconds and the node reconnects once the model is loaded."
+		if a.Status().EngineProcess != nil { // the agent runs the engine (Windows): only the engine restarts
+			msg = "Restarting the engine; requests in flight end. The node reconnects once the model is loaded again (up to a few minutes)."
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": msg})
 	case errors.Is(err, node.ErrRestartUnavailable):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "The agent may not restart the engine on this machine. Run this yourself:",
 			"command": node.RestartCommand})
@@ -267,5 +348,30 @@ func (s *Server) restart(w http.ResponseWriter) {
 		s.log.Error("local UI: engine restart failed", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not request the restart: " + err.Error(),
 			"command": node.RestartCommand})
+	}
+}
+
+// engineCtl stops (stop) or starts the engine the agent runs.
+func (s *Server) engineCtl(stop bool) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		a := s.cur()
+		var err error
+		msg := "Starting the engine. The node reconnects once the model is loaded (up to a few minutes)."
+		if stop {
+			err = a.StopEngine()
+			msg = "Engine stopped: the GPU is free and the node is away. Start engine brings it back."
+		} else {
+			err = a.StartEngine()
+		}
+		if errors.Is(err, node.ErrNoEngineControl) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "This agent does not run the engine itself; stop or start its service instead.",
+				"command": node.RestartCommand})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": msg})
 	}
 }

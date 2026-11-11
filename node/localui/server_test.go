@@ -62,7 +62,9 @@ func (f *fakeAgent) RestartEngine() error {
 	f.restarts++
 	return nil
 }
-func (f *fakeAgent) isPaused() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.paused }
+func (f *fakeAgent) StopEngine() error  { return node.ErrNoEngineControl }
+func (f *fakeAgent) StartEngine() error { return node.ErrNoEngineControl }
+func (f *fakeAgent) isPaused() bool     { f.mu.Lock(); defer f.mu.Unlock(); return f.paused }
 
 // fakeSMIEnv makes this test binary act as nvidia-smi (TestMain), so the stand-in runs on
 // Windows too, where a shell script cannot.

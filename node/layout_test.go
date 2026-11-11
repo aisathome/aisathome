@@ -33,10 +33,15 @@ func TestWindowsDataDir(t *testing.T) {
 func TestWindowsLayout(t *testing.T) {
 	l := WindowsLayout(env(map[string]string{"ProgramData": `C:\ProgramData`}))
 	want := Layout{
-		Config:       `C:\ProgramData\AIsAtHome\node.json`,
-		StateFile:    `C:\ProgramData\AIsAtHome\state.json`,
-		PasswordFile: `C:\ProgramData\AIsAtHome\ui-password`,
-		LogFile:      `C:\ProgramData\AIsAtHome\logs\node.log`,
+		Config:         `C:\ProgramData\AIsAtHome\node.json`,
+		StateFile:      `C:\ProgramData\AIsAtHome\state.json`,
+		PasswordFile:   `C:\ProgramData\AIsAtHome\ui-password`,
+		LogFile:        `C:\ProgramData\AIsAtHome\logs\node.log`,
+		EngineProgram:  `engine\llama-server.exe`,
+		Model:          `C:\ProgramData\AIsAtHome\models\model.gguf`,
+		EngineLogFile:  `C:\ProgramData\AIsAtHome\logs\engine.log`,
+		Setup:          true,
+		SetupStateFile: `C:\ProgramData\AIsAtHome\setup-state.json`,
 	}
 	if l != want {
 		t.Fatalf("layout:\n%+v\nwant\n%+v", l, want)
@@ -52,7 +57,7 @@ func TestDefaultLayoutOnThisPlatform(t *testing.T) {
 		}
 		return
 	}
-	if l != (Layout{Config: "node.json", PasswordFile: "/etc/aisathome-node/ui-password"}) {
+	if l != (Layout{Config: "node.json", PasswordFile: "/etc/aisathome-node/ui-password", EngineProgram: "llama-server"}) {
 		t.Fatalf("linux layout: %+v", l)
 	}
 }

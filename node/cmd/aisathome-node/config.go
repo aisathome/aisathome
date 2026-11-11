@@ -17,10 +17,10 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 	var cfg node.Config
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, fmt.Errorf("reading %s: %w", path, err)
+		return defaults(cfg, layout), fmt.Errorf("reading %s: %w", path, err)
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return cfg, fmt.Errorf("parsing %s: %w", path, err)
+		return defaults(node.Config{}, layout), fmt.Errorf("parsing %s: %w", path, err)
 	}
 	// The environment wins over the config file, so an installer-provided token is never
 	// silently replaced by a token left in an example config.
@@ -46,12 +46,17 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 		}
 		cfg.Watchdog = d
 	}
-	// A Windows service has no drop-in: its state lives in the agent's folder. On Linux the
-	// layout has no state file, so the state stays in memory unless configured.
+	return defaults(cfg, layout), nil
+}
+
+// defaults fills what the layout sets: a Windows service has no drop-in, so its state lives in
+// the agent's folder. On Linux the layout has no state file, so the state stays in memory
+// unless configured.
+func defaults(cfg node.Config, layout node.Layout) node.Config {
 	if cfg.StateFile == "" {
 		cfg.StateFile = layout.StateFile
 	}
-	return cfg, nil
+	return cfg
 }
 
 // passwordFile is the local UI's password file: AISATHOME_UI_PASSWORD_FILE, or the layout's.

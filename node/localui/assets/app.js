@@ -21,7 +21,7 @@
 		return `${Math.floor(s / 86400)}d`;
 	};
 	const words = { serving: 'Serving', connected: 'Connected', paused: 'Paused', disconnected: 'Disconnected', offline: 'No agent' };
-	const badKinds = new Set(['disconnected', 'refused', 'engine_unhealthy', 'request_failed', 'watchdog']);
+	const badKinds = new Set(['disconnected', 'refused', 'rejected', 'engine_unhealthy', 'engine_exited', 'request_failed', 'watchdog']);
 
 	let last = null;
 	let timer = null;
@@ -60,9 +60,13 @@
 			out.push(el('strong', '', s.gateway || 'the gateway'));
 			add('. ');
 			if (s.refused) add(`The gateway refused this node agent: ${s.refused}. `, 'bad');
+			if (s.rejected) add(`The gateway refused this node: ${s.rejected}. `, 'bad');
 		}
 		if (s.paused) add(s.slots_in_use > 0 ? `Paused: finishing ${s.slots_in_use} request(s), taking no new ones. ` : 'Paused: taking no new requests. ');
-		if (s.engine === 'unhealthy') add('The engine does not answer its health check. ', 'bad');
+		const ep = s.engine_process;
+		if (s.engine === 'stopped' || (ep && ep.state === 'stopped')) add('Engine stopped: the GPU is free. ');
+		else if (ep && ep.state === 'restarting') add(`The engine ended (${ep.last_exit || 'no reason'}); it starts again shortly. `, 'bad');
+		else if (s.engine === 'unhealthy') add(ep && ep.state === 'running' ? 'The engine is loading the model or does not answer yet. ' : 'The engine does not answer its health check. ', 'bad');
 		else if (s.engine === 'healthy') add('Engine healthy.');
 		return out;
 	}
@@ -141,6 +145,16 @@
 		p.dataset.action = s.paused ? 'resume' : 'pause';
 		$('restart').hidden = !s.can_restart;
 		if (!s.can_restart) showCommand(c.restart_command);
+		if (c.password_hint) $('pw-hint').textContent = c.password_hint;
+		const ep = s.engine_process;
+		const eng = !!c.engine_control && !!ep;
+		const stopped = eng && (ep.state === 'stopped' || s.engine === 'stopped');
+		$('engine-toggle').hidden = !eng;
+		$('engine-toggle').textContent = stopped ? 'Start engine' : 'Stop engine';
+		$('engine-toggle').dataset.action = stopped ? 'start-engine' : 'stop-engine';
+		$('help-linux').hidden = eng;
+		$('help-engine').hidden = !eng;
+		$('setup-link').hidden = !s.setup;
 	}
 
 	function showCommand(cmd) {
@@ -179,8 +193,9 @@
 			if (!r.ok) throw new Error(`HTTP ${r.status}`);
 			render(r.data);
 		} catch {
+			const cmd = last && last.controls && last.controls.status_command ? last.controls.status_command : 'systemctl status aisathome-node';
 			setState('offline', [el('span', 'bad', 'The node agent does not answer. '),
-				document.createTextNode('It may be restarting; this page keeps trying. Check: systemctl status aisathome-node')]);
+				document.createTextNode(`It may be restarting; this page keeps trying. Check: ${cmd}`)]);
 		}
 		timer = setTimeout(refresh, document.visibilityState === 'visible' ? 2000 : 15000);
 	}
@@ -222,6 +237,19 @@
 		const r = await api('/api/restart-engine', {});
 		b.disabled = false;
 		if (r.data.command) showCommand(r.data.command);
+		message('control-msg', r.ok ? r.data.message : (r.data.error || `Failed (HTTP ${r.status})`), !r.ok);
+		refresh();
+	});
+
+	$('engine-toggle').addEventListener('click', async (ev) => {
+		const b = ev.currentTarget;
+		const action = b.dataset.action || 'stop-engine';
+		if (action === 'stop-engine' && !window.confirm(last && last.slots_in_use > 0
+			? `${last.slots_in_use} request(s) are in flight and will fail. Stop the engine and free the GPU?`
+			: 'Stop the engine and free the GPU? The node leaves the network until you start it again.')) return;
+		b.disabled = true;
+		const r = await api(`/api/${action}`, {});
+		b.disabled = false;
 		message('control-msg', r.ok ? r.data.message : (r.data.error || `Failed (HTTP ${r.status})`), !r.ok);
 		refresh();
 	});

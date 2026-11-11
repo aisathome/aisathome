@@ -223,6 +223,8 @@ fi
 
 target=/var/lib/aisathome-node/models/model.gguf
 # set_engine: llama-server's command for the tier (after pick_tier).
+# The Windows node builds the same command in Go (node/setup/engine.go); the drift test runs
+# set_engine and fails until both agree. Change both together.
 llama_exec="" tier_label=""
 set_engine() {
   ctx_per_slot="${ctx_per_slot:-$(tier_ctx "$tier")}" kv_type="${kv_type:-$(tier_kv "$tier")}"
