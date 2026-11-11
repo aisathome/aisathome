@@ -7,22 +7,14 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+## [v0.4.0] — 2026-11-11
+
+A node no longer hangs on a silent gateway link, and 16 GB cards keep room for a desktop.
+
 ### Added
 
-- **A conversation stays on the model file it started on.** The two tiers serve the roles
-  `deep` and `agent` from different files under different names (`qwen3.8-27b` on 24 GB cards,
-  `qwen3.8-27b-q3` on 16 GB). Once a chat or an agent session has an answer, the gateway sends
-  its later requests only to nodes serving the model that answered, for 24 hours after its
-  last answer: it waits for one as for any busy node, and if none is online after the queue
-  time it answers 503 with "this conversation started on ..." instead of switching files
-  midway. Clients send no common session id, so the gateway recognises a conversation as its
-  prompt cache does, from hashes of the rendered prompt, keeping no text. Requests that start a
-  conversation, or that name a model, are routed as before. A switch to another model by name
-  holds also when a tool loop goes on to a new user message (the session went back to the first
-  model). (gateway)
 - **`install.sh --download-only <dir> --tier standard|big`** downloads the file of a tier on a
   machine without the card; without `--tier` it takes the tier of this machine's card. (node)
-
 - **The node agent runs as a Windows service.** Started by the Service Control Manager, it
   stops cleanly on Stop and at shutdown, and logs to `%ProgramData%\AIsAtHome\logs\node.log`
   (8 MB, one older file kept). On Windows its config, password and state default to
@@ -35,6 +27,21 @@ and **(site)** are live on aisathome.org once deployed.
   clocks and power limits. Tested without a GPU on Linux and Windows. A test runs install.sh's
   tier functions and fails when they and the Go table disagree, so the two platforms keep the
   same tiers. Not used by the agent yet; Linux installs are unchanged. (node)
+- **The node agent speaks protocol version 2.** If a gateway refuses its version, the agent
+  shows the gateway's reason in its local UI and in `aisathome-node status`, and tries again
+  after 10 minutes instead of every few seconds. It still connects to gateways from before
+  protocol versions. (node)
+- **A conversation stays on the model file it started on.** The two tiers serve the roles
+  `deep` and `agent` from different files under different names (`qwen3.8-27b` on 24 GB cards,
+  `qwen3.8-27b-q3` on 16 GB). Once a chat or an agent session has an answer, the gateway sends
+  its later requests only to nodes serving the model that answered, for 24 hours after its
+  last answer: it waits for one as for any busy node, and if none is online after the queue
+  time it answers 503 with "this conversation started on ..." instead of switching files
+  midway. Clients send no common session id, so the gateway recognises a conversation as its
+  prompt cache does, from hashes of the rendered prompt, keeping no text. Requests that start a
+  conversation, or that name a model, are routed as before. A switch to another model by name
+  holds also when a tool loop goes on to a new user message (the session went back to the first
+  model). (gateway)
 - **A science task can carry an `order`.** Within its claim class, after interrupted work, a
   queued task with a lower `order` (an integer, default 0) is claimed first, then oldest first as
   before. A project that runs its tasks in a planned sequence sets it at create, for example
@@ -123,18 +130,32 @@ and **(site)** are live on aisathome.org once deployed.
   current and the previous node release keep working, logs each node's version and shows it on
   the account page, and refuses other versions with a message that says what to do.
   (gateway, live since 2026-10-24)
-- **The node agent speaks protocol version 2.** If a gateway refuses its version, the agent
-  shows the gateway's reason in its local UI and in `aisathome-node status`, and tries again
-  after 10 minutes instead of every few seconds. It still connects to gateways from before
-  protocol versions. (node)
+
+### Changed
+
+- **16 GB cards run `UD-Q3_K_XL` at 81,920 tokens, with room for a desktop.** The standard
+  tier downloads its own pinned file (13.1 GB) and answers as `qwen3.8-27b-q3`; it needs
+  14,300 MiB free instead of 15,200, so a desktop of about 1.5 GB may stay on the card (measured
+  on an RTX 5070 Ti: it ran with 1.5 GB held by other programs and failed at start with 2.0 GB;
+  `UD-IQ4_XS` left about 640 MiB). It costs a little quality: HumanEval 92.7% against 96.3%,
+  hard needles at 32k 77/80 against 80/80; decode after a 32k prompt is 30 tokens/s on that
+  card. 24 GB cards keep `UD-IQ4_XS` at 196,608 as `qwen3.8-27b`. An installed 16 GB node
+  downloads the new file on its next update; `--model` refuses the other tier's file and says
+  which tier it belongs to. (node)
+- **Answers name the model that answered.** A streamed chunk whose `model` is not the
+  answering node's model name gets it, as the assembled answer already did, so a request for
+  `deep` shows `qwen3.8-27b` or `qwen3.8-27b-q3`. (gateway)
+- **Automatic rounds no longer need reviews.** A project's new `auto_rounds` keeps what the gateway
+  does with a task's end without `review_loop`: a task that passes its local checks is
+  `ready-for-operator` with no review task, one that fails them gets its automatic round up to
+  `max_review_rounds`, and a skipped one a fresh base. A project that turns `review_loop` off
+  with work under way loses nothing: candidates waiting at `in-review` become
+  `ready-for-operator`, the open reviews the gateway made are cancelled, and a verdict still
+  owed is recorded and schedules nothing. (gateway)
+- People wait at most 1 second, not 8, before a science request gives up its node (`preempt_after_seconds`
+  default 1). A science step takes about 70 s, so the longer wait rarely let it finish. (gateway, live since 2026-10-25)
 
 ### Fixed
-
-- **Fewer false guard holds.** The netcat rule reads only shell commands and shell scripts, so
-  Lean or Python text such as `have nc : a < b` no longer holds a node; as a command, netcat fed
-  from a file, a here-document or a pipe is caught in any word order. A hold records its rule and
-  a reason in fixed words, never content, and an admin can clear it on `/account/ops` after
-  seeing both. (gateway)
 
 - **A node no longer waits forever on a gateway connection that went silent.** On 2026-11-10
   a node's connection stopped bringing anything from the gateway while its own writes still
@@ -145,18 +166,20 @@ and **(site)** are live on aisathome.org once deployed.
   so that systemd, the Windows service or a start script restarts it. Time paused, while the
   engine is unhealthy, or after the gateway refused the agent's version does not count.
   `AISATHOME_WATCHDOG` changes the limit (`10m`, at least `1m`) or turns it off (`off`). (node)
-
+- **Fewer false guard holds.** The netcat rule reads only shell commands and shell scripts, so
+  Lean or Python text such as `have nc : a < b` no longer holds a node; as a command, netcat fed
+  from a file, a here-document or a pipe is caught in any word order. A hold records its rule and
+  a reason in fixed words, never content, and an admin can clear it on `/account/ops` after
+  seeing both. (gateway)
 - **Held nodes no longer count as online.** `/v1/stats` has a new `nodes.held`; `online`, `slots`,
   `busy`, `paused` and `models` leave held nodes out, as do the leaderboard's count and the daily
   history from now on. A hold raises a `node-held` warning with its rule and time, and
   `/account/ops` lists holds. A runner that sizes its work by `slots` no longer counts a node that
   gets no requests. (gateway)
-
 - **A message with personal data fails at once when no trusted node is online.** It used to wait
   out the whole queue time, 30 s by default, for the same 503. The reason is unchanged, and such a
   message still never goes to an untrusted node. In the two minutes after a gateway start it
   waits as before, while nodes reconnect. (gateway)
-
 - **The gateway no longer refuses prompts a node can hold.** It estimated a prompt as a third of
   its JSON, which ran 1.06-1.47 x real tokens on steps and up to 3.2 x on compaction summaries,
   whose reasoning the model never sees. It now counts the rendered prompt with its tokenizer,
@@ -164,7 +187,6 @@ and **(site)** are live on aisathome.org once deployed.
   Without a tokenizer it is a third of the rendered bytes. At most four prompts are counted at
   once, and a word over 64 KiB is merged in parts, which bounds what a request of one huge word
   costs (8 MiB: from 945 to 272 MiB at peak). (gateway)
-
 - **A candidate no longer drops out of the review loop when its review's id is taken.** If
   `<candidate>.review` is already a person's task, or not a review, the candidate goes to
   `needs-operator` with the reason, instead of ending with no review and no stage. A chain in an
@@ -195,29 +217,24 @@ and **(site)** are live on aisathome.org once deployed.
 - The gateway's own token count of an answer (for credit) no longer stops early when the
   answer carries logprobs. (gateway, live since 2026-10-24)
 
-### Changed
+### Updating a node
 
-- **16 GB cards run `UD-Q3_K_XL` at 81,920 tokens, with room for a desktop.** The standard
-  tier downloads its own pinned file (13.1 GB) and answers as `qwen3.8-27b-q3`; it needs
-  14,300 MiB free instead of 15,200, so a desktop of about 1.5 GB may stay on the card (measured
-  on an RTX 5070 Ti: it ran with 1.5 GB held by other programs and failed at start with 2.0 GB;
-  `UD-IQ4_XS` left about 640 MiB). It costs a little quality: HumanEval 92.7% against 96.3%,
-  hard needles at 32k 77/80 against 80/80; decode after a 32k prompt is 30 tokens/s on that
-  card. 24 GB cards keep `UD-IQ4_XS` at 196,608 as `qwen3.8-27b`. An installed 16 GB node
-  downloads the new file on its next update; `--model` refuses the other tier's file and says
-  which tier it belongs to. (node)
-- **Answers name the model that answered.** A streamed chunk whose `model` is not the
-  answering node's model name gets it, as the assembled answer already did, so a request for
-  `deep` shows `qwen3.8-27b` or `qwen3.8-27b-q3`. (gateway)
-- **Automatic rounds no longer need reviews.** A project's new `auto_rounds` keeps what the gateway
-  does with a task's end without `review_loop`: a task that passes its local checks is
-  `ready-for-operator` with no review task, one that fails them gets its automatic round up to
-  `max_review_rounds`, and a skipped one a fresh base. A project that turns `review_loop` off
-  with work under way loses nothing: candidates waiting at `in-review` become
-  `ready-for-operator`, the open reviews the gateway made are cancelled, and a verdict still
-  owed is recorded and schedules nothing. (gateway)
-- People wait at most 1 second, not 8, before a science request gives up its node (`preempt_after_seconds`
-  default 1). A science step takes about 70 s, so the longer wait rarely let it finish. (gateway, live since 2026-10-25)
+Every node should update: the fix for a silent gateway link is in the agent. Nodes on v0.3.0
+keep working meanwhile (the gateway accepts both protocol versions). On a 24 GB card the model
+stays as it is; on a 16 GB card the update downloads `UD-Q3_K_XL` (13.1 GB) while the node
+keeps serving (about 16 GB free in `/var/lib` needed), then restarts.
+
+```
+curl -LO https://github.com/aisathome/aisathome/releases/download/v0.4.0/aisathome-node-bundle-linux-amd64.tar.xz
+curl -LO https://github.com/aisathome/aisathome/releases/download/v0.4.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
+sudo ./install.sh --keep-token
+```
+
+The agent now exits when it has had no working link to the gateway for 5 minutes, and systemd
+starts it again. A node in a container without systemd needs a start script that restarts the
+agent whenever it exits. Step by step: [Update your node](https://aisathome.org/node/update/).
 
 ## [v0.3.0] — 2026-10-24
 
@@ -394,6 +411,8 @@ https://aisathome.org/node/
 
 **Full changelog:** https://github.com/aisathome/aisathome/commits/v0.1.0
 
-[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.2.0...main
+[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.4.0...main
+[v0.4.0]: https://github.com/aisathome/aisathome/compare/v0.3.0...v0.4.0
+[v0.3.0]: https://github.com/aisathome/aisathome/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/aisathome/aisathome/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/aisathome/aisathome/commits/v0.1.0

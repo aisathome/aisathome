@@ -66,8 +66,8 @@ were measured with):
 | standard | `Qwen3.8-27B-UD-Q3_K_XL.gguf` | 13,146,393,504 | `8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e` | `qwen3.8-27b-q3` |
 | big | `Qwen3.8-27B-UD-IQ4_XS.gguf` | 14,252,845,984 | `40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199` | `qwen3.8-27b` |
 
-`UD-IQ4_XS` replaced `UD-Q4_K_M` (16.5 GB) in v0.3.0; 16 GB cards run `UD-Q3_K_XL` since the
-release after it. The file goes straight to `/var/lib/aisathome-node/models/model.gguf`:
+`UD-IQ4_XS` replaced `UD-Q4_K_M` (16.5 GB) in v0.3.0; 16 GB cards run `UD-Q3_K_XL` since
+v0.4.0. The file goes straight to `/var/lib/aisathome-node/models/model.gguf`:
 
 - an interrupted download resumes from `model.gguf.part` on the next run;
 - a wrong checksum deletes the download, so the next run starts clean;

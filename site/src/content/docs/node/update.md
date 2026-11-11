@@ -28,7 +28,7 @@ The installer keeps:
 - the token, the node id and the gateway (from `/etc/aisathome-node/node.json`); pass
   `--node-id` or `--gateway-url` to change them;
 - the model, which it checks again (about a minute); a release that pins another model
-  downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; after v0.3.0, a 16 GB
+  downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; v0.4.0: a 16 GB
   card's tier runs `UD-Q3_K_XL`, 13.1 GB, in its place; the old file is replaced once the new
   one is verified, so you need about 16 GB free in `/var/lib` for the update);
 - the local UI's password, the counters and whether the node starts at boot.
@@ -65,3 +65,7 @@ swapping the bundle directory:
 
 `node.json`, the token and the model live outside the bundle, so they stay as they are.
 Keep the old directory until the node has connected, so you can go back.
+
+From v0.4.0 the agent exits with an error when it has had no working link to the gateway for
+5 minutes (see [Troubleshooting](/node/operate/#troubleshooting)), so your start script must
+start it again whenever it exits, for example in a loop with a pause of a few seconds.

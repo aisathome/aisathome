@@ -38,7 +38,7 @@ The `protocol` field (`"0.1"`) is frozen: gateways before versions refuse a node
 | version | nodes | what changed |
 |---|---|---|
 | 1 | v0.1.0 to v0.3.0 (no `protocol_version`) | the messages below, without the version fields |
-| 2 | from the release after v0.3.0 | `hello.protocol_version`; `welcome.protocol_version`, `protocol_min`, `protocol_max`; refusal with close code 4001 |
+| 2 | v0.4.0 and later | `hello.protocol_version`; `welcome.protocol_version`, `protocol_min`, `protocol_max`; refusal with close code 4001 |
 
 ## Messages
 
