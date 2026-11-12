@@ -34,11 +34,18 @@ type auth struct {
 
 	mu       sync.Mutex
 	lastFail time.Time
-	links    map[[32]byte]time.Time // SHA-256 of each unused sign-in link's secret: its expiry
+	links    map[[32]byte]link // by the SHA-256 of each unused sign-in link's secret
+}
+
+// link is an unused sign-in link: its expiry, and a digest of the password it was made under
+// (a new password ends it, as it ends sessions).
+type link struct {
+	exp time.Time
+	pw  [32]byte
 }
 
 func newAuth(file string) *auth {
-	return &auth{file: file, now: time.Now, links: map[[32]byte]time.Time{}}
+	return &auth{file: file, now: time.Now, links: map[[32]byte]link{}}
 }
 
 // password reads the password file; it is read on every use, so a new password takes effect
@@ -98,7 +105,8 @@ func (a *auth) session(pw string) *http.Cookie {
 // may sign in anyway. The secrets are kept as SHA-256 digests, so a lookup's timing tells
 // nothing about them.
 func (a *auth) newLink() (string, error) {
-	if _, err := a.password(); err != nil {
+	pw, err := a.password()
+	if err != nil {
 		return "", errors.New("controls are off: " + err.Error())
 	}
 	var b [32]byte
@@ -109,17 +117,17 @@ func (a *auth) newLink() (string, error) {
 	now := a.now()
 	var oldest [32]byte
 	var oldestExp time.Time
-	for k, exp := range a.links {
-		if !now.Before(exp) {
+	for k, l := range a.links {
+		if !now.Before(l.exp) {
 			delete(a.links, k)
-		} else if oldestExp.IsZero() || exp.Before(oldestExp) {
-			oldest, oldestExp = k, exp
+		} else if oldestExp.IsZero() || l.exp.Before(oldestExp) {
+			oldest, oldestExp = k, l.exp
 		}
 	}
 	if len(a.links) >= maxLinks {
 		delete(a.links, oldest)
 	}
-	a.links[sha256.Sum256([]byte(secret))] = now.Add(linkTTL)
+	a.links[sha256.Sum256([]byte(secret))] = link{exp: now.Add(linkTTL), pw: sha256.Sum256([]byte(pw))}
 	return secret, nil
 }
 
@@ -128,15 +136,18 @@ func (a *auth) newLink() (string, error) {
 func (a *auth) redeem(secret string) (*http.Cookie, bool) {
 	k := sha256.Sum256([]byte(secret))
 	a.mu.Lock()
-	exp, ok := a.links[k]
+	l, ok := a.links[k]
 	delete(a.links, k)
 	a.mu.Unlock()
-	if !ok || !a.now().Before(exp) {
+	if !ok || !a.now().Before(l.exp) {
 		return nil, false
 	}
 	pw, err := a.password()
 	if err != nil {
 		return nil, false
+	}
+	if cur := sha256.Sum256([]byte(pw)); subtle.ConstantTimeCompare(cur[:], l.pw[:]) != 1 {
+		return nil, false // made under an older password
 	}
 	return a.session(pw), true
 }

@@ -133,6 +133,20 @@ func TestLoginLinkPassword(t *testing.T) {
 	if r := e.req(t, "GET", link, "", nil); sessionCookie(r) != nil {
 		t.Fatal("a link signed in without a password file")
 	}
+	// A new password (the file rewritten) ends a link made before it.
+	if err := os.WriteFile(e.pw, []byte(testPassword+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := askLink(t, e)
+	if err := os.WriteFile(e.pw, []byte("a-new-password-after-a-revocation\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.req(t, "GET", old, "", nil); sessionCookie(r) != nil {
+		t.Fatal("a link made under the old password signed in after the password changed (Codex review)")
+	}
+	if r := e.req(t, "GET", askLink(t, e), "", nil); sessionCookie(r) == nil {
+		t.Fatal("a link made under the new password did not sign in")
+	}
 	for _, line := range []string{"", "nonsense", `{"op":"status"}`} {
 		if ans := e.ui.pipeAnswer([]byte(line)); ans.URL != "" || ans.Error == "" {
 			t.Errorf("%q: %+v", line, ans)
