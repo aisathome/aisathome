@@ -181,7 +181,11 @@ func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if c.Lease != "" || c.Result != nil || c.Reason != "" || c.Requeue {
-		apiError(w, http.StatusBadRequest, "claim takes worker, lease_seconds, kinds, max_class and task only")
+		apiError(w, http.StatusBadRequest, "claim takes worker, lease_seconds, kinds, max_class, task and hold_seconds only")
+		return
+	}
+	if c.HoldSec != nil && (*c.HoldSec < 0 || *c.HoldSec > int(affinityWindow/time.Second)) {
+		apiError(w, http.StatusBadRequest, fmt.Sprintf("hold_seconds: 0 to %d", int(affinityWindow/time.Second)))
 		return
 	}
 	if c.MaxClass < 0 || c.MaxClass > classOther {
@@ -194,7 +198,7 @@ func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	t, err := g.tasks.claim(id, c.Worker, c.LeaseSec, c.Kinds, c.MaxClass, c.Task)
+	t, err := g.tasks.claim(id, c.Worker, c.LeaseSec, c.Kinds, c.MaxClass, c.Task, c.HoldSec)
 	if err != nil {
 		taskError(w, err)
 		return
@@ -221,8 +225,8 @@ func (g *Gateway) leaseRequest(w http.ResponseWriter, r *http.Request, limit int
 	if err == nil && (len(c.Lease) != 32 || strings.Trim(c.Lease, "0123456789abcdef") != "") {
 		err = errors.New("lease: the id the claim returned")
 	}
-	if err == nil && (c.LeaseSec != 0 || len(c.Kinds) > 0 || c.MaxClass != 0 || c.Task != "") {
-		err = errors.New("lease_seconds, kinds, max_class and task belong to a claim")
+	if err == nil && (c.LeaseSec != 0 || len(c.Kinds) > 0 || c.MaxClass != 0 || c.Task != "" || c.HoldSec != nil) {
+		err = errors.New("lease_seconds, kinds, max_class, task and hold_seconds belong to a claim")
 	}
 	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())

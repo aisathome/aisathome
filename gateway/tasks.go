@@ -266,6 +266,15 @@ type taskLease struct {
 	Since       time.Time `json:"since"`
 	HeartbeatAt time.Time `json:"heartbeat_at"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	HoldSec     *int      `json:"hold_seconds,omitempty"` // the claim's hold_seconds; absent: affinityWindow
+}
+
+// hold: how long a task that came back from this lease waits for its worker.
+func (l *taskLease) hold() time.Duration {
+	if l == nil || l.HoldSec == nil {
+		return affinityWindow
+	}
+	return time.Duration(*l.HoldSec) * time.Second
 }
 
 type taskEvent struct {
@@ -347,6 +356,10 @@ type taskControl struct {
 	Requeue  bool        `json:"requeue,omitempty"`       // fail: give the task back (an interruption: its try continues)
 	Fix      *taskNew    `json:"fix,omitempty"`           // fail: the move of a skipped task to a fresh base
 	Task     string      `json:"task,omitempty"`          // claim: this task only (a worker taking its own back)
+	// HoldSec (claim): how long the task waits for this worker after its lease ends in a give-back or
+	// an expiry, 0 to affinityWindow seconds; absent: affinityWindow. 0 for a worker whose checkpoints
+	// any worker can resume (the stateless spot runner keeps them in S3, 2026-11-12).
+	HoldSec *int `json:"hold_seconds,omitempty"`
 }
 
 func (t *Task) event(at time.Time, what, worker, note string) {

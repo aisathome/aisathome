@@ -168,22 +168,31 @@ const (
 	interruptExpired   = "expired"    // the lease expired: only its worker's take-back within the window
 )
 
-// giveBack returns a leased task to the queue, held for its worker for affinityWindow: given
+// giveBack returns a leased task to the queue, held for its worker for the lease's hold (default
+// affinityWindow; hold_seconds at the claim): given
 // back by the worker (fail with requeue, kind interruptGivenBack) or expired (interruptExpired).
 // Neither uses up the try yet (claim decides); a task interrupted maxInterruptions times fails.
 // Holds s.mu.
 func (s *taskStore) giveBack(p *projectTasks, t *Task, now time.Time, kind, reason string) error {
-	worker := t.Lease.Worker
+	worker, hold := t.Lease.Worker, t.Lease.hold()
 	what := map[string]string{interruptGivenBack: "requeued", interruptExpired: "expired"}[kind]
 	t.Error = reason
 	if t.Interruptions >= maxInterruptions {
 		t.State, t.Interrupted = TaskFailed, ""
 		t.event(now, what, worker, fmt.Sprintf("%s; failed after %d interruptions", reason, t.Interruptions))
 		t.LoopPending = &loopPending{Step: owedStop, Why: "failed after too many interruptions"}
+	} else if kind == interruptExpired && t.Tries >= t.MaxTries && hold <= 0 {
+		// held for nobody: the wait for its worker (the sweep below) is over at once
+		t.State, t.Interrupted, t.Lease = TaskFailed, "", nil
+		t.Error = fmt.Sprintf("lease expired on try %d of %d (no hold for its worker)", t.Tries, t.MaxTries)
+		t.event(now, "failed", worker, t.Error)
+		t.LoopPending = &loopPending{Step: owedStop, Why: "the lease expired on the last try"}
 	} else {
 		t.State, t.Requeued, t.Interrupted = TaskQueued, true, kind
 		t.Lease = nil
-		until := now.Add(affinityWindow)
+		// a hold of 0 (the worker's checkpoints are shared) holds it for nobody: until is now, so the task
+		// is free at once (an expiry on the last try failed above)
+		until := now.Add(hold)
 		t.PreferWorker, t.PreferUntil = worker, &until
 		note := reason + "; back in the queue"
 		if kind == interruptExpired && t.Tries >= t.MaxTries {
@@ -228,7 +237,7 @@ func (s *taskStore) sweep(p *projectTasks, now time.Time) {
 			t.PreferUntil != nil && !now.Before(*t.PreferUntil):
 			worker := t.PreferWorker
 			t.State, t.Interrupted, t.PreferWorker, t.PreferUntil = TaskFailed, "", "", nil
-			t.Error = fmt.Sprintf("lease expired on try %d of %d and %s did not take it back within %s", t.Tries, t.MaxTries, worker, affinityWindow)
+			t.Error = fmt.Sprintf("lease expired on try %d of %d and %s did not take it back in time", t.Tries, t.MaxTries, worker)
 			t.event(now, "failed", worker, t.Error)
 			t.LoopPending = &loopPending{Step: owedStop, Why: "the lease expired on the last try"}
 			if s.conclude(p, t, now) == nil {
@@ -443,7 +452,7 @@ func heldFor(t *Task, worker string, now time.Time) bool {
 // claim leases the next queued task to worker, or returns nil when none is queued. With only,
 // it leases that task if it is queued and not held for another worker (404 or 409 otherwise).
 // maxClass > 0 limits it to classes up to that one.
-func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxClass int, only string) (*Task, error) {
+func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxClass int, only string, hold *int) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, now, err := s.open(project)
@@ -493,7 +502,7 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxCl
 	t.PreferWorker, t.PreferUntil, t.Interrupted = "", nil, ""
 	t.State, t.Error = TaskLeased, ""
 	t.Lease = &taskLease{ID: hex.EncodeToString(id[:]), Worker: worker, TTLSec: ttl, Since: now, HeartbeatAt: now,
-		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}
+		ExpiresAt: now.Add(time.Duration(ttl) * time.Second), HoldSec: hold}
 	t.event(now, "claimed", worker, note)
 	if err := s.save(t); err != nil {
 		return nil, err

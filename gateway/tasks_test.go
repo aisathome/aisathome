@@ -1578,6 +1578,67 @@ func TestTaskAffinity(t *testing.T) {
 	}
 }
 
+// A worker whose checkpoints any worker can resume claims with hold_seconds 0: a task it gives back,
+// or whose lease expires, is held for nobody (the stateless spot runner, 2026-11-12). Between 0 and
+// affinityWindow the hold is that long; out of range, or on another call, it is refused.
+func TestTaskHoldSeconds(t *testing.T) {
+	r := newTaskRig(t, "")
+	r.create("A1", "attempt")
+	claim := func(worker string, hold any) (string, string) {
+		t.Helper()
+		w, out := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": worker, "lease_seconds": 60, "hold_seconds": hold})
+		if w.Code == http.StatusNoContent {
+			return "", ""
+		}
+		if w.Code != 200 {
+			t.Fatalf("claim: HTTP %d %s", w.Code, w.Body)
+		}
+		return out["task"].(map[string]any)["id"].(string), out["lease"].(map[string]any)["id"].(string)
+	}
+	_, lease := claim("w1", 0)
+	if w := r.lease("A1", "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot notice"}); w.Code != 200 {
+		t.Fatalf("requeue: HTTP %d", w.Code)
+	}
+	// another worker at once, continuing the try
+	id, lease := claim("w2", 0)
+	if got := r.g.tasks.get("tauceti", "A1"); id != "A1" || got.Tries != 1 || got.Interruptions != 1 {
+		t.Fatalf("w2 claimed %q: %+v", id, got)
+	}
+	if w := r.lease("A1", "heartbeat", "w2", lease, map[string]any{"hold_seconds": 0}); w.Code != 400 {
+		t.Errorf("heartbeat with hold_seconds: HTTP %d", w.Code)
+	}
+	// an expiry: free at once, as a new try (only a give-back continues a try for another worker)
+	r.now = r.now.Add(61 * time.Second)
+	if id, _ := claim("w3", 120); id != "A1" {
+		t.Fatalf("after w2's expiry w3 claimed %q, want A1", id)
+	}
+	if got := r.g.tasks.get("tauceti", "A1"); got.Tries != 2 {
+		t.Fatalf("tries after the expiry: %+v", got)
+	}
+	// hold_seconds 120: held for w3 that long, then free
+	r.now = r.now.Add(61 * time.Second)
+	if id, _ := claim("w4", 0); id != "" {
+		t.Fatalf("w4 claimed %q within w3's 120 s hold", id)
+	}
+	r.now = r.now.Add(120 * time.Second)
+	if id, _ := claim("w4", 0); id != "A1" {
+		t.Fatalf("after w3's hold w4 claimed %q, want A1", id)
+	}
+	// an expiry on the last try with hold 0 fails at the next sweep instead of waiting
+	r.now = r.now.Add(61 * time.Second)
+	if id, _ := claim("w5", 0); id != "" {
+		t.Fatalf("w5 claimed %q after the expiry on the last try", id)
+	}
+	if st := r.state("A1"); st != TaskFailed {
+		t.Fatalf("A1 is %s after an expiry on the last try with hold 0, want failed", st)
+	}
+	for _, h := range []any{-1, int(affinityWindow/time.Second) + 1, "x"} {
+		if w, _ := r.call("POST", tasksPath+"/claim", testProjectKey, map[string]any{"worker": "w1", "hold_seconds": h}); w.Code != 400 {
+			t.Errorf("claim with hold_seconds %v: HTTP %d", h, w.Code)
+		}
+	}
+}
+
 // The internal review's verdict and the owner's decision are stored on a done task only, with
 // the project key; they show in the task and (without the detail) in the list, and a task
 // changed by them needs another export.
