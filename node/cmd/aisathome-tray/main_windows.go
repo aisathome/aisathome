@@ -282,6 +282,9 @@ func quitTrays(w io.Writer) int {
 	var sess uint32
 	windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sess)
 	waitGone(func(p trayProc) bool { return p.session == sess }, 5*time.Second)
+	// Another user's tray (fast user switching): an administrator may end it once the debug
+	// privilege is on (an elevated token has it, switched off).
+	enableDebugPrivilege()
 	for _, p := range trays() {
 		h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, p.pid)
 		if err != nil {
@@ -297,6 +300,21 @@ func quitTrays(w io.Writer) int {
 	}
 	fmt.Fprintln(w, "a tray is still running")
 	return 1
+}
+
+func enableDebugPrivilege() {
+	var t windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &t); err != nil {
+		return
+	}
+	defer t.Close()
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr("SeDebugPrivilege"), &luid); err != nil {
+		return
+	}
+	tp := windows.Tokenprivileges{PrivilegeCount: 1}
+	tp.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}
+	windows.AdjustTokenPrivileges(t, false, &tp, 0, nil, nil)
 }
 
 type trayProc struct{ pid, session uint32 }
