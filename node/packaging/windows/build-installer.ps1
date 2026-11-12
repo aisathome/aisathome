@@ -1,7 +1,7 @@
 # Build the Windows installer: the agent, built exactly as scripts/build-release.sh builds
-# aisathome-node-windows-amd64.exe, packed by Inno Setup 6 (preinstalled on GitHub's
-# windows-2025 image). Writes aisathome-node-windows-amd64.exe and
-# aisathome-node-setup-windows-amd64.exe into OutDir.
+# aisathome-node-windows-amd64.exe, and the tray (a GUI program: no console window), packed by
+# Inno Setup 6 (preinstalled on GitHub's windows-2025 image). Writes
+# aisathome-node-windows-amd64.exe and aisathome-node-setup-windows-amd64.exe into OutDir.
 #
 #   pwsh node/packaging/windows/build-installer.ps1 -Version <version> -OutDir <dir> [-EngineDir <dir>]
 #
@@ -20,6 +20,9 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 $exe = Join-Path $OutDir 'aisathome-node-windows-amd64.exe'
+$stage = Join-Path $OutDir 'stage'
+New-Item -ItemType Directory -Force $stage | Out-Null
+$trayExe = Join-Path $stage 'aisathome-tray.exe'
 
 Push-Location $root
 try {
@@ -28,12 +31,14 @@ try {
     -ldflags "-s -w -X main.version=$Version -X github.com/aisathome/aisathome/node.Version=$Version" `
     -o $exe ./node/cmd/aisathome-node
   if ($LASTEXITCODE -ne 0) { throw "go build failed ($LASTEXITCODE)" }
+  go build -trimpath `
+    -ldflags "-s -w -H windowsgui -X github.com/aisathome/aisathome/node.Version=$Version" `
+    -o $trayExe ./node/cmd/aisathome-tray
+  if ($LASTEXITCODE -ne 0) { throw "go build (tray) failed ($LASTEXITCODE)" }
 } finally { Pop-Location }
 
 # Inno Setup's ExtractTemporaryFile (the update's "service stop") finds the file by name; the
 # same name for source and destination leaves no doubt which one.
-$stage = Join-Path $OutDir 'stage'
-New-Item -ItemType Directory -Force $stage | Out-Null
 $nodeExe = Join-Path $stage 'aisathome-node.exe'
 Copy-Item -Force $exe $nodeExe
 
@@ -48,7 +53,7 @@ $iscc = @(
 if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
 if (-not $iscc) { throw 'Inno Setup 6 (ISCC.exe) not found' }
 
-$defs = @("/DAppVersion=$Version", "/DFileVersion=$num", "/DNodeExe=$nodeExe", "/DOutDir=$OutDir")
+$defs = @("/DAppVersion=$Version", "/DFileVersion=$num", "/DNodeExe=$nodeExe", "/DTrayExe=$trayExe", "/DOutDir=$OutDir")
 if ($EngineDir) { $defs += "/DEngineDir=$((Resolve-Path $EngineDir).Path)" }
 & $iscc /Qp @defs (Join-Path $PSScriptRoot 'aisathome-node.iss')
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }

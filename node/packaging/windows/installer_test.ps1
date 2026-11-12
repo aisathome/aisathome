@@ -6,11 +6,14 @@
 #
 # It seeds a config, as the setup page writes it, with an extra permission entry for Everyone;
 # installs; checks the service (virtual account, delayed automatic start, restart on failure,
-# running, answering on 127.0.0.1:7381), the data folder's permissions and the shortcut;
-# installs again over it (an update keeps config and password); uninstalls silently (service
+# running, answering on 127.0.0.1:7381), the data folder's permissions, the tray (its file, its
+# autostart entry, the Start-menu entry, and its sign-in over the agent's pipe), and the
+# shortcut; installs again over it while a tray runs (an update closes the tray and keeps
+# config and password); checks who may sign in from the tray (a standard user only once
+# `service install -ui-user` names it); uninstalls silently while a tray runs (service, tray
 # and program gone, the data folder kept with only its documented files); installs again and
 # uninstalls with /PURGEDATA (data folder gone); then a fresh install without a config (the
-# service runs, "/" leads to the setup page, no engine runs).
+# service runs, "/" leads to the setup page, no engine runs, the tray shows "setup").
 #
 # SPDX-License-Identifier: Apache-2.0
 param([Parameter(Mandatory)][string]$Setup)
@@ -20,7 +23,10 @@ $name = 'aisathome-node'
 $app = Join-Path $env:ProgramFiles 'AIsAtHome'
 $exe = Join-Path $app 'aisathome-node.exe'
 $data = Join-Path $env:ProgramData 'AIsAtHome'
-$shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\AIs@home node.url'
+$tray = Join-Path $app 'aisathome-tray.exe'
+$shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\AIs@home node.lnk'
+$runKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+$runValue = 'AIs@home tray'
 $logs = Join-Path ([IO.Path]::GetTempPath()) 'aisathome-installer-test'
 New-Item -ItemType Directory -Force $logs | Out-Null
 $account = "NT SERVICE\$name"
@@ -34,7 +40,38 @@ function Fail([string]$msg) {
   }
   $nodeLog = Join-Path $data 'logs\node.log'
   if (Test-Path $nodeLog) { Write-Host '----- node.log'; Get-Content $nodeLog -Tail 40 }
+  $trayLog = Join-Path $env:LOCALAPPDATA 'AIsAtHome\tray.log'
+  if (Test-Path $trayLog) { Write-Host '----- tray.log'; Get-Content $trayLog -Tail 40 }
   throw $msg
+}
+
+# Tray-Check runs `aisathome-tray -check` (as $cred's user when given) and returns its output
+# and exit code: the state the tray would show, and whether the agent's pipe gave it a
+# sign-in link that signs in once.
+function Tray-Check($cred) {
+  $out = Join-Path $logs "tray-check-$([guid]::NewGuid()).txt"
+  $a = @{ FilePath = $tray; ArgumentList = '-check'; Wait = $true; PassThru = $true; RedirectStandardOutput = $out
+    WorkingDirectory = $app; NoNewWindow = $true }
+  if ($cred) { $a.Credential = $cred; $a.Remove('NoNewWindow') }
+  $p = Start-Process @a
+  $text = if (Test-Path $out) { Get-Content -Raw $out } else { '' }
+  Write-Host "tray -check (exit $($p.ExitCode)): $text"
+  [pscustomobject]@{ Code = $p.ExitCode; Text = "$text" }
+}
+
+# Start-Tray starts the tray as this account, as the login autostart would, and checks that it
+# keeps running.
+function Start-Tray {
+  $p = Start-Process -FilePath $tray -PassThru
+  Start-Sleep -Seconds 3
+  if ($p.HasExited) { Fail "the tray exited at start (exit code $($p.ExitCode))" }
+  $p
+}
+
+function Check-TrayGone($p, [string]$when) {
+  for ($i = 0; $i -lt 20 -and -not $p.HasExited; $i++) { Start-Sleep -Milliseconds 500 }
+  if (-not $p.HasExited) { Fail "$when left the tray $($p.Id) running" }
+  if (Get-Process -Name 'aisathome-tray' -ErrorAction SilentlyContinue) { Fail "$when left a tray running" }
 }
 
 function Invoke-Logged([string]$file, [string[]]$argList) {
@@ -103,6 +140,20 @@ function Check-Installed {
   if (-not (Same $ids ($admins + $me))) { Fail "ui-password allows $($ids -join ', '); want $($admins -join ', ') and $me" }
   if ((Get-Content -Raw $pwFile).Trim().Length -lt 12) { Fail 'ui-password is too short' }
   if (-not (Test-Path $shortcut)) { Fail "no Start menu entry $shortcut" }
+  $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
+  if ($lnk.TargetPath -ne $tray -or $lnk.Arguments -ne '-open') {
+    Fail "the Start menu entry runs $($lnk.TargetPath) $($lnk.Arguments), want $tray -open"
+  }
+  if (Test-Path ($shortcut -replace '\.lnk$', '.url')) { Fail 'the old Internet shortcut is still there' }
+  if (-not (Test-Path (Join-Path $app 'aisathome.ico'))) { Fail 'no aisathome.ico' }
+  $run = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).$runValue
+  if ($run -ne "`"$tray`"") { Fail "tray autostart is '$run', want `"$tray`"" }
+  # The tray signs in over the agent's pipe (this account is an administrator) and sees a
+  # configured node that is not connected.
+  $c = Tray-Check $null
+  if ($c.Code -ne 0 -or $c.Text -notmatch 'signin=ok' -or $c.Text -notmatch 'state=starting') {
+    Fail "tray -check: want state=starting and signin=ok"
+  }
   $nodeLog = Join-Path $data 'logs\node.log'
   if (-not (Select-String -Quiet -Path $nodeLog -Pattern 'msg=starting')) { Fail "no start line in $nodeLog" }
   return $svc.ProcessId
@@ -127,8 +178,10 @@ $pid1 = Check-Installed
 $password = Get-Content -Raw (Join-Path $data 'ui-password')
 $config = Get-Content -Raw $cfg
 
-Write-Host '== update (install over it)'
+Write-Host '== update (install over it), with a tray running'
+$trayProc = Start-Tray
 Install
+Check-TrayGone $trayProc 'the update'
 $pid2 = Check-Installed
 if ($pid2 -eq $pid1) { Fail 'the update did not restart the service' }
 if ((Get-Content -Raw (Join-Path $data 'ui-password')) -ne $password) { Fail 'the update changed the password' }
@@ -145,8 +198,38 @@ if ($svc.State -ne 'Stopped' -or $svc.StartMode -ne 'Disabled') {
 if ($LASTEXITCODE -ne 0) { Fail "service install -start: exit $LASTEXITCODE" }
 Check-Installed | Out-Null
 
-Write-Host '== uninstall, keeping the data'
+Write-Host '== tray sign-in for a standard user: refused until service install -ui-user names it'
+# A standard (not administrator) account: the agent's pipe gives it no link while the password
+# file is only for the installing user, and does once `service install -ui-user` grants it.
+$ciUser = 'aisathome-ci'
+$ciPass = 'Ci-' + [guid]::NewGuid().ToString('N').Substring(0, 16) + '-a1!'
+net.exe user $ciUser $ciPass /add | Out-Null
+if ($LASTEXITCODE -ne 0) { Fail "could not add the local user $ciUser" }
+try {
+  $cred = [pscredential]::new("$env:COMPUTERNAME\$ciUser", (ConvertTo-SecureString $ciPass -AsPlainText -Force))
+  $ran = $true
+  try { $c = Tray-Check $cred } catch { $ran = $false; Write-Warning "skipped: cannot run a process as $ciUser here: $($_.Exception.Message)" }
+  if ($ran) {
+    if ($c.Code -eq 0 -or $c.Text -notmatch 'signin=failed' -or $c.Text -notmatch 'state=starting') {
+      Fail "tray -check as a standard user: want state=starting and a refused sign-in"
+    }
+    & $exe service install -ui-user $ciUser
+    if ($LASTEXITCODE -ne 0) { Fail "service install -ui-user: exit $LASTEXITCODE" }
+    $c = Tray-Check $cred
+    if ($c.Code -ne 0 -or $c.Text -notmatch 'signin=ok') { Fail "tray -check as $ciUser after -ui-user: want signin=ok" }
+  }
+} finally {
+  net.exe user $ciUser /delete | Out-Null
+}
+# Back to the installing user, for the checks below.
+& $exe service install
+if ($LASTEXITCODE -ne 0) { Fail "service install: exit $LASTEXITCODE" }
+
+Write-Host '== uninstall with a tray running, keeping the data'
+$trayProc = Start-Tray
 Uninstall @()
+Check-TrayGone $trayProc 'the uninstall'
+if ((Get-ItemProperty $runKey -ErrorAction SilentlyContinue).$runValue) { Fail 'the tray autostart entry is still there' }
 if (Get-Service $name -ErrorAction SilentlyContinue) { Fail 'the service is still there after uninstall' }
 if (Get-Process -Name $name -ErrorAction SilentlyContinue) { Fail 'an agent still runs after uninstall' }
 if (Test-Path $app) { Fail "$app is still there: $(Get-ChildItem -Recurse -Name $app)" }
@@ -202,6 +285,10 @@ $svc2 = Get-CimInstance Win32_Service -Filter "Name='$name'"
 if ($svc2.ProcessId -ne $svc.ProcessId -or $svc2.State -ne 'Running') { Fail 'fresh install: the agent restarted or stopped' }
 if (Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue) { Fail 'fresh install: an engine runs before the setup' }
 if (Test-Path (Join-Path $data 'node.json')) { Fail 'fresh install: node.json appeared without the setup' }
+$c = Tray-Check $null
+if ($c.Code -ne 0 -or $c.Text -notmatch 'state=setup' -or $c.Text -notmatch 'signin=ok') {
+  Fail 'fresh install: tray -check, want state=setup and signin=ok'
+}
 Uninstall @('/PURGEDATA')
 if (Test-Path $data) { Fail "/PURGEDATA left $data" }
 Write-Host 'installer test passed'

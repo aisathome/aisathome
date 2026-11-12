@@ -168,6 +168,16 @@ jobs:
           Invoke-RestMethod -Method Post -Uri "$ui/api/start-engine" -ContentType 'application/json' -Body '{}' -WebSession $web | Out-Null
           $st = Wait-Status $isUp 'the engine started again'
           $eng = Engine-Pid $st
+          # The tray: its state from the status (engine up, no gateway: "starting"), and a
+          # one-time sign-in link from the agent's pipe that signs in once.
+          $tray = Join-Path $dir 'aisathome-tray.exe'
+          go build -ldflags '-H windowsgui' -o $tray ./node/cmd/aisathome-tray
+          if ($LASTEXITCODE -ne 0) { throw 'go build (tray) failed' }
+          $trayOut = Join-Path $dir 'tray-check.txt'
+          $p = Start-Process -FilePath $tray -ArgumentList '-check' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $trayOut
+          $text = Get-Content -Raw $trayOut
+          "tray -check (exit $($p.ExitCode)): $text"
+          if ($p.ExitCode -ne 0 -or $text -notmatch 'state=starting' -or $text -notmatch 'signin=ok') { Show-Logs; throw 'tray -check failed' }
           # A clean stop stops the engine too.
           Stop-Service aisathome-node
           $svc = Get-CimInstance Win32_Service -Filter "Name='aisathome-node'"
@@ -196,8 +206,9 @@ jobs:
     # The Windows installer (Inno Setup 6, preinstalled on the image), without a GPU, engine or
     # gateway: build it, then node/packaging/windows/installer_test.ps1 installs it silently,
     # checks the service (virtual account, delayed start, restart on failure, running, page
-    # answering) and the data folder's permissions, updates it in place, and uninstalls it
-    # silently, once keeping the data folder and once with /PURGEDATA.
+    # answering), the data folder's permissions and the tray (file, autostart, Start menu, its
+    # sign-in over the agent's pipe, closed by an update and an uninstall), updates it in place,
+    # and uninstalls it silently, once keeping the data folder and once with /PURGEDATA.
     runs-on: windows-2025
     timeout-minutes: 20
     steps:

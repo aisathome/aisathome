@@ -49,6 +49,16 @@ and **(site)** are live on aisathome.org once deployed.
   setup's last state, `nvidia-smi` and the driver, the agent's and the engine's logs, the data
   and engine folders, and whether the gateway answers. The token and the local password are
   removed wherever they appear. On Windows, run it in PowerShell as administrator. (node)
+- **A tray icon for the Windows node** (`aisathome-tray.exe`), started at every user's login:
+  the node's state as its icon and tooltip (serving, connected, starting, paused, engine
+  stopped, not set up, a problem such as a refused token, or the agent not running), and a menu
+  to open the node's page, stop and start the engine, collect diagnostics (`diagnose` as
+  administrator, the zip on the Desktop) and quit. The tray and the Start-menu entry open the
+  page **signed in**, without the local password: the agent hands out one-time sign-in links
+  (single use, one minute) over a local pipe, only to administrators and to accounts that may
+  read the password file. `service install -ui-user <account>` lets another standard account
+  in. The installer adds the tray and its autostart and closes running trays before an update
+  or uninstall. (node)
 
 ## [v0.4.0] — 2026-11-11
 

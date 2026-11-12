@@ -2,7 +2,10 @@
 
 `aisathome-node.exe` is AIs@home code under the Apache License 2.0 (`LICENSE.txt`). It is
 written in Go and contains the Go standard library and `golang.org/x/sys` (BSD 3-Clause) and
-`github.com/coder/websocket` (ISC).
+`github.com/coder/websocket` (ISC). `aisathome-tray.exe`, the notification-area icon, is
+AIs@home code under the same licence; besides those it contains
+[`fyne.io/systray`](https://github.com/fyne-io/systray) v1.12.2 (Apache-2.0, "Copyright 2014
+Brave New Software Project, Inc."; the same licence text as `LICENSE.txt`).
 
 The `engine` folder holds software under other terms, which the Apache License does **not**
 cover:
