@@ -91,7 +91,7 @@ func run(ctx context.Context, cfgPath string, layout node.Layout, logw io.Writer
 		defer f.Close()
 		engineOut = f
 	}
-	r := &runner{cfgPath: cfgPath, layout: layout, log: log, engineOut: engineOut, uiPort: uiPort}
+	r := &runner{cfgPath: cfgPath, layout: layout, log: log, engineOut: engineOut, uiPort: uiPort, pipe: localui.TrayPipe}
 	r.runNode = r.node
 	if layout.Setup && uiPort != 0 {
 		return r.withSetup(ctx)
@@ -107,7 +107,9 @@ type runner struct {
 	log       *slog.Logger
 	engineOut io.Writer
 	uiPort    int
-	runNode   func(ctx context.Context, ui *localui.Server) (int, error) // r.node; tests replace it
+	// pipe is the tray's pipe (localui.TrayPipe); "" = none.
+	pipe    string
+	runNode func(ctx context.Context, ui *localui.Server) (int, error) // r.node; tests replace it
 }
 
 // errConfig is a config the node cannot run with (the setup page can fix it).
@@ -202,7 +204,7 @@ func (r *runner) withSetup(ctx context.Context) int {
 		Log: log.With("part", "setup"),
 	}, mode)
 	pw := passwordFile(os.Getenv, r.layout)
-	ui := localui.New(r.waiting(), localui.Options{Port: r.uiPort, PasswordFile: pw, Log: log, Setup: flow})
+	ui := localui.New(r.waiting(), localui.Options{Port: r.uiPort, PasswordFile: pw, Log: log, Setup: flow, Pipe: r.pipe})
 	// The UI ends with this function, also when the node fails and the agent must exit for the
 	// service's recovery to restart it.
 	uictx, stopUI := context.WithCancel(ctx)

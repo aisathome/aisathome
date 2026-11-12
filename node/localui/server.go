@@ -9,7 +9,8 @@
 //   - state-changing requests must be same-origin (Origin and Sec-Fetch-Site) and JSON,
 //     which defeats cross-site requests from web pages;
 //   - controls need a session cookie (HttpOnly, SameSite=Strict) that is only issued for the
-//     password in the password file;
+//     password in the password file, or for a one-time sign-in link (GET /login-link, single
+//     use, a minute) that only the agent's tray pipe hands out (Windows; pipe.go);
 //   - the page loads nothing from elsewhere (embedded assets, a strict CSP).
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -73,6 +74,9 @@ type Options struct {
 	NvidiaSMI    string // nvidia-smi command; "" = "nvidia-smi"
 	Log          *slog.Logger
 	Setup        Setup // the setup page; nil = none
+	// Pipe is the named pipe where the tray asks for one-time sign-in links (TrayPipe on
+	// Windows); "" = none.
+	Pipe string
 }
 
 // Server is the local UI.
@@ -133,6 +137,21 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		srv.Shutdown(sctx)
 	}()
 	s.log.Info("local UI listening", "url", "http://"+ln.Addr().String()+"/")
+	if s.opt.Pipe != "" {
+		pctx, stop := context.WithCancel(ctx)
+		pipeDone := make(chan struct{})
+		go func() {
+			defer close(pipeDone)
+			// The page works without it; only the tray's sign-in needs it.
+			if err := s.servePipe(pctx, s.opt.Pipe); err != nil {
+				s.log.Error("tray pipe not available: the tray cannot sign in to the page", "pipe", s.opt.Pipe, "err", err)
+			}
+		}()
+		defer func() {
+			stop()
+			<-pipeDone
+		}()
+	}
 	err := srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -161,6 +180,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
+	mux.HandleFunc("GET /login-link", s.handleLoginLink)
 	mux.HandleFunc("POST /api/pause", s.control(func(w http.ResponseWriter, _ *http.Request) { s.cur().Pause(); s.ok(w) }))
 	mux.HandleFunc("POST /api/resume", s.control(func(w http.ResponseWriter, _ *http.Request) { s.cur().Resume(); s.ok(w) }))
 	mux.HandleFunc("POST /api/restart-engine", s.control(s.restart))
@@ -286,7 +306,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		c.Enabled = true
 		c.SignedIn = s.auth.valid(r)
 	}
-	resp := StatusResponse{Status: st, GPU: s.gpu.get(r.Context()), Controls: c, AccountURL: AccountURL}
+	resp := StatusResponse{Status: st, Controls: c, AccountURL: AccountURL}
+	if r.URL.Query().Get("gpu") != "0" { // the tray polls without it: no nvidia-smi run for it
+		resp.GPU = s.gpu.get(r.Context())
+	}
 	if s.opt.Setup != nil {
 		ss := s.opt.Setup.State()
 		resp.Setup = &ss
@@ -312,6 +335,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, cookie)
 	s.ok(w)
+}
+
+// handleLoginLink signs the browser in with a one-time link from the tray (newLink) and
+// goes to "/". A used, expired or unknown link goes to "/" too, where the page asks for the
+// password (a browser restoring its tabs reopens a used link). Only a navigation the person
+// started (Sec-Fetch-Site none, as from the tray or the address bar) or a non-browser client
+// may use one: another site's page cannot, even with a valid secret.
+func (s *Server) handleLoginLink(w http.ResponseWriter, r *http.Request) {
+	switch site := r.Header.Get("Sec-Fetch-Site"); site {
+	case "", "none", "same-origin":
+	default:
+		s.log.Warn("local UI: rejected a sign-in link from another site", "sec-fetch-site", site)
+		http.Error(w, "sign-in links only work when opened directly", http.StatusForbidden)
+		return
+	}
+	if c, ok := s.auth.redeem(r.URL.Query().Get("t")); ok {
+		http.SetCookie(w, c)
+		s.log.Info("local UI: signed in with a one-time link from the tray")
+	} else if !s.auth.valid(r) {
+		s.log.Warn("local UI: a sign-in link was used, expired or unknown")
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
