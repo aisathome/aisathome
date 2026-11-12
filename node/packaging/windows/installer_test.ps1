@@ -202,9 +202,11 @@ Write-Host '== tray sign-in for a standard user: refused until service install -
 # A standard (not administrator) account: the agent's pipe gives it no link while the password
 # file is only for the installing user, and does once `service install -ui-user` grants it.
 $ciUser = 'aisathome-ci'
-$ciPass = 'Ci-' + [guid]::NewGuid().ToString('N').Substring(0, 16) + '-a1!'
-net.exe user $ciUser $ciPass /add | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail "could not add the local user $ciUser" }
+# 14 characters at most: for a longer password net.exe asks "(Y/N)" about pre-Windows 2000
+# computers, gets no answer here and fails (CI, 2026-11-12). Upper, lower, digit and symbol.
+$ciPass = 'Ci1!a' + [guid]::NewGuid().ToString('N').Substring(0, 9)
+$out = net.exe user $ciUser $ciPass /add 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { Fail "could not add the local user ${ciUser}: $out" }
 try {
   $cred = [pscredential]::new("$env:COMPUTERNAME\$ciUser", (ConvertTo-SecureString $ciPass -AsPlainText -Force))
   $ran = $true
