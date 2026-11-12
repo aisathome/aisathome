@@ -166,3 +166,44 @@ func TestEngineNotRunningIsNotHealthy(t *testing.T) {
 		t.Fatal("did not connect once the engine runs")
 	}
 }
+
+// Stop engine while the agent is between its hello and the gateway's welcome: there is no
+// session to leave yet, so the session must not start (it would offer capacity with the engine
+// stopped until three health checks failed; Codex review).
+func TestStopEngineDuringHandshake(t *testing.T) {
+	var hits atomic.Int32
+	var a *Agent
+	closed := make(chan struct{}, 1)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var hello protocol.Msg
+		if read(r.Context(), c, &hello) != nil {
+			return
+		}
+		if err := a.StopEngine(); err != nil { // the volunteer presses Stop engine now
+			t.Error(err)
+		}
+		sendTo(t, c, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: "gw"})
+		var m protocol.Msg
+		for read(r.Context(), c, &m) == nil {
+		}
+		closed <- struct{}{}
+	}))
+	t.Cleanup(s.Close)
+	cfg := testConfig("ws"+strings.TrimPrefix(s.URL, "http"), testEngine(t, &hits).URL, "")
+	cfg.HealthInterval = time.Hour // only the stop may end the session
+	cfg.EngineControl = &stateControl{state: engine.StateRunning}
+	a = New(cfg, quietLog())
+	runAgent(t, a)
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the session went on after Stop engine during the handshake")
+	}
+	if st := a.Status(); st.Connected || st.Engine != EngineStopped {
+		t.Fatalf("connected %v, engine %q; want away and stopped", st.Connected, st.Engine)
+	}
+}

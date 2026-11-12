@@ -375,6 +375,10 @@ func (a *Agent) session(ctx context.Context) error {
 		return send(m)
 	}
 	a.mu.Lock()
+	if a.held { // Stop engine came during the handshake, before there was a session to leave
+		a.mu.Unlock()
+		return errEngineStopped
+	}
 	a.connected, a.gatewayID, a.connectedAt, a.refused, a.rejected = true, welcome.GatewayID, a.now(), "", ""
 	a.push = func() { _ = heartbeat() }
 	a.leave = func() { stopCause(errEngineStopped) } // the session's end closes the connection
