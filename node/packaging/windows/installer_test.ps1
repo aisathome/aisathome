@@ -205,3 +205,6 @@ if (Test-Path (Join-Path $data 'node.json')) { Fail 'fresh install: node.json ap
 Uninstall @('/PURGEDATA')
 if (Test-Path $data) { Fail "/PURGEDATA left $data" }
 Write-Host 'installer test passed'
+# Exit 0 explicitly: the CI's pwsh shell ends with "exit $LASTEXITCODE", and the last native
+# command here is Wait-Status's `status -json`, which exits 1 by design (answered, not connected).
+exit 0
