@@ -86,10 +86,20 @@ func TestEngineSettings(t *testing.T) {
 		t.Errorf("config from the engine: %+v", cfg)
 	}
 
-	cfg = node.Config{Preset: "mine", Engine: &node.EngineConfig{Tier: "standard", LlamaServer: "/x/ls", Model: "/m.gguf", Port: 8123}}
-	if es, err = engineSettings(&cfg, node.LinuxLayout, "/opt"); err != nil || es.Exe != "/x/ls" || es.Model != "/m.gguf" ||
+	// Absolute paths are used as they are. They come from TempDir: "/x/ls" is not absolute on
+	// Windows (it has no drive), so there it would rightly become "D:\x\ls".
+	absExe, absModel := filepath.Join(t.TempDir(), "x", "ls"), filepath.Join(t.TempDir(), "m.gguf")
+	cfg = node.Config{Preset: "mine", Engine: &node.EngineConfig{Tier: "standard", LlamaServer: absExe, Model: absModel, Port: 8123}}
+	if es, err = engineSettings(&cfg, node.LinuxLayout, "/opt"); err != nil || es.Exe != absExe || es.Model != absModel ||
 		cfg.Upstream != "http://127.0.0.1:8123" || cfg.Preset != "mine" {
 		t.Errorf("configured paths and port: %+v %v %+v", es, err, cfg)
+	}
+
+	// A rooted path without a drive (`\x\ls` on Windows) is made absolute too: on every
+	// platform the engine gets absolute paths only.
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "standard", LlamaServer: filepath.FromSlash("/x/ls"), Model: filepath.FromSlash("/m.gguf")}}
+	if es, err = engineSettings(&cfg, node.LinuxLayout, "/opt"); err != nil || !filepath.IsAbs(es.Exe) || !filepath.IsAbs(es.Model) {
+		t.Errorf("rooted paths: %+v %v", es, err)
 	}
 
 	// Relative paths in node.json are the agent's working directory's: the engine runs in its

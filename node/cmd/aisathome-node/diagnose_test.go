@@ -95,7 +95,7 @@ func TestDiagnose(t *testing.T) {
 		"logs/node.log":    "leaked <redacted> and <redacted>",
 		"logs/node.log.1":  "nt-n-0000000b.<redacted>",
 		"logs/engine.log":  "model loaded",
-		"files.txt":        "models/model.gguf",
+		"files.txt":        filepath.Join("models", "model.gguf"), // the folder's own separator, as Explorer shows it
 		"gateway.txt":      `/healthz: 200 "ok"`,
 		"errors.txt":       "",
 		"service/" + serviceCommands(l, dir)[0].name + ".txt": "output of",

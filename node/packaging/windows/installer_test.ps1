@@ -179,16 +179,22 @@ $st = Wait-Status
 if ($st.connected -or -not $st.controls.enabled -or $st.setup.mode -ne 'setup' -or $st.setup.configured -or $st.engine_process) {
   Fail "fresh install: want setup mode, not configured, controls on, no engine process: $($st | ConvertTo-Json -Depth 4)"
 }
-$code = 0; $loc = ''
+# HttpClient without redirects, not Invoke-WebRequest -MaximumRedirection 0: PowerShell 7
+# reports the unfollowed redirect as an error, which -ErrorAction Stop (and this script's
+# $ErrorActionPreference) turns into an exception without the response, so the 303 was lost.
+$code = 0; $loc = ''; $why = ''
+$handler = [Net.Http.HttpClientHandler]::new()
+$handler.AllowAutoRedirect = $false
+$client = [Net.Http.HttpClient]::new($handler)
 try {
-  # PowerShell 7 returns the 303 itself with -SkipHttpErrorCheck; older versions throw.
-  $r = Invoke-WebRequest -Uri 'http://127.0.0.1:7381/' -MaximumRedirection 0 -SkipHttpErrorCheck -UseBasicParsing -ErrorAction Stop
+  $r = $client.GetAsync('http://127.0.0.1:7381/').GetAwaiter().GetResult()
   $code = [int]$r.StatusCode; $loc = "$($r.Headers.Location)"
 } catch {
-  $resp = $_.Exception.Response
-  if ($resp) { $code = [int]$resp.StatusCode; $loc = "$($resp.Headers.Location)" }
+  $why = "($($_.Exception.Message))"
+} finally {
+  $client.Dispose()
 }
-if ($code -ne 303 -or $loc -ne '/setup') { Fail "fresh install: / answered $code $loc, want 303 to /setup" }
+if ($code -ne 303 -or $loc -ne '/setup') { Fail "fresh install: / answered $code $loc $why, want 303 to /setup" }
 $page = Invoke-WebRequest -Uri 'http://127.0.0.1:7381/setup' -UseBasicParsing
 if ($page.StatusCode -ne 200 -or $page.Content -notmatch 'setup\.js') { Fail "fresh install: /setup answered $($page.StatusCode)" }
 Start-Sleep -Seconds 5
