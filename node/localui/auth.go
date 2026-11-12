@@ -35,6 +35,7 @@ type auth struct {
 	mu       sync.Mutex
 	lastFail time.Time
 	links    map[[32]byte]link // by the SHA-256 of each unused sign-in link's secret
+	linkSeq  uint64            // the number of links made, for dropping the oldest
 }
 
 // link is an unused sign-in link: its expiry, and a digest of the password it was made under
@@ -42,6 +43,7 @@ type auth struct {
 type link struct {
 	exp time.Time
 	pw  [32]byte
+	seq uint64 // the order links were made in: expiries can be equal (Windows' clock is coarse)
 }
 
 func newAuth(file string) *auth {
@@ -116,18 +118,19 @@ func (a *auth) newLink() (string, error) {
 	defer a.mu.Unlock()
 	now := a.now()
 	var oldest [32]byte
-	var oldestExp time.Time
+	oldestSeq := uint64(1<<64 - 1)
 	for k, l := range a.links {
 		if !now.Before(l.exp) {
 			delete(a.links, k)
-		} else if oldestExp.IsZero() || l.exp.Before(oldestExp) {
-			oldest, oldestExp = k, l.exp
+		} else if l.seq < oldestSeq {
+			oldest, oldestSeq = k, l.seq
 		}
 	}
 	if len(a.links) >= maxLinks {
 		delete(a.links, oldest)
 	}
-	a.links[sha256.Sum256([]byte(secret))] = link{exp: now.Add(linkTTL), pw: sha256.Sum256([]byte(pw))}
+	a.linkSeq++
+	a.links[sha256.Sum256([]byte(secret))] = link{exp: now.Add(linkTTL), pw: sha256.Sum256([]byte(pw)), seq: a.linkSeq}
 	return secret, nil
 }
 

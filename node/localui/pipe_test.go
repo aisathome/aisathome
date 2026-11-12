@@ -100,9 +100,12 @@ func TestLoginLinkNotCrossSite(t *testing.T) {
 	}
 }
 
-// Only maxLinks unused links are kept: a burst drops the oldest, not the newest.
+// Only maxLinks unused links are kept: a burst drops the oldest, not the newest, also when
+// they were all made at the same clock reading (Windows' clock is coarse; CI failed on that).
 func TestLoginLinkLimit(t *testing.T) {
 	e := newEnv(t)
+	now := time.Now()
+	e.ui.auth.now = func() time.Time { return now }
 	first := askLink(t, e)
 	var last string
 	for i := 0; i < maxLinks; i++ {
