@@ -3,6 +3,7 @@ package main
 
 import (
 	"archive/zip"
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/localui"
 	"github.com/aisathome/aisathome/node/setup"
+	"github.com/aisathome/aisathome/node/tray"
 )
 
 // diagnose implements `aisathome-node diagnose [-out file.zip]`: one zip with what is needed
@@ -40,8 +42,15 @@ func runDiagnose(args []string, stdout, stderr io.Writer) int {
 	layout := node.DefaultLayout()
 	out := fl.String("out", "", "the zip to write (default: aisathome-diagnose-<time>.zip on the Desktop, else in the home folder)")
 	cfgPath := fl.String("config", layout.Config, "config file (JSON)")
+	pause := fl.Bool("pause", false, "wait for Enter before exiting (the tray runs this in a window of its own)")
 	if err := fl.Parse(args); err != nil || fl.NArg() > 0 {
 		return 2
+	}
+	if *pause {
+		defer func() {
+			fmt.Fprint(stdout, "\nPress Enter to close this window.")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}()
 	}
 	if *out == "" {
 		*out = defaultDiagnosePath(time.Now())
@@ -49,6 +58,9 @@ func runDiagnose(args []string, stdout, stderr io.Writer) int {
 	exeDir, _ := ownDir()
 	d := diagnosis{layout: layout, cfgPath: *cfgPath, exeDir: exeDir, uiPort: localui.DefaultPort,
 		run: runCommand, smi: setup.ExecSMI{}, now: time.Now}
+	if runtime.GOOS == "windows" { // the tray's log of the user running this
+		d.trayLog = tray.LogFile(os.Getenv)
+	}
 	if p, err := localui.PortFromEnv(localui.DefaultPort); err == nil && p != 0 {
 		d.uiPort = p
 	}
@@ -93,6 +105,7 @@ type diagnosis struct {
 	smi     setup.SMI
 	now     func() time.Time
 	client  *http.Client // the gateway check; nil = a default with timeouts
+	trayLog string       // the tray's log (Windows); "" = none
 
 	secrets []string // exact strings to redact (the token, the password)
 	errs    []string
@@ -164,7 +177,7 @@ func (d *diagnosis) write(ctx context.Context, out string) (int, error) {
 		}
 	}
 	add("nvidia-smi.txt", d.nvidiaSMI(ctx))
-	for _, l := range []string{d.layout.LogFile, d.layout.EngineLogFile} {
+	for _, l := range []string{d.layout.LogFile, d.layout.EngineLogFile, d.trayLog} {
 		for _, p := range []string{l, l + ".1"} {
 			if l == "" {
 				continue

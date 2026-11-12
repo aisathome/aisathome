@@ -49,6 +49,8 @@ func TestDiagnose(t *testing.T) {
 	os.WriteFile(l.LogFile, []byte("msg=starting\nleaked "+token+" and "+password+"\n"), 0o600)
 	os.WriteFile(l.LogFile+".1", []byte("older: "+other+"\n"), 0o600)
 	os.WriteFile(l.EngineLogFile, []byte("llama-server: model loaded\n"), 0o600)
+	trayLog := filepath.Join(dir, "tray.log")
+	os.WriteFile(trayLog, []byte("msg=state state=problem\n"), 0o600)
 	os.WriteFile(l.SetupStateFile, []byte(`{"mode":"setup","card":{"name":"RTX 4090"},"speed":{"error":"slow"}}`), 0o600)
 	os.WriteFile(l.StateFile, []byte(`{"events":[{"kind":"rejected","text":"HTTP 401"}]}`), 0o600)
 	ui, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -59,7 +61,7 @@ func TestDiagnose(t *testing.T) {
 
 	var ran []string
 	d := diagnosis{layout: l, cfgPath: l.Config, exeDir: dir, uiPort: ui.Addr().(*net.TCPAddr).Port, smi: diagSMI{},
-		now: func() time.Time { return time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC) },
+		trayLog: trayLog, now: func() time.Time { return time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC) },
 		run: func(_ context.Context, name string, args ...string) (string, error) {
 			ran = append(ran, name)
 			return "output of " + name + " mentioning " + password, nil
@@ -95,6 +97,7 @@ func TestDiagnose(t *testing.T) {
 		"logs/node.log":    "leaked <redacted> and <redacted>",
 		"logs/node.log.1":  "nt-n-0000000b.<redacted>",
 		"logs/engine.log":  "model loaded",
+		"logs/tray.log":    "state=problem",
 		"files.txt":        filepath.Join("models", "model.gguf"), // the folder's own separator, as Explorer shows it
 		"gateway.txt":      `/healthz: 200 "ok"`,
 		"errors.txt":       "",

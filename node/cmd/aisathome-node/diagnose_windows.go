@@ -21,6 +21,8 @@ func serviceCommands(l node.Layout, exeDir string) []diagCommand {
 		{"sc-qfailureflag", []string{"sc.exe", "qfailureflag", node.ServiceName}},
 		{"tasklist", []string{"tasklist.exe", "/v", "/fi", "imagename eq llama-server.exe"}},
 		{"tasklist-agent", []string{"tasklist.exe", "/v", "/fi", "imagename eq aisathome-node.exe"}},
+		{"tasklist-tray", []string{"tasklist.exe", "/v", "/fi", "imagename eq aisathome-tray.exe"}},
+		{"tray-autostart", []string{"reg.exe", "query", `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`, "/v", "AIs@home tray"}},
 		{"icacls-data", []string{"icacls.exe", dir}},
 		{"icacls-files", []string{"icacls.exe", filepath.Join(dir, "*")}},
 		{"events-scm", []string{"wevtutil.exe", "qe", "System", "/q:*[System[Provider[@Name='Service Control Manager']]]", "/c:60", "/rd:true", "/f:text"}},
