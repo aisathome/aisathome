@@ -7,6 +7,20 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+Planned as 0.2.0 (a new module; nothing existing changes).
+
+### Added
+
+- `lean.holes`: one proof, many holes. A copy of an outline in which each `sorry` marks its position (tactic or
+  term) and runs Mathlib's `extract_goal *` (`standin_copy`); the extracted statements read from Lake's output,
+  with why a hole is not extracted (not reached, elaborated more than once, data, metavariables; `extracted`);
+  a key per statement from the environment, the normalised context and the normalised statement
+  (`statement_key`, `signature_key`); the file's top-level commands, the scope lines and the definitions a lemma
+  file needs (`commands`, `scope_lines`, `context_text`); the dry assembly (each hole's lemma in a
+  `namespace <block>` above the declaration that holds it, the hole replaced by its application;
+  `dry_assembly`, `failed_blocks`) and the assembly from the lemmas' proof files (`assemble`). Text only: the
+  project compiles. Not yet run against Lean (a project's validation script does that first).
+
 ### Fixed
 
 - `Sandbox.drop` removes the root-owned, mode-000 `work/work` directories that overlayfs leaves in a
