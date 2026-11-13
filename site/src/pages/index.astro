@@ -6,6 +6,7 @@ import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, steps } from '../data/home';
 import { posts, postURL, shortDate, isoDate } from '../data/devlog';
 import { science } from '../data/science';
+import { p2m } from '../data/prove2me';
 
 // The newest dev log posts (design C of three, owner 2026-10-19), with the dev log's own publish
 // filter: drafts only in a build with DEVLOG_DRAFTS=1.
@@ -72,19 +73,27 @@ const icons: Record<string, string> = {
 			</svg>
 		</section>
 
-		{science.merged > 0 && (
-			<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
-				<p class="sci-kicker">Science</p>
-				<h2 id="b-sci">An open model on volunteer GPUs contributed to Tau Ceti</h2>
-				<p class="sci-text">
+		<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
+			<p class="sci-kicker">Science</p>
+			<h2 id="b-sci">Our GPUs prove theorems</h2>
+			<p class="sci-text" data-home-prove2me>
+				<strong class="sci-count" data-home-p2m-accepted>{p2m.totals.accepted}</strong>{' '}
+				{p2m.totals.accepted === 1 ? 'proof' : 'proofs'} by {p2m.model} accepted on prove2me so far ({p2m.totals.open_leaves_proved} of{' '}
+				{p2m.totals.open_leaves} open leaves tried), where theorems from research papers are stated in Lean 4 and every proof is checked
+				by machine.{p2m.current ? ` Trial ${p2m.current.trial} is running.` : ''}{' '}
+				<a href="/science/prove2me/" data-home-p2m-link>See the trials <span aria-hidden="true">→</span></a>
+			</p>
+			{science.merged > 0 && (
+				<p class="sci-text" data-home-tauceti>
 					<strong class="sci-count" data-home-science-merged>{science.merged}</strong>{' '}
 					<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, an open
 					library of formal mathematics where every change must pass the project’s own review. Failures are
-					counted too. Paused since 7 November 2026 at the maintainers’ request.
+					counted too. Paused since 7 November 2026 at the maintainers’ request.{' '}
+					<a href={science.pagePath}>See every pull request <span aria-hidden="true">→</span></a>
 				</p>
-				<a class="sci-link" href={science.pagePath}>See every pull request <span aria-hidden="true">→</span></a>
-			</section>
-		)}
+			)}
+			<a class="sci-link" href="/science/" data-home-science-all>All science <span aria-hidden="true">→</span></a>
+		</section>
 
 		{latest.length > 0 && (
 			<section class="log-c" aria-labelledby="b-log" data-home-devlog>
@@ -258,6 +267,8 @@ const icons: Record<string, string> = {
 	.sci-kicker { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sl-color-accent-high); }
 	.sci h2 { margin: 0.4rem 0 0.75rem; font-size: clamp(1.6rem, 3.2vw, 2.2rem); font-weight: 850; text-wrap: balance; }
 	.sci-text { max-width: 44rem; font-size: 1rem; line-height: 1.6; }
+	.sci-text + .sci-text { margin-top: 0.75rem; }
+	.sci-text a { font-weight: 600; color: var(--sl-color-gray-2); white-space: nowrap; }
 	.sci-count { font: 900 1.6rem/1 var(--font-display); color: var(--sl-color-white); }
 	.sci-link { display: inline-block; margin-top: 0.75rem; font-weight: 600; color: var(--sl-color-gray-2); }
 

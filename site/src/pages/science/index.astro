@@ -1,0 +1,101 @@
+---
+// Science overview (/science/): one card per project, the active one first, each with its status, a few headline numbers
+// from the same committed data its own page renders (science/prove2me.json, science/tauceti.json), and a link to it.
+// SPDX-License-Identifier: Apache-2.0
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { p2m } from '../../data/prove2me';
+import { science as tc } from '../../data/science';
+
+const t = p2m.totals;
+const cur = p2m.current;
+const running = !!cur && cur.leaves.some((l) => l.state === 'running' || l.state === 'queued');
+const dayLabel = (iso: string) => {
+	const d = new Date(iso);
+	return `${d.getUTCDate()} ${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+};
+const cards = [
+	{
+		id: 'prove2me',
+		name: 'prove2me',
+		href: '/science/prove2me/',
+		status: 'Active',
+		state: 'active',
+		about: 'Research theorems stated in Lean 4 and split into leaves. The Lean kernel checks every proof.',
+		numbers: [
+			{ key: 'accepted', value: String(t.accepted), label: `${t.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of ${t.submitted} submitted` },
+			{ key: 'open', value: `${t.open_leaves_proved} of ${t.open_leaves}`, label: 'open leaves proved' },
+			...(cur && running ? [{ key: 'trial', value: `Trial ${cur.trial}`, label: `running since ${dayLabel(cur.start)}` }] : []),
+		],
+		asOf: p2m.generated_at,
+	},
+	{
+		id: 'tauceti',
+		name: 'Tau Ceti',
+		href: tc.pagePath,
+		status: 'Paused at the maintainers’ request since 7 November 2026',
+		state: 'paused',
+		about: 'A library of formal mathematics; every change must pass the project’s own review.',
+		numbers: [
+			{ key: 'merged', value: `${tc.merged} of ${tc.prs.length}`, label: 'pull requests merged' },
+			...(tc.firstReviewed ? [{ key: 'first-review', value: `${tc.firstReviewApproved} of ${tc.firstReviewed}`, label: 'approved at the first review' }] : []),
+		],
+		asOf: tc.generatedAt?.toISOString() ?? '',
+	},
+];
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Science',
+		description: `What ${p2m.model}, an open model on the AIs@home network, does for science: work a machine checks, with every result counted.`,
+	}}
+>
+	<p>
+		Science on AIs@home means an open model, {p2m.model}, running on the network’s GPUs and doing work that a machine checks: a proof that
+		Lean accepts or rejects, a change that a project’s own review merges or not. Every attempt counts, the failures too. Today the network
+		is mostly the maintainer’s own GPUs, some of them rented.
+	</p>
+	<ul class="sci-cards not-content" data-science-overview>
+		{
+			cards.map((c) => (
+				<li class:list={['card', `card-${c.state}`]} data-project={c.id} data-status={c.state}>
+					<h2>
+						<a href={c.href} data-project-link>{c.name}</a>
+					</h2>
+					<p class="status" data-project-status>{c.status}</p>
+					<p class="about">{c.about}</p>
+					<dl>
+						{c.numbers.map((n) => (
+							<div data-number={n.key}>
+								<dt>{n.label}</dt>
+								<dd>{n.value}</dd>
+							</div>
+						))}
+					</dl>
+					<p class="foot">
+						{c.asOf && <span>As of {dayLabel(c.asOf)}. </span>}
+						<a href={c.href}>See {c.name} <span aria-hidden="true">→</span></a>
+					</p>
+				</li>
+			))
+		}
+	</ul>
+</StarlightPage>
+
+<style>
+	.sci-cards { display: grid; gap: 1rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }
+	.card { padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-gray-4); border-radius: 0.4rem; background: var(--b-surface); }
+	.card-active { border-left-color: var(--sl-color-accent); }
+	.card h2 { margin: 0; font-size: 1.4rem; }
+	.card h2 a { color: var(--sl-color-white); text-decoration: none; }
+	.card h2 a:hover { color: var(--sl-color-accent-high); }
+	.status { margin: 0.25rem 0 0; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.card-active .status { color: var(--sl-color-accent-high); }
+	.about { margin: 0.5rem 0 0; color: var(--sl-color-gray-2); }
+	.card dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.5rem 1rem; margin: 0.75rem 0 0; }
+	.card dl div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+	.card dd { margin: 0; font: 900 1.5rem/1.1 var(--font-display); color: var(--sl-color-white); }
+	.card dt { margin-top: 0.2rem; font-size: 0.78rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+	.foot { margin: 0.75rem 0 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+	.foot a { font-weight: 600; color: var(--sl-color-accent-high); }
+</style>

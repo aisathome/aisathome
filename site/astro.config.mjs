@@ -65,7 +65,11 @@ export default defineConfig({
 				},
 				{
 					label: 'Science',
-					items: [{ label: 'Tau Ceti', link: '/science/tauceti/' }],
+					items: [
+						{ label: 'Overview', link: '/science/' },
+						{ label: 'prove2me', link: '/science/prove2me/' },
+						{ label: 'Tau Ceti', link: '/science/tauceti/' },
+					],
 				},
 				{
 					label: 'About',

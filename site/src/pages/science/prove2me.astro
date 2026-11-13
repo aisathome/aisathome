@@ -1,0 +1,389 @@
+---
+// Science: prove2me (prove2.me), where Qwen3.8 27B on the AIs@home network tries leaves of research theorems in
+// Lean 4. The build renders src/data/science/prove2me.json (our trials and submissions, exported from the trial
+// records; the page works without JavaScript); the browser adds the network's share of the work from the gateway's
+// public /v1/stats (project prove2me), which stays hidden until real numbers arrive.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { compact, counts, day, hhmm, leafProgress, shortSpan, outcomeLabel, p2m, plainTitle, qwenTokens, span, stateLabel, sumTokens, theoremURL, tokTitle } from '../../data/prove2me';
+
+const t = p2m.totals;
+const cur = p2m.current;
+const safe = (u: string) => (theoremURL.test(u) ? u : undefined);
+const groupLabel = { calibration: 'Calibration', open: 'Open' } as Record<string, string>;
+const earlierText = (e: number[]) => (e.length ? `tried before in trial${e.length > 1 ? 's' : ''} ${e.join(' and ')}` : '');
+const pct = (x: number, n: number) => Math.round((100 * x) / n);
+const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.leaves.reduce((a, r) => a + r.model_minutes, 0) / 60, tok: sumTokens(tr.leaves) }));
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Science: prove2me',
+		description: `Leaves of prove2me, research theorems stated in Lean 4, that ${p2m.model}, an open model on the AIs@home network, tried to prove, and the proofs we submitted. Every run counts.`,
+	}}
+	headings={[
+		{ depth: 2, slug: 'results', text: 'Results so far' },
+		{ depth: 2, slug: 'submissions', text: 'Submitted to prove2me' },
+		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
+		{ depth: 2, slug: 'trials', text: 'Trials' },
+		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
+		{ depth: 2, slug: 'next', text: 'What comes next' },
+	]}
+>
+	<p>
+		<a href={p2m.project_url} data-p2m-link="home">prove2me</a> collects theorems from mathematical research papers, stated in Lean 4
+		and split into small pieces called leaves. Anyone, a person or an agent, may submit a proof of an open leaf, and prove2me’s own
+		check decides: the Lean kernel and the axioms the proof uses.
+	</p>
+	<p>
+		{p2m.model}, an open-weight model on the AIs@home network, works on leaves as an agent, with Lean and Mathlib at prove2me’s
+		versions. Our own full check judges every attempt: the proof must build, state exactly the leaf’s theorem, and use no
+		<code>sorry</code> and no axiom beyond Lean’s standard three. Only proofs that pass it are submitted, and since 12 November 2026
+		every one of them that proves an open leaf is. AIs@home is not part of prove2me.
+	</p>
+	<p class="p2m-updated" data-p2m-updated>Updated on <time datetime={p2m.generated_at}>{day(p2m.generated_at)}</time></p>
+
+	<h2 id="results">Results so far</h2>
+	<dl class="p2m-kpis not-content" data-p2m-kpis>
+		<div data-kpi="accepted"><dt>{t.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of {t.submitted} submitted</dt><dd>{t.accepted}</dd></div>
+		<div data-kpi="open"><dt>open leaves proved, of {t.open_leaves} tried</dt><dd>{t.open_leaves_proved}</dd></div>
+		<div data-kpi="runs"><dt>runs proved, of {t.runs} in trials 1 to {trials.length}</dt><dd>{t.proved}</dd></div>
+	</dl>
+	<p data-p2m-small>
+		Small numbers. The one open leaf proved was a short proof of a leaf nobody had tried yet: it shows that the model can do it, not how
+		often. On calibration leaves, which others had proved before, {t.calibration_proved} of {t.calibration_runs} runs succeeded.
+		All runs together took {t.model_hours} hours of model time.
+	</p>
+
+	<section class="p2m-live not-content" data-p2m-live hidden aria-labelledby="p2m-live-head">
+		<h3 id="p2m-live-head">prove2me on the network</h3>
+		<dl class="p2m-live-list">
+			<div><dt>requests today (UTC)</dt><dd data-live="today-requests"></dd></div>
+			<div><dt>of all the network’s requests today</dt><dd data-live="today-share"></dd></div>
+			<div><dt>requests since 11 November</dt><dd data-live="requests"></dd></div>
+			<div><dt>tokens read and written since 11 November</dt><dd data-live="tokens"></dd></div>
+			<div><dt>GPU hours since 11 November</dt><dd data-live="hours"></dd></div>
+		</dl>
+		<p class="p2m-note">
+			Live from the gateway’s public statistics, updated <time data-live="updated"></time> UTC. The network counts prove2me on its own
+			since 11 November 2026 (trial 4 on); the requests of trials 1 to 3 count under Tau Ceti’s project.
+		</p>
+	</section>
+
+	<h2 id="submissions">Submitted to prove2me</h2>
+	{
+		p2m.submissions.length ? (
+			<div class="p2m-wrap not-content">
+				<table class="p2m-table" data-p2m-submissions>
+					<thead>
+						<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">From</th><th scope="col">Submitted</th><th scope="col">prove2me’s verdict</th></tr>
+					</thead>
+					<tbody>
+						{p2m.submissions.map((s) => (
+							<tr data-submission={s.leaf} data-verdict={s.verdict}>
+								<th scope="row">{s.leaf}</th>
+								<td class="thm">
+									<a href={safe(s.url)} data-theorem>{s.theorem}</a>
+									<span class="sub">{plainTitle(s.title)}</span>
+								</td>
+								<td data-label="From">Trial {s.trial}</td>
+								<td data-label="Submitted"><time datetime={s.submitted_at}>{day(s.submitted_at)}, {hhmm(s.submitted_at)}</time></td>
+								<td data-label="Verdict" class:list={['verdict', `verdict-${s.verdict}`]}>
+									{s.verdict === 'accepted' ? 'Accepted' : s.verdict === 'pending' ? 'Pending' : 'Rejected'}
+									{s.verdict_at && <span class="sub">{hhmm(s.verdict_at)}</span>}
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+		) : (
+			<p>Nothing yet.</p>
+		)
+	}
+	<p>
+		O04 had been open for 13 days with no submission from anyone. Its proof is short: the distribution has a density, so a single
+		price carries no probability mass. prove2me’s theorem page shows the leaf as proved. Calibration leaves are never submitted:
+		they were proved before.
+	</p>
+
+	<h2 id="working-on-now">Working on now</h2>
+	{
+		cur ? (
+			<section class="p2m-now not-content" data-p2m-now>
+				<p class="head">
+					Trial {cur.trial}, since {day(cur.start)} · scaffold {cur.scaffold}
+				</p>
+				<p>{cur.summary}</p>
+				<p class="caps">Budget: {cur.caps}.</p>
+				<ul>
+					{cur.leaves.map((l) => (
+						<li data-current-leaf={l.leaf} data-state={l.state}>
+							<span class="leaf">{l.leaf}</span>
+							<a href={safe(l.url)} class="thm-name">{l.theorem}</a>
+							<span class="meta">
+								<span>{groupLabel[l.group] ?? l.group} leaf</span>
+								{l.earlier.length > 0 && <span>{earlierText(l.earlier)}</span>}
+							</span>
+							<span class:list={['state', `state-${l.state}`]} data-progress={leafProgress(l)}>
+								{stateLabel[l.state] ?? l.state}
+								{leafProgress(l) && `: ${leafProgress(l)}`}
+							</span>
+						</li>
+					))}
+				</ul>
+				<p class="meta">
+					As of {day(p2m.generated_at)}, {hhmm(p2m.generated_at)}. This list changes when the site is rebuilt, so it can lag behind the
+					trial.
+				</p>
+			</section>
+		) : (
+			<p>No trial is running.</p>
+		)
+	}
+
+	<h2 id="trials">Trials</h2>
+	<p>
+		Each trial changed the agent’s scaffold (its instructions, tools and rounds) from what the one before taught, so the trials are
+		steps, not repeats. Tap a trial for every leaf it ran.
+	</p>
+	<div class="p2m-wrap not-content">
+		<table class="p2m-table p2m-trials" data-p2m-trials>
+			<thead>
+				<tr>
+					<th scope="col">Trial</th><th scope="col">Dates</th><th scope="col">Scaffold</th><th scope="col" class="num">Proved</th>
+					<th scope="col" class="num">Calibration</th><th scope="col" class="num">Open</th><th scope="col" class="num">Model hours</th>
+					<th scope="col" class="num">Qwen tokens</th>
+				</tr>
+			</thead>
+			<tbody>
+				{trials.map((tr) => (
+					<tr data-trial={tr.trial}>
+						<th scope="row"><a href={`#trial-${tr.trial}`}>Trial {tr.trial}</a></th>
+						<td data-label="Dates" class="nowrap"><time datetime={tr.start}>{shortSpan(tr)}</time></td>
+						<td data-label="Scaffold">{tr.scaffold}</td>
+						<td data-label="Proved" class="num" data-cell="proved">{tr.c.all.proved} of {tr.c.all.runs}</td>
+						<td data-label="Calibration" class="num" data-cell="calibration">{tr.c.calibration.runs ? `${tr.c.calibration.proved} of ${tr.c.calibration.runs}` : '–'}</td>
+						<td data-label="Open" class="num" data-cell="open">{tr.c.open.proved} of {tr.c.open.runs}</td>
+						<td data-label="Model hours" class="num">{tr.hours.toFixed(1)}</td>
+						<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(tr.tok)} data-output={tr.tok.output_tokens} data-cached={tr.tok.cached_tokens} title={tokTitle(tr.tok)}>{compact(qwenTokens(tr.tok))}</td>
+					</tr>
+				))}
+			</tbody>
+			<tfoot>
+				<tr data-trial="all">
+					<th scope="row">All</th><td></td><td></td>
+					<td data-label="Proved" class="num" data-cell="proved">{t.proved} of {t.runs}</td>
+					<td data-label="Calibration" class="num" data-cell="calibration">{t.calibration_proved} of {t.calibration_runs}</td>
+					<td data-label="Open" class="num" data-cell="open">{trials.reduce((a, tr) => a + tr.c.open.proved, 0)} of {t.open_runs}</td>
+					<td data-label="Model hours" class="num">{t.model_hours.toFixed(1)}</td>
+					<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(t)} data-output={t.output_tokens} data-cached={t.cached_tokens} title={tokTitle(t)}>{compact(qwenTokens(t))}</td>
+				</tr>
+			</tfoot>
+		</table>
+	</div>
+
+	{
+		trials.map((tr) => (
+			<details class="p2m-trial" id={`trial-${tr.trial}`} data-p2m-trial={tr.trial}>
+				<summary>
+					Trial {tr.trial} · {span(tr)} · {tr.c.all.proved} of {tr.c.all.runs} proved
+				</summary>
+				<p>{tr.summary}</p>
+				<p class="caps">Budget per leaf: {tr.caps}.</p>
+				<div class="p2m-wrap not-content">
+					<table class="p2m-table p2m-leaves">
+						<thead>
+							<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">Rounds</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Qwen tokens</th></tr>
+						</thead>
+						<tbody>
+							{tr.leaves.map((r) => (
+								<tr data-leaf={r.leaf} data-outcome={r.outcome} data-scored={String(r.scored)}>
+									<th scope="row">{r.leaf}</th>
+									<td class="thm">
+										<a href={safe(r.url)}>{r.theorem}</a>
+										<span class="sub">{plainTitle(r.title)}</span>
+									</td>
+									<td data-label="Kind">
+										{groupLabel[r.group] ?? r.group}
+										{r.earlier.length > 0 && <span class="sub">{earlierText(r.earlier)}</span>}
+									</td>
+									<td data-label="Result" class:list={['result', r.outcome === 'proved' ? 'proved' : r.scored ? 'failed' : 'unscored']}>
+										{outcomeLabel(r)}
+										{!r.scored && r.not_scored_why && <span class="sub">{r.not_scored_why}</span>}
+									</td>
+									<td data-label="Rounds" class="num">{r.rounds}</td>
+									<td data-label="Model min" class="num">{r.model_minutes.toFixed(1)}</td>
+									<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(r)} data-output={r.output_tokens} data-cached={r.cached_tokens} title={tokTitle(r)}>{compact(qwenTokens(r))}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			</details>
+		))
+	}
+
+	<h2 id="how-to-read-this">How to read this</h2>
+	<ul>
+		<li>
+			<strong>The Lean kernel is the judge.</strong> A run counts as proved only when our full check passes (the proof builds, its theorem
+			is exactly the leaf’s, and it uses no <code>sorry</code> and only the axioms <code>propext</code>, <code>Classical.choice</code> and
+			<code>Quot.sound</code>), with Lean {p2m.lean} and Mathlib <code>{p2m.mathlib}</code> as on prove2me. A submission counts as
+			accepted only when prove2me’s verdict says so. We do not grade the model’s work ourselves.
+		</li>
+		<li>
+			<strong>Calibration and open leaves.</strong> A calibration leaf had already been proved by someone else when we chose it. It
+			tells us whether the setup works; the model is not shown that proof, and we never submit one. An open leaf had no accepted proof
+			when we chose it.
+		</li>
+		<li>
+			<strong>Every run counts.</strong> A run is one leaf in one trial: a first round, and from trial 2 up to two fix rounds in which
+			the model gets Lean’s errors. Failed runs stay in the tables. A leaf tried again in a later trial counts as one more run, and
+			once among the open leaves tried. Runs cut short by a fault on our side, not the model’s, say “Not scored” and why ({t.runs - t.scored}
+			so far); they still count among the runs.
+		</li>
+		<li>
+			<strong>Model minutes</strong> are the time the model spent generating, summed over a run’s rounds.
+			<strong>Qwen tokens</strong> are everything the model read and wrote in a run, as on the Tau Ceti page:
+			{compact(qwenTokens(t))} in all, of which {compact(t.output_tokens)} written. Most of what it reads is the same files again:
+			{Math.round((100 * t.cached_tokens) / t.prompt_tokens)}% came from the cache. Hover a token count for the exact numbers. Two first tries in
+			trial 2 that the gateway’s personal-data filter cut off are not in the counts.
+		</li>
+		<li>
+			<strong>Small samples.</strong> {t.runs} runs in {trials.length} trials, each with a different scaffold, budget and set of leaves.
+			They show what happened, not a success rate.
+		</li>
+		<li>
+			<strong>These are our own measurements</strong>, from the records of each run, not estimates. The model runs on the AIs@home
+			network, which today is mostly the maintainer’s own GPUs, some of them rented. The data is published as JSON:
+			<a href="/science/prove2me.json" data-p2m-json><code>/science/prove2me.json</code></a>.
+		</li>
+	</ul>
+
+	<h2 id="next">What comes next</h2>
+	<ul>
+		<li>Trial {cur?.trial ?? trials.length + 1}, above: whether one task per hole closes holes that whole-leaf rounds could not.</li>
+		<li>
+			Then a random sample of open leaves at a fixed budget, with the pass line written down before the run: the test of whether this
+			works at a useful rate, and what a proof costs.
+		</li>
+		<li>
+			The question behind it: can an open model on one consumer GPU close open leaves often enough that volunteers’ GPUs could do real
+			work here?
+		</li>
+	</ul>
+</StarlightPage>
+
+<script>
+	// The network's share of the work for project prove2me, from the gateway's public /v1/stats (aggregates only).
+	// Hidden until real numbers arrive and on any failure: never dashes or zeros by default.
+	const box = document.querySelector<HTMLElement>('[data-p2m-live]');
+	const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+	const full = new Intl.NumberFormat('en');
+	const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+	const load = async () => {
+		if (!box || !window.fetch) return;
+		try {
+			const ctl = new AbortController();
+			const timer = setTimeout(() => ctl.abort(), 8000);
+			const res = await fetch('/v1/stats', { signal: ctl.signal, headers: { accept: 'application/json' } });
+			clearTimeout(timer);
+			if (!res.ok) throw new Error(String(res.status));
+			const d = await res.json();
+			const all = d?.total?.projects?.prove2me;
+			const today = d?.today?.projects?.prove2me ?? { requests: 0 };
+			const todayAll = d?.today?.requests;
+			const at = new Date(d?.updated);
+			const tokens = (all?.prompt_tokens ?? NaN) + (all?.completion_tokens ?? NaN);
+			if (!all || ![all.requests, tokens, all.node_seconds ?? 0, today.requests, todayAll].every(ok) || Number.isNaN(at.getTime())) throw new Error('data');
+			const vals: Record<string, string> = {
+				'today-requests': full.format(today.requests),
+				'today-share': todayAll > 0 ? `${Math.round((100 * today.requests) / todayAll)}%` : '0%',
+				requests: full.format(all.requests),
+				tokens: compact.format(tokens),
+				hours: (all.node_seconds / 3600).toFixed(1),
+				updated: `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`,
+			};
+			box.querySelectorAll<HTMLElement>('[data-live]').forEach((el) => (el.textContent = vals[el.dataset.live ?? ''] ?? ''));
+			box.querySelector<HTMLTimeElement>('time[data-live]')!.dateTime = at.toISOString();
+			box.dataset.requests = String(all.requests);
+			box.hidden = false;
+		} catch {
+			box.hidden = true;
+		}
+	};
+	// A trial's link in the table (and a #trial-N address) opens that trial's list.
+	const openTrial = () => {
+		const d = location.hash.startsWith('#trial-') ? document.getElementById(location.hash.slice(1)) : null;
+		if (d instanceof HTMLDetailsElement) d.open = true;
+	};
+	window.addEventListener('hashchange', openTrial);
+	openTrial();
+	load();
+	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
+</script>
+
+<style>
+	.p2m-updated, .p2m-note, .caps, .sub, .meta { color: var(--sl-color-gray-3); }
+	.p2m-updated { font-size: 0.85rem; }
+	.p2m-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
+	.p2m-kpis div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
+	.p2m-kpis dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); color: var(--sl-color-white); }
+	.p2m-kpis dt { margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+	@media (max-width: 40rem) { .p2m-kpis { grid-template-columns: 1fr; } }
+
+	.p2m-live[hidden] { display: none !important; }
+	.p2m-live { margin: 1.25rem 0; padding: 1rem 1.25rem; border-radius: 0.5rem; background: var(--b-band, var(--b-surface)); }
+	.p2m-live h3 { margin: 0; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+	.p2m-live-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem 1rem; margin: 0.6rem 0 0; }
+	.p2m-live-list div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+	.p2m-live-list dd { margin: 0; font: 700 1.25rem/1.2 var(--font-display); color: var(--sl-color-white); }
+	.p2m-live-list dt { font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+	.p2m-note { margin: 0.6rem 0 0; font-size: 0.8rem; }
+
+	.p2m-wrap { overflow-x: auto; margin-top: 1rem; }
+	.p2m-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+	.p2m-table :is(th, td) { padding: 0.45rem 0.75rem 0.45rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+	.p2m-table :is(th, td):last-child { padding-right: 0; }
+	.p2m-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.p2m-table tbody th, .p2m-table tfoot th { white-space: nowrap; font-weight: 600; }
+	.p2m-table tfoot :is(th, td) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+	.p2m-table a { color: var(--sl-color-accent-high); }
+	.p2m-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	.p2m-table .thm { min-width: 14rem; }
+	.p2m-table td.result { min-width: 8rem; }
+	.p2m-table .tok { cursor: help; }
+	.p2m-table .nowrap { white-space: nowrap; }
+	.p2m-trials :is(th, td) { padding-right: 0.6rem; }
+	.p2m-table .thm a, .p2m-now .thm-name { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
+	.p2m-table .sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+	.p2m-table .proved, .p2m-table .verdict-accepted { font-weight: 600; color: var(--sl-color-accent-high); }
+	.p2m-table .unscored { font-style: italic; color: var(--sl-color-gray-3); }
+
+	.p2m-trial { margin-top: 0.75rem; }
+	.p2m-trial > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+	.caps { font-size: 0.85rem; }
+
+	.p2m-now { margin: 1rem 0 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+	.p2m-now p { margin: 0.5rem 0 0; }
+	.p2m-now .head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+	.p2m-now ul { margin: 0.75rem 0 0; padding: 0; list-style: none; }
+	.p2m-now li + li { margin-top: 0.6rem; }
+	.p2m-now .leaf { font-weight: 700; margin-right: 0.5rem; color: var(--sl-color-white); }
+	.p2m-now .meta { display: block; font-size: 0.85rem; }
+	.p2m-now .meta > span + span::before { content: ' · '; }
+	.p2m-now .state { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	.p2m-now .state-running { color: var(--sl-color-accent-high); }
+
+	/* Phones: each row as a small card instead of a wide table. */
+	@media (max-width: 40rem) {
+		.p2m-table, .p2m-table :is(tbody, tfoot) { display: block; }
+		.p2m-table thead { display: none; }
+		.p2m-table tbody tr, .p2m-table tfoot tr { display: grid; grid-template-columns: 1fr; gap: 0.2rem; padding: 0.6rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+		.p2m-table :is(th, td) { padding: 0; border: 0; }
+		.p2m-table .num { text-align: left; }
+		.p2m-table .thm { min-width: 0; }
+		.p2m-table td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+		.p2m-table tfoot td:empty { display: none; }
+	}
+</style>
