@@ -12,6 +12,15 @@ const safe = (u: string) => (theoremURL.test(u) ? u : undefined);
 const groupLabel = { calibration: 'Calibration', open: 'Open' } as Record<string, string>;
 const earlierText = (e: number[]) => (e.length ? `tried before in trial${e.length > 1 ? 's' : ''} ${e.join(' and ')}` : '');
 const pct = (x: number, n: number) => Math.round((100 * x) / n);
+// For the live "Working on now": what the build knows of each theorem (its link and title) and of the running trial's leaves.
+const known = {
+	trial: cur ? `t${cur.trial}` : '',
+	order: cur?.leaves.map((l) => l.leaf) ?? [],
+	leaves: Object.fromEntries((cur?.leaves ?? []).map((l) => [l.leaf, { theorem: l.theorem, url: safe(l.url) ?? '', group: l.group, earlier: l.earlier }])),
+	theorems: Object.fromEntries(
+		[...p2m.trials.flatMap((tr) => tr.leaves), ...(cur?.leaves ?? [])].filter((r) => safe(r.url)).map((r) => [r.theorem, r.url]),
+	),
+};
 const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.leaves.reduce((a, r) => a + r.model_minutes, 0) / 60, tok: sumTokens(tr.leaves) }));
 ---
 
@@ -107,17 +116,18 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 	</p>
 
 	<h2 id="working-on-now">Working on now</h2>
+	<script is:inline type="application/json" data-p2m-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
 	{
 		cur ? (
-			<section class="p2m-now not-content" data-p2m-now>
-				<p class="head">
+			<section class="p2m-now not-content" data-p2m-now data-trial={`t${cur.trial}`} data-source="build">
+				<p class="head" data-now-head>
 					Trial {cur.trial}, since {day(cur.start)} · scaffold {cur.scaffold}
 				</p>
-				<p>{cur.summary}</p>
-				<p class="caps">Budget: {cur.caps}.</p>
-				<ul>
+				<p data-now-about>{cur.summary}</p>
+				<p class="caps" data-now-about>Budget: {cur.caps}.</p>
+				<ul data-now-leaves>
 					{cur.leaves.map((l) => (
-						<li data-current-leaf={l.leaf} data-state={l.state}>
+						<li id={`leaf-${l.leaf}`} data-current-leaf={l.leaf} data-state={l.state}>
 							<span class="leaf">{l.leaf}</span>
 							<a href={safe(l.url)} class="thm-name">{l.theorem}</a>
 							<span class="meta">
@@ -131,13 +141,17 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 						</li>
 					))}
 				</ul>
-				<p class="meta">
+				<p class="meta" data-now-asof>
 					As of {day(p2m.generated_at)}, {hhmm(p2m.generated_at)}. This list changes when the site is rebuilt, so it can lag behind the
 					trial.
 				</p>
 			</section>
 		) : (
-			<p>No trial is running.</p>
+			<section class="p2m-now not-content" data-p2m-now data-trial="" data-source="build">
+				<p class="head" data-now-head>No trial is running.</p>
+				<ul data-now-leaves></ul>
+				<p class="meta" data-now-asof hidden></p>
+			</section>
 		)
 	}
 
@@ -275,6 +289,87 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 </StarlightPage>
 
 <script>
+	import { compact as compactTok, currentTrial, leafProgress, liveLeaves, parseQueue, stateLabel } from '../../data/prove2me-live';
+
+	// "Working on now", live: the gateway's public view of prove2me's task queue (gateway queue_public.go) replaces the
+	// build's list when it answers, on load and every minute. On any failure the build's list stays as it was.
+	const nowBox = document.querySelector<HTMLElement>('[data-p2m-now]');
+	type Known = { trial: string; order: string[]; leaves: Record<string, { theorem: string; url: string; group: string; earlier: number[] }>; theorems: Record<string, string> };
+	let known: Known = { trial: '', order: [], leaves: {}, theorems: {} };
+	try {
+		known = JSON.parse(document.querySelector('[data-p2m-known]')?.textContent || '{}') as Known;
+	} catch {}
+	const el = (tag: string, cls?: string, text?: string) => {
+		const e = document.createElement(tag);
+		if (cls) e.className = cls;
+		if (text !== undefined) e.textContent = text;
+		return e;
+	};
+	const hm = (d: Date) => `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+	const theoremLink = /^https:\/\/prove2\.me\/theorems\/[0-9a-f-]{36}$/;
+	const loadQueue = async () => {
+		if (!nowBox || !window.fetch) return;
+		try {
+			const ctl = new AbortController();
+			const timer = setTimeout(() => ctl.abort(), 8000);
+			const res = await fetch('/v1/projects/prove2me/queue', { signal: ctl.signal, headers: { accept: 'application/json' } });
+			clearTimeout(timer);
+			if (!res.ok) return;
+			const q = parseQueue(await res.json());
+			if (!q) return;
+			const trial = currentTrial(q);
+			const head = nowBox.querySelector<HTMLElement>('[data-now-head]')!;
+			const list = nowBox.querySelector<HTMLElement>('[data-now-leaves]')!;
+			const asof = nowBox.querySelector<HTMLElement>('[data-now-asof]')!;
+			const sameTrial = trial !== null && trial === known.trial;
+			nowBox.querySelectorAll<HTMLElement>('[data-now-about]').forEach((p) => (p.hidden = !sameTrial));
+			if (!sameTrial) head.textContent = trial ? `Trial ${trial.replace(/^t/, '')}` : 'Nothing is running or queued right now.';
+			const leaves = trial ? liveLeaves(q, trial, known.order) : [];
+			list.replaceChildren(
+				...leaves.map((l) => {
+					const k = known.leaves[l.leaf];
+					const li = el('li');
+					li.id = `leaf-${l.leaf}`;
+					li.dataset.currentLeaf = l.leaf;
+					li.dataset.state = l.state;
+					li.append(el('span', 'leaf', l.leaf));
+					const theorem = k?.theorem || l.theorem;
+					const url = k?.url || known.theorems[theorem] || '';
+					if (theorem) {
+						const a = el(theoremLink.test(url) ? 'a' : 'span', 'thm-name', theorem);
+						if (a instanceof HTMLAnchorElement) a.href = url;
+						li.append(' ', a);
+					}
+					const meta = el('span', 'meta');
+					const group = k?.group ?? (l.group === 'calibration' ? 'calibration' : 'open');
+					meta.append(el('span', '', `${group === 'calibration' ? 'Calibration' : 'Open'} leaf`));
+					if (k?.earlier?.length) meta.append(el('span', '', `tried before in trial${k.earlier.length > 1 ? 's' : ''} ${k.earlier.join(' and ')}`));
+					if (l.tokens > 0) {
+						const tok = el('span', '', `${compactTok(l.tokens)} Qwen tokens so far`);
+						tok.dataset.tokens = String(l.tokens);
+						meta.append(tok);
+					}
+					li.append(meta);
+					const progress = l.proved ? 'proved' : leafProgress(l);
+					const st = el('span', `state state-${l.state}`, `${stateLabel[l.state] ?? l.state}${progress ? `: ${progress}` : ''}`);
+					st.dataset.progress = progress;
+					li.append(st);
+					return li;
+				}),
+			);
+			const at = new Date(q.updated);
+			asof.hidden = false;
+			asof.textContent = `Live from the gateway’s task queue, updated ${hm(at)} UTC; it refreshes every minute.`;
+			nowBox.dataset.source = 'live';
+			nowBox.dataset.trial = trial ?? '';
+			if (location.hash.startsWith('#leaf-')) document.getElementById(location.hash.slice(1))?.classList.add('target');
+		} catch {
+			// keep what the page shows
+		}
+	};
+	loadQueue();
+	setInterval(() => document.visibilityState === 'visible' && loadQueue(), 60000);
+
 	// The network's share of the work for project prove2me, from the gateway's public /v1/stats (aggregates only).
 	// Hidden until real numbers arrive and on any failure: never dashes or zeros by default.
 	const box = document.querySelector<HTMLElement>('[data-p2m-live]');
@@ -355,7 +450,7 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 	.p2m-table .tok { cursor: help; }
 	.p2m-table .nowrap { white-space: nowrap; }
 	.p2m-trials :is(th, td) { padding-right: 0.6rem; }
-	.p2m-table .thm a, .p2m-now .thm-name { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
+	.p2m-table .thm a { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
 	.p2m-table .sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; overflow-wrap: anywhere; }
 	.p2m-table .proved, .p2m-table .verdict-accepted { font-weight: 600; color: var(--sl-color-accent-high); }
 	.p2m-table .unscored { font-style: italic; color: var(--sl-color-gray-3); }
@@ -364,16 +459,20 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 	.p2m-trial > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
 	.caps { font-size: 0.85rem; }
 
-	.p2m-now { margin: 1rem 0 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
-	.p2m-now p { margin: 0.5rem 0 0; }
-	.p2m-now .head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
-	.p2m-now ul { margin: 0.75rem 0 0; padding: 0; list-style: none; }
-	.p2m-now li + li { margin-top: 0.6rem; }
-	.p2m-now .leaf { font-weight: 700; margin-right: 0.5rem; color: var(--sl-color-white); }
-	.p2m-now .meta { display: block; font-size: 0.85rem; }
-	.p2m-now .meta > span + span::before { content: ' · '; }
-	.p2m-now .state { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
-	.p2m-now .state-running { color: var(--sl-color-accent-high); }
+	/* Global: the live list is built by the script, outside this page's style scope. */
+	:global(.p2m-now) { margin: 1rem 0 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+	:global(.p2m-now p) { margin: 0.5rem 0 0; }
+	:global(.p2m-now p[hidden]) { display: none; }
+	:global(.p2m-now .head) { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+	:global(.p2m-now ul) { margin: 0.75rem 0 0; padding: 0; list-style: none; }
+	:global(.p2m-now li + li) { margin-top: 0.6rem; }
+	:global(.p2m-now li:target), :global(.p2m-now li.target) { outline: 2px solid var(--sl-color-accent); outline-offset: 0.3rem; border-radius: 0.2rem; }
+	:global(.p2m-now .leaf) { font-weight: 700; margin-right: 0.5rem; color: var(--sl-color-white); }
+	:global(.p2m-now .thm-name) { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
+	:global(.p2m-now .meta) { display: block; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+	:global(.p2m-now .meta > span + span::before) { content: ' · '; }
+	:global(.p2m-now .state) { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	:global(.p2m-now .state-running) { color: var(--sl-color-accent-high); }
 
 	/* Phones: each row as a small card instead of a wide table. */
 	@media (max-width: 40rem) {

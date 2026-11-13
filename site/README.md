@@ -33,6 +33,12 @@ not start with it), `date`, `summary` (one line for the list and the feed) and `
 `src/content/devlog/img/` and are referenced as `![alt](./img/name.svg)`. Posts carry no
 author name.
 
+prove2me (`/science/prove2me/`): built from `src/data/science/prove2me.json` (committed, exported from
+the trial records, public fields only), which stays the history and the fallback. In the browser its
+"Working on now" comes from the gateway's public view of the project's task queue
+(`/v1/projects/prove2me/queue`, on load and every minute; `src/data/prove2me-live.ts`), and the
+build's list stays when that fails.
+
 Science (`/science/tauceti/`, data at `/v1/projects/tauceti/science`): built from
 `src/data/science/tauceti.json`, exported from our run records by an export script in the
 research notes (public fields only) and committed here. That is the fallback: in the browser the

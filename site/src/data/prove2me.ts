@@ -8,6 +8,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import raw from './science/prove2me.json';
 
+// The pure helpers live in prove2me-live.ts, which the browser's script imports without this data.
+export { compact, leafProgress, plural, stateLabel } from './prove2me-live';
+
 export type Group = 'calibration' | 'open';
 export type Outcome = 'proved' | 'refused' | 'compile_error' | 'no_solution' | 'no-progress' | string;
 
@@ -130,13 +133,6 @@ export function outcomeLabel(r: LeafRun): string {
 	}
 }
 
-export const stateLabel: Record<string, string> = {
-	running: 'Running',
-	queued: 'Queued',
-	finished: 'Finished',
-	failed: 'Stopped by a fault',
-	cancelled: 'Cancelled',
-};
 
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** "2026-11-12" -> "12 November 2026"; with `year` false, "12 November". */
@@ -181,23 +177,6 @@ export const sumTokens = (rs: Tok[]): Tok => ({
 	output_tokens: rs.reduce((a, r) => a + r.output_tokens, 0),
 });
 const exact = (v: number) => new Intl.NumberFormat('en').format(v);
-/** 16968593 -> "17.0M", 405114 -> "405k" (the Tau Ceti page's format). */
-export const compact = (v: number) => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${Math.round(v / 1e3)}k` : String(Math.round(v)));
 /** The hover text of a token count: the exact number, how many were written and how many came from the cache. */
 export const tokTitle = (r: Tok) =>
 	`${exact(qwenTokens(r))} Qwen tokens, ${exact(r.output_tokens)} of them written; ${exact(r.cached_tokens)} of the ${exact(r.prompt_tokens)} read came from the cache`;
-
-/** Where a v5 leaf stands: its outline, then its hole tasks. */
-export function leafProgress(l: CurrentLeaf) {
-	const outline: Record<string, string> = { running: 'writing the outline', queued: 'outline queued', finished: 'outline done', failed: 'outline stopped by a fault' };
-	const parts = [outline[l.outline ?? ''] ?? ''];
-	if (l.holes) parts.push(`${l.holes.proved} of ${plural(l.holes.n, 'hole')} proved`);
-	else if (l.hole_tasks) {
-		const h = l.hole_tasks;
-		const open = [h.running ? `${h.running} running` : '', h.queued ? `${h.queued} queued` : ''].filter(Boolean).join(', ');
-		parts.push(`${plural(h.n, 'hole task')}: ${h.proved} proved${open ? `, ${open}` : ''}`);
-	}
-	return parts.filter(Boolean).join('; ');
-}
-
-export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
