@@ -50,7 +50,7 @@ func stillRunning(t *testing.T, done <-chan error, d time.Duration, what string)
 func TestSilentGatewayIsDropped(t *testing.T) {
 	var hits atomic.Int32
 	gw, conns := fakeGateway(t) // it never reads after the welcome: no pongs
-	cfg := testConfig(gw, engine(t, &hits).URL, "")
+	cfg := testConfig(gw, testEngine(t, &hits).URL, "")
 	cfg.Heartbeat = 20 * time.Millisecond // the writes go through all along
 	cfg.PingInterval, cfg.PingTimeout = 50*time.Millisecond, 200*time.Millisecond
 	cfg.Watchdog = -1 // the connection itself must recover, without the watchdog
@@ -84,7 +84,7 @@ func lastEvent(a *Agent, kind string) string {
 func TestWatchdogEndsAStuckAgent(t *testing.T) {
 	var hits atomic.Int32
 	gw, conns := fakeGateway(t)
-	cfg := testConfig(gw, engine(t, &hits).URL, "")
+	cfg := testConfig(gw, testEngine(t, &hits).URL, "")
 	cfg.PingInterval = -1 // stand-in for a stuck session the pings do not catch
 	cfg.Watchdog = 300 * time.Millisecond
 	done := runAgent(t, New(cfg, quietLog()))
@@ -186,7 +186,7 @@ func TestWatchdogSparesDeliberateBreaks(t *testing.T) {
 	t.Run("paused", func(t *testing.T) {
 		var hits atomic.Int32
 		gw, conns := fakeGateway(t)
-		cfg := testConfig(gw, engine(t, &hits).URL, "")
+		cfg := testConfig(gw, testEngine(t, &hits).URL, "")
 		cfg.PingInterval = -1 // a dead link that nothing else would catch
 		cfg.Watchdog = 200 * time.Millisecond
 		a := New(cfg, quietLog())

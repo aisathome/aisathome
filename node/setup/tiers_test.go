@@ -59,3 +59,20 @@ func TestTierForTotal(t *testing.T) {
 		}
 	}
 }
+
+// The pinned llama.cpp zips: one release, https, a SHA-256 and a size each.
+func TestWindowsLlamaPins(t *testing.T) {
+	b := WindowsLlama
+	if !regexp.MustCompile(`^b[0-9]+$`).MatchString(b.Tag) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(b.Commit) || len(b.Files) == 0 {
+		t.Fatalf("build %+v", b)
+	}
+	for _, f := range b.Files {
+		if !strings.HasPrefix(f.URL, llamaRelease+b.Tag+"/") || !strings.HasSuffix(f.URL, ".zip") ||
+			!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(f.SHA256) || f.Size <= 0 {
+			t.Errorf("bad pin %+v", f)
+		}
+	}
+	if b.Driver.CUDA != "12.4" || !strings.Contains(b.Files[0].File(), "cuda-12.4") {
+		t.Errorf("driver requirement for CUDA %s, files %v", b.Driver.CUDA, b.Files)
+	}
+}

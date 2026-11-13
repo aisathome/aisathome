@@ -7,6 +7,102 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+## [v0.5.0] — 2026-11-14
+
+A node on Windows: one installer, a setup page, a tray icon. And llama.cpp b12323 with a larger
+prompt cache on every node.
+
+### Added
+
+- **The node agent can run its engine itself, for Windows.** With `"engine": {"tier": ...}` in
+  `node.json`, the agent starts llama-server as its child with the tier's command (built in Go
+  from the same flags as install.sh; a test runs install.sh's `set_engine` and fails when the
+  two differ), restarts it with a growing wait (2 s up to 2 min) when it ends, and stops,
+  starts or restarts it on request; the local UI's restart works through it. On Windows the
+  engine runs in a Job object, so it ends with the agent however the agent ends; its output goes
+  to `%ProgramData%\AIsAtHome\logs\engine.log`. The Windows build is upstream llama.cpp's CUDA
+  12.4 release of the commit the Linux bundle builds, pinned by SHA-256; CI fetches and checks
+  it and runs it on the CPU with our flags. Linux nodes are unchanged: systemd runs their engine.
+  (node)
+- **A Windows installer** (`AIsAtHome-node-setup-<version>.exe`, Inno Setup, one UAC
+  prompt). It installs the agent under Program Files and registers it as the service
+  `aisathome-node` with `aisathome-node service install`: its own virtual account
+  `NT SERVICE\aisathome-node`, delayed automatic start, restart on failure. The data folder
+  `%ProgramData%\AIsAtHome` is readable only by that account and administrators (it no longer
+  inherits from `%ProgramData%`); the installer writes a local UI password there that the
+  installing user may read too. Installing over it updates in place and keeps the config,
+  password and state. Uninstalling removes the service and the program and asks whether to
+  delete the data folder (silently: kept, unless `/PURGEDATA`). It ships the engine in
+  `engine\` beside the agent: upstream llama.cpp's Windows CUDA 12.4 build (MIT) with NVIDIA's
+  CUDA runtime and cuBLAS DLLs, named in `THIRD_PARTY_NOTICES.md`. Not signed yet.
+  `aisathome-node service uninstall` and `service stop` exist too. (node)
+- **The Windows node sets itself up on its local page.** A fresh install has no `node.json`:
+  the agent still runs, keeps its engine stopped and opens `http://127.0.0.1:7381/` on the setup
+  page (`/setup`), behind the local password. Four steps: the card, its driver and free memory;
+  the model download with progress, resumed after a break and checked by SHA-256; the speed
+  test with the tier's own engine; then the node token from the account page. Only then does
+  the agent write `node.json` (the tier, and the card when there are several) and start the
+  node, in the same process. If the gateway refuses the token, the page and
+  `aisathome-node status` show the gateway's reason. "Run the setup again" and "Use another
+  node token" work on a running node. (node)
+- **Stop engine and Start engine** on the local page of a node whose agent runs its engine
+  (Windows): stopping frees the GPU and leaves the gateway at once; the page and
+  `aisathome-node status` show the engine as stopped, not unhealthy, with its process. The
+  agent no longer starts the engine while another program holds its port. (node)
+- **`aisathome-node diagnose`** writes one zip for finding out why a node does not work: the
+  version, the service, `node.json` with the token redacted, the local page's status and the
+  setup's last state, `nvidia-smi` and the driver, the agent's and the engine's logs, the data
+  and engine folders, and whether the gateway answers. The token and the local password are
+  removed wherever they appear. On Windows, run it in PowerShell as administrator. (node)
+- **A tray icon for the Windows node** (`aisathome-tray.exe`), started at every user's login:
+  the node's state as its icon and tooltip (serving, connected, starting, paused, engine
+  stopped, not set up, a problem such as a refused token, or the agent not running), and a menu
+  to open the node's page, stop and start the engine, collect diagnostics (`diagnose` as
+  administrator, the zip on the Desktop) and quit. The tray and the Start-menu entry open the
+  page **signed in**, without the local password: the agent hands out one-time sign-in links
+  (single use, one minute) over a local pipe, only to administrators and to accounts that may
+  read the password file. `service install -ui-user <account>` lets another standard account
+  in. The installer adds the tray and its autostart and closes running trays before an update
+  or uninstall. (node)
+
+### Changed
+
+- **llama.cpp b12323** (2026-11-12) replaces v0.5.0 (2026-09-23) on Linux and Windows. Every
+  flag the node passes is unchanged. (node)
+- **A larger prompt cache in RAM:** `--cache-ram` is half the machine's RAM, at most 16384 MiB
+  (was 2048). One cached agent conversation is 1-1.5 GiB, and 2048 held only one, so an agent
+  that switched between two conversations recomputed most of its prompt: cache hits after a
+  switch rose from 29% to 88% in our test. `CACHE_RAM_MIB` still overrides it. (node)
+- **CI's engine smoke test** runs ggml-org's Qwen3.5-0.8B (Q4_0, Apache-2.0): b12323 no longer
+  serves chat completions with the previous test model. (node)
+
+### Known issues
+
+- **The Windows installer is not code-signed yet.** SmartScreen, Defender or the browser may
+  warn when you download or start it. Check its SHA-256 against `SHA256SUMS`, then choose
+  **More info → Run anyway**. (node)
+
+### Updating a node
+
+**Linux:** optional, recommended for agent work (the larger prompt cache). The engine may now
+keep up to half the RAM (at most 16 GiB) for its cache; to keep less, run for example
+`sudo CACHE_RAM_MIB=4096 ./install.sh --keep-token`.
+
+```
+curl -LO https://github.com/aisathome/aisathome/releases/download/v0.5.0/aisathome-node-bundle-linux-amd64.tar.xz
+curl -LO https://github.com/aisathome/aisathome/releases/download/v0.5.0/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
+sudo ./install.sh --keep-token
+```
+
+**Windows (new):** download `AIsAtHome-node-setup-v0.5.0.exe` and `SHA256SUMS` from the release,
+check the hash (`Get-FileHash AIsAtHome-node-setup-v0.5.0.exe` in PowerShell), run it and accept
+the one administrator prompt. At the end it starts the tray icon and offers to open the node's
+page (`http://127.0.0.1:7381/`), which walks through the card, the model download, the speed
+test and the node token. Installing a later version over it keeps the config, password and
+state.
+
 ## [v0.4.0] — 2026-11-11
 
 A node no longer hangs on a silent gateway link, and 16 GB cards keep room for a desktop.
@@ -411,7 +507,8 @@ https://aisathome.org/node/
 
 **Full changelog:** https://github.com/aisathome/aisathome/commits/v0.1.0
 
-[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.4.0...main
+[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.5.0...main
+[v0.5.0]: https://github.com/aisathome/aisathome/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/aisathome/aisathome/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/aisathome/aisathome/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/aisathome/aisathome/compare/v0.1.0...v0.2.0

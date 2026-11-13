@@ -26,8 +26,8 @@ type DriverReq struct {
 }
 
 // WindowsCUDA124 is upstream llama.cpp's Windows CUDA 12.4 build of the pinned commit (the
-// plan's choice; slice 3 pins the zips). ggml's default architectures for CUDA 12.4: native code
-// for 8.6 and 8.9, PTX for 5.0 to 9.0. Drivers (Checked 2026-11-10, NVIDIA's CUDA Toolkit release
+// plan's choice; WindowsLlama pins the zips). ggml's default architectures for CUDA 12.4:
+// native code for 8.6 and 8.9, PTX for 5.0 to 9.0. Drivers (Checked 2026-11-10, NVIDIA's CUDA Toolkit release
 // notes, Windows x86_64 column): 527.41 is CUDA 12.0 GA's (CUDA 12.x minor-version
 // compatibility), 551.61 CUDA 12.4 GA's (PTX from 12.4 needs it), 570.65 CUDA 12.8 GA's, the
 // first CUDA with RTX 50 (Blackwell, 12.0). To re-measure on the GPU checklist (slice 7).

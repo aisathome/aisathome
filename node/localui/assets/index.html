@@ -58,21 +58,26 @@
 				<input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" spellcheck="false">
 				<button class="btn btn-primary" type="submit">Unlock</button>
 			</div>
-			<p class="muted">Show it with <code>sudo cat /etc/aisathome-node/ui-password</code>. This browser remembers it.</p>
+			<p class="muted">Show it with <code id="pw-hint">sudo cat /etc/aisathome-node/ui-password</code>. This browser remembers it.</p>
 			<p class="msg" id="login-msg" role="alert"></p>
 		</form>
 		<div id="unlocked" hidden>
 			<div class="row">
 				<button class="btn btn-primary" id="pause" type="button">Pause</button>
 				<button class="btn btn-secondary" id="restart" type="button">Restart engine</button>
+				<button class="btn btn-secondary" id="engine-toggle" type="button" hidden>Stop engine</button>
+				<a class="link" id="setup-link" href="/setup" hidden>Setup and token</a>
 				<button class="link" id="logout" type="button">Lock</button>
 			</div>
 			<p class="msg" id="control-msg" role="status"></p>
 			<p class="cmd" id="restart-cmd" hidden><span class="muted">Restart the engine yourself:</span> <code id="restart-cmd-text"></code><button class="link" id="copy" type="button">Copy</button></p>
 		</div>
-		<p class="muted small"><strong>Pause</strong> finishes requests in flight and takes no new ones; the model stays in
+		<p class="muted small" id="help-linux"><strong>Pause</strong> finishes requests in flight and takes no new ones; the model stays in
 			GPU memory. To free the GPU, stop the node: <code>sudo systemctl stop aisathome-node aisathome-llama</code>.
 			<strong>Restart engine</strong> restarts llama-server and this agent; requests in flight end.</p>
+		<p class="muted small" id="help-engine" hidden><strong>Pause</strong> finishes requests in flight and takes no new ones; the model stays in
+			GPU memory. <strong>Stop engine</strong> frees the GPU (for games or other GPU work): the node leaves the network
+			until you start the engine again, and requests in flight end. <strong>Restart engine</strong> restarts llama-server only.</p>
 	</section>
 
 	<section class="panel" aria-labelledby="events-h">

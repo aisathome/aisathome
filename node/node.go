@@ -23,6 +23,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/aisathome/aisathome/node/engine"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -84,6 +85,13 @@ type Config struct {
 	StateFile      string `json:"state_file,omitempty"`
 	RestartTrigger string `json:"restart_trigger,omitempty"`
 	Preset         string `json:"preset,omitempty"`
+
+	// Engine, when set, makes the agent run llama-server itself, as its child (the Windows
+	// node). The Linux installer runs the engine as a systemd unit and leaves it unset.
+	Engine *EngineConfig `json:"engine,omitempty"`
+	// EngineControl is that engine process, set by the command that starts it; the local UI
+	// stops, starts and restarts the engine through it. Nil: the agent does not run the engine.
+	EngineControl EngineControl `json:"-"`
 }
 
 // Agent is a running node agent.
@@ -102,6 +110,9 @@ type Agent struct {
 	gatewayID   string
 	connectedAt time.Time
 	refused     string // the gateway's reason when it last refused this node's protocol version; "" once connected
+	rejected    string // the gateway's reason when it last refused the token or the hello; "" once connected
+	leave       func() // ends the current session at once; nil while disconnected
+	held        bool   // the engine is stopped on request (StopEngine) until StartEngine or RestartEngine
 	engine      string
 	started     time.Time
 	lastRestart time.Time
@@ -232,8 +243,25 @@ func (a *Agent) serve(ctx context.Context) error {
 	}
 }
 
-// healthy reports whether the engine answers /health with 200 within 3 s.
+// healthy reports whether the engine answers /health with 200 within 3 s. An engine the agent
+// runs and that is stopped on request is never healthy (whatever else answers on its port) and
+// shows as "stopped", not "unhealthy".
 func (a *Agent) healthy(ctx context.Context) bool {
+	if a.engineHeld() {
+		if ctx.Err() == nil {
+			a.setEngine(EngineStopped)
+		}
+		return false
+	}
+	// An engine the agent runs counts only while its process runs: when it is waiting to start
+	// (e.g. its port is held by another program) whatever answers on the port is not ours, and
+	// must not get the node's requests.
+	if ctl := a.cfg.EngineControl; ctl != nil && ctl.Status().State != engine.StateRunning {
+		if ctx.Err() == nil {
+			a.setEngine(EngineUnhealthy)
+		}
+		return false
+	}
 	hctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(hctx, http.MethodGet, strings.TrimRight(a.cfg.Upstream, "/")+"/health", nil)
@@ -257,8 +285,12 @@ func (a *Agent) waitHealthy(ctx context.Context) error {
 	for !a.healthy(ctx) {
 		if !logged {
 			a.setAway(true) // a restart of the agent would not heal the engine
-			a.log.Warn("engine not healthy; staying away from the gateway until it is", "upstream", a.cfg.Upstream)
-			a.event("engine_unhealthy", "waiting for the engine before connecting")
+			if a.engineState() == EngineStopped {
+				a.log.Info("engine stopped; staying away from the gateway until it runs again")
+			} else {
+				a.log.Warn("engine not healthy; staying away from the gateway until it is", "upstream", a.cfg.Upstream)
+				a.event("engine_unhealthy", "waiting for the engine before connecting")
+			}
 			logged = true
 		}
 		select {
@@ -282,8 +314,19 @@ func (a *Agent) session(ctx context.Context) error {
 	// between, that accepts the connection and then says nothing must not hold the node.
 	hctx, hcancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer hcancel()
-	c, _, err := websocket.Dial(hctx, a.cfg.GatewayURL, &websocket.DialOptions{HTTPHeader: h})
+	c, resp, err := websocket.Dial(hctx, a.cfg.GatewayURL, &websocket.DialOptions{HTTPHeader: h})
 	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			// The gateway answered but refused the token: say so on the local page (setup).
+			reason := fmt.Sprintf("HTTP %d", resp.StatusCode)
+			if resp.Body != nil {
+				b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+				if t := cleanReason(string(b)); t != "" {
+					reason += ": " + t
+				}
+			}
+			a.setRejected(reason)
+		}
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer c.CloseNow()
@@ -312,6 +355,9 @@ func (a *Agent) session(ctx context.Context) error {
 		if errors.As(err, &ce) && ce.Code == protocol.CloseUnsupportedProtocol {
 			return &RefusedError{Reason: ce.Reason}
 		}
+		if errors.As(err, &ce) && ce.Code == websocket.StatusPolicyViolation {
+			a.setRejected(cleanReason(ce.Reason)) // e.g. "node id is reserved"
+		}
 		return fmt.Errorf("no welcome from gateway: %v", err)
 	}
 	hcancel()
@@ -329,15 +375,20 @@ func (a *Agent) session(ctx context.Context) error {
 		return send(m)
 	}
 	a.mu.Lock()
-	a.connected, a.gatewayID, a.connectedAt, a.refused = true, welcome.GatewayID, a.now(), ""
+	if a.held { // Stop engine came during the handshake, before there was a session to leave
+		a.mu.Unlock()
+		return errEngineStopped
+	}
+	a.connected, a.gatewayID, a.connectedAt, a.refused, a.rejected = true, welcome.GatewayID, a.now(), "", ""
 	a.push = func() { _ = heartbeat() }
+	a.leave = func() { stopCause(errEngineStopped) } // the session's end closes the connection
 	a.eventLocked("connected", welcome.GatewayID)
 	paused := a.ps.Paused
 	a.mu.Unlock()
 	a.save()
 	defer func() {
 		a.mu.Lock()
-		a.connected, a.push = false, nil
+		a.connected, a.push, a.leave = false, nil, nil
 		a.mu.Unlock()
 	}()
 	if paused { // tell the gateway before it routes anything here
@@ -455,6 +506,9 @@ func (a *Agent) ping(sctx context.Context, c *websocket.Conn, stop context.Cance
 		a.linkAlive()
 	}
 }
+
+// errEngineStopped ends a session when the volunteer stops the engine the agent runs.
+var errEngineStopped = errors.New("the engine was stopped from the local UI")
 
 // errNoPong ends a session whose gateway did not answer a ping.
 var errNoPong = errors.New("no pong from the gateway")

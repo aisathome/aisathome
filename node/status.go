@@ -8,10 +8,13 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/aisathome/aisathome/node/engine"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -28,6 +31,7 @@ const (
 	EngineUnknown   = "unknown"
 	EngineHealthy   = "healthy"
 	EngineUnhealthy = "unhealthy"
+	EngineStopped   = "stopped" // the agent runs the engine and it is stopped on request (GPU free)
 )
 
 // ErrPausedMsg is the error a paused node answers new requests with. The gateway retries such
@@ -38,6 +42,10 @@ const ErrPausedMsg = "node paused"
 
 // ErrRestartUnavailable means the agent has no way to restart the engine itself.
 var ErrRestartUnavailable = errors.New("this agent cannot restart the engine; run: " + RestartCommand)
+
+// ErrNoEngineControl means the agent does not run the engine itself, so it cannot stop or
+// start it (Linux: systemd runs it).
+var ErrNoEngineControl = errors.New("this agent does not run the engine itself")
 
 // ErrRestartTooSoon limits engine restarts from the UI to one a minute.
 var ErrRestartTooSoon = errors.New("an engine restart was requested less than a minute ago")
@@ -50,7 +58,7 @@ const (
 // Event is one entry in the agent's recent history: what happened, never request content.
 type Event struct {
 	Time  time.Time `json:"time"`
-	Kind  string    `json:"kind"` // started, connected, disconnected, refused, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested, watchdog
+	Kind  string    `json:"kind"` // started, connected, disconnected, refused, rejected, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested, watchdog, engine_stopped, engine_started, engine_exited
 	Text  string    `json:"text,omitempty"`
 	Count int       `json:"count,omitempty"` // repeats folded into this entry (e.g. failed reconnects)
 }
@@ -75,27 +83,34 @@ func (c *Counters) add(u protocol.Usage) {
 
 // Status is a snapshot of the agent for the local UI.
 type Status struct {
-	State          string               `json:"state"`
-	Connected      bool                 `json:"connected"`
-	Paused         bool                 `json:"paused"`
-	Engine         string               `json:"engine"`
-	NodeID         string               `json:"node_id"`
-	Gateway        string               `json:"gateway"`    // host of the gateway URL
-	GatewayID      string               `json:"gateway_id"` // from welcome
-	ConnectedSince *time.Time           `json:"connected_since,omitempty"`
-	StartedAt      time.Time            `json:"started_at"`
-	Agent          string               `json:"agent"`
-	Protocol       int                  `json:"protocol"`          // the protocol version this agent speaks
-	Refused        string               `json:"refused,omitempty"` // the gateway refused that version: its reason (until the node connects again)
-	Models         []protocol.ModelInfo `json:"models"`
-	Preset         string               `json:"preset,omitempty"`
-	SlotsInUse     int                  `json:"slots_in_use"`
-	SlotsTotal     int                  `json:"slots_total"`
-	Day            string               `json:"day"` // local date of Today
-	Today          Counters             `json:"today"`
-	Total          Counters             `json:"total"`
-	Events         []Event              `json:"events"` // newest first
-	CanRestart     bool                 `json:"can_restart"`
+	State          string     `json:"state"`
+	Connected      bool       `json:"connected"`
+	Paused         bool       `json:"paused"`
+	Engine         string     `json:"engine"`
+	NodeID         string     `json:"node_id"`
+	Gateway        string     `json:"gateway"`    // host of the gateway URL
+	GatewayID      string     `json:"gateway_id"` // from welcome
+	ConnectedSince *time.Time `json:"connected_since,omitempty"`
+	StartedAt      time.Time  `json:"started_at"`
+	Agent          string     `json:"agent"`
+	Protocol       int        `json:"protocol"`          // the protocol version this agent speaks
+	Refused        string     `json:"refused,omitempty"` // the gateway refused that version: its reason (until the node connects again)
+	// Rejected is the gateway's reason when it last refused this node's token or hello ("HTTP
+	// 401: unknown node token", "node id is reserved"), until the node connects again. Text
+	// from the gateway: shown as text only.
+	Rejected   string               `json:"rejected,omitempty"`
+	Models     []protocol.ModelInfo `json:"models"`
+	Preset     string               `json:"preset,omitempty"`
+	SlotsInUse int                  `json:"slots_in_use"`
+	SlotsTotal int                  `json:"slots_total"`
+	Day        string               `json:"day"` // local date of Today
+	Today      Counters             `json:"today"`
+	Total      Counters             `json:"total"`
+	Events     []Event              `json:"events"` // newest first
+	CanRestart bool                 `json:"can_restart"`
+	// EngineProcess is the engine process when the agent runs it itself (Config.EngineControl);
+	// then the UI can also stop and start it.
+	EngineProcess *engine.Status `json:"engine_process,omitempty"`
 }
 
 // persisted is what survives agent restarts (Config.StateFile): the pause switch, the
@@ -219,6 +234,53 @@ func (a *Agent) setEngine(state string) {
 	a.mu.Unlock()
 }
 
+// engineHeld reports whether the engine the agent runs is stopped on request: asked to stop
+// (the supervisor may still be ending it) or found stopped.
+func (a *Agent) engineHeld() bool {
+	ctl := a.cfg.EngineControl
+	if ctl == nil {
+		return false
+	}
+	a.mu.Lock()
+	held := a.held
+	a.mu.Unlock()
+	return held || ctl.Status().State == engine.StateStopped
+}
+
+func (a *Agent) engineState() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.engine
+}
+
+// setRejected records the gateway's reason for refusing the token or the hello, and an event.
+func (a *Agent) setRejected(reason string) {
+	if reason == "" {
+		reason = "no reason given"
+	}
+	a.mu.Lock()
+	a.rejected = reason
+	a.eventLocked("rejected", reason)
+	a.mu.Unlock()
+	a.save()
+}
+
+// cleanReason makes the gateway's text safe to keep and show: one line of printable
+// characters, at most 200 bytes.
+func cleanReason(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 200 {
+		s = strings.ToValidUTF8(s[:200], "") + "..."
+	}
+	return s
+}
+
 // Paused reports whether the volunteer paused the node.
 func (a *Agent) Paused() bool {
 	a.mu.Lock()
@@ -259,11 +321,13 @@ func (a *Agent) setPaused(p bool) {
 	}
 }
 
-// RestartEngine asks systemd to restart llama-server by touching Config.RestartTrigger,
-// which a root-owned systemd path unit watches (the agent itself has no privileges).
-// Restarting llama-server restarts the agent too (PartOf), so requests in flight end.
+// RestartEngine restarts llama-server. When the agent runs the engine itself
+// (Config.EngineControl) it restarts it at once; requests in flight end. Otherwise it asks
+// systemd by touching Config.RestartTrigger, which a root-owned systemd path unit watches (the
+// agent itself has no privileges); restarting llama-server restarts the agent too (PartOf).
 func (a *Agent) RestartEngine() error {
-	if a.cfg.RestartTrigger == "" {
+	ctl := a.cfg.EngineControl
+	if ctl == nil && a.cfg.RestartTrigger == "" {
 		return ErrRestartUnavailable
 	}
 	a.mu.Lock()
@@ -276,7 +340,56 @@ func (a *Agent) RestartEngine() error {
 	a.mu.Unlock()
 	a.save()
 	a.log.Warn("engine restart requested from the local UI")
+	if ctl != nil {
+		a.mu.Lock()
+		a.held = false
+		a.mu.Unlock()
+		ctl.Restart()
+		return nil
+	}
 	return os.WriteFile(a.cfg.RestartTrigger, []byte(a.now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+}
+
+// StopEngine stops the engine the agent runs, which frees the GPU, until StartEngine. The node
+// leaves the gateway at once; requests in flight end.
+func (a *Agent) StopEngine() error {
+	ctl := a.cfg.EngineControl
+	if ctl == nil {
+		return ErrNoEngineControl
+	}
+	a.event("engine_stopped", "stopped from the local UI")
+	a.log.Warn("engine stop requested from the local UI")
+	ctl.Stop()
+	a.mu.Lock()
+	a.engine, a.held = EngineStopped, true
+	leave := a.leave
+	a.mu.Unlock()
+	if leave != nil { // leave the gateway now, not after three failed health checks
+		leave()
+	}
+	return nil
+}
+
+// StartEngine starts the engine the agent runs again, after StopEngine (or at once when it is
+// waiting to restart after a crash).
+func (a *Agent) StartEngine() error {
+	ctl := a.cfg.EngineControl
+	if ctl == nil {
+		return ErrNoEngineControl
+	}
+	a.mu.Lock()
+	a.held = false
+	a.mu.Unlock()
+	a.event("engine_started", "started from the local UI")
+	a.log.Info("engine start requested from the local UI")
+	ctl.Start()
+	return nil
+}
+
+// EngineExited records that the engine the agent runs ended on its own (a crash, or it did not
+// start) and when it starts again. err is the process's exit, never its output.
+func (a *Agent) EngineExited(err error, restartIn time.Duration) {
+	a.event("engine_exited", fmt.Sprintf("%v; starting it again in %v", err, restartIn.Round(time.Second)))
 }
 
 // Status returns a snapshot for the local UI.
@@ -295,13 +408,18 @@ func (a *Agent) Status() Status {
 		Agent:      AgentVersion(),
 		Protocol:   protocol.Version,
 		Refused:    a.refused,
+		Rejected:   a.rejected,
 		Models:     append([]protocol.ModelInfo(nil), a.cfg.Models...),
 		Preset:     a.cfg.Preset,
 		SlotsInUse: len(a.cancels),
 		Day:        a.ps.Day,
 		Today:      a.ps.Today,
 		Total:      a.ps.Total,
-		CanRestart: a.cfg.RestartTrigger != "",
+		CanRestart: a.cfg.RestartTrigger != "" || a.cfg.EngineControl != nil,
+	}
+	if ctl := a.cfg.EngineControl; ctl != nil {
+		st := ctl.Status()
+		s.EngineProcess = &st
 	}
 	if a.connected {
 		t := a.connectedAt

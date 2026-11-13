@@ -148,3 +148,132 @@ func TestInstallShDrift(t *testing.T) {
 		t.Errorf("speed prompt: install.sh %q, Go %q", text.String(), speedText)
 	}
 }
+
+// The engine command: install.sh's set_engine, run in bash for each tier with the script's own
+// defaults (no environment overrides), must give exactly the arguments EngineSettings.Args
+// gives, in the same order; and the node's model entry must announce the same roles.
+func TestInstallShEngineDrift(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	b, err := os.ReadFile(installSh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	// The defaults set_engine reads, as the script sets them.
+	var defaults []string
+	for _, re := range []string{`(?m)^target=.*$`, `(?m)^custom=0$`, `(?m)^slots="\$\{SLOTS:-[0-9]+\}" ctx_per_slot=.*$`,
+		`(?m)^reasoning_budget="\$\{REASONING_BUDGET:-[-0-9]+\}"$`,
+		`(?m)^cache_ram="\$\{CACHE_RAM_MIB:-\$\(cache_ram_for "\$\(mem_total_mib\)"\)\}"$`} {
+		l := regexp.MustCompile(re).FindString(script)
+		if l == "" {
+			t.Fatalf("install.sh: no line matching %s", re)
+		}
+		defaults = append(defaults, l)
+	}
+	var sb strings.Builder
+	// The cache default reads the machine's RAM in bash as Tier.Engine does in Go (same machine).
+	sb.WriteString("set -eu\n" + shellFunc(t, script, "cache_ram_for") + "\n" + shellFunc(t, script, "mem_total_mib") + "\n")
+	sb.WriteString(strings.Join(defaults, "\n") + "\n")
+	for _, f := range []string{"tier_ctx", "tier_kv", "tier_alias", "set_engine"} {
+		sb.WriteString(shellFunc(t, script, f) + "\n")
+	}
+	for _, tr := range Tiers {
+		// set_engine reads alias (set_model's), ctx_per_slot and kv_type (empty: the tier's).
+		fmt.Fprintf(&sb, "tier=%s alias=\"$(tier_alias %[1]s)\" ctx_per_slot= kv_type=\nset_engine\neval \"argv=($llama_exec)\"\nprintf 'engine %[1]s'; printf '\\x1f%%s' \"${argv[@]}\"; echo\n", tr.Name)
+	}
+	cmd := exec.Command(bash, "-c", sb.String())
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")} // no SLOTS, KV_TYPE, REASONING_BUDGET, ... overrides
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash: %v\n%s", err, out)
+	}
+	target := strings.TrimPrefix(defaults[0], "target=")
+	seen := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Split(strings.TrimPrefix(line, "engine "), "\x1f")
+		tr, ok := TierByName(f[0])
+		if !ok || len(f) < 2 {
+			t.Fatalf("unexpected bash output %q", line)
+		}
+		seen++
+		e := tr.Engine(f[1], target)
+		if err := e.Validate(); err != nil {
+			t.Errorf("%s: %v", tr.Name, err)
+		}
+		if want := e.Args(); !slices.Equal(f[2:], want) {
+			t.Errorf("%s: set_engine's arguments differ from Go's\n install.sh %q\n Go         %q", tr.Name, f[2:], want)
+		}
+	}
+	if seen != len(Tiers) {
+		t.Errorf("set_engine ran for %d tiers, want %d", seen, len(Tiers))
+	}
+	// The engine's environment: the unit's Environment= lines and the card pin.
+	unit := shellFunc(t, script, "llama_unit")
+	for _, kv := range (EngineSettings{}).Env() {
+		if !strings.Contains(unit, "\nEnvironment="+kv+"\n") {
+			t.Errorf("llama_unit does not set %s", kv)
+		}
+	}
+	if !strings.Contains(script, `gpu_pin="Environment=CUDA_VISIBLE_DEVICES=$gpu_uuid"`) {
+		t.Error("install.sh no longer pins the card with CUDA_VISIBLE_DEVICES=<uuid> (EngineSettings.CUDADevice)")
+	}
+	// gen_node_config's roles.
+	m := regexp.MustCompile(`"roles": \[([^\]]*)\]`).FindStringSubmatch(shellFunc(t, script, "gen_node_config"))
+	if m == nil {
+		t.Fatal("gen_node_config: cannot find the roles")
+	}
+	if want := `"` + strings.Join(EngineRoles, `", "`) + `"`; m[1] != want {
+		t.Errorf("roles: install.sh %s, Go %s", m[1], want)
+	}
+}
+
+// The Windows build is upstream's release of the commit the Linux bundle builds: moving one
+// fails until the other follows.
+func TestLlamaCommitDrift(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/build-llama.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^LLAMA_COMMIT=([0-9a-f]{40})$`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("build-llama.sh: no LLAMA_COMMIT")
+	}
+	if string(m[1]) != WindowsLlama.Commit {
+		t.Errorf("llama.cpp commit: Linux bundle %s, Windows zips %s (release %s)", m[1], WindowsLlama.Commit, WindowsLlama.Tag)
+	}
+}
+
+// The prompt cache's size for the machine's RAM: install.sh's cache_ram_for and CacheRAMFor
+// must agree for every RAM size, around the cap and for an unknown (0) size.
+func TestInstallShCacheRAMDrift(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	b, err := os.ReadFile(installSh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	totals := []int{0, 1, 2047, 4096, 8192, 16384, 24576, 32766, 32767, 32768, 32769, 65536, 131072, 1 << 20}
+	var sb strings.Builder
+	sb.WriteString("set -eu\n" + shellFunc(t, string(b), "cache_ram_for") + "\n")
+	for _, n := range totals {
+		fmt.Fprintf(&sb, "cache_ram_for %d\n", n)
+	}
+	out, err := exec.Command(bash, "-c", sb.String()).CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash: %v\n%s", err, out)
+	}
+	got := strings.Fields(string(out))
+	if len(got) != len(totals) {
+		t.Fatalf("bash printed %q for %d sizes", got, len(totals))
+	}
+	for i, n := range totals {
+		if want := strconv.Itoa(CacheRAMFor(n)); got[i] != want {
+			t.Errorf("RAM %d MiB: install.sh %s, Go %s", n, got[i], want)
+		}
+	}
+}

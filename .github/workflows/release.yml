@@ -1,8 +1,8 @@
-# On a v* tag: run the CI checks, build static binaries, llama-server with CUDA and the
-# prebuilt node bundle, plus SHA256SUMS, and attach them to a draft GitHub Release (the owner
-# publishes it after review). A manual run (workflow_dispatch) on a branch is the dry run:
-# it builds everything without publishing and keeps the files as a workflow artifact for
-# 7 days (for a test install on a rented GPU).
+# On a v* tag: run the CI checks, build static binaries, llama-server with CUDA, the
+# prebuilt node bundle and the Windows installer, plus SHA256SUMS, and attach them to a draft
+# GitHub Release (the owner publishes it after review). A manual run (workflow_dispatch) on
+# a branch is the dry run: it builds everything without publishing and keeps the files as a
+# workflow artifact for 7 days (for a test install on a rented GPU).
 # SPDX-License-Identifier: Apache-2.0
 name: release
 
@@ -69,8 +69,50 @@ jobs:
           compression-level: 1
           if-no-files-found: error
 
+  # The Windows installer (node/packaging/windows), built on Windows by Inno Setup 6. Its agent
+  # is built as build-release.sh builds aisathome-node-windows-amd64.exe; the release job checks
+  # that the two are the same bytes.
+  node-setup:
+    runs-on: windows-2025
+    timeout-minutes: 60 # lzma2 over the engine (about 1.5 GB unpacked) takes a while
+    permissions:
+      contents: read
+    env:
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      # The agent embeds its page's files: LF as in the repo, or the bytes differ.
+      - name: git keeps LF line ends
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false # no shared build cache in release builds
+      # The engine: upstream llama.cpp's Windows CUDA 12.4 release of the commit the Linux
+      # bundle builds, pinned by size and SHA-256 (node/setup/llama.go); fetch-llama checks the
+      # zips and unpacks them into one folder, which the installer packs as {app}\engine.
+      - name: Fetch the engine
+        shell: pwsh
+        run: |
+          go run ./node/packaging/windows/fetch-llama -out (Join-Path $env:RUNNER_TEMP 'engine')
+          if ($LASTEXITCODE -ne 0) { throw 'fetch-llama failed' }
+          if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'engine\llama\llama-server.exe'))) { throw 'no llama-server.exe' }
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $version = if ($env:IS_TAG -eq 'true') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 12))" }
+          ./node/packaging/windows/build-installer.ps1 -Version $version -OutDir win-dist -EngineDir (Join-Path $env:RUNNER_TEMP 'engine\llama')
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: AIsAtHome-node-setup
+          path: win-dist/*.exe # the agent and AIsAtHome-node-setup-<version>.exe
+          retention-days: 7
+          if-no-files-found: error
+
   release:
-    needs: [check, llama]
+    needs: [check, llama, node-setup]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -89,12 +131,20 @@ jobs:
         with:
           name: llama
           path: ${{ runner.temp }}/llama-artifact
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: AIsAtHome-node-setup
+          path: ${{ runner.temp }}/windows
       - name: Build
         run: |
           if [ "$IS_TAG" = true ]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA::12}"; fi
           mkdir "$RUNNER_TEMP/llama"
           tar -C "$RUNNER_TEMP/llama" -xf "$RUNNER_TEMP/llama-artifact/llama.tar"
           LLAMA_DIR="$RUNNER_TEMP/llama" ./scripts/build-release.sh "$version" dist
+          # The installer's agent must be the release's Windows agent, byte for byte.
+          cmp "$RUNNER_TEMP/windows/aisathome-node-windows-amd64.exe" dist/aisathome-node-windows-amd64.exe
+          cp "$RUNNER_TEMP/windows/AIsAtHome-node-setup-$version.exe" dist/
+          (cd dist && sha256sum aisathome-* AIsAtHome-* > SHA256SUMS)
           ls -l dist
       - name: Publish
         if: env.IS_TAG == 'true'

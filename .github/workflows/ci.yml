@@ -60,12 +60,14 @@ jobs:
           grep -q '^tier: big: 1 x 196608 tokens' "$RUNNER_TEMP/dry-run.txt"
 
   windows:
-    # The node agent on Windows, without a GPU: vet, build and unit tests of the node packages,
-    # then the agent as a real Windows service with its default files under %ProgramData%.
-    # There is no engine and no gateway, so the agent runs, serves its local UI and reports
-    # "not connected". windows-2025 is windows-latest today, pinned like ubuntu-24.04 above.
+    # The node agent on Windows, without a GPU: vet, build and unit tests of the node packages;
+    # the pinned upstream llama.cpp build (the zips the installer ships), checked by SHA-256 and
+    # run on the CPU with our flags and a small model; then the agent as a real Windows service
+    # with its default files under %ProgramData%, running that llama-server as its child. There
+    # is no gateway, so the agent reports "not connected". windows-2025 is windows-latest today,
+    # pinned like ubuntu-24.04 above.
     runs-on: windows-2025
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -81,7 +83,26 @@ jobs:
         # No -race: on Windows it needs cgo and a C toolchain. The check job runs the same
         # tests with it on Linux.
         run: go test -count=1 ./node/... ./protocol/...
-      - name: the agent as a Windows service
+      - name: llama.cpp, the pinned upstream Windows build
+        # node/setup/llama.go pins the zips (size and SHA-256); fetch-llama checks and unpacks
+        # them into one folder, and fetches the pinned small test model.
+        shell: pwsh
+        run: |
+          go run ./node/packaging/windows/fetch-llama -out (Join-Path $env:RUNNER_TEMP 'llama') -smoke-model
+          if ($LASTEXITCODE -ne 0) { throw 'fetch-llama failed' }
+          Get-ChildItem (Join-Path $env:RUNNER_TEMP 'llama\llama') | Format-Table Name, Length
+      - name: llama-server on the CPU with our flags
+        # Each tier's exact command (only the model and port differ) under the supervisor, in its
+        # Job object: health, model name, a chat answer, the speed test's endpoints, /metrics,
+        # and the reasoning budget's message. No GPU here, so ggml-cuda.dll does not load and
+        # llama-server runs on the CPU.
+        shell: pwsh
+        run: |
+          $env:AISATHOME_LLAMA_SERVER = Join-Path $env:RUNNER_TEMP 'llama\llama\llama-server.exe'
+          $env:AISATHOME_SMOKE_MODEL = Join-Path $env:RUNNER_TEMP 'llama\smoke-model.gguf'
+          go test -count=1 -v -run '^TestLlamaServerSmoke$' ./node/engine/
+          if ($LASTEXITCODE -ne 0) { throw 'the llama-server smoke run failed' }
+      - name: the agent as a Windows service, with its engine
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -89,42 +110,123 @@ jobs:
           $bin = Join-Path $dir 'aisathome-node.exe'
           go build -o $bin ./node/cmd/aisathome-node
           if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
-          # The default folder (node.WindowsLayout): config, password, state and log.
+          # The default folder (node.WindowsLayout): config, password, state and logs. The
+          # engine: the build fetched above with the small model, the standard tier's command.
           $data = Join-Path $env:ProgramData 'AIsAtHome'
           New-Item -ItemType Directory -Force $data | Out-Null
-          Set-Content -Encoding ascii (Join-Path $data 'node.json') `
-            '{"node_id":"ci-windows","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"ci","upstream":"http://127.0.0.1:1","models":[{"name":"ci","slots":1,"ctx":4096}]}'
+          $cfg = @{ node_id = 'ci-windows'; gateway_url = 'ws://127.0.0.1:1/v1/node/connect'; token = 'ci'
+            engine = @{ tier = 'standard'; llama_server = (Join-Path $env:RUNNER_TEMP 'llama\llama\llama-server.exe')
+              model = (Join-Path $env:RUNNER_TEMP 'llama\smoke-model.gguf') } }
+          Set-Content -Encoding ascii (Join-Path $data 'node.json') ($cfg | ConvertTo-Json -Depth 4)
           Set-Content -Encoding ascii (Join-Path $data 'ui-password') 'ci-password-0123456789'
+          $log = Join-Path $data 'logs\node.log'
+          $engineLog = Join-Path $data 'logs\engine.log'
+          function Show-Logs { foreach ($f in $log, $engineLog) { if (Test-Path $f) { "== $f"; Get-Content -Tail 80 $f } } }
+          # Wait-Status polls `status -json` until $ok accepts it (exit 1: an agent answered and
+          # is not connected; 3: nothing answered yet).
+          function Wait-Status([scriptblock]$ok, [string]$what) {
+            for ($i = 0; $i -lt 90; $i++) {
+              Start-Sleep -Seconds 1
+              $out = & $bin status -json | Out-String
+              if ($LASTEXITCODE -eq 1) {
+                $st = $out | ConvertFrom-Json
+                if (& $ok $st) { return $st }
+              }
+            }
+            Show-Logs
+            throw "waiting for $what; last status (exit $LASTEXITCODE): $out"
+          }
+          $isUp = { param($st) $st.engine -eq 'healthy' -and $st.engine_process.state -eq 'running' }
+          function Engine-Pid($st) {
+            $p = Get-Process -Id $st.engine_process.pid
+            if ($p.ProcessName -ne 'llama-server') { throw "engine pid $($p.Id) is $($p.ProcessName)" }
+            $p.Id
+          }
+          function Test-Gone([int]$id) {
+            for ($i = 0; $i -lt 30; $i++) {
+              if (-not (Get-Process -Id $id -ErrorAction SilentlyContinue)) { return $true }
+              Start-Sleep -Milliseconds 500
+            }
+            $false
+          }
           # No -config: the service must find its config in the default folder.
           New-Service -Name aisathome-node -BinaryPathName "`"$bin`"" -StartupType Manual | Out-Null
           Start-Service aisathome-node
-          $out = ''
-          $answered = $false
-          for ($i = 0; $i -lt 30 -and -not $answered; $i++) {
-            Start-Sleep -Seconds 1
-            $out = & $bin status -json | Out-String
-            # Exit 1: an agent answered and is not connected (3: nothing answered yet).
-            $answered = $LASTEXITCODE -eq 1
+          $st = Wait-Status $isUp 'the agent and a healthy engine'
+          if ($st.node_id -ne 'ci-windows' -or $st.connected -or -not $st.controls.enabled -or
+              $st.models[0].name -ne 'qwen3.8-27b-q3' -or $st.models[0].ctx -ne 81920 -or -not $st.can_restart) {
+            throw "unexpected status (want ci-windows, not connected, controls on, the standard tier's model, can restart): $($st | ConvertTo-Json -Depth 5)"
           }
-          $log = Join-Path $data 'logs\node.log'
-          if (-not $answered) {
-            if (Test-Path $log) { Get-Content $log }
-            throw "the service's agent did not answer on 127.0.0.1:7381 (last exit $LASTEXITCODE)"
-          }
-          $st = $out | ConvertFrom-Json
-          if ($st.node_id -ne 'ci-windows' -or $st.connected -or -not $st.controls.enabled) {
-            throw "unexpected status (want ci-windows, not connected, controls on): $out"
-          }
+          $eng = Engine-Pid $st
+          # Stop engine and Start engine on the local page (signed in): the Job object's stop
+          # frees the GPU; the page shows "stopped", not "unhealthy".
+          $ui = 'http://127.0.0.1:7381'
+          Invoke-RestMethod -Method Post -Uri "$ui/api/login" -ContentType 'application/json' -Body '{"password":"ci-password-0123456789"}' -SessionVariable web | Out-Null
+          Invoke-RestMethod -Method Post -Uri "$ui/api/stop-engine" -ContentType 'application/json' -Body '{}' -WebSession $web | Out-Null
+          if (-not (Test-Gone $eng)) { Show-Logs; throw "Stop engine left llama-server $eng running" }
+          $st = Wait-Status { param($st) $st.engine -eq 'stopped' -and $st.engine_process.state -eq 'stopped' } 'the engine shown as stopped'
+          Invoke-RestMethod -Method Post -Uri "$ui/api/start-engine" -ContentType 'application/json' -Body '{}' -WebSession $web | Out-Null
+          $st = Wait-Status $isUp 'the engine started again'
+          $eng = Engine-Pid $st
+          # The tray: its state from the status (engine up, no gateway: "starting"), and a
+          # one-time sign-in link from the agent's pipe that signs in once.
+          $tray = Join-Path $dir 'aisathome-tray.exe'
+          go build -ldflags '-H windowsgui' -o $tray ./node/cmd/aisathome-tray
+          if ($LASTEXITCODE -ne 0) { throw 'go build (tray) failed' }
+          $trayOut = Join-Path $dir 'tray-check.txt'
+          $p = Start-Process -FilePath $tray -ArgumentList '-check' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $trayOut
+          $text = Get-Content -Raw $trayOut
+          "tray -check (exit $($p.ExitCode)): $text"
+          if ($p.ExitCode -ne 0 -or $text -notmatch 'state=starting' -or $text -notmatch 'signin=ok') { Show-Logs; throw 'tray -check failed' }
+          # A clean stop stops the engine too.
           Stop-Service aisathome-node
           $svc = Get-CimInstance Win32_Service -Filter "Name='aisathome-node'"
           if ($svc.State -ne 'Stopped' -or $svc.ExitCode -ne 0) {
+            Show-Logs
             throw "after Stop-Service: state $($svc.State), exit code $($svc.ExitCode)"
           }
-          Get-Content $log
+          if (-not (Test-Gone $eng)) { throw "llama-server $eng outlived the stopped service" }
+          # Killing the agent (TerminateProcess, no chance to clean up) kills the engine too: its
+          # Job object goes with the agent's last handle to it.
+          Start-Service aisathome-node
+          $st = Wait-Status $isUp 'the restarted service and its engine'
+          $eng = Engine-Pid $st
+          $agentPid = (Get-CimInstance Win32_Service -Filter "Name='aisathome-node'").ProcessId
+          Stop-Process -Id $agentPid -Force
+          if (-not (Test-Gone $eng)) { throw "llama-server $eng outlived the killed agent $agentPid" }
+          Show-Logs
           if (-not (Select-String -Quiet -Path $log -Pattern 'msg=starting')) { throw "no start line in $log" }
+          if (-not (Select-String -Quiet -Path $log -Pattern 'msg="engine started"')) { throw "no engine start in $log" }
+          if (-not (Select-String -Quiet -Path $engineLog -Pattern 'llama|ggml')) { throw "no llama-server output in $engineLog" }
           if (-not (Test-Path (Join-Path $data 'state.json'))) { throw 'no state file in the default folder' }
           Remove-Service aisathome-node
           exit 0
+
+  node-setup:
+    # The Windows installer (Inno Setup 6, preinstalled on the image), without a GPU, engine or
+    # gateway: build it, then node/packaging/windows/installer_test.ps1 installs it silently,
+    # checks the service (virtual account, delayed start, restart on failure, running, page
+    # answering), the data folder's permissions and the tray (file, autostart, Start menu, its
+    # sign-in over the agent's pipe, closed by an update and an uninstall), updates it in place,
+    # and uninstalls it silently, once keeping the data folder and once with /PURGEDATA.
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      # The agent embeds its page's files: LF as in the repo, so the build matches the release's.
+      - name: git keeps LF line ends
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: build the installer
+        shell: pwsh
+        run: ./node/packaging/windows/build-installer.ps1 -Version v0.0.0-ci -OutDir "$env:RUNNER_TEMP\installer"
+      - name: silent install, update, uninstall and a fresh install
+        shell: pwsh
+        run: ./node/packaging/windows/installer_test.ps1 -Setup "$env:RUNNER_TEMP\installer\AIsAtHome-node-setup-v0.0.0-ci.exe"
 
   harness:
     # harness/ (the Python package aisathome_harness): its offline tests. Standard library only, so the

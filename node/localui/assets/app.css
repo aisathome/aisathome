@@ -144,7 +144,7 @@ a { color: var(--accent-high); text-underline-offset: 3px; }
 .panel { margin-top: 1.25rem; padding: 1.4rem 1.25rem 1.5rem; border-radius: 0.5rem; background: var(--surface); }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
 label { display: block; margin-bottom: 0.4rem; font-weight: 600; color: var(--strong); }
-input[type='password'] {
+input[type='password'], input[type='text'] {
 	flex: 1 1 16rem; min-width: 0; max-width: 26rem; padding: 0.7rem 0.8rem;
 	border: 1px solid var(--line); border-radius: 0.4rem; background: var(--bg); color: var(--strong);
 	font: 500 1rem var(--font-mono);
@@ -181,3 +181,16 @@ input[type='password'] {
 @media (prefers-reduced-motion: reduce) {
 	*, ::before, ::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* Setup page */
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.step { position: relative; margin-top: 1.25rem; padding: 1.4rem 1.25rem 1.5rem 3.6rem; border-radius: 0.5rem; background: var(--surface); counter-increment: step; }
+.step::before { content: counter(step); position: absolute; left: 1.2rem; top: 1.35rem; width: 1.7rem; height: 1.7rem; border-radius: 50%; display: grid; place-items: center; font: 800 1rem/1 var(--font-display); background: var(--bg); color: var(--muted); }
+.step[data-done='true']::before { content: '\2713'; background: var(--accent); color: var(--on-accent); }
+.step h2 { margin: 0 0 0.5rem; }
+.step[aria-disabled='true'] { opacity: 0.6; }
+.step .row { margin-top: 0.75rem; }
+.facts-line { margin: 0.4rem 0 0; color: var(--strong); overflow-wrap: anywhere; }
+details.adv { margin-top: 0.75rem; }
+details.adv summary { cursor: pointer; color: var(--muted); }
+.wide { flex: 1 1 22rem; max-width: 34rem; }

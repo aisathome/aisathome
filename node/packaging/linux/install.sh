@@ -128,7 +128,18 @@ min_tps="${MIN_DECODE_TPS:-20}" speed_ctx=32000
 reasoning_budget="${REASONING_BUDGET:-8192}"
 # Host-RAM prompt cache in MiB (llama-server --cache-ram; default there 8192, 0 = off). It
 # bounds how much conversation data stays warm in RAM; llama-server has no idle-time limit.
-cache_ram="${CACHE_RAM_MIB:-2048}"
+# cache_ram_for <total RAM MiB>: half the machine's RAM, at most 16384 (owner, 2026-11-12);
+# 2048 when the RAM is not known (0). One cached agent conversation of the hybrid model is
+# 1-1.5 GiB at 19-44k tokens and an entry larger than the cache is dropped, so 2048 held one
+# conversation; 16384 raised cache hits after a switch between two conversations from 29% to
+# 88%, peaking at 9.3 GiB (measured 2026-11-12). It fills up on a busy node, hence the cap at
+# half the RAM: volunteers may run BOINC CPU work beside the node. The Windows node has the
+# same rule in Go (node/setup/engine.go, CacheRAMFor); the drift test compares them.
+cache_ram_for() {
+  if (( $1 <= 0 )); then echo 2048; elif (( $1 / 2 < 16384 )); then echo $(( $1 / 2 )); else echo 16384; fi
+}
+mem_total_mib() { awk '$1 == "MemTotal:" { print int($2 / 1024); f = 1 } END { if (!f) print 0 }' /proc/meminfo 2>/dev/null || echo 0; }
+cache_ram="${CACHE_RAM_MIB:-$(cache_ram_for "$(mem_total_mib)")}"
 case "$kv_type" in ""|q8_0|q4_0|f16) ;; *) die "KV_TYPE must be q8_0, q4_0 or f16" 2 ;; esac
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || die "SLOTS must be a positive integer" 2
 [[ -z "$ctx_per_slot" || "$ctx_per_slot" =~ ^[1-9][0-9]*$ ]] || die "CTX_PER_SLOT must be a positive integer" 2
@@ -223,6 +234,8 @@ fi
 
 target=/var/lib/aisathome-node/models/model.gguf
 # set_engine: llama-server's command for the tier (after pick_tier).
+# The Windows node builds the same command in Go (node/setup/engine.go); the drift test runs
+# set_engine and fails until both agree. Change both together.
 llama_exec="" tier_label=""
 set_engine() {
   ctx_per_slot="${ctx_per_slot:-$(tier_ctx "$tier")}" kv_type="${kv_type:-$(tier_kv "$tier")}"

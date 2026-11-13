@@ -11,3 +11,6 @@ const StatusCommand = "systemctl status " + ServiceName
 
 // DefaultLayout is this platform's default files.
 func DefaultLayout() Layout { return LinuxLayout }
+
+// PasswordHint is how the volunteer shows the local UI's password in file (root:aisathome 0640).
+func PasswordHint(file string) string { return "sudo cat " + file }

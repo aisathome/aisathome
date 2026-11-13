@@ -18,8 +18,8 @@ printf '#!/bin/sh\necho fake llama-server\n' > "$llama/bin/llama-server"; chmod 
 : > "$llama/lib/libggml-cuda.so"; ln -s libggml-cuda.so "$llama/lib/libggml-cuda.so.0"
 echo "MIT" > "$llama/licenses/llama.cpp/LICENSE"
 cat > "$llama/BUILD-INFO" <<'INFO'
-llama_cpp_tag=v0.5.0
-llama_cpp_commit=7fe450e19305b828c199d602c23a8337aaa1f03b
+llama_cpp_tag=b12323
+llama_cpp_commit=93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
 cuda_version=12.8
 cuda_archs=86-real;89-real;120a-real
 compute_caps=8.6 8.9 12.0
@@ -55,7 +55,7 @@ printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted 
 chmod +x "$tmp/fake/"*
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   out="$(PATH="$tmp/fake:$PATH" "$d/install.sh" --dry-run --node-id ci 2>&1)" || fail "dry run: $out"
-  for want in "llama-server: prebuilt, llama.cpp v0.5.0" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "tier: big: 1 x 196608 tokens"; do
+  for want in "llama-server: prebuilt, llama.cpp b12323" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "tier: big: 1 x 196608 tokens"; do
     [[ "$out" == *"$want"* ]] || fail "dry run lacks '$want': $out"
   done
 fi

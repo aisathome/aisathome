@@ -4,6 +4,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,21 +12,24 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/aisathome/aisathome/node/engine"
 	"github.com/aisathome/aisathome/protocol"
 )
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// engine is a minimal llama-server: /health, and a short stream on completions; hits counts
+// testEngine is a minimal llama-server: /health, and a short stream on completions; hits counts
 // completion requests.
-func engine(t *testing.T, hits *atomic.Int32) *httptest.Server {
+func testEngine(t *testing.T, hits *atomic.Int32) *httptest.Server {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			return
@@ -97,7 +101,7 @@ func sendTo(t *testing.T, c *websocket.Conn, m protocol.Msg) {
 func TestPausedNodeRefusesRequests(t *testing.T) {
 	var hits atomic.Int32
 	gw, conns := fakeGateway(t)
-	a := New(testConfig(gw, engine(t, &hits).URL, ""), quietLog())
+	a := New(testConfig(gw, testEngine(t, &hits).URL, ""), quietLog())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go a.Run(ctx)
@@ -147,7 +151,7 @@ func TestStatePersistsAcrossRestart(t *testing.T) {
 	var hits atomic.Int32
 	state := filepath.Join(t.TempDir(), "node-state.json")
 	gw, conns := fakeGateway(t)
-	eng := engine(t, &hits)
+	eng := testEngine(t, &hits)
 	a := New(testConfig(gw, eng.URL, state), quietLog())
 	a.served(protocol.Usage{PromptTokens: 5, CompletionTokens: 3, DurationMs: 1500})
 	a.failed("engine returned 500")
@@ -232,6 +236,64 @@ func TestRestartEngine(t *testing.T) {
 	}
 	if !a.Status().CanRestart {
 		t.Fatal("CanRestart false with a trigger")
+	}
+}
+
+// fakeControl records what the agent asks of the engine process it runs.
+type fakeControl struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeControl) do(c string) { f.mu.Lock(); f.calls = append(f.calls, c); f.mu.Unlock() }
+func (f *fakeControl) Stop()       { f.do("stop") }
+func (f *fakeControl) Start()      { f.do("start") }
+func (f *fakeControl) Restart()    { f.do("restart") }
+func (f *fakeControl) Status() engine.Status {
+	return engine.Status{State: engine.StateRunning, PID: 42, Restarts: 1}
+}
+
+// An agent that runs its engine (Windows) restarts, stops and starts it itself; one without
+// (Linux) refuses stop and start and keeps restarting through systemd's trigger.
+func TestEngineControl(t *testing.T) {
+	a := New(testConfig("ws://x", "http://x", ""), quietLog())
+	if a.StopEngine() != ErrNoEngineControl || a.StartEngine() != ErrNoEngineControl || a.Status().EngineProcess != nil {
+		t.Fatal("an agent without an engine control controls an engine")
+	}
+	ctl := &fakeControl{}
+	cfg := testConfig("ws://x", "http://x", "")
+	cfg.EngineControl = ctl
+	cfg.RestartTrigger = filepath.Join(t.TempDir(), "restart-engine") // not used: the agent restarts it itself
+	a = New(cfg, quietLog())
+	if err := a.RestartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cfg.RestartTrigger); err == nil {
+		t.Fatal("the agent touched systemd's trigger although it runs the engine")
+	}
+	if err := a.RestartEngine(); err != ErrRestartTooSoon {
+		t.Fatalf("second restart within a minute: %v", err)
+	}
+	if a.StopEngine() != nil || a.StartEngine() != nil {
+		t.Fatal("stop or start refused")
+	}
+	a.EngineExited(errors.New("exit status 3"), 4*time.Second)
+	if want := []string{"restart", "stop", "start"}; !slices.Equal(ctl.calls, want) {
+		t.Fatalf("calls %v, want %v", ctl.calls, want)
+	}
+	st := a.Status()
+	if !st.CanRestart || st.EngineProcess == nil || st.EngineProcess.PID != 42 || st.EngineProcess.State != engine.StateRunning {
+		t.Fatalf("status %+v", st)
+	}
+	var kinds []string
+	for _, e := range st.Events {
+		kinds = append(kinds, e.Kind)
+	}
+	if want := []string{"engine_exited", "engine_started", "engine_stopped", "restart_requested"}; !slices.Equal(kinds[:4], want) {
+		t.Fatalf("events %v, want %v first", kinds, want)
+	}
+	if st.Events[0].Text != "exit status 3; starting it again in 4s" {
+		t.Fatalf("exit event %q", st.Events[0].Text)
 	}
 }
 

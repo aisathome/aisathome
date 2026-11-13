@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Set up · AIs@home node</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script src="/setup.js" defer></script>
+</head>
+<body>
+<header class="top">
+	<p class="brand"><span class="logo" aria-hidden="true">@</span><span>AIs@home <em>node</em></span></p>
+	<a class="acct" id="account" href="https://aisathome.org/account" target="_blank" rel="noopener noreferrer">Your nodes <span aria-hidden="true">&#8599;</span></a>
+</header>
+
+<main>
+	<section class="hero" aria-labelledby="title">
+		<h1 id="title">Set up this node</h1>
+		<p class="state-line" id="lead" aria-live="polite">Asking the agent&hellip;</p>
+	</section>
+
+	<section class="panel" id="signin" hidden aria-labelledby="signin-h">
+		<h2 id="signin-h">Local password</h2>
+		<form id="login">
+			<label for="password">The password the installer made for this computer</label>
+			<div class="row">
+				<input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" spellcheck="false">
+				<button class="btn btn-primary" type="submit">Unlock</button>
+			</div>
+			<p class="muted">No password needed when you open this page from the AIs@home node entry in the Start menu or from the tray icon: they sign you in.</p>
+			<p class="muted">Show it with <code id="pw-hint"></code> (press Win+R, paste, Enter). This browser remembers it.</p>
+			<p class="msg" id="login-msg" role="alert"></p>
+		</form>
+	</section>
+
+	<section class="panel" id="running" hidden aria-labelledby="running-h">
+		<h2 id="running-h">This node is set up</h2>
+		<p id="running-line"></p>
+		<div class="row">
+			<a class="btn btn-primary" href="/">Status page</a>
+			<button class="btn btn-secondary" id="again" type="button">Run the setup again</button>
+		</div>
+		<form id="token-form">
+			<label for="new-token">Use another node token</label>
+			<div class="row">
+				<input id="new-token" class="wide" type="password" autocomplete="off" spellcheck="false" placeholder="nt-n-...">
+				<button class="btn btn-secondary" type="submit">Save and reconnect</button>
+			</div>
+		</form>
+		<p class="msg" id="running-msg" role="status"></p>
+	</section>
+
+	<ol class="steps" id="steps" hidden>
+		<li class="step" id="step-card">
+			<h2>Graphics card</h2>
+			<p class="muted">Finds the NVIDIA card, its driver and how much memory is free. Close games and other programs that use the card first.</p>
+			<p class="facts-line" id="card-line"></p>
+			<p class="msg" id="card-msg" role="status"></p>
+			<div class="row"><button class="btn btn-primary" id="check" type="button">Check the card</button></div>
+		</li>
+		<li class="step" id="step-download">
+			<h2>Model</h2>
+			<p class="muted" id="download-note">Downloads the model for your card (about 13-14 GB) into <code id="model-path"></code>. An interrupted download continues where it stopped.</p>
+			<div class="bar" aria-hidden="true"><span id="download-bar"></span></div>
+			<p class="facts-line" id="download-line"></p>
+			<p class="msg" id="download-msg" role="status"></p>
+			<div class="row">
+				<button class="btn btn-primary" id="download" type="button">Download</button>
+				<button class="btn btn-secondary" id="cancel-download" type="button" hidden>Pause the download</button>
+			</div>
+		</li>
+		<li class="step" id="step-speed">
+			<h2>Speed test</h2>
+			<p class="muted">Loads the model on the card and writes a short answer after a long prompt. The network needs at least <span id="min-tps">20</span> tokens per second. Takes a few minutes.</p>
+			<p class="facts-line" id="speed-line"></p>
+			<p class="msg" id="speed-msg" role="status"></p>
+			<div class="row">
+				<button class="btn btn-primary" id="speed" type="button">Run the speed test</button>
+				<button class="btn btn-secondary" id="cancel-speed" type="button" hidden>Cancel</button>
+			</div>
+		</li>
+		<li class="step" id="step-token">
+			<h2>Node token</h2>
+			<form id="start-form">
+				<label for="token">Create a node on <a id="account2" href="https://aisathome.org/account" target="_blank" rel="noopener noreferrer">your account page</a> and paste its token here</label>
+				<div class="row">
+					<input id="token" class="wide" type="password" autocomplete="off" spellcheck="false" placeholder="nt-n-..." required>
+					<button class="btn btn-primary" id="start" type="submit">Start the node</button>
+				</div>
+				<details class="adv">
+					<summary>Other gateway</summary>
+					<label for="gateway">Gateway address</label>
+					<input id="gateway" class="wide" type="text" spellcheck="false">
+				</details>
+			</form>
+			<p class="msg" id="start-msg" role="status"></p>
+		</li>
+	</ol>
+
+
+	<p class="muted small" id="leave-row" hidden><button class="link" id="leave" type="button">Back to the node without changes</button></p>
+</main>
+
+<footer class="foot">
+	<p>Served by the node agent on this computer only (127.0.0.1). The token stays on this computer; the page never shows it again.</p>
+</footer>
+</body>
+</html>

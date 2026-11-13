@@ -23,7 +23,7 @@ tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-li
 ```
 
 The bundle (about 0.5 GB) holds the installer, the node agent and `llama-server` with
-llama.cpp v0.5.0, built with CUDA 12.8 for the RTX 30, 40 and 50 series, plus the NVIDIA
+llama.cpp b12323, built with CUDA 12.8 for the RTX 30, 40 and 50 series, plus the NVIDIA
 CUDA runtime and cuBLAS libraries it needs (see `THIRD_PARTY_NOTICES.md`). If the latest
 release has no bundle yet, use [build it yourself](#build-it-yourself).
 
@@ -100,7 +100,7 @@ sudo dpkg -i cuda-keyring_1.1-1_all.deb && sudo apt-get update
 sudo apt-get install -y cuda-toolkit-12-2 cmake ninja-build build-essential git
 export PATH=/usr/local/cuda/bin:$PATH   # nvcc is not on PATH by default
 
-git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp && cd llama.cpp
+git clone --depth 1 --branch b12323 https://github.com/ggml-org/llama.cpp && cd llama.cpp
 cmake -B build -G Ninja -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=86;89" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target llama-server
 cd ..

@@ -81,8 +81,9 @@ These measures make it less likely that prompts end up on disk by accident:
 
 - **No core dumps** (`LimitCORE=0`): a crash dump would contain prompts from memory.
 - **No swap** (`MemorySwapMax=0`, needs cgroup v2): prompts are never paged out.
-- **A smaller prompt cache in RAM** (`--cache-ram 2048` MiB instead of 8192). Override with
-  `CACHE_RAM_MIB`; `0` disables it.
+- **A bounded prompt cache in RAM** (`--cache-ram`: half the machine's RAM, at most 16384 MiB).
+  It keeps recent conversations warm so an agent's next step does not recompute its whole
+  prompt; with no swap it never reaches disk. Override with `CACHE_RAM_MIB`; `0` disables it.
 - **No prompt logging:** `llama-server` runs without verbose logging.
 
 They do not make the node confidential: anyone with root on the machine can still read

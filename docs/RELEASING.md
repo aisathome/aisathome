@@ -25,7 +25,9 @@ commit, tagged with where it applies: (node), (gateway), (site) or (docs).
 `./scripts/build-release.sh v0.1.0 dist` builds the static node and gateway binaries
 (`aisathome-node`: linux amd64/arm64, windows amd64; `aisathome-gateway`: linux amd64/arm64)
 and `SHA256SUMS`; with `LLAMA_DIR` pointing at the output of `scripts/build-llama.sh` it packs
-the node bundle too. `aisathome-node -version` prints the version.
+the node bundle too. `aisathome-node -version` prints the version. The Windows installer
+(`AIsAtHome-node-setup-<version>.exe`) builds only on Windows with Inno Setup 6:
+`node/packaging/windows/build-installer.ps1 -Version v0.1.0 -OutDir dist-win`.
 
 ## Making a release
 
@@ -33,8 +35,10 @@ the node bundle too. `aisathome-node -version` prints the version.
 git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
 ```
 
-The workflow runs the CI checks, builds the Go binaries, `llama-server` with CUDA and the
-bundle, writes `SHA256SUMS`, and attaches everything to a **draft** release. Review the
+The workflow runs the CI checks, builds the Go binaries, `llama-server` with CUDA, the
+bundle and the Windows installer (on a Windows runner; its agent must be byte-identical to
+`aisathome-node-windows-amd64.exe`), writes `SHA256SUMS`, and attaches everything to a
+**draft** release. The installer is not signed yet: Windows shows a SmartScreen warning. Review the
 draft (files, sizes, `BUILD-INFO`, generated notes). Tags with a `-` (for example
 `v0.2.0-rc1`) become pre-releases.
 

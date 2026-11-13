@@ -16,9 +16,10 @@ set -euo pipefail
 
 [[ $# -eq 1 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-# The llama.cpp release the presets were benchmarked with (2026-10-09). The commit pins the tag: a moved tag fails the build.
-LLAMA_TAG=v0.5.0
-LLAMA_COMMIT=7fe450e19305b828c199d602c23a8337aaa1f03b
+# The llama.cpp release the node runs (b12323, 2026-11-12: the newest release with a Windows CUDA 12.4 build, which
+# the Windows node ships; node/setup/llama.go pins the same commit). The commit pins the tag: a moved tag fails the build.
+LLAMA_TAG=b12323
+LLAMA_COMMIT=93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
 # Real (SASS) code only, no PTX: RTX 30 (8.6), RTX 40 (8.9), RTX 50 (12.0; llama.cpp turns
 # 120 into 120a anyway). Without PTX, a CUDA 12.8 build runs on any CUDA 12 driver (>= 525)
 # through minor version compatibility, which does not cover PTX; see MIN_DRIVER.

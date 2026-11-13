@@ -16,14 +16,25 @@ type Layout struct {
 	StateFile    string // pause switch, counters and events (Config.StateFile)
 	PasswordFile string // the local UI's password
 	LogFile      string // the agent's log when it runs as a Windows service (no console there)
+	// The engine, when the agent runs it (Config.Engine): the llama-server program, relative to
+	// the folder of the agent's own program; the model file; and the engine's log as a service.
+	EngineProgram string
+	Model         string
+	EngineLogFile string
+	// Setup: the agent runs without a complete config and serves the setup page (/setup) until
+	// the volunteer has set it up (package setupflow); SetupStateFile keeps the setup's last
+	// state for `aisathome-node diagnose`. Linux: the installer sets the node up instead.
+	Setup          bool
+	SetupStateFile string
 }
 
 // LinuxLayout is the Linux defaults. The installer's systemd units pass the config path and
 // set the state file in the environment (local-ui.conf); the password file is
 // root:aisathome 0640.
 var LinuxLayout = Layout{
-	Config:       "node.json",
-	PasswordFile: "/etc/aisathome-node/ui-password",
+	Config:        "node.json",
+	PasswordFile:  "/etc/aisathome-node/ui-password",
+	EngineProgram: "llama-server",
 }
 
 // WindowsDataDir is the agent's folder on Windows: AIsAtHome under %ProgramData%, or under
@@ -46,6 +57,13 @@ func WindowsLayout(getenv func(string) string) Layout {
 		StateFile:    winJoin(d, "state.json"),
 		PasswordFile: winJoin(d, "ui-password"),
 		LogFile:      winJoin(d, "logs", "node.log"),
+		// The program in the installer's engine folder beside the agent (Program Files); the
+		// model with the data, which the service account may write (the setup downloads it there).
+		EngineProgram:  `engine\llama-server.exe`,
+		Model:          winJoin(d, "models", "model.gguf"),
+		EngineLogFile:  winJoin(d, "logs", "engine.log"),
+		Setup:          true,
+		SetupStateFile: winJoin(d, "setup-state.json"),
 	}
 }
 

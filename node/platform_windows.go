@@ -13,3 +13,7 @@ const StatusCommand = "Get-Service " + ServiceName
 
 // DefaultLayout is this platform's default files.
 func DefaultLayout() Layout { return WindowsLayout(os.Getenv) }
+
+// PasswordHint is how the volunteer shows the local UI's password in file: the installing
+// user may read it (the installer's permission), in Notepad (Win+R, then this).
+func PasswordHint(file string) string { return `notepad "` + file + `"` }

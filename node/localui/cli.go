@@ -95,7 +95,13 @@ func PrintStatus(w io.Writer, st StatusResponse, port int, now time.Time) {
 	if !st.Connected && st.Refused != "" {
 		row("refused", "%s", st.Refused)
 	}
-	row("engine", "%s", st.Engine)
+	if !st.Connected && st.Rejected != "" {
+		row("rejected", "%s", st.Rejected)
+	}
+	row("engine", "%s", engineLine(st.Status, now))
+	if st.Setup != nil && (st.Setup.Mode == "setup" || !st.Setup.Configured) {
+		row("setup", "not set up yet: open http://%s/setup", Addr(port))
+	}
 	for _, m := range st.Models {
 		row("model", "%s, %d slot(s) x %d tokens", m.Name, m.Slots, m.Ctx)
 	}
@@ -184,4 +190,30 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// engineLine is the engine's health and, when the agent runs it, its process: "stopped" when
+// stopped on request, not "unhealthy".
+func engineLine(st node.Status, now time.Time) string {
+	ep := st.EngineProcess
+	if ep == nil {
+		return st.Engine
+	}
+	switch ep.State {
+	case "stopped":
+		return "stopped (Start engine on the local page)"
+	case "restarting":
+		s := "ended: " + orDash(ep.LastExit)
+		if ep.NextStart != nil {
+			s += "; starting again in " + ago(ep.NextStart.Sub(now))
+		}
+		return s
+	case "running":
+		s := fmt.Sprintf("%s, process %d running for %s", st.Engine, ep.PID, ago(now.Sub(ep.Since)))
+		if ep.Restarts > 0 {
+			s += fmt.Sprintf(", %d restart(s)", ep.Restarts)
+		}
+		return s
+	}
+	return st.Engine + ", process " + ep.State
 }
