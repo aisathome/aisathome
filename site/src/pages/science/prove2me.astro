@@ -324,10 +324,10 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 			const sameTrial = trial !== null && trial === known.trial;
 			nowBox.querySelectorAll<HTMLElement>('[data-now-about]').forEach((p) => (p.hidden = !sameTrial));
 			if (!sameTrial) head.textContent = trial ? `Trial ${trial.replace(/^t/, '')}` : 'Nothing is running or queued right now.';
-			const leaves = trial ? liveLeaves(q, trial, known.order) : [];
+			const leaves = trial ? liveLeaves(q, trial, sameTrial ? known.order : []) : [];
 			list.replaceChildren(
 				...leaves.map((l) => {
-					const k = known.leaves[l.leaf];
+					const k = sameTrial ? known.leaves[l.leaf] : undefined; // a leaf id names another theorem in another trial
 					const li = el('li');
 					li.id = `leaf-${l.leaf}`;
 					li.dataset.currentLeaf = l.leaf;
