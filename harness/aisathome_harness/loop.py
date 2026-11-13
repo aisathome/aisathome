@@ -24,7 +24,8 @@ The loop then decides whether the session goes on with a new message in the same
   did not retry itself), the session is resumed, at most `max_resumes` times, with `Prompts.resume`.
 - The first-edit nudge: a model that has not changed its target files after `first_edit_step` steps
   is stopped between two steps and told to write a first version now (`Prompts.first_edit`). Once per
-  task, first round only.
+  task, first round only, unless the session's watcher fires again (`Session.first_edit_again` and
+  `FirstEditWatch.again`: a project's later round-1 nudge, sent as whatever `Prompts.first_edit` then is).
 - The stuck-loop nudge: the same command with the same empty or failing result `loop_guard.REPEATS`
   times since the last edit gets one message (`Prompts.loop`). Once per round.
 - A follow-up round that stops on a stale step-limit notice while it still has steps gets one message
@@ -362,6 +363,11 @@ class FirstEditWatch:
     @property
     def near(self) -> bool:
         return not self.edited and self.steps >= self.step
+
+    def again(self) -> bool:
+        """Asked after it fired: whether it keeps watching and may stop the round once more (a subclass's
+        later nudge; it must not fire for the same reason twice). The first-edit nudge itself: never."""
+        return False
 
     def poll(self) -> bool:
         if self.edited:
@@ -767,6 +773,9 @@ class Session:
     first_edit_step: int | None = None            # None: no first-edit nudge
     first_edit_targets: list[str] = field(default_factory=list)
     first_edit_accept: Callable[[str], bool] = lambda path: True   # with no targets: which changes count
+    # the first-edit watcher may fire more than once in round 1 (FirstEditWatch.again), also after a stop:
+    # then a resumed round 1 gets a watcher although the nudge fired, and the watcher keeps its own state
+    first_edit_again: bool = False
     loop_guard: bool = True
     before: Callable[[], object] | None = None   # remove a leftover container before a segment
     stop: Callable[[], object] | None = None     # stop the running one
@@ -1007,11 +1016,13 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
           + (f" (resuming session {sid})" if resume else ""))
     resumes = interruptions(segments) if resume else 0
     round_no = (fu_round or 0) + 1
-    nudge_at = s.first_edit_step if fu_round is None and not (nudged or {}).get("fired") else None
+    fired = bool((nudged or {}).get("fired"))
+    nudge_at = s.first_edit_step if fu_round is None and (not fired or s.first_edit_again) else None
     nudge = None
     if nudge_at and nudge_at < steps:        # else the step cap comes first
         nudge = s.first_edit_watcher(events, nudge_at)
-        nudged = {"step": nudge_at, "fired": False}
+        if not fired:
+            nudged = {"step": nudge_at, "fired": False}
     loop = None
     if s.loop_guard and not looped:
         loop = LoopWatch(events, _size(events), grace=T.loop_grace)
@@ -1085,10 +1096,15 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
             m = re.search(r"\"sessionID\":\"(ses_[A-Za-z0-9]+)\"", events.read_text())
             sid = m.group(1) if m else None
         if seg.get("first_edit_nudge") and sid:
-            nudged = {"step": nudge.step, "fired": True, "at_step": nudge.steps, "between_steps": nudge.last == b"step_finish",
-                      "model_s": round(model_used_s(events, ev_start, segments)), "targets": nudge.targets}
-            s.say(f"no target file changed by step {nudge.steps}: first-edit nudge")
-            nudge, message = None, s.prompts.first_edit
+            if not (nudged or {}).get("fired"):
+                nudged = {"step": nudge.step, "fired": True, "at_step": nudge.steps, "between_steps": nudge.last == b"step_finish",
+                          "model_s": round(model_used_s(events, ev_start, segments)), "targets": nudge.targets}
+                s.say(f"no target file changed by step {nudge.steps}: first-edit nudge")
+            else:                            # the watcher's later nudge (FirstEditWatch.again)
+                nudged = {**nudged, "again": [*nudged.get("again", []), nudge.steps]}
+                s.say(f"round-1 nudge again at step {nudge.steps}")
+            message = s.prompts.first_edit
+            nudge = nudge if s.first_edit_again and nudge.again() else None
             continue
         if seg.get("loop_nudge") and sid:
             looped = loop.record()

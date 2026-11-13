@@ -7,7 +7,9 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
-Planned as 0.2.0 (a new module; nothing existing changes).
+## [0.2.0] - 2026-11-13
+
+A new module and two round-engine changes.
 
 ### Added
 
@@ -19,7 +21,21 @@ Planned as 0.2.0 (a new module; nothing existing changes).
   file needs (`commands`, `scope_lines`, `context_text`); the dry assembly (each hole's lemma in a
   `namespace <block>` above the declaration that holds it, the hole replaced by its application;
   `dry_assembly`, `failed_blocks`) and the assembly from the lemmas' proof files (`assemble`). Text only: the
-  project compiles. Not yet run against Lean (a project's validation script does that first).
+  project compiles. The stand-in copy raises `maxHeartbeats` to 2,000,000 (`STANDIN_HEARTBEATS`): the holes of one
+  proof share its budget, and at Lean's default the 4th extraction of a real 8-hole outline ran out (prove2me's
+  validation on a runner, 2026-11-13).
+
+### Changed
+
+- A follow-up round that made no tool call runs again once (continued in its session with its own caps,
+  like a round the endpoint consumed) instead of ending the task at once; a second one still ends it not
+  scored (`unscored: "no_tool_calls"`). It never reaches the project's feedback. prove2me's trial 4 lost a
+  leaf's last fix round to one reply cut after 98 characters.
+- The first-edit watcher may fire more than once in round 1 when the session sets `first_edit_again` and
+  the watcher's `again()` says so (a project's later nudge, sent as `Prompts.first_edit` at that moment);
+  run.json's `first_edit_nudge` keeps the first firing and lists the later ones in `again`. The default
+  is unchanged: one nudge. prove2me's step-20 progress nudge never fired because the step-8 first-edit
+  nudge used the only one.
 
 ### Fixed
 

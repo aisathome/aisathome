@@ -11,7 +11,8 @@ model and is run again once after the endpoint answers again (round 1 from scrat
 try moved aside; a later round continued in its session with its caps counted afresh, `Rounds.retry`).
 Other unscored kinds (a project's own, e.g. a request the endpoint refused by policy) end the task as not
 scored. A follow-up that made no tool call never ran: a tooling problem, not a verdict on the model, so
-the task ends there not scored (`unscored: "no_tool_calls"` in `final`).
+it runs again once like an infrastructure round (trial 4's C12 lost its last round to one), and a second
+one ends the task not scored (`unscored: "no_tool_calls"` in `final`).
 
 `run_rounds` is idempotent: its state is <raw>/rounds.json (evidence.py), and the same call continues
 after a stop at any point. Standard library only.
@@ -198,8 +199,17 @@ def run_rounds(r: Rounds) -> dict:
         if rec["outcome"] == r.proved:
             return finish(r.proved, True, n, n)
         if rec.get("no_tool_calls"):
-            # the follow-up never ran (no tool call): tooling, not the model; not scored
-            return finish(rec["outcome"], False, n, unscored="no_tool_calls")
+            # the follow-up never ran (no tool call): tooling, not the model. It runs again once, continued in
+            # its session with its own caps, like a round the endpoint consumed; a second time, not scored.
+            # Never judged by the project's feedback (a no-progress rule would read it as "unchanged").
+            tries = sum(1 for x in st["rounds"] if x["round"] == n and x.get("no_tool_calls"))
+            if not r.infra_retry or tries > 1 or (r.probe and not r.wait(r.probe)):
+                return finish(rec["outcome"], False, n, unscored="no_tool_calls")
+            rec["retried"] = True
+            evidence.save_rounds(raw, st)
+            say(f"round {n} made no tool call; running it again with its own caps")
+            (r.retry or r.resume)()
+            continue
         if n >= total:
             return finish(rec["outcome"], True, n)
         msg = r.feedback(rec, n, total)

@@ -103,9 +103,10 @@ def norm_events(path: Path) -> list:
     return out
 
 
-def play(name: str, prompts: dict) -> dict:
-    """Run one scenario through run_session in a scratch directory; return the normalised records."""
-    fields, wall_min, steps, kinds, invocations = SCENARIOS[name]
+def play(name: str, prompts: dict, scenario: tuple | None = None, session_cls=loop.Session) -> dict:
+    """Run one scenario (SCENARIOS[name], or `scenario` in its shape) through run_session in a scratch
+    directory, with sessions of `session_cls`; return the normalised records."""
+    fields, wall_min, steps, kinds, invocations = scenario or SCENARIOS[name]
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         tree, raw, home, state = root / "tree", root / "raw" / TID, root / "runs" / TID / "home", root / "state"
@@ -128,7 +129,7 @@ def play(name: str, prompts: dict) -> dict:
                 os.kill(int((state / "pid").read_text()), signal.SIGTERM)
 
         def session() -> loop.Session:
-            return loop.Session(
+            return session_cls(
                 task_id=TID, tree=tree, raw=raw, home=home, state=root / "runs" / TID / "state", command=command,
                 prompt=lambda s, m: f"PROMPT {s} steps {m} min",
                 prompts=loop.Prompts(resume=prompts["RESUME_PROMPT"], first_edit=prompts["FIRST_EDIT_NUDGE"],
@@ -162,6 +163,64 @@ class Characterisation(unittest.TestCase):
         for name in SCENARIOS:
             with self.subTest(name):
                 self.assertEqual(json.loads(json.dumps(play(name, ref["prompts"]))), ref["scenarios"][name])
+
+
+class LaterNudge(loop.FirstEditWatch):
+    """A project's later round-1 nudge through the first-edit watcher: after the first-edit nudge, it fires
+    once more at step 5 (with the target edited or not), as `Prompts.first_edit` swapped to SECOND."""
+
+    def __init__(self, session, *a, **kw):
+        super().__init__(*a, **kw)
+        self.session, self.first_done, self.second_done = session, False, False
+
+    def poll(self) -> bool:
+        if not self.first_done:
+            if super().poll():
+                self.first_done = True
+                return True
+            return False
+        self.read()
+        if not self.second_done and self.steps >= 5 and self.last == b"step_finish":
+            self.second_done = True
+            self.session.prompts = loop.Prompts(resume=self.session.prompts.resume, first_edit="SECOND",
+                                                loop=self.session.prompts.loop)
+            return True
+        return False
+
+    def again(self) -> bool:
+        return not self.second_done
+
+
+class LaterNudgeSession(loop.Session):
+    def first_edit_watcher(self, events, step):
+        git = self.git
+        return LaterNudge(self, events, step, lambda: loop.tree_changed(git, self.first_edit_targets, self.first_edit_accept),
+                          self.first_edit_targets, self.timing.first_edit_grace)
+
+
+class TwoNudges(unittest.TestCase):
+    """Trial 4 (prove2me): its progress nudge at step 20 never fired, because the first-edit nudge at step 8 took
+    round 1's only nudge. With `first_edit_again` the watcher fires both, each once."""
+    PROMPTS = {"RESUME_PROMPT": "RESUME after a machine stop", "FIRST_EDIT_NUDGE": "FIRST", "LOOP_NUDGE": "LOOP {signature}"}
+    INV = [{"actions": [step("ls"), step("grep -rn foo ."), step("grep -rn bar ."), {"wait": 30}], "exit": 0},
+           {"actions": [step("true", edit=EDIT), step("ls"), step("ls -l"), {"wait": 5}], "exit": 0},
+           {"actions": [step("ls -a"), step("ls -la"), step("ls -lt"), talk("RESULT: done")], "exit": 0}]
+
+    def messages(self, again: bool) -> tuple[list, dict]:
+        fields = {"first_edit_step": 2, "first_edit_targets": [TARGET], "first_edit_again": again}
+        out = play("two", self.PROMPTS, (fields, 10, 30, ["fresh"], self.INV), LaterNudgeSession)
+        return [c["message"] for c in out["calls"]], out["runs"][-1]["first_edit_nudge"]
+
+    def test_both_nudges_fire_once_each(self):
+        msgs, rec = self.messages(True)
+        self.assertEqual(msgs[1:], ["FIRST", "SECOND"])
+        self.assertEqual((rec["fired"], len(rec["again"])), (True, 1))
+        self.assertLess(rec["at_step"], rec["again"][0])
+
+    def test_without_first_edit_again_only_the_first_fires(self):
+        msgs, rec = self.messages(False)
+        self.assertEqual(msgs[1:], ["FIRST"])
+        self.assertNotIn("again", rec)
 
 
 if __name__ == "__main__":

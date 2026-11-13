@@ -46,6 +46,16 @@ def lake_out(rel: str, msgs: list[tuple[str, int, int, str]]) -> str:
 
 
 class StandinCopy(unittest.TestCase):
+    def test_the_copy_raises_the_heartbeat_budget_before_the_outline(self):
+        """Trial 4's C12: 8 holes in one proof ran out of the default 200,000 heartbeats at the 4th extraction."""
+        c = H.standin_copy(OUTLINE)
+        head, rest = c.text.split(H.STANDIN_HEADER)
+        self.assertIn(f"set_option maxHeartbeats {H.STANDIN_HEARTBEATS}\n", H.STANDIN_HEADER)
+        self.assertGreater(H.STANDIN_HEARTBEATS, 200_000)
+        self.assertIn("theorem solution", rest)
+        ln, col = c.copy_pos[0]
+        self.assertEqual(c.text.splitlines()[ln - 1][col:col + len(H.STANDIN)], H.STANDIN)
+
     def test_every_code_sorry_becomes_the_standin(self):
         c = H.standin_copy(OUTLINE + "-- a sorry in a comment\n")
         self.assertEqual(c.text.count(H.STANDIN + "\n"), 3)

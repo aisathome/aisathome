@@ -93,11 +93,34 @@ class Engine(unittest.TestCase):
         self.assertEqual((st["final"]["outcome"], st["final"]["rounds"]), ("axioms", 1))
         self.assertEqual(len(rig.calls), 1)
 
-    def test_a_followup_without_tool_calls_stops(self):
-        rig = Rig(self.raw, ["compile_error", {"outcome": "compile_error", "unscored": None, "no_tool_calls": True}])
-        st = rounds.run_rounds(rig.make())
+    def test_a_followup_without_tool_calls_twice_stops_not_scored(self):
+        none = {"outcome": "compile_error", "unscored": None, "no_tool_calls": True}
+        rig = Rig(self.raw, ["compile_error", none, none])
+        r = rig.make()
+        r.retry = lambda: rig._session("retry")
+        st = rounds.run_rounds(r)
         self.assertEqual((st["final"]["outcome"], st["final"]["rounds"], st["final"]["scored"], st["final"]["unscored"]),
                          ("compile_error", 2, False, "no_tool_calls"))
+        self.assertEqual([c[0] for c in rig.calls], ["start", "followup", "retry"])
+
+    def test_a_followup_without_tool_calls_runs_again_and_is_never_judged(self):
+        """Trial 4's C12: round 2's reply was cut after 98 characters with no tool call. That round runs again
+        once with its own caps; the feedback (a project's no-progress rule) never sees it."""
+        none = {"outcome": "refused", "unscored": None, "no_tool_calls": True}
+        seen = []
+        rig = Rig(self.raw, ["refused", none, "refused", "proved"])
+        r = rig.make(feedback=lambda rec, n, total: seen.append((n, rec.get("no_tool_calls"))) or f"fix {n}")
+        r.retry = lambda: rig._session("retry")
+        st = rounds.run_rounds(r)
+        self.assertEqual([c[0] for c in rig.calls], ["start", "followup", "retry", "followup"])
+        self.assertEqual((st["final"]["outcome"], st["final"]["scored"], st["final"]["proved_in_round"]), ("proved", True, 3))
+        self.assertEqual(seen, [(1, None), (2, None)])
+        self.assertTrue(st["rounds"][1]["retried"])
+
+    def test_a_followup_without_tool_calls_is_not_retried_without_infra_retry(self):
+        rig = Rig(self.raw, ["compile_error", {"outcome": "compile_error", "unscored": None, "no_tool_calls": True}])
+        st = rounds.run_rounds(rig.make(infra_retry=False))
+        self.assertEqual((st["final"]["scored"], st["final"]["unscored"]), (False, "no_tool_calls"))
         self.assertEqual(len(rig.calls), 2)
 
     def test_infra_in_round_one_is_retried_once_from_scratch(self):

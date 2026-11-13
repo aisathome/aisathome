@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [project]
 name = "aisathome-harness"
-version = "0.1.2"
+version = "0.2.0"
 description = "Run an open model behind any OpenAI-compatible endpoint as an agent on outside projects' tasks, check the results mechanically, keep the evidence."
 readme = "README.md"
 license = { text = "Apache-2.0" }

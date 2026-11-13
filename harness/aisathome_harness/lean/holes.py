@@ -38,8 +38,13 @@ STANDIN_IMPORTS = ("Mathlib.Tactic.ExtractGoal", "Mathlib.Tactic.Trace")
 # `trace` (Mathlib.Tactic.Trace) logs the position marker at the stand-in; `extract_goal * using <name>` logs
 # `theorem <name> ... := sorry` (or `def`); without a goal it can extract, `trace_state` prints the goal. The
 # macros are not hygienic, so the name stays as written.
+# All holes of one declaration share its heartbeat budget, and `extract_goal *` prints the whole context at each:
+# on a real outline (prove2me trial 4's C12, 8 holes in one proof) Lean's default 200,000 ran out at the 4th hole and
+# the rest were never reached (2026-11-13). The copy gets this many; a `set_option ... in` of the outline's own wins.
+STANDIN_HEARTBEATS = 2_000_000
 STANDIN_HEADER = (
     "-- each `sorry` became `" + STANDIN + "`: it marks its position and extracts its goal\n"
+    f"set_option maxHeartbeats {STANDIN_HEARTBEATS}\n"
     f'syntax (name := aisathomeHoleTactic) "{STANDIN}" : tactic\n'
     f'syntax (name := aisathomeHoleTerm) "{STANDIN}" : term\n'
     "set_option hygiene false in\n"
