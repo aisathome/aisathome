@@ -1,0 +1,23 @@
+---
+// The site's main navigation (src/data/nav.json, which the gateway's account pages follow too) as a
+// list of links, for the header (HeaderLinks.astro), the phone menu (Header.astro) and the top of
+// the docs' mobile menu (Sidebar.astro). The current section is marked with aria-current.
+import nav from '../data/nav.json';
+import { domain } from '../data/site';
+
+interface Props {
+	class?: string;
+	label?: string;
+	[attr: string]: unknown;
+}
+// The rest carries the parent's style scope (data-astro-cid-*), so its scoped styles reach the nav.
+const { class: cls, label = 'Main', ...rest } = Astro.props;
+const here = Astro.url.pathname;
+const links = nav.map((l) => {
+	const href = l.href.replace('{domain}', domain);
+	return { label: l.label, href, current: href.startsWith('/') && (here === href || here.startsWith(href)) };
+});
+---
+<nav class={cls} aria-label={label} {...rest}>
+	{links.map((l) => <a href={l.href} aria-current={l.current ? 'page' : undefined}>{l.label}</a>)}
+</nav>

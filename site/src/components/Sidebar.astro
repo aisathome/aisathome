@@ -1,0 +1,21 @@
+---
+// Starlight's sidebar with the site's main navigation on top. On phones the sidebar is the menu
+// that Starlight's menu button opens, and without these links it held only the docs (owner,
+// 2026-11-13: on a phone the navigation could not be found). From 50rem the sidebar is a column
+// beside the page and the header has the links (HeaderLinks.astro), so they are hidden here.
+import Default from '@astrojs/starlight/components/Sidebar.astro';
+import MainNav from './MainNav.astro';
+---
+<MainNav class="sidebar-main md:sl-hidden" />
+<Default />
+
+<style is:global>
+	.sidebar-main { display: flex; flex-direction: column; gap: 0.125rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--sl-color-hairline-light); }
+	.sidebar-main a {
+		padding: 0.3em var(--sl-sidebar-item-padding-inline, 0.5rem); border-radius: 0.25rem; color: var(--sl-color-white);
+		font-size: var(--sl-text-lg); font-weight: 600; text-decoration: none;
+	}
+	.sidebar-main a:hover { color: var(--sl-color-accent-high); }
+	.sidebar-main a[aria-current='page'] { background: var(--sl-color-text-accent); color: var(--sl-color-black); }
+	@media (min-width: 50rem) { .sidebar-main { display: none; } }
+</style>

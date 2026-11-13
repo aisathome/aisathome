@@ -37,6 +37,8 @@ export default defineConfig({
 				Footer: './src/components/Footer.astro',
 				Hero: './src/components/Hero.astro',
 				PageTitle: './src/components/PageTitle.astro',
+				Header: './src/components/Header.astro',
+				Sidebar: './src/components/Sidebar.astro',
 			},
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/aisathome/aisathome' },

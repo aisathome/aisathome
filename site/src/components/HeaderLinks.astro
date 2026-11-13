@@ -2,19 +2,52 @@
 // Top-bar navigation next to Starlight's social icons (Starlight has no top nav of its own).
 // The items are in src/data/nav.json, which the gateway's account pages follow too
 // (gateway/page.go headerNav; e2e/header_test.go checks they match).
+//
+// Where the menu is at each width (the gateway's pages do the same):
+//   72rem and up    the links in the header (nav.top-links);
+//   50 to 72rem     a Menu button in the header that opens them (details.nav-drop);
+//   below 50rem     the header's right side is hidden; on pages with a sidebar Starlight's menu
+//                   button opens it with the links on top (Sidebar.astro), on the others a menu
+//                   button of our own does (Header.astro).
+// Starlight also renders this component in its mobile menu's footer; there the links stay hidden.
+import { Icon } from '@astrojs/starlight/components';
 import Default from '@astrojs/starlight/components/SocialIcons.astro';
-import nav from '../data/nav.json';
-import { domain } from '../data/site';
-const links = nav.map((l) => ({ label: l.label, href: l.href.replace('{domain}', domain) }));
+import MainNav from './MainNav.astro';
 ---
-<nav class="top-links" aria-label="Main">
-	{links.map((l) => <a href={l.href}>{l.label}</a>)}
-</nav>
+<MainNav class="top-links" />
+<details class="nav-drop" data-nav-menu>
+	<summary><Icon name="bars" class="open" /><Icon name="close" class="close" /><span>Menu</span></summary>
+	<MainNav class="nav-drop-pane" />
+</details>
 <Default />
 
-<style>
+<style is:global>
+	/* Global: the links are MainNav's elements, outside this component's style scope. Class names are unique. */
 	.top-links { display: none; gap: 1.25rem; margin-inline-end: 0.75rem; }
 	.top-links a { color: var(--sl-color-gray-2); text-decoration: none; font-size: var(--sl-text-sm); }
 	.top-links a:hover { color: var(--sl-color-accent-high); }
+	.top-links a[aria-current='page'] { color: var(--sl-color-white); box-shadow: inset 0 -2px var(--sl-color-accent); }
 	@media (min-width: 72rem) { .top-links { display: flex; align-items: center; } }
+
+	.nav-drop { display: none; position: relative; }
+	@media (min-width: 50rem) and (max-width: 71.99rem) { .nav-drop { display: block; } }
+	.nav-drop > summary {
+		display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.4rem; color: var(--sl-color-gray-2); font-size: var(--sl-text-sm); cursor: pointer; list-style: none;
+	}
+	.nav-drop > summary::-webkit-details-marker { display: none; }
+	.nav-drop > summary:hover, .nav-drop[open] > summary { color: var(--sl-color-white); border-color: var(--sl-color-gray-3); }
+	.nav-drop > summary svg { width: 1rem; height: 1rem; }
+	.nav-drop .close, .nav-drop[open] .open { display: none; }
+	.nav-drop[open] .close { display: block; }
+	.nav-drop-pane {
+		position: absolute; inset-inline-end: 0; top: calc(100% + 0.4rem); z-index: var(--sl-z-index-menu); display: flex;
+		flex-direction: column; min-width: 13rem; padding: 0.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.5rem;
+		background: var(--sl-color-bg-nav); box-shadow: var(--sl-shadow-md);
+	}
+	.nav-drop-pane a { padding: 0.4rem 0.6rem; border-radius: 0.3rem; color: var(--sl-color-gray-2); text-decoration: none; }
+	.nav-drop-pane a:hover { background: var(--sl-color-gray-6); color: var(--sl-color-white); }
+	.nav-drop-pane a[aria-current='page'] { color: var(--sl-color-white); font-weight: 600; }
+	/* Starlight's mobile menu footer renders this component too: no menu there. */
+	.mobile-preferences .nav-drop { display: none; }
 </style>
