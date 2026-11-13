@@ -57,6 +57,8 @@ usage_err() { [[ $code -eq 2 ]] || fail "$1: exit $code, want 2"; }
 
 # The tier follows the card's size: big (UD-IQ4_XS, 192k) on 24 GB and more, standard
 # (UD-Q3_K_XL, 80k) on 16 GB. Each tier's file answers under its own model name.
+# The prompt cache follows this machine's RAM: half of it, at most 16384 MiB (cache_ram_for).
+want_cache="$(awk '$1 == "MemTotal:" { h = int($2 / 1024 / 2); print (h < 16384 ? h : 16384) }' /proc/meminfo)"
 # card <total MiB> <free MiB> [name]: one fake GPU.
 card() { echo "0, GPU-fake-0, ${3:-NVIDIA GeForce RTX 3090}, $1, $2"; }
 hf=https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502
@@ -73,7 +75,7 @@ check_tier() {  # check_tier <FAKE_MEM> <tier> <ctx>
   has "tier $2 ($1)" '"name": "'"$name"'", "roles": ["deep", "agent"], "slots": 1, "ctx": '"$3"
   has "tier $2 ($1)" "-np 1 --kv-unified-per-slot $3 "
   has "tier $2 ($1)" "-ctk q4_0 -ctv q4_0 "
-  has "tier $2 ($1)" "--reasoning-budget 8192 "; has "tier $2 ($1)" "--cache-ram 2048 "; has "tier $2 ($1)" "--host 127.0.0.1 "
+  has "tier $2 ($1)" "--reasoning-budget 8192 "; has "tier $2 ($1)" "--cache-ram $want_cache "; has "tier $2 ($1)" "--host 127.0.0.1 "
   has "tier $2 ($1)" "at least 20 tokens/s after a 32000-token prompt"
 }
 run -- --dry-run
@@ -148,6 +150,13 @@ ok "KV override"; has "KV override" "-ctk q8_0 -ctv q8_0 "; lacks "KV override" 
 run REASONING_BUDGET=-1 CACHE_RAM_MIB=0 MODEL_ALIAS=my-model MIN_DECODE_TPS=12.5 -- --dry-run
 ok "other overrides"; has "other overrides" "--reasoning-budget -1 "
 has "other overrides" "--cache-ram 0 "; has "other overrides" "--alias my-model "; has "other overrides" "at least 12.5 tokens/s"
+# cache_ram_for itself, for machines this one is not: 32 GB, 24 GB, 128 GB, unknown (0).
+cache_ram_for() { :; }
+eval "$(sed -n '/^cache_ram_for() {$/,/^}$/p' "$installer")"
+for c in "32768 16384" "24576 12288" "131072 16384" "8192 4096" "0 2048"; do
+  read -r total want <<<"$c"; got="$(cache_ram_for "$total")"
+  [[ "$got" = "$want" ]] || { out="cache_ram_for $total = $got"; fail "cache for $total MiB of RAM: want $want"; }
+done
 
 # Invalid input is rejected with a usage error before anything is installed.
 run PRESET=Balanced -- --dry-run
@@ -612,8 +621,8 @@ printf '#!/bin/sh\necho fake node\n' > "$b/bin/aisathome-node"
 chmod +x "$b/bin/"*
 : > "$b/lib/libggml-cuda.so"
 cat > "$b/BUILD-INFO" <<'INFO'
-llama_cpp_tag=v0.5.0
-llama_cpp_commit=7fe450e19305b828c199d602c23a8337aaa1f03b
+llama_cpp_tag=b12323
+llama_cpp_commit=93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
 cuda_version=12.8
 cuda_archs=86-real;89-real;120a-real
 compute_caps=8.6 8.9 12.0
@@ -623,7 +632,7 @@ INFO
 repo_installer="$installer" installer="$b/install.sh"
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   run -- --dry-run --node-id test-node
-  ok "bundle"; has "bundle" "llama-server: prebuilt, llama.cpp v0.5.0 (7fe450e19305), CUDA 12.8"
+  ok "bundle"; has "bundle" "llama-server: prebuilt, llama.cpp b12323 (93cf736a8d1d), CUDA 12.8"
   has "bundle" "GPU 0: NVIDIA GeForce RTX 3090, driver 535.183.01, compute capability 8.6: supported"
   has "bundle" "model: https://huggingface.co/unsloth/"; has "bundle" '"node_id": "test-node"'
   has "bundle" "-np 1 --kv-unified-per-slot 196608 "

@@ -60,6 +60,15 @@ and **(site)** are live on aisathome.org once deployed.
   in. The installer adds the tray and its autostart and closes running trays before an update
   or uninstall. (node)
 
+### Changed
+
+- **llama.cpp b12323** (2026-11-12) replaces v0.5.0 (2026-09-23) on Linux and Windows. Every
+  flag the node passes is unchanged. (node)
+- **A larger prompt cache in RAM:** `--cache-ram` is half the machine's RAM, at most 16384 MiB
+  (was 2048). One cached agent conversation is 1-1.5 GiB, and 2048 held only one, so an agent
+  that switched between two conversations recomputed most of its prompt: cache hits after a
+  switch rose from 29% to 88% in our test. `CACHE_RAM_MIB` still overrides it. (node)
+
 ## [v0.4.0] — 2026-11-11
 
 A node no longer hangs on a silent gateway link, and 16 GB cards keep room for a desktop.

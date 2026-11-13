@@ -23,10 +23,26 @@ const (
 	// for 8 minutes and filled the context; after the budget the model is told to answer.
 	ReasoningBudget        = 8192
 	ReasoningBudgetMessage = "(Thinking budget reached; answering now.)"
-	// CacheRAMMiB is llama-server's host-RAM prompt cache (--cache-ram; its own default is 8192,
-	// 0 = off). It bounds how much conversation data stays warm in RAM.
-	CacheRAMMiB = 2048
+	// CacheRAMMaxMiB caps llama-server's host-RAM prompt cache (--cache-ram; its own default is
+	// 8192, 0 = off): see CacheRAMFor.
+	CacheRAMMaxMiB = 16384
+	// CacheRAMUnknownMiB is the cache when the machine's RAM cannot be read.
+	CacheRAMUnknownMiB = 2048
 )
+
+// CacheRAMFor is the prompt cache for a machine with totalMiB of RAM (install.sh's
+// cache_ram_for): half the RAM, at most CacheRAMMaxMiB; CacheRAMUnknownMiB when totalMiB is 0
+// (not known). One cached agent conversation of the hybrid model is 1-1.5 GiB at 19-44k tokens,
+// and an entry larger than the cache is dropped, so 2048 held one conversation; 16384 raised
+// the cache hits after a switch between two conversations from 29% to 88% and peaked at
+// 9.3 GiB (measured, 2026-11-12). It is a ceiling that fills on a busy node, so it takes at
+// most half the RAM: volunteers may run BOINC CPU work beside the node.
+func CacheRAMFor(totalMiB int) int {
+	if totalMiB <= 0 {
+		return CacheRAMUnknownMiB
+	}
+	return min(totalMiB/2, CacheRAMMaxMiB)
+}
 
 // EngineRoles are the roles the node's model entry announces (install.sh's gen_node_config).
 var EngineRoles = []string{"deep", "agent"}
@@ -50,13 +66,14 @@ type EngineSettings struct {
 	CUDADevice string
 }
 
-// Engine is the tier's llama-server command with the program at exe and the model at model.
+// Engine is the tier's llama-server command with the program at exe and the model at model,
+// with the prompt cache for this machine's RAM.
 func (t Tier) Engine(exe, model string) EngineSettings {
 	return EngineSettings{
 		Exe: exe, Model: model, Alias: t.Alias, Host: EngineHost, Port: EnginePort,
 		Slots: EngineSlots, CtxPerSlot: t.Ctx, KV: t.KV,
 		ReasoningBudget: ReasoningBudget, ReasoningBudgetMessage: ReasoningBudgetMessage,
-		CacheRAMMiB: CacheRAMMiB,
+		CacheRAMMiB: CacheRAMFor(SystemRAMMiB()),
 	}
 }
 

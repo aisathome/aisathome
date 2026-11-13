@@ -37,7 +37,7 @@ What is in it (`BUILD-INFO` has the exact values):
 
 | | |
 |---|---|
-| llama.cpp | `v0.5.0`, commit `7fe450e19305b828c199d602c23a8337aaa1f03b`, the version the presets were benchmarked with |
+| llama.cpp | release `b12323`, commit `93cf736a8d1d46aa922e27eb64aa712bcd5ebc30` (the presets were benchmarked with v0.5.0 and re-measured with this release) |
 | CUDA | 12.8.1 (`nvidia/cuda:12.8.1-devel-ubuntu22.04`, pinned by digest), real code for `86-real;89-real;120a-real`, no PTX |
 | Libraries | llama.cpp's, `libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12` (NVIDIA, unmodified), `libgomp.so.1`; see `THIRD_PARTY_NOTICES.md` |
 | Size | 497 MB packed (xz), 927 MiB unpacked; cuBLAS is most of it (869 MB unpacked, 439 MB packed). Measured on a local build with the same CUDA 12.8.1 libraries, 2026-10-11 |
@@ -104,7 +104,7 @@ For other GPUs, older systems, or if you prefer to compile.
   sudo apt-get install -y cuda-toolkit-12-2 cmake ninja-build build-essential
   export PATH=/usr/local/cuda/bin:$PATH   # nvcc is not on PATH by default
 
-  git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp && cd llama.cpp
+  git clone --depth 1 --branch b12323 https://github.com/ggml-org/llama.cpp && cd llama.cpp
   cmake -B build -G Ninja -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=86;89" -DCMAKE_BUILD_TYPE=Release
   cmake --build build --target llama-server
   ```
@@ -194,10 +194,12 @@ These measures make it less likely that prompts end up on disk by accident:
   from memory.
 - **No swap** (`MemorySwapMax=0` on both services, needs cgroup v2): prompts are never
   paged out to the swap device.
-- **Smaller prompt cache in RAM** (`--cache-ram 2048` MiB instead of llama-server's 8192):
-  bounds how much conversation data stays warm in memory. llama-server has a size limit,
-  not a time limit. Override with `CACHE_RAM_MIB`, where `0` disables the cache (follow-up
-  turns then need a full prefill more often).
+- **Bounded prompt cache in RAM** (`--cache-ram`: half the machine's RAM, at most 16384 MiB;
+  llama-server's own default is 8192): bounds how much conversation data stays warm in
+  memory. llama-server has a size limit, not a time limit. One cached agent conversation is
+  1-1.5 GiB, and 2048 held only one, so an agent switching between two conversations
+  recomputed most of its prompt. Override with `CACHE_RAM_MIB`, where `0` disables the cache
+  (follow-up turns then need a full prefill more often).
 - **No prompt logging:** llama-server runs without verbose logging and without
   `--log-prompts-dir`.
 

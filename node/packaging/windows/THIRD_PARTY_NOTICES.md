@@ -12,7 +12,7 @@ cover:
 
 | Files | What | Terms |
 |---|---|---|
-| `llama-server.exe`, `llama-server-impl.dll`, the `llama*`, `ggml*` and `mtmd*` DLLs and the other files of llama.cpp's release | [llama.cpp](https://github.com/ggml-org/llama.cpp)'s own Windows x64 CUDA 12.4 release `b11146` (commit `7fe450e19305b828c199d602c23a8337aaa1f03b`), unmodified | MIT (below) |
+| `llama-server.exe`, `llama-server-impl.dll`, the `llama*`, `ggml*` and `mtmd*` DLLs and the other files of llama.cpp's release | [llama.cpp](https://github.com/ggml-org/llama.cpp)'s own Windows x64 CUDA 12.4 release `b12323` (commit `93cf736a8d1d46aa922e27eb64aa712bcd5ebc30`), unmodified | MIT (below) |
 | the OpenMP runtime DLL, when present | LLVM's OpenMP runtime, shipped in llama.cpp's release | Apache-2.0 with LLVM exceptions: `LICENSE-LLVM-OpenMP` in that folder |
 | `cudart64_*.dll`, `cublas64_*.dll`, `cublasLt64_*.dll` | NVIDIA CUDA runtime and cuBLAS, from llama.cpp's `cudart-llama-bin-win-cuda-12.4-x64.zip`, unmodified | [NVIDIA CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/index.html) (below) |
 

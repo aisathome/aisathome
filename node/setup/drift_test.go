@@ -165,7 +165,8 @@ func TestInstallShEngineDrift(t *testing.T) {
 	// The defaults set_engine reads, as the script sets them.
 	var defaults []string
 	for _, re := range []string{`(?m)^target=.*$`, `(?m)^custom=0$`, `(?m)^slots="\$\{SLOTS:-[0-9]+\}" ctx_per_slot=.*$`,
-		`(?m)^reasoning_budget="\$\{REASONING_BUDGET:-[-0-9]+\}"$`, `(?m)^cache_ram="\$\{CACHE_RAM_MIB:-[0-9]+\}"$`} {
+		`(?m)^reasoning_budget="\$\{REASONING_BUDGET:-[-0-9]+\}"$`,
+		`(?m)^cache_ram="\$\{CACHE_RAM_MIB:-\$\(cache_ram_for "\$\(mem_total_mib\)"\)\}"$`} {
 		l := regexp.MustCompile(re).FindString(script)
 		if l == "" {
 			t.Fatalf("install.sh: no line matching %s", re)
@@ -173,7 +174,9 @@ func TestInstallShEngineDrift(t *testing.T) {
 		defaults = append(defaults, l)
 	}
 	var sb strings.Builder
-	sb.WriteString("set -eu\n" + strings.Join(defaults, "\n") + "\n")
+	// The cache default reads the machine's RAM in bash as Tier.Engine does in Go (same machine).
+	sb.WriteString("set -eu\n" + shellFunc(t, script, "cache_ram_for") + "\n" + shellFunc(t, script, "mem_total_mib") + "\n")
+	sb.WriteString(strings.Join(defaults, "\n") + "\n")
 	for _, f := range []string{"tier_ctx", "tier_kv", "tier_alias", "set_engine"} {
 		sb.WriteString(shellFunc(t, script, f) + "\n")
 	}
@@ -240,5 +243,37 @@ func TestLlamaCommitDrift(t *testing.T) {
 	}
 	if string(m[1]) != WindowsLlama.Commit {
 		t.Errorf("llama.cpp commit: Linux bundle %s, Windows zips %s (release %s)", m[1], WindowsLlama.Commit, WindowsLlama.Tag)
+	}
+}
+
+// The prompt cache's size for the machine's RAM: install.sh's cache_ram_for and CacheRAMFor
+// must agree for every RAM size, around the cap and for an unknown (0) size.
+func TestInstallShCacheRAMDrift(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	b, err := os.ReadFile(installSh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	totals := []int{0, 1, 2047, 4096, 8192, 16384, 24576, 32766, 32767, 32768, 32769, 65536, 131072, 1 << 20}
+	var sb strings.Builder
+	sb.WriteString("set -eu\n" + shellFunc(t, string(b), "cache_ram_for") + "\n")
+	for _, n := range totals {
+		fmt.Fprintf(&sb, "cache_ram_for %d\n", n)
+	}
+	out, err := exec.Command(bash, "-c", sb.String()).CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash: %v\n%s", err, out)
+	}
+	got := strings.Fields(string(out))
+	if len(got) != len(totals) {
+		t.Fatalf("bash printed %q for %d sizes", got, len(totals))
+	}
+	for i, n := range totals {
+		if want := strconv.Itoa(CacheRAMFor(n)); got[i] != want {
+			t.Errorf("RAM %d MiB: install.sh %s, Go %s", n, got[i], want)
+		}
 	}
 }

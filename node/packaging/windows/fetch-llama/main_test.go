@@ -129,7 +129,7 @@ func TestPins(t *testing.T) {
 	for _, f := range setup.WindowsLlama.Files {
 		names = append(names, f.File())
 	}
-	if strings.Join(names, " ") != "llama-b11146-bin-win-cuda-12.4-x64.zip cudart-llama-bin-win-cuda-12.4-x64.zip" {
+	if strings.Join(names, " ") != "llama-b12323-bin-win-cuda-12.4-x64.zip cudart-llama-bin-win-cuda-12.4-x64.zip" {
 		t.Errorf("files %v", names)
 	}
 	if smokeModel.File() != "tinyopenjev-for-testing-Q8_0.gguf" || len(smokeModel.SHA256) != 64 || smokeModel.Size <= 0 {

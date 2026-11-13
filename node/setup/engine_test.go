@@ -4,7 +4,9 @@ package setup
 import (
 	"fmt"
 	"net"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -23,7 +25,7 @@ func TestEngineFromTier(t *testing.T) {
 		{"--host", "127.0.0.1"}, {"--port", "8000"}, {"--kv-unified-per-slot", "81920"},
 		{"-ctk", "q4_0"}, {"-ctv", "q4_0"}, {"-np", "1"},
 		{"--reasoning-budget", "8192"}, {"--reasoning-budget-message", "(Thinking budget reached; answering now.)"},
-		{"--cache-ram", "2048"},
+		{"--cache-ram", strconv.Itoa(CacheRAMFor(SystemRAMMiB()))},
 	} {
 		i := slices.Index(args, want[0])
 		if i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
@@ -98,5 +100,32 @@ func TestCheckPort(t *testing.T) {
 	ln.Close()
 	if err := e.CheckPort(); err != nil {
 		t.Fatalf("free port: %v", err)
+	}
+}
+
+// The prompt cache: half the machine's RAM, at most 16384 MiB; 2048 when the RAM is unknown.
+func TestCacheRAMFor(t *testing.T) {
+	for _, c := range []struct{ total, want int }{
+		{0, 2048}, {-1, 2048}, {4096, 2048}, {8192, 4096}, {16384, 8192}, {24576, 12288},
+		{32104, 16052}, {32768, 16384}, {65536, 16384}, {131072, 16384},
+	} {
+		if got := CacheRAMFor(c.total); got != c.want {
+			t.Errorf("CacheRAMFor(%d) = %d, want %d", c.total, got, c.want)
+		}
+	}
+}
+
+func TestMemTotalMiB(t *testing.T) {
+	for in, want := range map[string]int{
+		"MemTotal:       32874352 kB\nMemFree:         1234 kB\n": 32103,
+		"MemFree: 1 kB\nMemTotal: 134217728 kB\n":                 131072,
+		"MemFree: 1 kB\n": 0, "": 0, "MemTotal: x kB\n": 0,
+	} {
+		if got := memTotalMiB(in); got != want {
+			t.Errorf("memTotalMiB(%q) = %d, want %d", in, got, want)
+		}
+	}
+	if runtime.GOOS == "linux" && SystemRAMMiB() <= 0 {
+		t.Error("SystemRAMMiB: no RAM size on Linux")
 	}
 }
