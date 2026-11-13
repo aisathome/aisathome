@@ -74,6 +74,10 @@ type Project struct {
 	ReviewLoop      bool `json:"review_loop,omitempty"`
 	AutoRounds      bool `json:"auto_rounds,omitempty"`
 	MaxReviewRounds int  `json:"max_review_rounds,omitempty"`
+	// PublicQueue publishes the public fields of the project's task queue (ids, states, outcomes,
+	// token counts, the trial, leaf and theorem names) at GET /v1/projects/<id>/queue, without a key
+	// (queue_public.go). Off: 404.
+	PublicQueue bool `json:"public_queue,omitempty"`
 }
 
 var projectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)

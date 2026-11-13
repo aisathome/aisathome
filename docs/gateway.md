@@ -117,6 +117,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `auto_rounds` | The gateway acts on a task's end. A task that passes its local checks is `ready-for-operator`, with no review task. One that fails them gets the runner's recipe as an automatic round, a skipped one a fresh base. |
 | `review_loop` | As `auto_rounds` (which it includes), and a passing task gets a Qwen review task first; a green verdict makes it `ready-for-operator`, a red one a fix round. Off for TauCeti (decision 0017). Turned off with work under way, a candidate waiting at `in-review` becomes `ready-for-operator` at the queue's next call or sweep, the loop's open reviews are cancelled, and a verdict still owed records and schedules nothing. A chain a person's round moved on keeps its status. A review a person created stays as it is. |
 | `max_review_rounds` | Automatic rounds per chain, of any kind, default 3; past them the task is `needs-operator` and the recipe waits there for `continue`. |
+| `public_queue` | Publishes the public fields of the project's task queue at `GET /v1/projects/<id>/queue`, without a key: each task's id, state and times, from its spec only the trial, leaf, group, theorem name and a hole task's role, generation and hole number, and from its result the outcome word, token counts and model minutes. Never the rest of the spec, the title, the worker, the lease, the error text or the raw evidence. Built at most every 15 s. The website's prove2me page reads it. Off: 404. |
 
 Make a key with:
 
@@ -136,6 +137,11 @@ optionally, `order`: within its claim class, after tasks that came back from a l
 sets it, as prove2me's trials do (calibration leaves first, then a comparison set, then new
 leaves). A project with neither `auto_rounds` nor `review_loop` gets nothing from the gateway at
 a task's end: its worker reports `complete` or `fail` and that is all.
+
+A project's model request may name the task it belongs to in an `X-Aisathome-Task` header. The
+gateway uses it only to tell a node's operator, on the account page, which task the node is working
+on, and only when the name is one of the project's running tasks; without it, a project with one
+running task is taken to be working on that one.
 
 ### The task queue when the disk fails
 

@@ -35,6 +35,7 @@ type Gateway struct {
 	projects atomic.Pointer[projectTable]
 	hist     *history         // daily snapshots for the network page (history.go)
 	pstatus  *projectStatuses // runners' latest status, for the operations page (projstatus.go)
+	pubq     publicQueues     // built public views of task queues (queue_public.go)
 	psci     *projectScience  // projects' published science results (science.go)
 	tasks    *taskStore       // projects' task queues (tasks.go, decision 0015)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
