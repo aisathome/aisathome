@@ -290,7 +290,10 @@ import LiveStats from '../components/LiveStats.astro';
 				const sums = { total: d?.total?.credit, today: d?.total?.today, volunteers: d?.volunteers?.count, nodes: d?.nodes?.with_credit };
 				if (!Object.values(sums).every(ok) || !Array.isArray(d?.top) || Number.isNaN(at.getTime())) return hide();
 				const rows = d.top.filter((r) => typeof r?.name === 'string' && [r.rank, r.total_credit, r.today, r.recent_average, r.nodes].every(ok));
-				box.querySelectorAll('[data-sum]').forEach((el) => (el.textContent = fmt(sums[el.dataset.sum])));
+				box.querySelectorAll('[data-sum]').forEach((el) => {
+					el.textContent = fmt(sums[el.dataset.sum]);
+					el.style.setProperty('--fit', `${Math.min(20, 180 / Math.max(1, el.textContent.length))}cqi`);
+				});
 				const body = box.querySelector('[data-rows]');
 				body.replaceChildren(
 					...rows.map((r) => {
@@ -390,14 +393,20 @@ import LiveStats from '../components/LiveStats.astro';
 		font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3);
 	}
 	:global(.net-live .live-head) { display: flex; gap: 0.4rem; align-items: center; color: var(--sl-color-accent-high); font-weight: 700; }
-	.board { margin-block: 2rem; }
+	.board { margin-block: 2rem; container-type: inline-size; }
+	/* Two by two, or four in a row when the column is wide enough (never three and one). */
 	.board-sums {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 1rem;
 		margin: 0 0 2rem;
 	}
+	@container (min-width: 46rem) { .board-sums { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 	.board-sums div {
+		/* The number's size follows the tile's width (cqi), so a large total such as 2,259,043 stays inside it
+		   (owner, 2026-11-13: it spilled out of its card); min-width 0 lets the grid cell shrink below the text. */
+		container-type: inline-size;
+		min-width: 0;
 		display: flex;
 		flex-direction: column-reverse;
 		padding: 1rem 1.25rem;
@@ -405,7 +414,11 @@ import LiveStats from '../components/LiveStats.astro';
 		border-radius: 0.4rem;
 		background: var(--b-surface);
 	}
-	.board-sums dd { margin: 0; font: 900 clamp(1.8rem, 4vw, 2.6rem)/1 var(--font-display); color: var(--sl-color-white); }
+	/* --fit (set with the number, by its length) is 20cqi up to 9 characters and smaller beyond. */
+	.board-sums dd {
+		margin: 0; font: 900 clamp(1rem, var(--fit, 20cqi), 2.6rem)/1 var(--font-display); color: var(--sl-color-white);
+		font-variant-numeric: tabular-nums; white-space: nowrap;
+	}
 	.board-sums dt { margin-top: 0.35rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
 	.board h2 { font-family: var(--font-display); text-transform: uppercase; color: var(--sl-color-white); margin: 0 0 0.75rem; }
 	.board-wrap { overflow-x: auto; }
