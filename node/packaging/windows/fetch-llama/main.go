@@ -6,7 +6,7 @@
 //	go run ./node/packaging/windows/fetch-llama -out <dir> [-smoke-model]
 //
 // <dir>/download holds the zips (a rerun resumes and checks them again), <dir>/llama the
-// unpacked build. -smoke-model also fetches a tiny pinned GGUF to <dir>/smoke-model.gguf, for
+// unpacked build. -smoke-model also fetches a small pinned GGUF to <dir>/smoke-model.gguf, for
 // running llama-server on a CPU in CI.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -27,20 +27,23 @@ import (
 	"github.com/aisathome/aisathome/node/setup"
 )
 
-// smokeModel is a tiny model of the same architecture family as the network's (qwen35, with a
-// thinking chat template, so the reasoning-budget flags take effect) from ggml-org, llama.cpp's
-// own test fixtures, pinned to a commit (Checked 2026-11-11: the Hub's LFS pointer). About 34M
-// parameters; its output is noise. Licence CC BY-NC 4.0: CI only downloads it to test that
-// llama-server loads and serves with our flags; it is never shipped.
+// smokeModel is a small model of the network's architecture family (qwen35, hybrid
+// DeltaNet; the same thinking chat template, so the reasoning-budget flags take effect; head
+// size 256, which the q4_0 KV cache splits): Qwen3.5-0.8B at Q4_0 from ggml-org, llama.cpp's
+// own conversions, pinned to a commit (Checked 2026-11-13: the Hub's LFS pointer, and
+// llama.cpp b12323 serves it as a text model). Licence Apache-2.0. CI only downloads it to
+// test that llama-server loads and serves with our flags; it is never shipped. It replaced
+// ggml-org's tinyopenjev test model, which b12323 classes as a decision model and refuses to
+// generate text with.
 var smokeModel = setup.Model{
-	URL:    "https://huggingface.co/ggml-org/tinyopenjev-for-testing-gguf/resolve/953e44649ca8a71e5a8eee4676edebff2a45b2a2/tinyopenjev-for-testing-Q8_0.gguf",
-	SHA256: "bb451e6faf46fea0b28dec91765a59d8392e40711ea5554f8e7d39b5e03b15a7",
-	Size:   45712544,
+	URL:    "https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/004fd086eccea9f7cf867aa07ba328773beef81d/Qwen3.5-0.8B-Q4_0.gguf",
+	SHA256: "57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf",
+	Size:   563036064,
 }
 
 func main() {
 	out := flag.String("out", "", "output folder")
-	withModel := flag.Bool("smoke-model", false, "also fetch the tiny test model")
+	withModel := flag.Bool("smoke-model", false, "also fetch the small test model")
 	flag.Parse()
 	if *out == "" || flag.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "usage: fetch-llama -out <dir> [-smoke-model]")

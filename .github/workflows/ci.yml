@@ -62,7 +62,7 @@ jobs:
   windows:
     # The node agent on Windows, without a GPU: vet, build and unit tests of the node packages;
     # the pinned upstream llama.cpp build (the zips the installer ships), checked by SHA-256 and
-    # run on the CPU with our flags and a tiny model; then the agent as a real Windows service
+    # run on the CPU with our flags and a small model; then the agent as a real Windows service
     # with its default files under %ProgramData%, running that llama-server as its child. There
     # is no gateway, so the agent reports "not connected". windows-2025 is windows-latest today,
     # pinned like ubuntu-24.04 above.
@@ -85,7 +85,7 @@ jobs:
         run: go test -count=1 ./node/... ./protocol/...
       - name: llama.cpp, the pinned upstream Windows build
         # node/setup/llama.go pins the zips (size and SHA-256); fetch-llama checks and unpacks
-        # them into one folder, and fetches the pinned tiny test model.
+        # them into one folder, and fetches the pinned small test model.
         shell: pwsh
         run: |
           go run ./node/packaging/windows/fetch-llama -out (Join-Path $env:RUNNER_TEMP 'llama') -smoke-model
@@ -111,7 +111,7 @@ jobs:
           go build -o $bin ./node/cmd/aisathome-node
           if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
           # The default folder (node.WindowsLayout): config, password, state and logs. The
-          # engine: the build fetched above with the tiny model, the standard tier's command.
+          # engine: the build fetched above with the small model, the standard tier's command.
           $data = Join-Path $env:ProgramData 'AIsAtHome'
           New-Item -ItemType Directory -Force $data | Out-Null
           $cfg = @{ node_id = 'ci-windows'; gateway_url = 'ws://127.0.0.1:1/v1/node/connect'; token = 'ci'
