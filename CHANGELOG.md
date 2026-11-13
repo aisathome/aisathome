@@ -7,6 +7,25 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+### Added
+
+- **The account page shows what each of your nodes is doing.** Under each node: its average
+  speed (output tokens a second over its last 50 answers, as the gateway measured them) and,
+  while it is connected, what it serves right now: a chat or API request (never what was asked
+  or by whom), or a science task such as `prove2me · t5-F01-h03` with its theorem and a link to
+  it on the site's prove2me page. (gateway)
+- **The prove2me page is live.** Its "Working on now" reads the gateway's new public view of the
+  project's task queue (`/v1/projects/prove2me/queue`: task ids, states, outcomes, token counts
+  and theorem names only) when the page loads and every minute, instead of a list made when the
+  site was built. (gateway, site)
+
+### Fixed
+
+- **Phones and tablets have a menu on every page.** Below 50rem the home page had no menu at
+  all and the docs' menu held only the docs; between 50 and 72rem the main links were missing.
+  (site)
+- **Large credit totals fit their tiles** on the network page, on any width. (site)
+
 ## [v0.5.0] — 2026-11-14
 
 A node on Windows: one installer, a setup page, a tray icon. And llama.cpp b12323 with a larger
