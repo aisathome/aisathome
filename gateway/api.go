@@ -183,6 +183,7 @@ type chatCaller struct {
 	reqAcct   string  // the account behind the request, API key or chat
 	class     string  // the workload class (project.go)
 	proj      *Project
+	task      string     // a project's request: the task it names (nodework.go), if any
 	charge    []string   // the budgets it is charged to
 	limits    []keyLimit // the keys whose request limits apply
 	overWait  int        // over its budget: seconds until it resets; only its own nodes may serve it
@@ -259,13 +260,14 @@ func (g *Gateway) chatIdentity(w http.ResponseWriter, r *http.Request) (*chatCal
 	acct, userKey, reqAcct := info, key, accountID // reqAcct: the account behind the request, API key or chat
 	// The workload class (project.go): the chat front end's users, people's own API keys, or
 	// a science project.
-	class, proj := ClassAgent, (*Project)(nil)
+	class, proj, task := ClassAgent, (*Project)(nil), ""
 	if info.Project != "" {
 		if proj = g.projects.Load().byID[info.Project]; proj == nil { // removed by a reload just now
 			apiError(w, http.StatusUnauthorized, "invalid API key")
 			return nil, false
 		}
 		class, userKey = ClassScience, projectUser(proj.ID) // one budget for all its keys
+		task = requestTask(r)
 	} else if info.ForwardUsers {
 		class = ClassChat
 	}
@@ -307,7 +309,7 @@ func (g *Gateway) chatIdentity(w http.ResponseWriter, r *http.Request) (*chatCal
 		}
 	}
 	return &chatCaller{info: info, accountID: accountID, acct: acct, userKey: userKey, reqAcct: reqAcct,
-		class: class, proj: proj, charge: charge, limits: limits, overWait: overWait}, true
+		class: class, proj: proj, task: task, charge: charge, limits: limits, overWait: overWait}, true
 }
 
 // readChatBody reads the request's JSON, of at most size bytes, within bodyReadTimeout. It writes
@@ -392,7 +394,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	}
 	req := &chatReq{user: c.acct.User, who: c.userKey, charge: c.charge, self: rt.self, want: want,
 		clientStream: clientStream, logprobs: wantsLogprobs(body), body: body, red: red, conv: conv,
-		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project}
+		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project, task: c.task}
 	return &chatJob{req: req, rt: rt, reqText: reqText, queueWait: queueWait}, true
 }
 

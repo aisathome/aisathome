@@ -21,7 +21,10 @@ Nodes installed from release `v0.1.0` or later serve a status page on your compu
 get an "AIs@home node" menu entry). It shows whether the node is connected, paused or
 serving, the model, slots in use, the GPU's memory and temperature, requests and tokens
 served today and in total (kept across reinstalls), and recent connections and errors. It never shows prompts
-or answers. **Your nodes** opens your [account page](https://aisathome.org/account).
+or answers. **Your nodes** opens your [account page](https://aisathome.org/account), which shows
+each of your nodes' average speed (output tokens a second over its last 50 answers, as the gateway
+measured them, waiting and prompt reading included) and what it serves right now: a chat or API
+request (never what was asked, or by whom) or a science task, linked to its page.
 
 Pause, resume and restarting the engine need the local password the installer created:
 

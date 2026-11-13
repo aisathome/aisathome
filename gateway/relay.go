@@ -31,6 +31,7 @@ type chatReq struct {
 	servedBy     bool           // an operator key: the answer names the node that served it (KeyInfo.ServedBy)
 	class        string         // workload class: chat, agent or science (project.go)
 	project      string         // the science project, or ""
+	task         string         // the project's task the request names (nodework.go), or ""
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
@@ -101,6 +102,10 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	p := newPendingReq()
 	n.mu.Lock()
 	n.pending[reqID] = p
+	if n.work == nil {
+		n.work = map[string]nodeWork{}
+	}
+	n.work[reqID] = nodeWork{class: req.class, project: req.project, task: req.task, since: time.Now()} // for its operator (nodework.go)
 	n.mu.Unlock()
 	var preempt <-chan struct{} // nil, never ready: only science is preempted
 	var sr *sciRun
@@ -114,6 +119,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	// stop keeps its slot until the node confirms (awaitStopped); any other when run returns.
 	rl.free = sync.OnceFunc(func() {
 		n.mu.Lock()
+		delete(n.work, reqID)
 		n.inflight--
 		if req.project != "" {
 			n.projects[req.project]--
@@ -309,6 +315,9 @@ func (rl *relay) commit(rec *usageRecord) {
 	g.stats.add(*rec) // clamped numbers: a node cannot inflate the public statistics either
 	g.hist.add(*rec)
 	g.recent.add(*rec)
+	if rec.Outcome == "ok" {
+		g.speeds.add(n.id, rec.Usage.CompletionTokens, rec.Usage.DurationMs)
+	}
 	if rec.Outcome == outcomeBlocked || rec.SelfServed || (rec.Outcome == outcomePreempted && rl.sent.empty()) {
 		return // the user never got the answer (a preempted one is sent again), or it came from the account's own node
 	}

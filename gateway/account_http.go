@@ -338,8 +338,10 @@ func (g *Gateway) accountData(id string) pageData {
 	for _, n := range a.Nodes {
 		c := g.credit.node(n.ID)
 		version, proto := g.nodeVersion(id, n.ID)
+		work, speed := g.nodeWorkView(id, n.ID)
 		d.Nodes = append(d.Nodes, nodeRow{ID: n.ID, Name: n.Name, Created: n.Created, Status: g.nodeStatus(id, n.ID),
-			Version: version, Protocol: proto, CreditToday: fmtCredit(c.TodayAt(now)), CreditTotal: fmtCredit(c.total())})
+			Version: version, Protocol: proto, CreditToday: fmtCredit(c.TodayAt(now)), CreditTotal: fmtCredit(c.total()),
+			Work: work, Speed: speed})
 	}
 	if c := g.credit.account(id); c != nil {
 		d.CreditToday, d.CreditTotal, d.CreditRAC = fmtCredit(c.TodayAt(now)), fmtCredit(c.Total), fmtCredit(c.RAC(now))
@@ -509,6 +511,10 @@ type nodeRow struct {
 	Protocol                 int    // the protocol version it speaks while connected, 0 otherwise
 	Created                  time.Time
 	CreditToday, CreditTotal string
+	// Work: what it serves right now, while connected (nodework.go: no content, nobody's identity);
+	// Speed: its average over its last answers, "" before any.
+	Work  []workItem
+	Speed string
 }
 
 // createToken ties a "create a key" form to the account's KeySeq (see AccountStore.AddKey).
@@ -640,11 +646,15 @@ and only after a probation of {{.Probation}}{{end}}.</p>
 {{if .CreditTotal}}<p>Credit: <strong>{{.CreditToday}}</strong> today, <strong>{{.CreditTotal}}</strong> in total
 (recent average {{.CreditRAC}} a day). <a href="/node/credit/">How credit works</a>.</p>{{end}}
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th>Version</th><th class="num">Credit today</th><th class="num">Credit total</th><th>Created</th><th></th></tr>
-{{range .Nodes}}<tr><td>{{if .Name}}{{.Name}}<br>{{end}}<code>{{.ID}}</code></td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+{{range .Nodes}}<tr class="node-main" data-node-id="{{.ID}}"><td>{{if .Name}}{{.Name}}<br>{{end}}<code>{{.ID}}</code></td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
 <td class="mut">{{if .Version}}<code>{{.Version}}</code>{{else if .Protocol}}unknown{{else}}–{{end}}{{if .Protocol}}<br>protocol {{.Protocol}}{{end}}</td>
 <td class="num">{{.CreditToday}}</td><td class="num">{{.CreditTotal}}</td><td class="mut">{{day .Created}}</td>
 <td class="end"><form method="post" action="/account/nodes/revoke"><input type="hidden" name="id" value="{{.ID}}">
-<button class="btn danger">Revoke</button></form></td></tr>{{end}}</table></div>
+<button class="btn danger">Revoke</button></form></td></tr>
+<tr class="node-now" data-node-now="{{.ID}}"><td colspan="7"><span data-node-speed><span class="mut">Average speed:</span> {{if .Speed}}{{.Speed}}{{else}}not measured yet{{end}}</span>
+{{if .Protocol}}<br><span data-node-work><span class="mut">Working on now:</span> {{if .Work}}{{range $i, $w := .Work}}{{if $i}}; {{end}}{{if .Href}}<a href="{{.Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .Detail}} <span class="mut">({{.}})</span>{{end}}{{end}}{{else}}nothing{{end}}</span>{{end}}</td></tr>{{end}}</table></div>
+<p class="hint">Working on now is as of this page load: reload to see it change. Requests from people show as chat or API
+requests only, never what they asked.</p>
 {{if not .ProbationEnd.IsZero}}<p class="hint">Probation (chats only, no agents) until {{day .ProbationEnd}}.</p>{{end}}
 {{else}}<p class="mut">No nodes yet.</p>{{end}}
 {{if .NodesClosed}}<p class="mut">New nodes are not being accepted right now.</p>
