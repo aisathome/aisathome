@@ -10,6 +10,7 @@ import raw from './science/prove2me.json';
 
 // The pure helpers live in prove2me-live.ts, which the browser's script imports without this data.
 export { compact, leafProgress, plural, stateLabel } from './prove2me-live';
+import type { Outline, StaticTask } from './prove2me-live';
 
 export type Group = 'calibration' | 'open';
 export type Outcome = 'proved' | 'refused' | 'compile_error' | 'no_solution' | 'no-progress' | string;
@@ -57,6 +58,8 @@ export interface CurrentLeaf {
 	holes?: { proved: number; n: number };
 	/** The hole tasks on the queue: one per extracted hole. */
 	hole_tasks?: { n: number; proved: number; running: number; queued: number };
+	/** Each outline (generation) with its holes and the pre-pass, from the outline task's records. */
+	outlines?: Outline[];
 }
 
 export interface Submission {
@@ -103,6 +106,8 @@ export interface Prove2me {
 		summary: string;
 		holes_as_of: string | null;
 		leaves: CurrentLeaf[];
+		/** Every task of the trial so far, with its tokens from its own records (null: not known). */
+		tasks?: StaticTask[];
 	} | null;
 	trials: Trial[];
 }

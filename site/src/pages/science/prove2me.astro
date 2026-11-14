@@ -5,6 +5,7 @@
 // public /v1/stats (project prove2me), which stays hidden until real numbers arrive.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { compact, counts, day, hhmm, leafProgress, shortSpan, outcomeLabel, p2m, plainTitle, qwenTokens, span, stateLabel, sumTokens, theoremURL, tokTitle } from '../../data/prove2me';
+import { detailProgress, detailProved, fromStatic, leafDetail, leafTokensText, taskTableHTML } from '../../data/prove2me-live';
 
 const t = p2m.totals;
 const cur = p2m.current;
@@ -13,9 +14,15 @@ const groupLabel = { calibration: 'Calibration', open: 'Open' } as Record<string
 const earlierText = (e: number[]) => (e.length ? `tried before in trial${e.length > 1 ? 's' : ''} ${e.join(' and ')}` : '');
 const pct = (x: number, n: number) => Math.round((100 * x) / n);
 // For the live "Working on now": what the build knows of each theorem (its link and title) and of the running trial's leaves.
+// Each leaf's tasks (every outline), with their tokens from the trial's records, for the build's list; the live view
+// merges the same tasks into the queue's by id (the queue lacks the cache reads of tasks finished before 14 November).
+const curTasks = cur?.tasks ?? [];
+const details = Object.fromEntries((cur?.leaves ?? []).map((l) => [l.leaf, leafDetail(curTasks.filter((t) => t.leaf === l.leaf).map(fromStatic), l.outlines ?? [])]));
 const known = {
 	trial: cur ? `t${cur.trial}` : '',
 	order: cur?.leaves.map((l) => l.leaf) ?? [],
+	tasks: curTasks,
+	outlines: Object.fromEntries((cur?.leaves ?? []).map((l) => [l.leaf, l.outlines ?? []])),
 	leaves: Object.fromEntries((cur?.leaves ?? []).map((l) => [l.leaf, { theorem: l.theorem, url: safe(l.url) ?? '', group: l.group, earlier: l.earlier }])),
 	theorems: Object.fromEntries(
 		[...p2m.trials.flatMap((tr) => tr.leaves), ...(cur?.leaves ?? [])].filter((r) => safe(r.url)).map((r) => [r.theorem, r.url]),
@@ -126,20 +133,30 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 				<p data-now-about>{cur.summary}</p>
 				<p class="caps" data-now-about>Budget: {cur.caps}.</p>
 				<ul data-now-leaves>
-					{cur.leaves.map((l) => (
-						<li id={`leaf-${l.leaf}`} data-current-leaf={l.leaf} data-state={l.state}>
-							<span class="leaf">{l.leaf}</span>
-							<a href={safe(l.url)} class="thm-name">{l.theorem}</a>
-							<span class="meta">
-								<span>{groupLabel[l.group] ?? l.group} leaf</span>
-								{l.earlier.length > 0 && <span>{earlierText(l.earlier)}</span>}
-							</span>
-							<span class:list={['state', `state-${l.state}`]} data-progress={leafProgress(l)}>
-								{stateLabel[l.state] ?? l.state}
-								{leafProgress(l) && `: ${leafProgress(l)}`}
-							</span>
-						</li>
-					))}
+					{cur.leaves.map((l) => {
+						const d = details[l.leaf];
+						const progress = d.rows.length ? (detailProved(d) ? 'proved' : detailProgress(d)) : leafProgress(l);
+						return (
+							<li id={`leaf-${l.leaf}`} data-current-leaf={l.leaf} data-state={l.state}>
+								<span class="leaf">{l.leaf}</span>
+								<a href={safe(l.url)} class="thm-name">{l.theorem}</a>
+								<span class="meta">
+									<span>{groupLabel[l.group] ?? l.group} leaf</span>
+									{l.earlier.length > 0 && <span>{earlierText(l.earlier)}</span>}
+									{d.rows.length > 0 && (
+										<span data-tokens={d.total} data-computed={d.computed} data-exact={String(d.exact)}>
+											{leafTokensText(d, l.state === 'running' || l.state === 'queued')}
+										</span>
+									)}
+								</span>
+								<span class:list={['state', `state-${l.state}`]} data-progress={progress}>
+									{stateLabel[l.state] ?? l.state}
+									{progress && `: ${progress}`}
+								</span>
+								<Fragment set:html={taskTableHTML(l.leaf, d)} />
+							</li>
+						);
+					})}
 				</ul>
 				<p class="meta" data-now-asof>
 					As of {day(p2m.generated_at)}, {hhmm(p2m.generated_at)}. This list changes when the site is rebuilt, so it can lag behind the
@@ -264,6 +281,13 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 			trial 2 that the gateway’s personal-data filter cut off are not in the counts.
 		</li>
 		<li>
+			<strong>Working on now</strong> counts every task of a leaf, each outline and each try included. Its
+			<strong>Qwen tokens</strong> are counted as above (everything read, cache re-reads included, and everything written);
+			<strong>computed</strong> tokens are the part the GPU worked through fresh: what it read without the cache, plus what it
+			wrote. Open a leaf’s tasks for each one’s result, steps, model minutes and tokens, and for each outline its holes
+			and what the quick pass of standard tactics closed. A running task’s tokens count once it ends.
+		</li>
+		<li>
 			<strong>Small samples.</strong> {t.runs} runs in {trials.length} trials, each with a different scaffold, budget and set of leaves.
 			They show what happened, not a success rate.
 		</li>
@@ -289,13 +313,21 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 </StarlightPage>
 
 <script>
-	import { compact as compactTok, currentTrial, leafProgress, liveLeaves, parseQueue, stateLabel } from '../../data/prove2me-live';
+	import { currentTrial, detailProgress, leafTokensText, liveLeaves, parseQueue, stateLabel, taskTableHTML } from '../../data/prove2me-live';
+	import type { Outline, StaticTask } from '../../data/prove2me-live';
 
 	// "Working on now", live: the gateway's public view of prove2me's task queue (gateway queue_public.go) replaces the
 	// build's list when it answers, on load and every minute. On any failure the build's list stays as it was.
 	const nowBox = document.querySelector<HTMLElement>('[data-p2m-now]');
-	type Known = { trial: string; order: string[]; leaves: Record<string, { theorem: string; url: string; group: string; earlier: number[] }>; theorems: Record<string, string> };
-	let known: Known = { trial: '', order: [], leaves: {}, theorems: {} };
+	type Known = {
+		trial: string;
+		order: string[];
+		tasks: StaticTask[];
+		outlines: Record<string, Outline[]>;
+		leaves: Record<string, { theorem: string; url: string; group: string; earlier: number[] }>;
+		theorems: Record<string, string>;
+	};
+	let known: Known = { trial: '', order: [], tasks: [], outlines: {}, leaves: {}, theorems: {} };
 	try {
 		known = JSON.parse(document.querySelector('[data-p2m-known]')?.textContent || '{}') as Known;
 	} catch {}
@@ -324,7 +356,9 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 			const sameTrial = trial !== null && trial === known.trial;
 			nowBox.querySelectorAll<HTMLElement>('[data-now-about]').forEach((p) => (p.hidden = !sameTrial));
 			if (!sameTrial) head.textContent = trial ? `Trial ${trial.replace(/^t/, '')}` : 'Nothing is running or queued right now.';
-			const leaves = trial ? liveLeaves(q, trial, sameTrial ? known.order : []) : [];
+			const leaves = trial ? liveLeaves(q, trial, sameTrial ? known.order : [], sameTrial ? known : {}) : [];
+			// a leaf's task table stays open across the minute's refresh
+			const opened = new Set([...list.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]')].filter((d) => d.open).map((d) => d.dataset.leafTasks));
 			list.replaceChildren(
 				...leaves.map((l) => {
 					const k = sameTrial ? known.leaves[l.leaf] : undefined; // a leaf id names another theorem in another trial
@@ -344,16 +378,22 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 					const group = k?.group ?? (l.group === 'calibration' ? 'calibration' : 'open');
 					meta.append(el('span', '', `${group === 'calibration' ? 'Calibration' : 'Open'} leaf`));
 					if (k?.earlier?.length) meta.append(el('span', '', `tried before in trial${k.earlier.length > 1 ? 's' : ''} ${k.earlier.join(' and ')}`));
-					if (l.tokens > 0) {
-						const tok = el('span', '', `${compactTok(l.tokens)} Qwen tokens so far`);
-						tok.dataset.tokens = String(l.tokens);
+					const d = l.detail;
+					if (d.total > 0 || d.computed > 0) {
+						const tok = el('span', '', leafTokensText(d, l.state === 'running' || l.state === 'queued'));
+						tok.dataset.tokens = String(d.total);
+						tok.dataset.computed = String(d.computed);
+						tok.dataset.exact = String(d.exact);
 						meta.append(tok);
 					}
 					li.append(meta);
-					const progress = l.proved ? 'proved' : leafProgress(l);
+					const progress = l.proved ? 'proved' : detailProgress(d);
 					const st = el('span', `state state-${l.state}`, `${stateLabel[l.state] ?? l.state}${progress ? `: ${progress}` : ''}`);
 					st.dataset.progress = progress;
 					li.append(st);
+					li.insertAdjacentHTML('beforeend', taskTableHTML(l.leaf, d));
+					const det = li.querySelector<HTMLDetailsElement>('details[data-leaf-tasks]');
+					if (det && opened.has(l.leaf)) det.open = true;
 					return li;
 				}),
 			);
@@ -473,6 +513,22 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 	:global(.p2m-now .meta > span + span::before) { content: ' · '; }
 	:global(.p2m-now .state) { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
 	:global(.p2m-now .state-running) { color: var(--sl-color-accent-high); }
+	:global(.p2m-now .p2m-tasks) { margin-top: 0.35rem; font-size: 0.85rem; }
+	:global(.p2m-now .p2m-tasks > summary) { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+	:global(.p2m-now .p2m-tasks-wrap) { overflow-x: auto; margin-top: 0.4rem; }
+	:global(.p2m-now .p2m-tasks table) { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+	:global(.p2m-now .p2m-tasks :is(th, td)) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+	:global(.p2m-now .p2m-tasks :is(th, td):last-child) { padding-right: 0; }
+	:global(.p2m-now .p2m-tasks thead th) { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	:global(.p2m-now .p2m-tasks tbody th) { white-space: nowrap; font-weight: 600; color: var(--sl-color-white); }
+	:global(.p2m-now .p2m-tasks tfoot :is(th, td)) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+	:global(.p2m-now .p2m-tasks .num) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	:global(.p2m-now .p2m-tasks .tok) { cursor: help; }
+	:global(.p2m-now .p2m-tasks .sub) { display: block; font-size: 0.75rem; font-weight: 400; white-space: normal; color: var(--sl-color-gray-3); }
+	:global(.p2m-now .p2m-tasks .proved) { font-weight: 600; color: var(--sl-color-accent-high); }
+	:global(.p2m-now .p2m-tasks .running) { color: var(--sl-color-accent-high); }
+	:global(.p2m-now .p2m-tasks .cancelled) { font-style: italic; color: var(--sl-color-gray-3); }
+	:global(.p2m-now .p2m-tasks p.outline-note) { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--sl-color-gray-3); }
 
 	/* Phones: each row as a small card instead of a wide table. */
 	@media (max-width: 40rem) {
@@ -484,5 +540,13 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 		.p2m-table .thm { min-width: 0; }
 		.p2m-table td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
 		.p2m-table tfoot td:empty { display: none; }
+		:global(.p2m-now .p2m-tasks table), :global(.p2m-now .p2m-tasks :is(tbody, tfoot)) { display: block; }
+		:global(.p2m-now .p2m-tasks thead) { display: none; }
+		:global(.p2m-now .p2m-tasks :is(tbody, tfoot) tr) { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+		:global(.p2m-now .p2m-tasks :is(th, td)) { padding: 0; border: 0; }
+		:global(.p2m-now .p2m-tasks tr > th), :global(.p2m-now .p2m-tasks td.result) { grid-column: 1 / -1; }
+		:global(.p2m-now .p2m-tasks .num) { text-align: left; }
+		:global(.p2m-now .p2m-tasks td[data-label]::before) { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+		:global(.p2m-now .p2m-tasks tfoot td:empty) { display: none; }
 	}
 </style>
