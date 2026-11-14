@@ -652,7 +652,7 @@ and only after a probation of {{.Probation}}{{end}}.</p>
 <td class="end"><form method="post" action="/account/nodes/revoke"><input type="hidden" name="id" value="{{.ID}}">
 <button class="btn danger">Revoke</button></form></td></tr>
 <tr class="node-now" data-node-now="{{.ID}}"><td colspan="7"><span data-node-speed><span class="mut">Average speed:</span> {{if .Speed}}{{.Speed}}{{else}}not measured yet{{end}}</span>
-{{if .Protocol}}<br><span data-node-work><span class="mut">Working on now:</span> {{if .Work}}{{range $i, $w := .Work}}{{if $i}}; {{end}}{{if .Href}}<a href="{{.Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .Detail}} <span class="mut">({{.}})</span>{{end}}{{end}}{{else}}nothing{{end}}</span>{{end}}</td></tr>{{end}}</table></div>
+{{if .Protocol}}<span data-node-work><span class="mut">Working on now:</span> {{if .Work}}{{range $i, $w := .Work}}{{if $i}}; {{end}}{{if .Href}}<a href="{{.Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .Detail}} <span class="mut">({{.}})</span>{{end}}{{end}}{{else}}nothing{{end}}</span>{{end}}</td></tr>{{end}}</table></div>
 <p class="hint">Working on now is as of this page load: reload to see it change. Requests from people show as chat or API
 requests only, never what they asked.</p>
 {{if not .ProbationEnd.IsZero}}<p class="hint">Probation (chats only, no agents) until {{day .ProbationEnd}}.</p>{{end}}

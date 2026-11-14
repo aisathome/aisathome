@@ -268,6 +268,7 @@ th:last-child,td:last-child{padding-right:0}tr:last-child td{border-bottom:0}
 .num{text-align:right;font-variant-numeric:tabular-nums}.end{text-align:right}
 .table-wrap{overflow-x:auto}td code{white-space:nowrap}
 tr.node-main td{border-bottom:0;padding-bottom:.15rem}tr.node-now td{padding-top:0;font-size:.9rem;white-space:normal;overflow-wrap:anywhere}
+tr.node-now td>span{display:block;position:sticky;left:0;max-width:calc(100vw - 5rem)}
 @media (max-width:30rem){.card{padding:1rem}}
 dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;margin:1rem 0}dl.kv dt{color:var(--mut)}dl.kv dd{margin:0}
 .badge{display:inline-flex;align-items:center;gap:.4em;padding:.05em .6em;border:1px solid currentColor;border-radius:999px;font-size:.75rem;font-weight:700;
