@@ -211,12 +211,14 @@ func (g *Gateway) handlePublicQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// One build at a time: concurrent requests wait for it and share it. The lock covers only the
+	// build, never the write: a client that reads slowly must not hold every other reader up.
 	g.pubq.mu.Lock()
-	defer g.pubq.mu.Unlock() // one build at a time: concurrent requests wait for it and share it
 	b, ok := g.pubq.byID[id]
 	if !ok || now.Sub(b.at) >= publicQueueTTL || now.Before(b.at) {
 		tasks, counts, err := g.tasks.publicList(id)
 		if err != nil {
+			g.pubq.mu.Unlock()
 			taskError(w, err) // an unreadable queue is a 503, never an empty one
 			return
 		}
@@ -226,6 +228,7 @@ func (g *Gateway) handlePublicQueue(w http.ResponseWriter, r *http.Request) {
 		body, err := json.Marshal(map[string]any{"project": id, "updated": now.UTC().Truncate(time.Second),
 			"counts": counts, "tasks": tasks})
 		if err != nil {
+			g.pubq.mu.Unlock()
 			apiError(w, http.StatusInternalServerError, "could not build the view")
 			return
 		}
@@ -235,6 +238,7 @@ func (g *Gateway) handlePublicQueue(w http.ResponseWriter, r *http.Request) {
 		}
 		g.pubq.byID[id] = b
 	}
+	g.pubq.mu.Unlock()
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("Cache-Control", "public, max-age=15")

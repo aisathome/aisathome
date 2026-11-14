@@ -4,6 +4,7 @@ package gateway
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -153,5 +154,52 @@ func TestPublicQueueLeavesTheTaskListPrivate(t *testing.T) {
 	r := publicRig(t)
 	if w, _ := r.call("GET", p2mTasks, "", nil); w.Code != http.StatusUnauthorized {
 		t.Fatalf("task list without a key: HTTP %d", w.Code)
+	}
+}
+
+// blockingWriter is a client that never reads: its Write blocks until released.
+type blockingWriter struct {
+	h       http.Header
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingWriter) Header() http.Header { return b.h }
+func (b *blockingWriter) WriteHeader(int)     {}
+func (b *blockingWriter) Write(p []byte) (int, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return len(p), nil
+}
+
+// A reader that never takes its bytes holds up nobody else: the cache lock covers the build, not
+// the write (Codex review 2026-11-14: a slow client could block every project's public queue).
+func TestPublicQueueSlowReaderBlocksNobody(t *testing.T) {
+	r := publicRig(t)
+	bw := &blockingWriter{h: http.Header{}, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	defer close(bw.release)
+	req := httptest.NewRequest("GET", "/v1/projects/prove2me/queue", nil)
+	req.SetPathValue("id", "prove2me")
+	go r.g.handlePublicQueue(bw, req)
+	select {
+	case <-bw.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the slow reader's request never reached its write")
+	}
+	done := make(chan int, 1)
+	go func() {
+		code, _, _ := r.publicQueue()
+		done <- code
+	}()
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("second reader: HTTP %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a reader that never reads blocked the public queue for everyone")
 	}
 }
