@@ -96,7 +96,7 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 	for _, tk := range view.Tasks {
 		ids = append(ids, tk["id"].(string))
 		allowed := []string{"id", "state", "created_at", "updated_at", "since", "trial", "leaf", "group", "theorem", "role", "gen", "hole",
-			"outcome", "prompt_tokens", "completion_tokens", "model_min"}
+			"outcome", "steps", "prompt_tokens", "cached_tokens", "completion_tokens", "model_min"}
 		for k := range tk {
 			if !slices.Contains(allowed, k) {
 				t.Errorf("task %s has field %q", tk["id"], k)
@@ -146,6 +146,55 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 		if w, _ := r.call("GET", path, "", nil); w.Code != http.StatusNotFound {
 			t.Errorf("%s: HTTP %d, want 404 (no public queue)", path, w.Code)
 		}
+	}
+}
+
+// The cache reads (owner, 2026-11-14: the page showed about a tenth of the Qwen tokens): a result's
+// cached_tokens and steps come through; a result without cached_tokens has none in the view (not a
+// 0, which would claim no cache reads), a reported 0 stays 0, and a negative count is refused.
+func TestPublicQueueCachedTokens(t *testing.T) {
+	r := publicRig(t)
+	done := func(id string, result map[string]any) int {
+		r.p2m("", map[string]any{"id": id, "kind": "attempt", "created_by": "owner", "spec": p2mSpec("C12", "InsiderDonations.price_recast",
+			map[string]any{"role": "hole", "gen": 1, "index": 0})})
+		lease := r.p2m("/claim", map[string]any{"worker": "w", "task": id, "lease_seconds": 600})["lease"].(map[string]any)["id"]
+		w, _ := r.call("POST", p2mTasks+"/"+id+"/complete", testProjectKey, map[string]any{"worker": "w", "lease": lease, "result": result})
+		return w.Code
+	}
+	base := func(extra map[string]any) map[string]any {
+		m := map[string]any{"outcome": "proved", "steps": 25, "prompt_tokens": 51138, "completion_tokens": 45988, "model_min": 25.1}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	if c := done("t5-C12-h01", base(map[string]any{"cached_tokens": 819942})); c != 200 {
+		t.Fatalf("complete with cached_tokens: HTTP %d", c)
+	}
+	if c := done("t5-C12-h02", base(nil)); c != 200 {
+		t.Fatalf("complete without cached_tokens: HTTP %d", c)
+	}
+	if c := done("t5-C12-asm", base(map[string]any{"cached_tokens": 0, "steps": 0, "prompt_tokens": 0, "completion_tokens": 0})); c != 200 {
+		t.Fatalf("complete with zero tokens: HTTP %d", c)
+	}
+	if c := done("t5-C12-bad", base(map[string]any{"cached_tokens": -1})); c != http.StatusBadRequest {
+		t.Fatalf("negative cached_tokens: HTTP %d, want 400", c)
+	}
+	_, body, _ := r.publicQueue()
+	var view struct{ Tasks []map[string]any }
+	json.Unmarshal([]byte(body), &view)
+	by := map[string]map[string]any{}
+	for _, tk := range view.Tasks {
+		by[tk["id"].(string)] = tk
+	}
+	if h := by["t5-C12-h01"]; h["cached_tokens"] != 819942.0 || h["prompt_tokens"] != 51138.0 || h["completion_tokens"] != 45988.0 || h["steps"] != 25.0 {
+		t.Errorf("cached tokens and steps: %v", h)
+	}
+	if h, ok := by["t5-C12-h02"]["cached_tokens"]; ok {
+		t.Errorf("a result without cached_tokens shows %v", h)
+	}
+	if a := by["t5-C12-asm"]; a["cached_tokens"] != 0.0 || a["steps"] != nil {
+		t.Errorf("a reported 0 must stay 0, and 0 steps left out: %v", a)
 	}
 }
 

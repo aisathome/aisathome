@@ -69,7 +69,7 @@ func (r *TaskResult) validate() error {
 			errs = append(errs, errors.New("result.review: a review task's verdict names its judge, qwen"))
 		}
 	}
-	if r.Steps < 0 || r.Steps > 100000 || r.PromptTokens < 0 || r.PromptTokens > 1e12 || r.CompletionTokens < 0 || r.CompletionTokens > 1e12 {
+	if r.Steps < 0 || r.Steps > 100000 || r.PromptTokens < 0 || r.PromptTokens > 1e12 || (r.CachedTokens != nil && (*r.CachedTokens < 0 || *r.CachedTokens > 1e12)) || r.CompletionTokens < 0 || r.CompletionTokens > 1e12 {
 		errs = append(errs, errors.New("result: steps or tokens out of range"))
 	}
 	if r.RawRef != "" && (len(r.RawRef) > 512 || !utf8Printable(r.RawRef)) {

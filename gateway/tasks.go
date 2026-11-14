@@ -286,6 +286,7 @@ type TaskResult struct {
 	CommitMsg        string          `json:"commit_msg,omitempty"`
 	Steps            int             `json:"steps"`
 	PromptTokens     int64           `json:"prompt_tokens"`
+	CachedTokens     *int64          `json:"cached_tokens,omitempty"` // re-read from the cache, not in PromptTokens; nil: not reported
 	CompletionTokens int64           `json:"completion_tokens"`
 	ModelMin         float64         `json:"model_min"`
 	AwakeMin         float64         `json:"awake_min"`

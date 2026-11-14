@@ -8,7 +8,8 @@
 //
 //   - the task's id (t5-F01-h03, as the trial's pages name it), its state, when it was made and last
 //     changed, and when its lease began while it runs;
-//   - from the result: a short outcome word ("proved", "outline"), the token counts and model minutes;
+//   - from the result: a short outcome word ("proved", "outline"), the steps, the token counts (the
+//     prompt tokens computed, those re-read from the cache, and those written) and model minutes;
 //   - from the spec: the trial, the leaf and its group, the theorem's name, and for a hole task its
 //     role, outline generation and hole number (prove2me's scaffold v5).
 //
@@ -63,8 +64,12 @@ type publicTask struct {
 	Gen     int    `json:"gen,omitempty"`
 	Hole    int    `json:"hole,omitempty"` // a hole task's hole, from 1
 	// From the result, once there is one.
+	// CachedTokens is there only when the worker reported it (prove2me from 2026-11-14 on): a reader
+	// must not take its absence for zero cache reads.
 	Outcome          string  `json:"outcome,omitempty"`
+	Steps            int     `json:"steps,omitempty"`
 	PromptTokens     int64   `json:"prompt_tokens,omitempty"`
+	CachedTokens     *int64  `json:"cached_tokens,omitempty"`
 	CompletionTokens int64   `json:"completion_tokens,omitempty"`
 	ModelMin         float64 `json:"model_min,omitempty"`
 }
@@ -128,6 +133,13 @@ func (t *Task) public() publicTask {
 			p.Outcome = "other"
 		}
 		p.PromptTokens, p.CompletionTokens = max(r.PromptTokens, 0), max(r.CompletionTokens, 0)
+		if r.CachedTokens != nil {
+			c := max(*r.CachedTokens, 0)
+			p.CachedTokens = &c
+		}
+		if r.Steps > 0 && r.Steps <= 100000 {
+			p.Steps = r.Steps
+		}
 		if r.ModelMin > 0 && r.ModelMin < 1e6 {
 			p.ModelMin = r.ModelMin
 		}
