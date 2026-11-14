@@ -15,6 +15,18 @@ an AIs@home gateway. Node operators do not need it.
   its session, checks each round and gives feedback for fix rounds, with all state in the task's evidence
   directory, so the same call continues after a stop. It is the seam a queue or scheduler calls; there is
   no global state, and tasks run side by side (see "Several sessions at once").
+- **A queue worker** (`queue.py`, `worker.py`): a client for a gateway's science task queue (create, list,
+  claim with a lease, heartbeat, complete, fail or give back, cancel, the public queue; the gateway URL, key
+  and project passed explicitly; typed errors) and the worker's lifecycle around it: held tasks first after a
+  stop, the lease renewed while a child process runs the task, the result or the crash reported, a stop
+  (SIGTERM or a spot notice) that stops the child, takes its checkpoint and gives the task back with its try,
+  a pause after three crashes in a row. The project supplies the child's callbacks (`child_main`: run,
+  cleanup, checkpoint).
+- **Checkpoints** (`checkpoint.py`, `aws.py`): a task's state, as the project lays it out (named parts),
+  packed and uploaded to a store (a directory, or S3 signed with SigV4 from the standard library) after
+  every round and at a give-back, restored on another machine with its hash checked and a fall-back to the
+  previous checkpoint after a cut upload; the evidence directory synced file by file; the spot interruption
+  notice from the instance metadata service.
 - **One session** (`loop.py`): [opencode](https://opencode.ai) runs in a hardened container and talks to
   the endpoint. The session has a step cap and a cap on the model's own time (from each step's first
   streamed chunk to its end, so time spent waiting in the endpoint's queue does not count). It is
@@ -97,6 +109,8 @@ cd harness && uv run --no-project --python 3.12 python -m unittest discover -s t
 `tests/fake_opencode.py` stands in for opencode, so the session loop is tested end to end without a
 container, a model or a network (`tests/test_loop_characterisation.py` holds the loop to reference
 records of scripted sessions). Tests that need real Docker or Lean belong to a project's own suite.
+`tests/integration_queue.py` runs the queue worker and checkpoints against a real (test) gateway: a toy task is
+claimed, stopped halfway and given back, then resumed from its checkpoint by a worker with its own directories.
 
 ## Releases
 

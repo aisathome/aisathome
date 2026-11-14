@@ -7,6 +7,40 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+## [0.3.0] - unreleased
+
+The execution side of a stateless queue worker, taken out of prove2me's worker (which now uses it, with the
+same behaviour).
+
+### Added
+
+- `queue`: `QueueClient`, one client for a gateway's task API (create, list, get, claim with `kinds`, `task`,
+  `max_class` and `hold_seconds`, heartbeat, complete, fail, give back, cancel, max_tries, review, decide,
+  exported, continue, the public queue without a key). URL, key or key file, and project passed explicitly;
+  each call a `Reply` (status, body) whose `check()` raises a typed error (`BadRequest`, `Unauthorized`,
+  `Forbidden`, `NotFound`, `Conflict`, `Unavailable`); the key never follows a redirect; optional retries with
+  backoff on network errors. `complete` sends a result once more without `cached_tokens` to a gateway from
+  before it. `safe_text` (one line the gateway's text check accepts), `task_headers` (`X-Aisathome-Task`).
+- `worker`: `Worker`, one task at a time: held tasks first (resumed with their lease, else claimed back by
+  id), the lease renewed while a child process runs the task (an expired lease claimed back, a lost one stops
+  the child), the result or the crash reported (retried while the gateway is unreachable, else held and
+  reported later), three crashes in a row pause it, SIGTERM or a watcher's notice stops the child, takes its
+  checkpoint (`checkpoint-task`) and gives the task back with its try; a busy marker file while a child runs.
+  `child_main` dispatches the child's commands (`run-task`, `cleanup-task`, `checkpoint-task`) to the
+  project's callbacks; `GiveBack` gives a task back instead of failing it. Clock and process calls injectable.
+- `checkpoint`: the store interface and `DirStore`; a task's state as a `Layout` of named parts (excluded
+  paths, optional parts, parts cleared by the project's remover) packed into one tar.zst with a manifest,
+  `save` (latest and previous), `restore` (only when the store's copy is newer or the local one incomplete;
+  sha256 checked, `previous` after a cut upload), `sync_evidence` and `fetch_evidence` (changed files only,
+  an index, every file checked on the way back).
+- `aws` (optional): `S3Store` (path-style SigV4 requests, standard library only), `Credentials` (environment,
+  `aws configure export-credentials`, or the instance role), `NoticeWatch` (spot interruption and Auto Scaling
+  termination from IMDSv2).
+
+### Changed
+
+- `Worker.run_forever` installs its signal handlers only on the main thread (it can run in a thread in tests).
+
 ## [0.2.2] - unreleased
 
 ### Fixed
