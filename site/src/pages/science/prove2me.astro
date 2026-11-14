@@ -35,6 +35,8 @@ const trialDetail = (r: Run) => leafDetail((r.tasks ?? []).map(fromStatic), r.ou
 const preparing = cur?.state === 'preparing';
 // The texts below name F01's trial-5 run; its task count comes from the data.
 const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' && r.outcome === 'proved' && r.tasks);
+// Leaves closed by reuse: the same statement as a theorem already proved on prove2me; the proof imports it.
+const reuses = p2m.submissions.filter((s) => s.kind === 'reuse' && s.reuses);
 ---
 
 <StarlightPage
@@ -65,15 +67,18 @@ const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' &
 	<p class="p2m-updated" data-p2m-updated>Updated on <time datetime={p2m.generated_at}>{day(p2m.generated_at)}</time></p>
 
 	<h2 id="results">Results so far</h2>
-	<dl class="p2m-kpis not-content" data-p2m-kpis>
+	<dl class="p2m-kpis not-content" data-p2m-kpis style={`--kpis: ${t.reused ? 4 : 3}`}>
 		<div data-kpi="accepted"><dt>{t.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of {t.submitted} submitted</dt><dd>{t.accepted}</dd></div>
 		<div data-kpi="open"><dt>open leaves proved, of {t.open_leaves} tried</dt><dd>{t.open_leaves_proved}</dd></div>
+		{t.reused > 0 && (
+			<div data-kpi="reused"><dt>{t.reused === 1 ? 'open leaf' : 'open leaves'} closed by reuse of a proof already on prove2me</dt><dd>{t.reused}</dd></div>
+		)}
 		<div data-kpi="runs"><dt>runs proved, of {t.runs} in trials 1 to {trials.length}</dt><dd>{t.proved}</dd></div>
 	</dl>
 	<p data-p2m-small>
 		Small numbers. The {t.open_leaves_proved} open leaves proved show that the model can do it, not how often: O04 (trial 3) was a short
 		proof of a leaf nobody had tried yet, and F01 (trial 5) took a new scaffold, two outlines and {f01?.tasks?.length} tasks after
-		trials 3 and 4 had failed on it. On calibration leaves, which others had proved before, {t.calibration_proved} of
+		trials 3 and 4 had failed on it.{reuses.length > 0 && ` ${reuses.map((s) => s.leaf).join(' and ')}, closed by reuse, ${reuses.length === 1 ? 'is' : 'are'} not among them.`} On calibration leaves, which others had proved before, {t.calibration_proved} of
 		{' '}{t.calibration_runs} runs succeeded. All runs together took {t.model_hours} hours of model time.
 	</p>
 
@@ -102,13 +107,22 @@ const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' &
 					</thead>
 					<tbody>
 						{p2m.submissions.map((s) => (
-							<tr data-submission={s.leaf} data-verdict={s.verdict}>
+							<tr data-submission={s.leaf} data-verdict={s.verdict} data-kind={s.kind}>
 								<th scope="row">{s.leaf}</th>
 								<td class="thm">
 									<a href={safe(s.url)} data-theorem>{s.theorem}</a>
-									<span class="sub">{plainTitle(s.title)}</span>
+									{plainTitle(s.title) !== s.theorem && <span class="sub">{plainTitle(s.title)}</span>}
+									{s.reuses && (
+										<span class="sub" data-reuses>
+											same statement as <a href={safe(s.reuses.url)}>{s.reuses.theorem}</a> by {s.reuses.author}
+										</span>
+									)}
 								</td>
-								<td data-label="From">Trial {s.trial}</td>
+								{s.kind === 'reuse' ? (
+									<td data-label="From">Closed by reuse<span class="sub">found while preparing trial {s.trial}</span></td>
+								) : (
+									<td data-label="From">Trial {s.trial}</td>
+								)}
 								<td data-label="Submitted"><time datetime={s.submitted_at}>{day(s.submitted_at)}, {hhmm(s.submitted_at)}</time></td>
 								<td data-label="Verdict" class:list={['verdict', `verdict-${s.verdict}`]}>
 									{s.verdict === 'accepted' ? 'Accepted' : s.verdict === 'pending' ? 'Pending' : 'Rejected'}
@@ -130,6 +144,16 @@ const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' &
 		together into one proof, which our full check and then prove2me accepted. prove2me’s theorem pages show both leaves as proved.
 		Calibration leaves are never submitted: they were proved before.
 	</p>
+	{
+		reuses.map((s) => (
+			<p data-p2m-reuse-note={s.leaf}>
+				{s.leaf} was closed by reuse. The leaf is the same statement as a theorem that {s.reuses!.author} had already proved on prove2me
+				under another name. Our index of prove2me’s library found the match while we prepared trial {s.trial}, and the model’s proof
+				is one line that imports that theorem. Our full check and then prove2me accepted it, but none of the mathematics is ours, so it
+				is not counted among the open leaves proved.
+			</p>
+		))
+	}
 
 	<h2 id="working-on-now">Working on now</h2>
 	<script is:inline type="application/json" data-p2m-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
@@ -302,7 +326,8 @@ const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' &
 		<li>
 			<strong>Calibration and open leaves.</strong> A calibration leaf had already been proved by someone else when we chose it. It
 			tells us whether the setup works; the model is not shown that proof, and we never submit one. An open leaf had no accepted proof
-			when we chose it.
+			when we chose it. An open leaf “closed by reuse” has the same statement as a theorem already proved on prove2me: we submit the
+			one-line proof that imports it, name its author, and do not count it as proved by the model.
 		</li>
 		<li>
 			<strong>Every run counts.</strong> A run is one leaf in one trial: a first round, and from trial 2 up to two fix rounds in which
@@ -516,7 +541,7 @@ const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' &
 <style>
 	.p2m-updated, .p2m-note, .caps, .sub, .meta { color: var(--sl-color-gray-3); }
 	.p2m-updated { font-size: 0.85rem; }
-	.p2m-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
+	.p2m-kpis { display: grid; grid-template-columns: repeat(var(--kpis, 3), 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
 	.p2m-kpis div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
 	.p2m-kpis dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); color: var(--sl-color-white); }
 	.p2m-kpis dt { margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }

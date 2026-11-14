@@ -2,7 +2,7 @@
 	"project": "prove2me",
 	"project_url": "https://prove2.me/",
 	"model": "Qwen3.8 27B",
-	"generated_at": "2026-11-14T20:54:24Z",
+	"generated_at": "2026-11-14T22:44:33Z",
 	"as_of": "2026-11-14",
 	"lean": "v4.33.1",
 	"mathlib": "0df444a",
@@ -19,13 +19,15 @@
 		"prompt_tokens": 132058593,
 		"cached_tokens": 123891070,
 		"output_tokens": 5603324,
-		"submitted": 2,
-		"accepted": 2
+		"submitted": 3,
+		"accepted": 3,
+		"reused": 1
 	},
 	"submissions": [
 		{
 			"leaf": "O04",
 			"trial": 3,
+			"kind": "proof",
 			"theorem": "SeqPostedPricing.MatroidSPM.accept_prob_eq_quantile",
 			"title": "§4: offered the price $F_i^{-1}(1-q_i)$, agent $i$ accepts with probability exactly $q_i$",
 			"url": "https://prove2.me/theorems/7f145aaf-e97f-4d4f-bd5a-1b6d57c5d1fa",
@@ -36,12 +38,29 @@
 		{
 			"leaf": "F01",
 			"trial": 5,
+			"kind": "proof",
 			"theorem": "CodedSorting.proposition_7_1_transpose",
 			"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
 			"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
 			"submitted_at": "2026-11-14T20:08:33Z",
 			"verdict": "accepted",
 			"verdict_at": "2026-11-14T20:10:51Z"
+		},
+		{
+			"leaf": "N02",
+			"trial": 6,
+			"kind": "reuse",
+			"theorem": "occupation_bind_sections_integrable_local",
+			"title": "occupation_bind_sections_integrable_local",
+			"url": "https://prove2.me/theorems/b1d59eba-4373-4046-8d79-4f717dd511ca",
+			"submitted_at": "2026-11-14T21:54:16Z",
+			"verdict": "accepted",
+			"verdict_at": "2026-11-14T21:55:33Z",
+			"reuses": {
+				"theorem": "AvramDividend.Classical.avram_chat24_occupation_bind_sections_integrable_public",
+				"url": "https://prove2.me/theorems/92887d5d-0a99-4615-aac3-82860fb3c907",
+				"author": "WillR"
+			}
 		}
 	],
 	"current": {
@@ -50,7 +69,7 @@
 		"start": null,
 		"scaffold": "v6",
 		"caps": "one round of 110 steps / 110 min for the outline and for each hole, then one fix round of 20 / 20",
-		"summary": "Scaffold v6, from what trial 5 taught. The outline follows the leaf’s own method when its statement names one, and an outline whose hole is the leaf’s main claim is refused. Every hole is first checked for a counterexample with Lean’s plausible, and holes about powers and digits get arithmetic hints. New is our own index of prove2me’s public library (Formalpedia, 333,690 statements): the agent never re-proves what is already proved there, may import proved theorems, and sees similar proved statements with their proofs. The leaves will be one calibration leaf and two or three easier open leaves, chosen by quick outline probes.",
+		"summary": "Scaffold v6, from what trial 5 taught. The outline follows the leaf’s own method when its statement names one, and an outline whose hole is the leaf’s main claim is refused. Every hole is first checked for a counterexample with Lean’s plausible, and holes about powers and digits get arithmetic hints. New is our own index of prove2me’s public library (Formalpedia, 333,690 statements): the agent never re-proves what is already proved there, may import proved theorems, and sees similar proved statements with their proofs. The leaves will be one calibration leaf and two or three easier open leaves, chosen by quick outline probes. During those probes the index already closed one open leaf that another prove2me user had proved under another name (see Submitted to prove2me).",
 		"holes_as_of": null,
 		"leaves": [],
 		"tasks": []

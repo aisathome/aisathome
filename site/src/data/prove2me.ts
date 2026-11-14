@@ -68,7 +68,13 @@ export interface CurrentLeaf {
 
 export interface Submission {
 	leaf: string;
+	/** The trial of the run that proved it; for a reuse, the trial whose outline probes found it. */
 	trial: number;
+	/** "proof": the model's own proof from a run; "reuse": the leaf is the same statement as a theorem already proved on
+	 * prove2me, which our index found, and the proof is one line that imports it (not counted as a leaf proved). */
+	kind: 'proof' | 'reuse';
+	/** A reuse: the proved theorem it imports, its prove2me page and its author as that page shows it. */
+	reuses?: { theorem: string; url: string; author: string };
 	theorem: string;
 	title: string;
 	url: string;
@@ -100,6 +106,8 @@ export interface Prove2me {
 		output_tokens: number;
 		submitted: number;
 		accepted: number;
+		/** Accepted submissions closed by reuse (in accepted, not in open_leaves_proved). */
+		reused: number;
 	};
 	submissions: Submission[];
 	current: {

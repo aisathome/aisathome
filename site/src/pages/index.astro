@@ -79,7 +79,7 @@ const icons: Record<string, string> = {
 			<p class="sci-text" data-home-prove2me>
 				<strong class="sci-count" data-home-p2m-accepted>{p2m.totals.accepted}</strong>{' '}
 				{p2m.totals.accepted === 1 ? 'proof' : 'proofs'} by {p2m.model} accepted on prove2me so far ({p2m.totals.open_leaves_proved} of{' '}
-				{p2m.totals.open_leaves} open leaves tried), where theorems from research papers are stated in Lean 4 and every proof is checked
+				{p2m.totals.open_leaves} open leaves tried{p2m.totals.reused ? `; ${p2m.totals.reused} more closed by reusing a proof already there` : ''}), where theorems from research papers are stated in Lean 4 and every proof is checked
 				by machine.{p2m.current ? ` Trial ${p2m.current.trial} ${p2m.current.state === 'preparing' ? 'is being prepared' : 'is running'}.` : ''}{' '}
 				<a href="/science/prove2me/" data-home-p2m-link>See the trials <span aria-hidden="true">→</span></a>
 			</p>
