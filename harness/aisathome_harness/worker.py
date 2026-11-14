@@ -315,28 +315,40 @@ class Worker:
             return
         self.execute(rec)
 
-    def _beat(self, rec: dict, done: threading.Event, lost: threading.Event, p):
+    def _beat(self, rec: dict, done: threading.Event, lost: threading.Event, p, expired: threading.Event):
         """The lease's heartbeats while the child `p` runs; a lost lease stops it (that child only: never a later
-        task's). `execute` joins this thread before it reports, so a late answer acts before the report."""
+        task's). `execute` joins this thread before it reports, so a late answer acts before the report.
+        Without a renewal for so long that the lease would run out before the child is stopped (`lease_s` less
+        `stop_wait_s` and one beat: the gateway unreachable), the child is stopped too (`expired`: the task is
+        given back and stays held), so it never runs on while another worker could hold the task."""
         tid = rec["task"]
+        good = self.clock.monotonic()            # the lease was claimed or checked about now
+        budget = max(self.lease_s - self.stop_wait_s - self.hb_s, 0)
         while not done.wait(self.hb_s):
+            sent = self.clock.monotonic()
             try:
                 code, body = self.c.heartbeat(tid, self.name, rec["lease"])
-            except OSError:
-                continue                     # the lease has minutes left; try again at the next beat
-            if code == 409:            # expired (the gateway unreachable too long) or cancelled: take it back if queued
-                try:
+                if code == 409:        # expired (the gateway unreachable too long) or cancelled: take it back if queued
+                    sent = self.clock.monotonic()
                     code, body = self.c.claim(self.name, self.lease_s, task=tid, hold_seconds=self.hold_s)
-                except OSError:
-                    continue
-                if code == 200:
-                    rec["lease"] = body["lease"]["id"]
-                    self.hold(rec)
-                    self.log(f"[{tid}] lease had expired; taken back ({last_note(body['task'])})")
-                    continue
+                    if code == 200:
+                        rec["lease"] = body["lease"]["id"]
+                        self.hold(rec)
+                        self.log(f"[{tid}] lease had expired; taken back ({last_note(body['task'])})")
+            except OSError:
+                code, body = None, {}            # try again at the next beat, while the lease lasts
+            if code == 200:
+                good = sent
+                continue
             if code in (404, 409):
                 self.log(f"[{tid}] lease lost ({error_text(body)}); stopping the task")
                 lost.set()
+                self._signal_child(signal.SIGTERM, p)
+                return
+            if self.clock.monotonic() - good >= budget:
+                self.log(f"[{tid}] no lease renewal for {self.clock.monotonic() - good:.0f} s (gateway unreachable); "
+                         "stopping the task before its lease runs out")
+                expired.set()
                 self._signal_child(signal.SIGTERM, p)
                 return
 
@@ -348,8 +360,7 @@ class Worker:
         specf.write_text(json.dumps({**spec, "worker": self.name}) + "\n")
         for f in (out, err):
             f.unlink(missing_ok=True)
-        lost = threading.Event()
-        done = threading.Event()
+        lost, expired, done = threading.Event(), threading.Event(), threading.Event()
         with open(self.state / "logs" / f"{tid}.log", "ab") as logf, self._busy(tid):
             with self.lock:
                 if self.stopping.is_set():
@@ -362,9 +373,9 @@ class Worker:
                 done.set()
                 self.give_back(rec)
                 return
-            hb = threading.Thread(target=self._beat, args=(rec, done, lost, p), daemon=True)
+            hb = threading.Thread(target=self._beat, args=(rec, done, lost, p, expired), daemon=True)
             hb.start()
-            rc = self._wait(p, lost)
+            rc = self._wait(p, lost, expired)
         done.set()
         hb.join()                  # a heartbeat still in flight acts now (a new lease, lost), not after the report
         with self.lock:
@@ -373,7 +384,7 @@ class Worker:
             self.release(tid)
             self.cleanup(rec)
             return
-        if self.stopping.is_set() and not out.exists():
+        if (self.stopping.is_set() or expired.is_set()) and not out.exists():
             self.give_back(rec)
             return
         if rc == 0 and out.exists():
@@ -406,15 +417,15 @@ class Worker:
                                                f"{safe_text(why, 300)}\n")
             self.log(f"{self.crashes} tasks crashed in a row: no new task until {self.state / 'paused'} is removed")
 
-    def _wait(self, p, lost: threading.Event | None = None) -> int:
-        """The child's exit code; after a stop or a lost lease (both sent SIGTERM), its time to exit, then
-        SIGKILL to its group."""
+    def _wait(self, p, *ends: threading.Event) -> int:
+        """The child's exit code; after a stop or one of `ends` (a lost or expiring lease; each sent SIGTERM),
+        its time to exit, then SIGKILL to its group."""
         while True:
             try:
                 return p.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
-            if self.stopping.is_set() or (lost is not None and lost.is_set()):
+            if self.stopping.is_set() or any(e.is_set() for e in ends):
                 self._signal_child(signal.SIGTERM, p)       # again: a stop while the child started missed it
                 try:
                     return p.wait(timeout=self.stop_wait_s)

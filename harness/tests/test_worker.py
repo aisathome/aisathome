@@ -275,6 +275,26 @@ class Lifecycle(Base):
         self.assertEqual(self.q.tasks["t1"]["state"], "done")
         self.assertEqual(w.held(), [])
 
+    def test_an_unreachable_gateway_stops_the_child_before_its_lease_runs_out(self):
+        self.q.add("t1", self.spec(sleep=60, running=str(self.root / "t1.running")))
+        w = self.worker(lease_s=3, heartbeat_s=0.1, stop_wait_s=1)
+
+        def down(*a, **k):
+            raise ConnectionRefusedError("partition")
+        th = threading.Thread(target=w.run_forever, kwargs={"once": True}, daemon=True)
+        th.start()
+        self.assertTrue(wait_for((self.root / "t1.running").exists))
+        t0 = time.monotonic()
+        self.q.heartbeat = self.q.fail = self.q.claim = down          # the gateway goes away
+        self.assertTrue(wait_for(lambda: bool(w.held()) and w.held()[0]["phase"] == "interrupted", timeout=15),
+                        w.logs)
+        self.assertLess(time.monotonic() - t0, 3, "the child ran on past its lease")
+        self.assertTrue(any("no lease renewal" in l for l in w.logs), w.logs)
+        self.assertTrue(any("could not give it back" in l for l in w.logs), w.logs)
+        w.stop()
+        th.join(15)
+        self.assertEqual(w.held()[0]["phase"], "interrupted")      # held: taken back when the gateway returns
+
     def test_a_crash_fails_the_task_and_three_in_a_row_pause_the_worker(self):
         for i in range(4):
             self.q.add(f"t{i}", self.spec(mode="crash"))
