@@ -866,3 +866,79 @@ func TestTaskReviewsOffAcrossARestart(t *testing.T) {
 		t.Fatalf("a new candidate's review: %v", rv)
 	}
 }
+
+// Stateless runners keep their checkpoints in shared storage, so a task one gives back need not
+// wait the 10 minutes for that runner: the claim's hold_seconds sets how long it waits (0: not at
+// all). The hold travels with the lease, also across a gateway restart; a claim without it keeps
+// the 10 minutes (older workers), and out-of-range values or the field on another call are refused.
+func TestTaskHoldSecondsThroughTheServer(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 11, 14, 20, 0, 0, 0, time.UTC)}
+	l := &loopGateway{}
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.StateDir = t.TempDir()
+		withProjects(c)
+		c.TasksNow = clk.Now
+		l.cfg = *c
+	}, mockEngine(t, false))
+	l.g, l.srv, l.url = r.g, r.gw, r.gw.URL
+	l.create(t, "T7-H.a-A", "attempt")
+	claim := func(worker string, hold any) (int, map[string]any, string) {
+		t.Helper()
+		body := map[string]any{"worker": worker, "task": "T7-H.a-A"}
+		if hold != nil {
+			body["hold_seconds"] = hold
+		}
+		code, out := l.call(t, "POST", "/claim", body)
+		if code != 200 {
+			return code, out, ""
+		}
+		return code, out["task"].(map[string]any), out["lease"].(map[string]any)["id"].(string)
+	}
+	giveBack := func(worker, lease string) {
+		t.Helper()
+		if code, out := l.call(t, "POST", "/T7-H.a-A/fail", map[string]any{"worker": worker, "lease": lease, "requeue": true,
+			"reason": "spot notice"}); code != 200 || out["state"] != "queued" {
+			t.Fatalf("%s gives back: HTTP %d %v", worker, code, out)
+		}
+	}
+
+	// hold 0, then a restart: the lease keeps its hold; another runner takes it at once, same try
+	code, task, lease := claim("runner-a", 0)
+	if code != 200 || task["tries"] != 1.0 {
+		t.Fatalf("runner-a claims: HTTP %d %v", code, task)
+	}
+	l.restart(t)
+	giveBack("runner-a", lease)
+	if code, task, lease = claim("runner-b", 120); code != 200 || task["tries"] != 1.0 || task["interruptions"] != 1.0 {
+		t.Fatalf("runner-b at once after a hold-0 give-back: HTTP %d %v", code, task)
+	}
+	// hold 120: held for runner-b that long, then free
+	giveBack("runner-b", lease)
+	clk.Add(119 * time.Second)
+	if code, out, _ := claim("runner-c", nil); code != 409 {
+		t.Fatalf("runner-c inside runner-b's 120 s hold: HTTP %d %v", code, out)
+	}
+	clk.Add(2 * time.Second)
+	if code, task, lease = claim("runner-c", nil); code != 200 || task["interruptions"] != 2.0 {
+		t.Fatalf("runner-c after the hold: HTTP %d %v", code, task)
+	}
+	// no hold_seconds (an older worker): the 10 minutes as before
+	giveBack("runner-c", lease)
+	clk.Add(9 * time.Minute)
+	if code, out, _ := claim("runner-a", 0); code != 409 {
+		t.Fatalf("runner-a inside the default hold: HTTP %d %v", code, out)
+	}
+	clk.Add(61 * time.Second)
+	if code, task, lease = claim("runner-a", 0); code != 200 || task["tries"] != 1.0 {
+		t.Fatalf("runner-a after the default hold: HTTP %d %v", code, task)
+	}
+	if code, out := l.call(t, "POST", "/T7-H.a-A/heartbeat", map[string]any{"worker": "runner-a", "lease": lease, "hold_seconds": 0}); code != 400 {
+		t.Errorf("heartbeat with hold_seconds: HTTP %d %v", code, out)
+	}
+	giveBack("runner-a", lease)
+	for _, h := range []any{-1, 601, "60", 1.5} {
+		if code, out, _ := claim("runner-a", h); code != 400 {
+			t.Errorf("claim with hold_seconds %v: HTTP %d %v", h, code, out)
+		}
+	}
+}
