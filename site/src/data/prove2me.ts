@@ -9,8 +9,9 @@
 import raw from './science/prove2me.json';
 
 // The pure helpers live in prove2me-live.ts, which the browser's script imports without this data.
-export { compact, leafProgress, plural, stateLabel } from './prove2me-live';
+export { compact, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, plural, stateLabel } from './prove2me-live';
 import type { Outline, StaticTask } from './prove2me-live';
+import type { TaskTableRow } from './task-table';
 
 export type Group = 'calibration' | 'open';
 export type Outcome = 'proved' | 'refused' | 'compile_error' | 'no_solution' | 'no-progress' | string;
@@ -83,6 +84,41 @@ export interface Submission {
 	verdict_at: string | null;
 }
 
+/** One leaf ever tried (one row per theorem over every run; a leaf closed by reuse has no run). */
+export interface Leaf {
+	/** "p2m-" and the first 6 hex characters of prove2me's theorem_id (8 when two collide). */
+	id: string;
+	/** The trials' own ids (C11, F01, ...). */
+	aliases: string[];
+	theorem: string;
+	title: string;
+	url: string;
+	roles: ('calibration' | 'open' | 'comparison')[];
+	trials: number[];
+	runs: number;
+	proved_runs: number;
+	outcome: 'accepted' | 'reused' | 'proved' | 'not_proved' | 'stopped' | 'not_scored';
+	first_tried: string;
+	/** Summed over its runs; null for a leaf with no run. */
+	model_minutes: number | null;
+	prompt_tokens: number | null;
+	cached_tokens: number | null;
+	output_tokens: number | null;
+}
+
+export interface RoleScore {
+	role: 'calibration' | 'open' | 'comparison';
+	leaves: number;
+	runs: number;
+	proved: number;
+	accepted: number;
+	reused: number;
+	model_hours: number;
+	prompt_tokens: number;
+	cached_tokens: number;
+	output_tokens: number;
+}
+
 export interface Prove2me {
 	project: string;
 	project_url: string;
@@ -108,6 +144,8 @@ export interface Prove2me {
 		accepted: number;
 		/** Accepted submissions closed by reuse (in accepted, not in open_leaves_proved). */
 		reused: number;
+		/** Leaves ever tried (rows of `leaves`). */
+		leaves: number;
 	};
 	submissions: Submission[];
 	current: {
@@ -124,6 +162,10 @@ export interface Prove2me {
 		tasks?: StaticTask[];
 	} | null;
 	trials: Trial[];
+	leaves: Leaf[];
+	by_role: RoleScore[];
+	/** Every task of every trial in the generic task table's fields (task-table.ts), relations included. */
+	tasks: TaskTableRow[];
 }
 
 export const p2m = raw as Prove2me;

@@ -2,7 +2,7 @@
 	"project": "prove2me",
 	"project_url": "https://prove2.me/",
 	"model": "Qwen3.8 27B",
-	"generated_at": "2026-11-14T22:44:33Z",
+	"generated_at": "2026-11-14T23:00:06Z",
 	"as_of": "2026-11-14",
 	"lean": "v4.33.1",
 	"mathlib": "0df444a",
@@ -21,7 +21,8 @@
 		"output_tokens": 5603324,
 		"submitted": 3,
 		"accepted": 3,
-		"reused": 1
+		"reused": 1,
+		"leaves": 30
 	},
 	"submissions": [
 		{
@@ -86,6 +87,7 @@
 				{
 					"leaf": "A01",
 					"group": "open",
+					"role": "open",
 					"theorem": "WilliamsonShmoys.connected_planar_supergraph_from_step__p2m_f2188066_bdee_41e3_86df_42250492e63d_a4",
 					"title": "Finite maximality turns strict planar extensions into connectivity",
 					"url": "https://prove2.me/theorems/6c35d7b0-b5ac-47cb-81ba-67341f778754",
@@ -102,6 +104,7 @@
 				{
 					"leaf": "A02",
 					"group": "open",
+					"role": "open",
 					"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.regularized_base_is_quasipoint",
 					"title": "Lemma 3.4",
 					"url": "https://prove2.me/theorems/2499fdb1-3ce9-401c-8f61-86aa0b237a74",
@@ -118,6 +121,7 @@
 				{
 					"leaf": "A03",
 					"group": "open",
+					"role": "open",
 					"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.complete_quantum_presheaf_trivial",
 					"title": "Proposition 3.1",
 					"url": "https://prove2.me/theorems/12ea27e3-acd1-45ac-b790-7e5f30d8f252",
@@ -134,6 +138,7 @@
 				{
 					"leaf": "A04",
 					"group": "open",
+					"role": "open",
 					"theorem": "SongZipkinFluct.Monotone.corollary2",
 					"title": "Corollary 2: the finite-horizon basestock levels $y^*_n(i)$ converge as $n\\to\\infty$",
 					"url": "https://prove2.me/theorems/f10c9d28-3d34-4aa5-ae2f-7e3cf9ef73d7",
@@ -150,6 +155,7 @@
 				{
 					"leaf": "B01",
 					"group": "open",
+					"role": "open",
 					"theorem": "FasterSFM.lemma_13",
 					"title": "Lemma 13 — inserted and cutting-plane row bounds: $k\\le k_n$, $Q_n<Kp_n^2$, $\\chi_n<1$",
 					"url": "https://prove2.me/theorems/35e2dae8-8747-442c-be87-e3e736ba36b2",
@@ -166,6 +172,7 @@
 				{
 					"leaf": "B02",
 					"group": "open",
+					"role": "open",
 					"theorem": "OAI.MUB6.Certificate.GramData.Block3.entry_11_11",
 					"title": "OAI.MUB6.Certificate.GramData.Block3.entry_11_11: intermediate lemma from OpenAI, The maximum number of mutually unbiased bases in dimension six",
 					"url": "https://prove2.me/theorems/ca216e9d-b280-424e-afc4-3e9ea2675d5e",
@@ -183,6 +190,7 @@
 				{
 					"leaf": "B03",
 					"group": "open",
+					"role": "open",
 					"theorem": "TenChallenges.challenge_04_r3",
 					"title": "Sidorenko's inequality for sides of size at most $3$",
 					"url": "https://prove2.me/theorems/87ebdda0-94bc-4fef-9b4d-83450e34c18c",
@@ -199,6 +207,7 @@
 				{
 					"leaf": "B04",
 					"group": "open",
+					"role": "open",
 					"theorem": "FalconerPath.completion",
 					"title": "A nonzero absolutely continuous measure on the original distance set",
 					"url": "https://prove2.me/theorems/5e79875e-8138-41a2-837e-998aa5c0147d",
@@ -215,6 +224,7 @@
 				{
 					"leaf": "B05",
 					"group": "open",
+					"role": "open",
 					"theorem": "QuantumMaxCutEnergy.exists_0562_approximation",
 					"title": "Classical 0.562 approximation of Quantum Max-Cut energy",
 					"url": "https://prove2.me/theorems/42603f9e-ecfc-47aa-8817-1655e6a00518",
@@ -232,6 +242,7 @@
 				{
 					"leaf": "B06",
 					"group": "open",
+					"role": "open",
 					"theorem": "QMCLeafB.SnapLedger.ledger_round_ok",
 					"title": "Snap displacement versus the recorded margin (margin–ledger joint)",
 					"url": "https://prove2.me/theorems/6ed316b4-d90c-4613-b461-5cc6020545f7",
@@ -258,6 +269,7 @@
 				{
 					"leaf": "C01",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "DPDeconstructed.lemma_6_1",
 					"title": "Lemma 6.1 — fixed points and iterates pass around the cycle $\\tau_0,\\tau_1,\\tau_2$",
 					"url": "https://prove2.me/theorems/7ab9280c-594e-4f57-b97e-9ba4d40ac077",
@@ -274,6 +286,7 @@
 				{
 					"leaf": "C02",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "MarkovProcess.measurable_finTail",
 					"title": "Measurability of dropping the first finite coordinate",
 					"url": "https://prove2.me/theorems/81b93a3e-861a-48fb-a016-ee8fa00e7e00",
@@ -290,6 +303,7 @@
 				{
 					"leaf": "C03",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "OnlineCombOpt.Exp2Full.theorem_1_full_domain",
 					"title": "Theorem 1 — full-domain EXP2 regret lower bound (corrected: excludes dimension one)",
 					"url": "https://prove2.me/theorems/12f45264-f329-4049-bd4d-b9217aa65b52",
@@ -306,6 +320,7 @@
 				{
 					"leaf": "C04",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "WilliamsonShmoys.face_accounting_implies_edge_bound",
 					"title": "Face accounting implies the planar edge bound",
 					"url": "https://prove2.me/theorems/12087d91-3069-4249-a63a-ff1ac9d3aee5",
@@ -322,6 +337,7 @@
 				{
 					"leaf": "C05",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "Groundwork.Colouring.card_prescribed",
 					"title": "Colouring: card prescribed",
 					"url": "https://prove2.me/theorems/8b8abc77-5f62-4b83-82ca-76c6f9d0c5cc",
@@ -338,6 +354,7 @@
 				{
 					"leaf": "C06",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "BianchiIX.measurableEmbedding_gaussWord",
 					"title": "Measurable embeddings defined by finite Gauss words",
 					"url": "https://prove2.me/theorems/dfe8e493-888c-4293-b1ba-ce64710c2d2e",
@@ -354,6 +371,7 @@
 				{
 					"leaf": "A01",
 					"group": "open",
+					"role": "open",
 					"theorem": "WilliamsonShmoys.connected_planar_supergraph_from_step__p2m_f2188066_bdee_41e3_86df_42250492e63d_a4",
 					"title": "Finite maximality turns strict planar extensions into connectivity",
 					"url": "https://prove2.me/theorems/6c35d7b0-b5ac-47cb-81ba-67341f778754",
@@ -372,6 +390,7 @@
 				{
 					"leaf": "A02",
 					"group": "open",
+					"role": "open",
 					"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.regularized_base_is_quasipoint",
 					"title": "Lemma 3.4",
 					"url": "https://prove2.me/theorems/2499fdb1-3ce9-401c-8f61-86aa0b237a74",
@@ -390,6 +409,7 @@
 				{
 					"leaf": "A03",
 					"group": "open",
+					"role": "open",
 					"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.complete_quantum_presheaf_trivial",
 					"title": "Proposition 3.1",
 					"url": "https://prove2.me/theorems/12ea27e3-acd1-45ac-b790-7e5f30d8f252",
@@ -408,6 +428,7 @@
 				{
 					"leaf": "A04",
 					"group": "open",
+					"role": "open",
 					"theorem": "SongZipkinFluct.Monotone.corollary2",
 					"title": "Corollary 2: the finite-horizon basestock levels $y^*_n(i)$ converge as $n\\to\\infty$",
 					"url": "https://prove2.me/theorems/f10c9d28-3d34-4aa5-ae2f-7e3cf9ef73d7",
@@ -436,6 +457,7 @@
 				{
 					"leaf": "F01",
 					"group": "open",
+					"role": "open",
 					"theorem": "CodedSorting.proposition_7_1_transpose",
 					"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
 					"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
@@ -452,6 +474,7 @@
 				{
 					"leaf": "F02",
 					"group": "open",
+					"role": "open",
 					"theorem": "APSCounting893.Main.generic_linear_noether_normalization",
 					"title": "Lemma 3.15 — Generic linear Noether normalization",
 					"url": "https://prove2.me/theorems/c3c3c422-9e14-46b3-b91a-18da2c87cbe5",
@@ -468,6 +491,7 @@
 				{
 					"leaf": "F03",
 					"group": "open",
+					"role": "open",
 					"theorem": "BirthdayEntropy.Soundness.pair_avoidance",
 					"title": "Lemma 4.1 — Pair avoidance under fixed-size sampling",
 					"url": "https://prove2.me/theorems/8503e60c-bce9-4b86-9847-fffdb33b1ee2",
@@ -484,6 +508,7 @@
 				{
 					"leaf": "O01",
 					"group": "open",
+					"role": "open",
 					"theorem": "HolevoCQ.decoder_subPOVM",
 					"title": "§4: the decision operators (11) satisfy $\\sum_uX_u\\le I$",
 					"url": "https://prove2.me/theorems/c0eca852-d0df-4ebe-8559-80083b3799eb",
@@ -500,6 +525,7 @@
 				{
 					"leaf": "O02",
 					"group": "open",
+					"role": "open",
 					"theorem": "BBPSSW.Distill.typical_set_sqrt",
 					"title": "Typical sets of size $2^{H+O(\\sqrt n)}$ carry almost all the weight",
 					"url": "https://prove2.me/theorems/83aae809-f2aa-433a-a5ed-c4380d0447d2",
@@ -516,6 +542,7 @@
 				{
 					"leaf": "O03",
 					"group": "open",
+					"role": "open",
 					"theorem": "DigitalPrivacy.DataStrategy.proof_thm1_case_psi_lt_Prho",
 					"title": "Proof of Theorem 1, case $\\psi<P\\rho$ (corrected: $\\psi>0$): $C_{{inv}}(\\xi)<C_h(\\xi)$ for every $\\xi>0$",
 					"url": "https://prove2.me/theorems/d1f097bd-fd4b-4325-87c1-e402ad7842a3",
@@ -532,6 +559,7 @@
 				{
 					"leaf": "O04",
 					"group": "open",
+					"role": "open",
 					"theorem": "SeqPostedPricing.MatroidSPM.accept_prob_eq_quantile",
 					"title": "§4: offered the price $F_i^{-1}(1-q_i)$, agent $i$ accepts with probability exactly $q_i$",
 					"url": "https://prove2.me/theorems/7f145aaf-e97f-4d4f-bd5a-1b6d57c5d1fa",
@@ -548,6 +576,7 @@
 				{
 					"leaf": "C07",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "WilliamsonShmoys.planar_drawing_maximal_supergraph__p2m_97829890_428d_4657_a899_f7e200a68a7c_a4",
 					"title": "A finite maximal drawable supergraph exists",
 					"url": "https://prove2.me/theorems/3ad60fc3-1bed-4725-aaf6-264d650d407f",
@@ -564,6 +593,7 @@
 				{
 					"leaf": "C08",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "AvramDividend.Classical.avram_ubv_finite9_uniformIntegrable_one_of_common_integrable_dominator",
 					"title": "Any uniformly dominated L1 family is uniformly integrable at exponent one",
 					"url": "https://prove2.me/theorems/eb3303d9-aa38-4611-bc49-764de8aba666",
@@ -580,6 +610,7 @@
 				{
 					"leaf": "C09",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "FiniteEnergyPlane.integral_norm_sq_le_of_skew",
 					"title": "Poincaré inequality on an interval for a curve vanishing at the left endpoint, with a skew-twisted derivative",
 					"url": "https://prove2.me/theorems/2b384dc4-4dd9-4583-8805-584dc64edddc",
@@ -596,6 +627,7 @@
 				{
 					"leaf": "C10",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "BookProof.ChapterF3.dressed_vacuum_bessel",
 					"title": "`BookProof.ChapterF3.dressed_vacuum_bessel` {ι : Type*} (x : ι → E') (hx : Orthonormal ℂ x) (v : E') (hv : ‖v‖ = 1) (s : Finset ι) : ∑ j ∈ s, ‖inner (𝕜",
 					"url": "https://prove2.me/theorems/4794634c-e5c6-4dbc-90b3-7caf38725e99",
@@ -622,6 +654,7 @@
 				{
 					"leaf": "C11",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "Ideal.Factors.quotientResidueEquiv_mk",
 					"title": "Factors: quotient Residue Equiv mk",
 					"url": "https://prove2.me/theorems/63eff57f-f30c-4c49-94df-9fd2cbab5292",
@@ -638,6 +671,7 @@
 				{
 					"leaf": "C12",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "InsiderDonations.price_recast",
 					"title": "§3.2, p.9 — $P^*=\\eta v+[1-\\eta]\\bar v-\\lambda^*u-\\sum_i(\\psi_i-\\bar\\psi)/(2\\tau_o)$",
 					"url": "https://prove2.me/theorems/6f7dce87-64fd-41e3-89fe-10985097e615",
@@ -655,6 +689,7 @@
 				{
 					"leaf": "A03",
 					"group": "open",
+					"role": "comparison",
 					"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.complete_quantum_presheaf_trivial",
 					"title": "Proposition 3.1",
 					"url": "https://prove2.me/theorems/12ea27e3-acd1-45ac-b790-7e5f30d8f252",
@@ -674,6 +709,7 @@
 				{
 					"leaf": "A04",
 					"group": "open",
+					"role": "comparison",
 					"theorem": "SongZipkinFluct.Monotone.corollary2",
 					"title": "Corollary 2: the finite-horizon basestock levels $y^*_n(i)$ converge as $n\\to\\infty$",
 					"url": "https://prove2.me/theorems/f10c9d28-3d34-4aa5-ae2f-7e3cf9ef73d7",
@@ -693,6 +729,7 @@
 				{
 					"leaf": "F01",
 					"group": "open",
+					"role": "comparison",
 					"theorem": "CodedSorting.proposition_7_1_transpose",
 					"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
 					"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
@@ -711,6 +748,7 @@
 				{
 					"leaf": "O01",
 					"group": "open",
+					"role": "open",
 					"theorem": "HolevoCQ.decoder_subPOVM",
 					"title": "§4: the decision operators (11) satisfy $\\sum_uX_u\\le I$",
 					"url": "https://prove2.me/theorems/c0eca852-d0df-4ebe-8559-80083b3799eb",
@@ -729,6 +767,7 @@
 				{
 					"leaf": "O02",
 					"group": "open",
+					"role": "open",
 					"theorem": "BBPSSW.Distill.typical_set_sqrt",
 					"title": "Typical sets of size $2^{H+O(\\sqrt n)}$ carry almost all the weight",
 					"url": "https://prove2.me/theorems/83aae809-f2aa-433a-a5ed-c4380d0447d2",
@@ -747,6 +786,7 @@
 				{
 					"leaf": "O03",
 					"group": "open",
+					"role": "open",
 					"theorem": "DigitalPrivacy.DataStrategy.proof_thm1_case_psi_lt_Prho",
 					"title": "Proof of Theorem 1, case $\\psi<P\\rho$ (corrected: $\\psi>0$): $C_{{inv}}(\\xi)<C_h(\\xi)$ for every $\\xi>0$",
 					"url": "https://prove2.me/theorems/d1f097bd-fd4b-4325-87c1-e402ad7842a3",
@@ -775,6 +815,7 @@
 				{
 					"leaf": "F01",
 					"group": "open",
+					"role": "comparison",
 					"theorem": "CodedSorting.proposition_7_1_transpose",
 					"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
 					"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
@@ -1177,6 +1218,7 @@
 				{
 					"leaf": "C12",
 					"group": "calibration",
+					"role": "calibration",
 					"theorem": "InsiderDonations.price_recast",
 					"title": "§3.2, p.9 — $P^*=\\eta v+[1-\\eta]\\bar v-\\lambda^*u-\\sum_i(\\psi_i-\\bar\\psi)/(2\\tau_o)$",
 					"url": "https://prove2.me/theorems/6f7dce87-64fd-41e3-89fe-10985097e615",
@@ -1279,6 +1321,7 @@
 				{
 					"leaf": "O02",
 					"group": "open",
+					"role": "open",
 					"theorem": "BBPSSW.Distill.typical_set_sqrt",
 					"title": "Typical sets of size $2^{H+O(\\sqrt n)}$ carry almost all the weight",
 					"url": "https://prove2.me/theorems/83aae809-f2aa-433a-a5ed-c4380d0447d2",
@@ -1500,6 +1543,2403 @@
 					]
 				}
 			]
+		}
+	],
+	"leaves": [
+		{
+			"id": "p2m-6c35d7",
+			"theorem": "WilliamsonShmoys.connected_planar_supergraph_from_step__p2m_f2188066_bdee_41e3_86df_42250492e63d_a4",
+			"title": "Finite maximality turns strict planar extensions into connectivity",
+			"url": "https://prove2.me/theorems/6c35d7b0-b5ac-47cb-81ba-67341f778754",
+			"aliases": [
+				"A01"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1,
+				2
+			],
+			"first_tried": "2026-11-07",
+			"runs": 2,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 92.9,
+			"prompt_tokens": 2290624,
+			"cached_tokens": 2198376,
+			"output_tokens": 116894
+		},
+		{
+			"id": "p2m-2499fd",
+			"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.regularized_base_is_quasipoint",
+			"title": "Lemma 3.4",
+			"url": "https://prove2.me/theorems/2499fdb1-3ce9-401c-8f61-86aa0b237a74",
+			"aliases": [
+				"A02"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1,
+				2
+			],
+			"first_tried": "2026-11-07",
+			"runs": 2,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 89.9,
+			"prompt_tokens": 2104184,
+			"cached_tokens": 1996066,
+			"output_tokens": 131020
+		},
+		{
+			"id": "p2m-12ea27",
+			"theorem": "QAlgorithms.Papers.Independent.Intakethird100.P20.complete_quantum_presheaf_trivial",
+			"title": "Proposition 3.1",
+			"url": "https://prove2.me/theorems/12ea27e3-acd1-45ac-b790-7e5f30d8f252",
+			"aliases": [
+				"A03"
+			],
+			"roles": [
+				"open",
+				"comparison"
+			],
+			"trials": [
+				1,
+				2,
+				4
+			],
+			"first_tried": "2026-11-07",
+			"runs": 3,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 155.0,
+			"prompt_tokens": 4154173,
+			"cached_tokens": 3599443,
+			"output_tokens": 199820
+		},
+		{
+			"id": "p2m-f10c9d",
+			"theorem": "SongZipkinFluct.Monotone.corollary2",
+			"title": "Corollary 2: the finite-horizon basestock levels $y^*_n(i)$ converge as $n\\to\\infty$",
+			"url": "https://prove2.me/theorems/f10c9d28-3d34-4aa5-ae2f-7e3cf9ef73d7",
+			"aliases": [
+				"A04"
+			],
+			"roles": [
+				"open",
+				"comparison"
+			],
+			"trials": [
+				1,
+				2,
+				4
+			],
+			"first_tried": "2026-11-07",
+			"runs": 3,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 176.4,
+			"prompt_tokens": 4087062,
+			"cached_tokens": 3835006,
+			"output_tokens": 259351
+		},
+		{
+			"id": "p2m-35e2da",
+			"theorem": "FasterSFM.lemma_13",
+			"title": "Lemma 13 — inserted and cutting-plane row bounds: $k\\le k_n$, $Q_n<Kp_n^2$, $\\chi_n<1$",
+			"url": "https://prove2.me/theorems/35e2dae8-8747-442c-be87-e3e736ba36b2",
+			"aliases": [
+				"B01"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1
+			],
+			"first_tried": "2026-11-07",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 29.0,
+			"prompt_tokens": 484152,
+			"cached_tokens": 450984,
+			"output_tokens": 53817
+		},
+		{
+			"id": "p2m-ca216e",
+			"theorem": "OAI.MUB6.Certificate.GramData.Block3.entry_11_11",
+			"title": "OAI.MUB6.Certificate.GramData.Block3.entry_11_11: intermediate lemma from OpenAI, The maximum number of mutually unbiased bases in dimension six",
+			"url": "https://prove2.me/theorems/ca216e9d-b280-424e-afc4-3e9ea2675d5e",
+			"aliases": [
+				"B02"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1
+			],
+			"first_tried": "2026-11-07",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_scored",
+			"model_minutes": 0.2,
+			"prompt_tokens": 104881,
+			"cached_tokens": 51634,
+			"output_tokens": 483
+		},
+		{
+			"id": "p2m-87ebdd",
+			"theorem": "TenChallenges.challenge_04_r3",
+			"title": "Sidorenko's inequality for sides of size at most $3$",
+			"url": "https://prove2.me/theorems/87ebdda0-94bc-4fef-9b4d-83450e34c18c",
+			"aliases": [
+				"B03"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1
+			],
+			"first_tried": "2026-11-07",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 16.1,
+			"prompt_tokens": 1087537,
+			"cached_tokens": 1062292,
+			"output_tokens": 26328
+		},
+		{
+			"id": "p2m-5e7987",
+			"theorem": "FalconerPath.completion",
+			"title": "A nonzero absolutely continuous measure on the original distance set",
+			"url": "https://prove2.me/theorems/5e79875e-8138-41a2-837e-998aa5c0147d",
+			"aliases": [
+				"B04"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1
+			],
+			"first_tried": "2026-11-07",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 29.0,
+			"prompt_tokens": 1199602,
+			"cached_tokens": 1161296,
+			"output_tokens": 49245
+		},
+		{
+			"id": "p2m-42603f",
+			"theorem": "QuantumMaxCutEnergy.exists_0562_approximation",
+			"title": "Classical 0.562 approximation of Quantum Max-Cut energy",
+			"url": "https://prove2.me/theorems/42603f9e-ecfc-47aa-8817-1655e6a00518",
+			"aliases": [
+				"B05"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1
+			],
+			"first_tried": "2026-11-07",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_scored",
+			"model_minutes": 19.2,
+			"prompt_tokens": 692803,
+			"cached_tokens": 661951,
+			"output_tokens": 37229
+		},
+		{
+			"id": "p2m-6ed316",
+			"theorem": "QMCLeafB.SnapLedger.ledger_round_ok",
+			"title": "Snap displacement versus the recorded margin (margin–ledger joint)",
+			"url": "https://prove2.me/theorems/6ed316b4-d90c-4613-b461-5cc6020545f7",
+			"aliases": [
+				"B06"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				1
+			],
+			"first_tried": "2026-11-07",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 9.9,
+			"prompt_tokens": 1013513,
+			"cached_tokens": 965295,
+			"output_tokens": 19704
+		},
+		{
+			"id": "p2m-7ab928",
+			"theorem": "DPDeconstructed.lemma_6_1",
+			"title": "Lemma 6.1 — fixed points and iterates pass around the cycle $\\tau_0,\\tau_1,\\tau_2$",
+			"url": "https://prove2.me/theorems/7ab9280c-594e-4f57-b97e-9ba4d40ac077",
+			"aliases": [
+				"C01"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				2
+			],
+			"first_tried": "2026-11-08",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 20.8,
+			"prompt_tokens": 609672,
+			"cached_tokens": 578203,
+			"output_tokens": 25957
+		},
+		{
+			"id": "p2m-81b93a",
+			"theorem": "MarkovProcess.measurable_finTail",
+			"title": "Measurability of dropping the first finite coordinate",
+			"url": "https://prove2.me/theorems/81b93a3e-861a-48fb-a016-ee8fa00e7e00",
+			"aliases": [
+				"C02"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				2
+			],
+			"first_tried": "2026-11-08",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 11.6,
+			"prompt_tokens": 244345,
+			"cached_tokens": 234055,
+			"output_tokens": 8404
+		},
+		{
+			"id": "p2m-12f452",
+			"theorem": "OnlineCombOpt.Exp2Full.theorem_1_full_domain",
+			"title": "Theorem 1 — full-domain EXP2 regret lower bound (corrected: excludes dimension one)",
+			"url": "https://prove2.me/theorems/12f45264-f329-4049-bd4d-b9217aa65b52",
+			"aliases": [
+				"C03"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				2
+			],
+			"first_tried": "2026-11-08",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 65.1,
+			"prompt_tokens": 810567,
+			"cached_tokens": 739443,
+			"output_tokens": 104454
+		},
+		{
+			"id": "p2m-12087d",
+			"theorem": "WilliamsonShmoys.face_accounting_implies_edge_bound",
+			"title": "Face accounting implies the planar edge bound",
+			"url": "https://prove2.me/theorems/12087d91-3069-4249-a63a-ff1ac9d3aee5",
+			"aliases": [
+				"C04"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				2
+			],
+			"first_tried": "2026-11-08",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 5.2,
+			"prompt_tokens": 122055,
+			"cached_tokens": 113644,
+			"output_tokens": 4607
+		},
+		{
+			"id": "p2m-8b8abc",
+			"theorem": "Groundwork.Colouring.card_prescribed",
+			"title": "Colouring: card prescribed",
+			"url": "https://prove2.me/theorems/8b8abc77-5f62-4b83-82ca-76c6f9d0c5cc",
+			"aliases": [
+				"C05"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				2
+			],
+			"first_tried": "2026-11-08",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 49.5,
+			"prompt_tokens": 2472538,
+			"cached_tokens": 2406486,
+			"output_tokens": 90832
+		},
+		{
+			"id": "p2m-dfe8e4",
+			"theorem": "BianchiIX.measurableEmbedding_gaussWord",
+			"title": "Measurable embeddings defined by finite Gauss words",
+			"url": "https://prove2.me/theorems/dfe8e493-888c-4293-b1ba-ce64710c2d2e",
+			"aliases": [
+				"C06"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				2
+			],
+			"first_tried": "2026-11-08",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 61.7,
+			"prompt_tokens": 2506365,
+			"cached_tokens": 2411608,
+			"output_tokens": 110411
+		},
+		{
+			"id": "p2m-a146ce",
+			"theorem": "CodedSorting.proposition_7_1_transpose",
+			"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
+			"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
+			"aliases": [
+				"F01"
+			],
+			"roles": [
+				"open",
+				"comparison"
+			],
+			"trials": [
+				3,
+				4,
+				5
+			],
+			"first_tried": "2026-11-09",
+			"runs": 3,
+			"proved_runs": 1,
+			"outcome": "accepted",
+			"model_minutes": 1369.2,
+			"prompt_tokens": 49620069,
+			"cached_tokens": 47011658,
+			"output_tokens": 1977489
+		},
+		{
+			"id": "p2m-c3c3c4",
+			"theorem": "APSCounting893.Main.generic_linear_noether_normalization",
+			"title": "Lemma 3.15 — Generic linear Noether normalization",
+			"url": "https://prove2.me/theorems/c3c3c422-9e14-46b3-b91a-18da2c87cbe5",
+			"aliases": [
+				"F02"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 78.0,
+			"prompt_tokens": 1854217,
+			"cached_tokens": 1421364,
+			"output_tokens": 83056
+		},
+		{
+			"id": "p2m-8503e6",
+			"theorem": "BirthdayEntropy.Soundness.pair_avoidance",
+			"title": "Lemma 4.1 — Pair avoidance under fixed-size sampling",
+			"url": "https://prove2.me/theorems/8503e60c-bce9-4b86-9847-fffdb33b1ee2",
+			"aliases": [
+				"F03"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 69.8,
+			"prompt_tokens": 566870,
+			"cached_tokens": 462179,
+			"output_tokens": 104476
+		},
+		{
+			"id": "p2m-c0eca8",
+			"theorem": "HolevoCQ.decoder_subPOVM",
+			"title": "§4: the decision operators (11) satisfy $\\sum_uX_u\\le I$",
+			"url": "https://prove2.me/theorems/c0eca852-d0df-4ebe-8559-80083b3799eb",
+			"aliases": [
+				"O01"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				3,
+				4
+			],
+			"first_tried": "2026-11-09",
+			"runs": 2,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 143.7,
+			"prompt_tokens": 5188552,
+			"cached_tokens": 4705210,
+			"output_tokens": 185720
+		},
+		{
+			"id": "p2m-83aae8",
+			"theorem": "BBPSSW.Distill.typical_set_sqrt",
+			"title": "Typical sets of size $2^{H+O(\\sqrt n)}$ carry almost all the weight",
+			"url": "https://prove2.me/theorems/83aae809-f2aa-433a-a5ed-c4380d0447d2",
+			"aliases": [
+				"O02"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				3,
+				4,
+				5
+			],
+			"first_tried": "2026-11-09",
+			"runs": 3,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 821.7,
+			"prompt_tokens": 34494860,
+			"cached_tokens": 32651858,
+			"output_tokens": 1217304
+		},
+		{
+			"id": "p2m-d1f097",
+			"theorem": "DigitalPrivacy.DataStrategy.proof_thm1_case_psi_lt_Prho",
+			"title": "Proof of Theorem 1, case $\\psi<P\\rho$ (corrected: $\\psi>0$): $C_{{inv}}(\\xi)<C_h(\\xi)$ for every $\\xi>0$",
+			"url": "https://prove2.me/theorems/d1f097bd-fd4b-4325-87c1-e402ad7842a3",
+			"aliases": [
+				"O03"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				3,
+				4
+			],
+			"first_tried": "2026-11-09",
+			"runs": 2,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 165.8,
+			"prompt_tokens": 2668156,
+			"cached_tokens": 2404270,
+			"output_tokens": 217871
+		},
+		{
+			"id": "p2m-7f145a",
+			"theorem": "SeqPostedPricing.MatroidSPM.accept_prob_eq_quantile",
+			"title": "§4: offered the price $F_i^{-1}(1-q_i)$, agent $i$ accepts with probability exactly $q_i$",
+			"url": "https://prove2.me/theorems/7f145aaf-e97f-4d4f-bd5a-1b6d57c5d1fa",
+			"aliases": [
+				"O04"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "accepted",
+			"model_minutes": 53.9,
+			"prompt_tokens": 1195971,
+			"cached_tokens": 1109932,
+			"output_tokens": 46429
+		},
+		{
+			"id": "p2m-3ad60f",
+			"theorem": "WilliamsonShmoys.planar_drawing_maximal_supergraph__p2m_97829890_428d_4657_a899_f7e200a68a7c_a4",
+			"title": "A finite maximal drawable supergraph exists",
+			"url": "https://prove2.me/theorems/3ad60fc3-1bed-4725-aaf6-264d650d407f",
+			"aliases": [
+				"C07"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 63.6,
+			"prompt_tokens": 2409181,
+			"cached_tokens": 2281743,
+			"output_tokens": 103710
+		},
+		{
+			"id": "p2m-eb3303",
+			"theorem": "AvramDividend.Classical.avram_ubv_finite9_uniformIntegrable_one_of_common_integrable_dominator",
+			"title": "Any uniformly dominated L1 family is uniformly integrable at exponent one",
+			"url": "https://prove2.me/theorems/eb3303d9-aa38-4611-bc49-764de8aba666",
+			"aliases": [
+				"C08"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 42.4,
+			"prompt_tokens": 2115586,
+			"cached_tokens": 2014111,
+			"output_tokens": 73890
+		},
+		{
+			"id": "p2m-2b384d",
+			"theorem": "FiniteEnergyPlane.integral_norm_sq_le_of_skew",
+			"title": "Poincaré inequality on an interval for a curve vanishing at the left endpoint, with a skew-twisted derivative",
+			"url": "https://prove2.me/theorems/2b384dc4-4dd9-4583-8805-584dc64edddc",
+			"aliases": [
+				"C09"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 0,
+			"outcome": "not_proved",
+			"model_minutes": 57.5,
+			"prompt_tokens": 2089066,
+			"cached_tokens": 1940451,
+			"output_tokens": 92896
+		},
+		{
+			"id": "p2m-479463",
+			"theorem": "BookProof.ChapterF3.dressed_vacuum_bessel",
+			"title": "`BookProof.ChapterF3.dressed_vacuum_bessel` {ι : Type*} (x : ι → E') (hx : Orthonormal ℂ x) (v : E') (hv : ‖v‖ = 1) (s : Finset ι) : ∑ j ∈ s, ‖inner (𝕜",
+			"url": "https://prove2.me/theorems/4794634c-e5c6-4dbc-90b3-7caf38725e99",
+			"aliases": [
+				"C10"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				3
+			],
+			"first_tried": "2026-11-09",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 9.0,
+			"prompt_tokens": 603173,
+			"cached_tokens": 552458,
+			"output_tokens": 12672
+		},
+		{
+			"id": "p2m-63eff5",
+			"theorem": "Ideal.Factors.quotientResidueEquiv_mk",
+			"title": "Factors: quotient Residue Equiv mk",
+			"url": "https://prove2.me/theorems/63eff57f-f30c-4c49-94df-9fd2cbab5292",
+			"aliases": [
+				"C11"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				4
+			],
+			"first_tried": "2026-11-12",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 3.7,
+			"prompt_tokens": 243708,
+			"cached_tokens": 228498,
+			"output_tokens": 6145
+		},
+		{
+			"id": "p2m-6f7dce",
+			"theorem": "InsiderDonations.price_recast",
+			"title": "§3.2, p.9 — $P^*=\\eta v+[1-\\eta]\\bar v-\\lambda^*u-\\sum_i(\\psi_i-\\bar\\psi)/(2\\tau_o)$",
+			"url": "https://prove2.me/theorems/6f7dce87-64fd-41e3-89fe-10985097e615",
+			"aliases": [
+				"C12"
+			],
+			"roles": [
+				"calibration"
+			],
+			"trials": [
+				4,
+				5
+			],
+			"first_tried": "2026-11-12",
+			"runs": 2,
+			"proved_runs": 1,
+			"outcome": "proved",
+			"model_minutes": 185.7,
+			"prompt_tokens": 5025111,
+			"cached_tokens": 4641556,
+			"output_tokens": 243110
+		},
+		{
+			"id": "p2m-b1d59e",
+			"theorem": "occupation_bind_sections_integrable_local",
+			"title": "occupation_bind_sections_integrable_local",
+			"url": "https://prove2.me/theorems/b1d59eba-4373-4046-8d79-4f717dd511ca",
+			"aliases": [
+				"N02"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [],
+			"first_tried": "2026-11-14",
+			"runs": 0,
+			"proved_runs": 0,
+			"outcome": "reused",
+			"model_minutes": null,
+			"prompt_tokens": null,
+			"cached_tokens": null,
+			"output_tokens": null
+		}
+	],
+	"by_role": [
+		{
+			"role": "calibration",
+			"leaves": 12,
+			"runs": 13,
+			"proved": 8,
+			"accepted": 0,
+			"reused": 0,
+			"model_hours": 9.6,
+			"prompt_tokens": 19251367,
+			"cached_tokens": 18142256,
+			"output_tokens": 877088
+		},
+		{
+			"role": "open",
+			"leaves": 18,
+			"runs": 25,
+			"proved": 1,
+			"accepted": 1,
+			"reused": 1,
+			"model_hours": 31.4,
+			"prompt_tokens": 64002028,
+			"cached_tokens": 59753903,
+			"output_tokens": 2678190
+		},
+		{
+			"role": "comparison",
+			"leaves": 3,
+			"runs": 4,
+			"proved": 1,
+			"accepted": 1,
+			"reused": 0,
+			"model_hours": 24.0,
+			"prompt_tokens": 48805198,
+			"cached_tokens": 45994911,
+			"output_tokens": 2048046
+		}
+	],
+	"tasks": [
+		{
+			"project": "prove2me",
+			"id": "t1-A01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 29,
+			"model_min": 24.8,
+			"tokens": 960625,
+			"started_at": "2026-11-07T16:45:55Z",
+			"finished_at": "2026-11-07T17:11:46Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-6c35d7",
+				"alias": "A01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-A02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 7,
+			"model_min": 26.4,
+			"tokens": 245264,
+			"started_at": "2026-11-07T17:22:31Z",
+			"finished_at": "2026-11-07T17:53:46Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-2499fd",
+				"alias": "A02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-A03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 25,
+			"model_min": 29.5,
+			"tokens": 1681478,
+			"started_at": "2026-11-07T17:56:38Z",
+			"finished_at": "2026-11-07T18:28:39Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-12ea27",
+				"alias": "A03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-A04",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 20,
+			"model_min": 30.0,
+			"tokens": 666642,
+			"started_at": "2026-11-07T18:29:29Z",
+			"finished_at": "2026-11-07T19:00:30Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-f10c9d",
+				"alias": "A04"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-B01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 14,
+			"model_min": 29.0,
+			"tokens": 537969,
+			"started_at": "2026-11-07T19:01:22Z",
+			"finished_at": "2026-11-07T19:32:22Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-35e2da",
+				"alias": "B01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-B02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 3,
+			"model_min": 0.2,
+			"tokens": 105364,
+			"started_at": "2026-11-07T19:46:33Z",
+			"finished_at": "2026-11-07T20:28:11Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-ca216e",
+				"alias": "B02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-B03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 29,
+			"model_min": 16.1,
+			"tokens": 1113865,
+			"started_at": "2026-11-07T20:28:44Z",
+			"finished_at": "2026-11-07T20:45:55Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-87ebdd",
+				"alias": "B03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-B04",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 26,
+			"model_min": 29.0,
+			"tokens": 1248847,
+			"started_at": "2026-11-07T20:46:24Z",
+			"finished_at": "2026-11-07T21:17:40Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-5e7987",
+				"alias": "B04"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-B05",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 19,
+			"model_min": 19.2,
+			"tokens": 730032,
+			"started_at": "2026-11-07T21:29:48Z",
+			"finished_at": "2026-11-07T22:30:04Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-42603f",
+				"alias": "B05"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t1-B06",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no_solution",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 30,
+			"model_min": 9.9,
+			"tokens": 1033217,
+			"started_at": "2026-11-07T22:30:07Z",
+			"finished_at": "2026-11-07T22:41:23Z",
+			"labels": {
+				"trial": "1",
+				"leaf": "p2m-6ed316",
+				"alias": "B06"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-C01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 27,
+			"model_min": 20.8,
+			"tokens": 635629,
+			"started_at": "2026-11-08T19:03:33Z",
+			"finished_at": "2026-11-08T19:26:42Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-7ab928",
+				"alias": "C01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-C02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 17,
+			"model_min": 11.6,
+			"tokens": 252749,
+			"started_at": "2026-11-08T09:28:48Z",
+			"finished_at": "2026-11-08T09:41:11Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-81b93a",
+				"alias": "C02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-C03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 27,
+			"model_min": 65.1,
+			"tokens": 915021,
+			"started_at": "2026-11-08T19:27:31Z",
+			"finished_at": "2026-11-08T22:02:30Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-12f452",
+				"alias": "C03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-C04",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 12,
+			"model_min": 5.2,
+			"tokens": 126662,
+			"started_at": "2026-11-08T10:39:04Z",
+			"finished_at": "2026-11-08T10:45:10Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-12087d",
+				"alias": "C04"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-C05",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 68,
+			"model_min": 49.5,
+			"tokens": 2563370,
+			"started_at": "2026-11-08T10:47:47Z",
+			"finished_at": "2026-11-08T11:49:54Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-8b8abc",
+				"alias": "C05"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-C06",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 57,
+			"model_min": 61.7,
+			"tokens": 2616776,
+			"started_at": "2026-11-08T11:49:54Z",
+			"finished_at": "2026-11-08T12:59:55Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-dfe8e4",
+				"alias": "C06"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-A01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 45,
+			"model_min": 68.1,
+			"tokens": 1446893,
+			"started_at": "2026-11-08T13:00:13Z",
+			"finished_at": "2026-11-08T14:13:12Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-6c35d7",
+				"alias": "A01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-A02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 46,
+			"model_min": 63.5,
+			"tokens": 1989940,
+			"started_at": "2026-11-08T14:14:08Z",
+			"finished_at": "2026-11-08T15:31:04Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-2499fd",
+				"alias": "A02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-A03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 36,
+			"model_min": 60.1,
+			"tokens": 2227440,
+			"started_at": "2026-11-08T15:32:02Z",
+			"finished_at": "2026-11-08T16:53:25Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-12ea27",
+				"alias": "A03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t2-A04",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 45,
+			"model_min": 63.4,
+			"tokens": 1792406,
+			"started_at": "2026-11-08T16:53:29Z",
+			"finished_at": "2026-11-08T18:58:17Z",
+			"labels": {
+				"trial": "2",
+				"leaf": "p2m-f10c9d",
+				"alias": "A04"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-F01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 59,
+			"model_min": 79.3,
+			"tokens": 3076754,
+			"started_at": "2026-11-09T19:19:01Z",
+			"finished_at": "2026-11-09T21:00:46Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-a146ce",
+				"alias": "F01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-F02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 42,
+			"model_min": 78.0,
+			"tokens": 1937273,
+			"started_at": "2026-11-09T21:01:49Z",
+			"finished_at": "2026-11-09T23:58:18Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-c3c3c4",
+				"alias": "F02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-F03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 19,
+			"model_min": 69.8,
+			"tokens": 671346,
+			"started_at": "2026-11-10T00:01:11Z",
+			"finished_at": "2026-11-10T19:39:38Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-8503e6",
+				"alias": "F03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-O01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 59,
+			"model_min": 78.5,
+			"tokens": 3347315,
+			"started_at": "2026-11-10T19:40:47Z",
+			"finished_at": "2026-11-10T21:17:08Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-c0eca8",
+				"alias": "O01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-O02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 49,
+			"model_min": 94.5,
+			"tokens": 2773931,
+			"started_at": "2026-11-10T21:18:01Z",
+			"finished_at": "2026-11-11T22:43:53Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-83aae8",
+				"alias": "O02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-O03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 35,
+			"model_min": 80.6,
+			"tokens": 1222869,
+			"started_at": "2026-11-11T22:46:54Z",
+			"finished_at": "2026-11-12T00:19:52Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-d1f097",
+				"alias": "O03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-O04",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 47,
+			"model_min": 53.9,
+			"tokens": 1242400,
+			"started_at": "2026-11-12T00:20:42Z",
+			"finished_at": "2026-11-12T01:46:43Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-7f145a",
+				"alias": "O04"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-C07",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 60,
+			"model_min": 63.6,
+			"tokens": 2512891,
+			"started_at": "2026-11-12T01:47:45Z",
+			"finished_at": "2026-11-12T02:59:42Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-3ad60f",
+				"alias": "C07"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-C08",
+			"kind": "run",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 65,
+			"model_min": 42.4,
+			"tokens": 2189476,
+			"started_at": "2026-11-12T03:00:03Z",
+			"finished_at": "2026-11-12T03:47:55Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-eb3303",
+				"alias": "C08"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-C09",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 48,
+			"model_min": 57.5,
+			"tokens": 2181962,
+			"started_at": "2026-11-12T03:48:03Z",
+			"finished_at": "2026-11-12T04:58:33Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-2b384d",
+				"alias": "C09"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t3-C10",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 21,
+			"model_min": 9.0,
+			"tokens": 615845,
+			"started_at": "2026-11-12T04:59:18Z",
+			"finished_at": "2026-11-12T05:12:41Z",
+			"labels": {
+				"trial": "3",
+				"leaf": "p2m-479463",
+				"alias": "C10"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-C11",
+			"kind": "run",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 20,
+			"model_min": 3.7,
+			"tokens": 249853,
+			"started_at": "2026-11-12T15:34:02Z",
+			"finished_at": "2026-11-12T15:52:03Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-63eff5",
+				"alias": "C11"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-C12",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 15,
+			"model_min": 50.4,
+			"tokens": 440903,
+			"started_at": "2026-11-12T15:34:06Z",
+			"finished_at": "2026-11-12T18:12:19Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-6f7dce",
+				"alias": "C12"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-A03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no-progress",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 13,
+			"model_min": 65.4,
+			"tokens": 445075,
+			"started_at": "2026-11-12T15:52:38Z",
+			"finished_at": "2026-11-12T17:26:02Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-12ea27",
+				"alias": "A03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-A04",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 43,
+			"model_min": 83.0,
+			"tokens": 1887365,
+			"started_at": "2026-11-12T18:13:34Z",
+			"finished_at": "2026-11-12T19:43:41Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-f10c9d",
+				"alias": "A04"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-F01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 45,
+			"model_min": 81.1,
+			"tokens": 1765503,
+			"started_at": "2026-11-12T19:45:01Z",
+			"finished_at": "2026-11-12T21:35:57Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-a146ce",
+				"alias": "F01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-O01",
+			"kind": "run",
+			"state": "done",
+			"outcome": "no-progress",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 52,
+			"model_min": 65.2,
+			"tokens": 2026957,
+			"started_at": "2026-11-12T21:03:15Z",
+			"finished_at": "2026-11-12T22:34:04Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-c0eca8",
+				"alias": "O01"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-O02",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 48,
+			"model_min": 85.3,
+			"tokens": 2212464,
+			"started_at": "2026-11-12T23:16:51Z",
+			"finished_at": "2026-11-13T00:52:32Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-83aae8",
+				"alias": "O02"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t4-O03",
+			"kind": "run",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 39,
+			"model_min": 85.2,
+			"tokens": 1663158,
+			"started_at": "2026-11-13T00:53:44Z",
+			"finished_at": "2026-11-13T02:26:03Z",
+			"labels": {
+				"trial": "4",
+				"leaf": "p2m-d1f097",
+				"alias": "O03"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01",
+			"kind": "outline",
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 29,
+			"model_min": 25.4,
+			"tokens": 1188719,
+			"started_at": "2026-11-13T16:07:00Z",
+			"finished_at": "2026-11-13T17:21:30Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h01",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 25,
+			"model_min": 19.5,
+			"tokens": 822716,
+			"started_at": "2026-11-13T21:03:43Z",
+			"finished_at": "2026-11-13T21:27:19Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h02",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 35,
+			"model_min": 38.8,
+			"tokens": 1317292,
+			"started_at": "2026-11-13T21:28:38Z",
+			"finished_at": "2026-11-13T22:13:53Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h03",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 32,
+			"model_min": 19.6,
+			"tokens": 879658,
+			"started_at": "2026-11-13T21:40:28Z",
+			"finished_at": "2026-11-13T22:03:00Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "3"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h04",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 81,
+			"model_min": 93.9,
+			"tokens": 5125493,
+			"started_at": "2026-11-13T21:42:31Z",
+			"finished_at": "2026-11-13T23:27:13Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "4"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h05",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 20,
+			"model_min": 6.3,
+			"tokens": 331606,
+			"started_at": "2026-11-13T22:03:34Z",
+			"finished_at": "2026-11-13T22:10:57Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "5"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h06",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 92,
+			"model_min": 130.2,
+			"tokens": 5406820,
+			"started_at": "2026-11-13T22:11:30Z",
+			"finished_at": "2026-11-14T01:27:18Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "6"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h06-a2",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 2,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": "t5-F01-h06",
+			"replaces": null,
+			"steps": 65,
+			"model_min": 130.6,
+			"tokens": 3440858,
+			"started_at": "2026-11-14T09:07:05Z",
+			"finished_at": "2026-11-14T11:28:40Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "6"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h07",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 45,
+			"model_min": 130.3,
+			"tokens": 3217987,
+			"started_at": "2026-11-13T22:15:00Z",
+			"finished_at": "2026-11-14T03:33:16Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "7"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-h07-a2",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "refused",
+			"try": 2,
+			"parent": "t5-F01",
+			"needs": [],
+			"retry_of": "t5-F01-h07",
+			"replaces": null,
+			"steps": 105,
+			"model_min": 130.4,
+			"tokens": 6349930,
+			"started_at": "2026-11-14T09:39:10Z",
+			"finished_at": "2026-11-14T12:08:24Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "1",
+				"hole": "7"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2",
+			"kind": "outline",
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": "t5-F01",
+			"steps": 27,
+			"model_min": 33.1,
+			"tokens": 1298779,
+			"started_at": "2026-11-14T11:32:00Z",
+			"finished_at": "2026-11-14T12:07:32Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h01",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 31,
+			"model_min": 39.0,
+			"tokens": 1449586,
+			"started_at": "2026-11-14T12:29:35Z",
+			"finished_at": "2026-11-14T13:12:47Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h02",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 36,
+			"model_min": 55.8,
+			"tokens": 2440691,
+			"started_at": "2026-11-14T12:29:48Z",
+			"finished_at": "2026-11-14T13:30:02Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h03",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 89,
+			"model_min": 130.3,
+			"tokens": 5908843,
+			"started_at": "2026-11-14T13:14:11Z",
+			"finished_at": "2026-11-14T15:34:14Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "3"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h03-a2",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 2,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": "t5-F01-s2-h03",
+			"replaces": null,
+			"steps": 38,
+			"model_min": 90.1,
+			"tokens": 2004212,
+			"started_at": "2026-11-14T15:35:03Z",
+			"finished_at": "2026-11-14T17:10:32Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "3"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h04",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 38,
+			"model_min": 66.7,
+			"tokens": 2811223,
+			"started_at": "2026-11-14T13:30:47Z",
+			"finished_at": "2026-11-14T14:40:45Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "4"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h05",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 18,
+			"model_min": 13.5,
+			"tokens": 515441,
+			"started_at": "2026-11-14T14:41:51Z",
+			"finished_at": "2026-11-14T14:56:51Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "5"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-h06",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 39,
+			"model_min": 55.3,
+			"tokens": 2245447,
+			"started_at": "2026-11-14T14:57:34Z",
+			"finished_at": "2026-11-14T15:58:45Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2",
+				"hole": "6"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-F01-s2-asm",
+			"kind": "assembly",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-F01-s2",
+			"needs": [
+				"t5-F01-s2-h01",
+				"t5-F01-s2-h02",
+				"t5-F01-s2-h03-a2",
+				"t5-F01-s2-h04",
+				"t5-F01-s2-h05",
+				"t5-F01-s2-h06"
+			],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 0,
+			"model_min": 0.0,
+			"tokens": 0,
+			"started_at": null,
+			"finished_at": null,
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-a146ce",
+				"alias": "F01",
+				"outline": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-C12",
+			"kind": "outline",
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 66,
+			"model_min": 110.2,
+			"tokens": 3910250,
+			"started_at": "2026-11-13T16:07:17Z",
+			"finished_at": "2026-11-13T19:01:00Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-6f7dce",
+				"alias": "C12",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-C12-h01",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t5-C12",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 25,
+			"model_min": 25.1,
+			"tokens": 917068,
+			"started_at": "2026-11-14T03:34:50Z",
+			"finished_at": "2026-11-14T04:02:39Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-6f7dce",
+				"alias": "C12",
+				"outline": "1",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-C12-asm",
+			"kind": "assembly",
+			"state": "done",
+			"outcome": "assembly_failed",
+			"try": 1,
+			"parent": "t5-C12",
+			"needs": [
+				"t5-C12-h01"
+			],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 0,
+			"model_min": 0.0,
+			"tokens": 0,
+			"started_at": null,
+			"finished_at": null,
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-6f7dce",
+				"alias": "C12",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-C12-asm-a2",
+			"kind": "assembly",
+			"state": "done",
+			"outcome": "proved",
+			"try": 2,
+			"parent": "t5-C12",
+			"needs": [
+				"t5-C12-h01"
+			],
+			"retry_of": "t5-C12-asm",
+			"replaces": null,
+			"steps": 0,
+			"model_min": 0.0,
+			"tokens": 0,
+			"started_at": null,
+			"finished_at": null,
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-6f7dce",
+				"alias": "C12",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02",
+			"kind": "outline",
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 32,
+			"model_min": 55.8,
+			"tokens": 1802440,
+			"started_at": "2026-11-13T16:24:24Z",
+			"finished_at": "2026-11-13T17:24:04Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-h01",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "infra",
+			"try": 1,
+			"parent": "t5-O02",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 18,
+			"model_min": 18.9,
+			"tokens": 428010,
+			"started_at": "2026-11-13T17:48:20Z",
+			"finished_at": "2026-11-13T20:08:22Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-h01-a2",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "no-progress",
+			"try": 2,
+			"parent": "t5-O02",
+			"needs": [],
+			"retry_of": "t5-O02-h01",
+			"replaces": null,
+			"steps": 91,
+			"model_min": 110.0,
+			"tokens": 5874112,
+			"started_at": "2026-11-14T04:03:51Z",
+			"finished_at": "2026-11-14T06:05:20Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-h02",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "no-progress",
+			"try": 1,
+			"parent": "t5-O02",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 25,
+			"model_min": 110.2,
+			"tokens": 1092163,
+			"started_at": "2026-11-13T18:57:01Z",
+			"finished_at": "2026-11-13T21:02:08Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1",
+				"hole": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-h02-a2",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "refused",
+			"try": 2,
+			"parent": "t5-O02",
+			"needs": [],
+			"retry_of": "t5-O02-h02",
+			"replaces": null,
+			"steps": 127,
+			"model_min": 87.6,
+			"tokens": 7452566,
+			"started_at": "2026-11-14T06:06:33Z",
+			"finished_at": "2026-11-14T07:44:56Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1",
+				"hole": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-h03",
+			"kind": "hole",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": "t5-O02",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 82,
+			"model_min": 130.4,
+			"tokens": 5394163,
+			"started_at": "2026-11-13T19:08:17Z",
+			"finished_at": "2026-11-13T21:41:16Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1",
+				"hole": "3"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-rest",
+			"kind": "rest",
+			"state": "done",
+			"outcome": "no-progress",
+			"try": 1,
+			"parent": "t5-O02",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 100,
+			"model_min": 68.0,
+			"tokens": 6191384,
+			"started_at": "2026-11-13T20:09:50Z",
+			"finished_at": "2026-11-13T21:40:05Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-s2",
+			"kind": "outline",
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": "t5-O02",
+			"steps": 44,
+			"model_min": 61.0,
+			"tokens": 2490931,
+			"started_at": "2026-11-14T07:46:08Z",
+			"finished_at": "2026-11-14T08:51:12Z",
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-s2-h01",
+			"kind": "hole",
+			"state": "cancelled",
+			"outcome": null,
+			"try": 1,
+			"parent": "t5-O02-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": null,
+			"model_min": null,
+			"tokens": null,
+			"started_at": null,
+			"finished_at": null,
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "2",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t5-O02-s2-rest",
+			"kind": "rest",
+			"state": "cancelled",
+			"outcome": null,
+			"try": 1,
+			"parent": "t5-O02-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": null,
+			"model_min": null,
+			"tokens": null,
+			"started_at": null,
+			"finished_at": null,
+			"labels": {
+				"trial": "5",
+				"leaf": "p2m-83aae8",
+				"alias": "O02",
+				"outline": "2"
+			}
 		}
 	]
 }

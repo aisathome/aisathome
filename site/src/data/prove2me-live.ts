@@ -411,3 +411,30 @@ export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): str
 export function leafTokensText(d: LeafDetail, soFar: boolean): string {
 	return `${d.exact ? '' : 'at least '}${compact(d.total)} Qwen tokens${soFar ? ' so far' : ''}, ${compact(d.computed)} computed`;
 }
+
+// ---- The table of every leaf (2026-11-14): its outcome labels, and the sort the browser applies (filters and sort are
+// the browser's; the build's table is in the export's order, by first tried).
+
+export const leafOutcomes = ['accepted', 'reused', 'proved', 'not_proved', 'stopped', 'not_scored'] as const;
+export const leafOutcomeLabel: Record<string, string> = {
+	accepted: 'Accepted by prove2me',
+	reused: 'Closed by reuse',
+	proved: 'Proved',
+	not_proved: 'Not proved',
+	stopped: 'Stopped',
+	not_scored: 'Not scored',
+};
+export const leafRoleLabel: Record<string, string> = { calibration: 'Calibration', open: 'Open', comparison: 'Comparison' };
+
+export type LeafSortKey = 'leaf' | 'theorem' | 'first' | 'outcome' | 'tokens' | 'minutes';
+export type LeafSort = { key: LeafSortKey; dir: 'asc' | 'desc' };
+/** A row's sort values: text for leaf and theorem, numbers for the rest (null: none, always last). */
+export type LeafKeys = { leaf: string; theorem: string; first: number; outcome: number; tokens: number | null; minutes: number | null; order: number };
+/** Names and dates go up first, the outcome best first, tokens and minutes most first. */
+export const leafFirstDir = (k: LeafSortKey): 'asc' | 'desc' => (k === 'tokens' || k === 'minutes' ? 'desc' : 'asc');
+export function compareLeaves(a: LeafKeys, b: LeafKeys, s: LeafSort): number {
+	const x = a[s.key], y = b[s.key];
+	if (x === null || y === null) return x === y ? a.order - b.order : x === null ? 1 : -1;
+	const c = typeof x === 'string' ? x.localeCompare(y as string) : (x as number) - (y as number);
+	return (s.dir === 'asc' ? c : -c) || a.order - b.order;
+}
