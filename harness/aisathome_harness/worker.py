@@ -285,19 +285,26 @@ class Worker:
 
     def resume(self, rec: dict):
         """A task this worker holds: its lease if still valid, else claimed back by id; then run on (the
-        child resumes from the checkpoint) or report what is owed."""
+        child resumes from the checkpoint) or report what is owed. Only 404 or 409 (no such task, not claimable)
+        mean it is not ours any more; any other answer (503: the queue's disk) or none keeps everything held
+        and asks again at the next step."""
         tid = rec["task"]
         try:
-            code, _ = self.c.heartbeat(tid, self.name, rec["lease"])
-            if code != 200:
+            code, body = self.c.heartbeat(tid, self.name, rec["lease"])
+            if code in (404, 409):
                 code, body = self.c.claim(self.name, self.lease_s, task=tid, hold_seconds=self.hold_s)
-                if code != 200:
+                if code in (404, 409):
                     self.log(f"[{tid}] not ours any more (HTTP {code} {error_text(body)}); its folders go")
                     self.release(tid)
                     self.cleanup(rec)
                     return
-                rec["lease"] = body["lease"]["id"]
-                self.log(f"[{tid}] taken back ({last_note(body['task'])})")
+                if code == 200:
+                    rec["lease"] = body["lease"]["id"]
+                    self.log(f"[{tid}] taken back ({last_note(body['task'])})")
+            if code != 200:
+                self.log(f"[{tid}] gateway answered HTTP {code} {error_text(body)}; held, trying again")
+                self.stopping.wait(self.poll_s)
+                return
         except OSError as e:
             self.log(f"[{tid}] gateway unreachable ({type(e).__name__}); trying again")
             self.stopping.wait(self.poll_s)

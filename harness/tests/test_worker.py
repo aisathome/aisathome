@@ -251,6 +251,30 @@ class Lifecycle(Base):
         t2 = self.q.tasks["t2"]
         self.assertEqual((t2["state"], (t2["result"] or {}).get("outcome")), ("done", "ok"), w.logs)
 
+    def test_a_transient_gateway_error_never_drops_a_held_task(self):
+        self.q.add("t1", self.spec())
+        self.q.claim("w1", task="t1")                                   # leased to w1 as L1
+        w = self.worker()
+        w.hold({"task": "t1", "lease": "L1", "spec": {**self.spec(), "task": "t1"}, "phase": "unreported", "since": 0})
+        real_hb, real_claim = self.q.heartbeat, self.q.claim
+        unavailable = (503, {"error": {"message": "the task queue cannot be read; try again shortly"}})
+        # the heartbeat itself answers 503: the lease may well be valid; no claim, nothing dropped
+        self.q.heartbeat = lambda *a: unavailable
+        w.step()
+        self.assertEqual(w.held()[0]["phase"], "unreported")
+        self.assertEqual([c for c in self.q.calls if c[0] == "claim" and c[2] == "t1"], [("claim", "w1", "t1", None, None)])
+        # the lease is gone (409) and the claim back answers 503: still held
+        self.q.heartbeat = lambda *a: (409, {"error": {"message": "lease lost"}})
+        self.q.claim = lambda *a, **k: unavailable
+        w.step()
+        self.assertEqual(w.held()[0]["phase"], "unreported")
+        self.assertNotIn("cleanup t1", self.events())
+        # the gateway is back: the task goes on
+        self.q.heartbeat, self.q.claim = real_hb, real_claim
+        w.run_forever(once=True)
+        self.assertEqual(self.q.tasks["t1"]["state"], "done")
+        self.assertEqual(w.held(), [])
+
     def test_a_crash_fails_the_task_and_three_in_a_row_pause_the_worker(self):
         for i in range(4):
             self.q.add(f"t{i}", self.spec(mode="crash"))
