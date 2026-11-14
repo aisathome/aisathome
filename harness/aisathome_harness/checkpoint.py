@@ -116,7 +116,7 @@ class Part:
     name: str
     path: Path
     exclude: tuple[str, ...] = ()       # paths inside the part left out (rebuilt on restore, e.g. ".lake/packages")
-    optional: bool = False              # packed when present; a checkpoint without it restores without it
+    optional: bool = False              # packed when present; a checkpoint without it removes it here
     clear: Path | None = None           # removed (Layout.remove) and made empty before the part is placed
 
 
@@ -254,12 +254,17 @@ def _fetch(st, prefix: str, which: str, dest: Path) -> dict | None:
     return m if sha256_file(dest) == m.get("sha256") else None
 
 
+def remove_path(p: Path):
+    """p removed without following links (nothing when it is not there)."""
+    if p.is_symlink() or p.is_file():
+        p.unlink()
+    elif p.exists():
+        shutil.rmtree(p)
+
+
 def replace_dir(src: Path, dst: Path):
     """dst becomes src (removed without following links, never as root)."""
-    if dst.is_symlink() or dst.is_file():
-        dst.unlink()
-    elif dst.exists():
-        shutil.rmtree(dst)
+    remove_path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))        # the parts may be on other file systems than the staging directory
 
@@ -312,6 +317,8 @@ def restore(st, lay: Layout, prefix: str, after: Callable[[], None] | None = Non
                 c.mkdir(parents=True)
             if (out / p.name).exists():
                 replace_dir(out / p.name, Path(p.path))
+            else:                                # an optional part the checkpoint has not: none here either
+                remove_path(Path(p.path))
         if after:
             after()
         mark(lay, m)

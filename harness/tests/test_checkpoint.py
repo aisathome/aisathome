@@ -145,6 +145,19 @@ class Checkpoints(unittest.TestCase):
         self.assertFalse((self.b / "state/t1/overlay").exists())
         self.assertTrue((self.b / "state/t1/base/HEAD").exists())
 
+    def test_an_optional_part_the_checkpoint_lacks_goes_here_too(self):
+        def lay(root):
+            return K.Layout(task="t1", parts=[K.Part("home", root / "home" / "t1"),
+                                              K.Part("extra", root / "extra" / "t1", optional=True)],
+                            notes=root / "notes", needs=(root / "home" / "t1",))
+        fill(self.a)
+        K.save(self.st, lay(self.a), self.pre, "round", log=self.logs.append)          # no extra/ on a
+        (self.b / "extra" / "t1").mkdir(parents=True)
+        (self.b / "extra" / "t1" / "stale").write_text("from an older checkpoint\n")
+        self.assertEqual(K.restore(self.st, lay(self.b), self.pre, log=self.logs.append)["seq"], 1)
+        self.assertTrue((self.b / "home" / "t1" / "notes.md").exists())
+        self.assertFalse((self.b / "extra" / "t1").exists())
+
     def test_nothing_to_save_and_a_checkpoint_without_a_part(self):
         with self.assertRaises(K.StoreError):
             K.save(self.st, machine(self.d / "empty"), self.pre, "round")
