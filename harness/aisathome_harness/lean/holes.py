@@ -493,14 +493,31 @@ def _binder_names(seg: str) -> list[str]:
     return out
 
 
+_OPEN, _CLOSE = "([{⦃⟨", ")]}⦄⟩"
+
+
+def _binders_part(head: str) -> str:
+    """The header up to its top-level `:` (the declaration's type follows): only there are bracketed groups
+    binders; in the type, `(h : T)` is a term with a type ascription and `h` a use."""
+    depth = 0
+    for i, ch in enumerate(head):
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(depth - 1, 0)
+        elif ch == ":" and depth == 0 and head[i + 1:i + 2] not in ("=", ":"):
+            return head[:i]
+    return head
+
+
 def _locals(code: str) -> set[str]:
-    """The names a declaration binds locally (best effort): its header's binder groups (`(h : T)`), the
-    binders of `fun`, `λ`, `∀`, `∃`, the names of `intro`, `rintro`, `obtain`, `let`, `have`, `set`, the
-    patterns after `with` and in `| ctor a b =>` alternatives. A bare use of such a name is the local, not a
+    """The names a declaration binds locally (best effort): its header's binder groups before the type
+    (`(h : T)`), the binders of `fun`, `λ`, `∀`, `∃`, the names of `intro`, `rintro`, `obtain`, `let`, `have`,
+    `set`, the patterns after `with` and in `| ctor a b =>` alternatives. A bare use of such a name is the local, not a
     declaration of the same name; a qualified one (`_root_.h`, `Foo.h`) is still the declaration."""
     head = re.split(r":=|(?<![\w'])where(?![\w'])|^\|", code, maxsplit=1, flags=re.M)[0]
     out: set[str] = set()
-    for m in _HEADER_BINDER.finditer(head):
+    for m in _HEADER_BINDER.finditer(_binders_part(head)):
         out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
     for rx in (_BINDS_TO_ARROW, _BINDS_TO_EOL):
         for m in rx.finditer(code):

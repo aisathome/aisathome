@@ -60,9 +60,10 @@ same behaviour).
 
 - `lean.holes.context_text`: a local binder with the same name as a theorem it left out is no longer a use of
   that theorem. After `theorem h : True := by sorry`, the independent `def keep (h : Nat) : Nat := h` was left
-  out too (and what used `keep`). The names a declaration binds (its header's binder groups, `fun`, `∀`, `∃`,
-  `intro`, `obtain`, `have`, `let`, patterns after `with` and in `|` alternatives) shadow a bare use of the
-  same name; a qualified use (`_root_.h`, `Foo.h`) still counts. Best effort: a local bound anywhere in the
+  out too (and what used `keep`). The names a declaration binds (its header's binder groups before its type,
+  `fun`, `∀`, `∃`, `intro`, `obtain`, `have`, `let`, patterns after `with` and in `|` alternatives) shadow a
+  bare use of the same name; a qualified use (`_root_.h`, `Foo.h`) still counts, and so does `(h : T)` in the
+  type, a term with a type ascription. Best effort: a local bound anywhere in the
   declaration shadows the name in all of it.
 
 ## [0.2.1] - unreleased
