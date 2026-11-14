@@ -2,25 +2,25 @@
 	"project": "prove2me",
 	"project_url": "https://prove2.me/",
 	"model": "Qwen3.8 27B",
-	"generated_at": "2026-11-14T10:05:58Z",
+	"generated_at": "2026-11-14T20:54:24Z",
 	"as_of": "2026-11-14",
 	"lean": "v4.33.1",
 	"mathlib": "0df444a",
 	"totals": {
-		"runs": 39,
-		"proved": 8,
-		"scored": 36,
-		"calibration_runs": 12,
-		"calibration_proved": 7,
-		"open_runs": 27,
+		"runs": 42,
+		"proved": 10,
+		"scored": 38,
+		"calibration_runs": 13,
+		"calibration_proved": 8,
+		"open_runs": 29,
 		"open_leaves": 17,
-		"open_leaves_proved": 1,
-		"model_hours": 31.8,
-		"prompt_tokens": 52701754,
-		"cached_tokens": 47618438,
-		"output_tokens": 2651775,
-		"submitted": 1,
-		"accepted": 1
+		"open_leaves_proved": 2,
+		"model_hours": 64.9,
+		"prompt_tokens": 132058593,
+		"cached_tokens": 123891070,
+		"output_tokens": 5603324,
+		"submitted": 2,
+		"accepted": 2
 	},
 	"submissions": [
 		{
@@ -32,542 +32,28 @@
 			"submitted_at": "2026-11-12T06:49:21Z",
 			"verdict": "accepted",
 			"verdict_at": "2026-11-12T06:51:23Z"
+		},
+		{
+			"leaf": "F01",
+			"trial": 5,
+			"theorem": "CodedSorting.proposition_7_1_transpose",
+			"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
+			"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
+			"submitted_at": "2026-11-14T20:08:33Z",
+			"verdict": "accepted",
+			"verdict_at": "2026-11-14T20:10:51Z"
 		}
 	],
 	"current": {
-		"trial": 5,
-		"start": "2026-11-13",
-		"scaffold": "v5",
-		"caps": "90 steps / 90 min for the outline and for each hole, then 2 fix rounds of 20 / 20",
-		"summary": "The model first writes an outline of the proof in which every step it has not proved is a sorry hole. Each hole then becomes a task of its own with its own 90 minutes, after a quick pass of standard tactics, and a ledger keeps every hole that Lean has checked, so no proved step is lost between tries.",
+		"trial": 6,
+		"state": "preparing",
+		"start": null,
+		"scaffold": "v6",
+		"caps": "one round of 110 steps / 110 min for the outline and for each hole, then one fix round of 20 / 20",
+		"summary": "Scaffold v6, from what trial 5 taught. The outline follows the leaf’s own method when its statement names one, and an outline whose hole is the leaf’s main claim is refused. Every hole is first checked for a counterexample with Lean’s plausible, and holes about powers and digits get arithmetic hints. New is our own index of prove2me’s public library (Formalpedia, 333,690 statements): the agent never re-proves what is already proved there, may import proved theorems, and sees similar proved statements with their proofs. The leaves will be one calibration leaf and two or three easier open leaves, chosen by quick outline probes.",
 		"holes_as_of": null,
-		"leaves": [
-			{
-				"leaf": "F01",
-				"group": "open",
-				"theorem": "CodedSorting.proposition_7_1_transpose",
-				"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
-				"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
-				"state": "running",
-				"outline": "finished",
-				"hole_tasks": {
-					"n": 7,
-					"proved": 5,
-					"running": 0,
-					"queued": 0
-				},
-				"earlier": [
-					3,
-					4
-				],
-				"outlines": [
-					{
-						"gen": 1,
-						"holes": 7,
-						"lemmas": 7,
-						"inplace": 0,
-						"prepass": {
-							"tried": 7,
-							"closed": 0,
-							"seconds": 709,
-							"by": {}
-						},
-						"prepass_holes": [
-							{
-								"hole": 1,
-								"closed_by": null,
-								"timed_out": true
-							},
-							{
-								"hole": 2,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 3,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 4,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 5,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 6,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 7,
-								"closed_by": null,
-								"timed_out": false
-							}
-						]
-					}
-				]
-			},
-			{
-				"leaf": "C12",
-				"group": "calibration",
-				"theorem": "InsiderDonations.price_recast",
-				"title": "§3.2, p.9 — $P^*=\\eta v+[1-\\eta]\\bar v-\\lambda^*u-\\sum_i(\\psi_i-\\bar\\psi)/(2\\tau_o)$",
-				"url": "https://prove2.me/theorems/6f7dce87-64fd-41e3-89fe-10985097e615",
-				"state": "queued",
-				"outline": "finished",
-				"hole_tasks": {
-					"n": 1,
-					"proved": 1,
-					"running": 0,
-					"queued": 0
-				},
-				"earlier": [
-					4
-				],
-				"outlines": [
-					{
-						"gen": 1,
-						"holes": 1,
-						"lemmas": 1,
-						"inplace": 0,
-						"prepass": {
-							"tried": 1,
-							"closed": 0,
-							"seconds": 71,
-							"by": {}
-						},
-						"prepass_holes": [
-							{
-								"hole": 1,
-								"closed_by": null,
-								"timed_out": false
-							}
-						]
-					}
-				]
-			},
-			{
-				"leaf": "O02",
-				"group": "open",
-				"theorem": "BBPSSW.Distill.typical_set_sqrt",
-				"title": "Typical sets of size $2^{H+O(\\sqrt n)}$ carry almost all the weight",
-				"url": "https://prove2.me/theorems/83aae809-f2aa-433a-a5ed-c4380d0447d2",
-				"state": "cancelled",
-				"outline": "finished",
-				"hole_tasks": {
-					"n": 4,
-					"proved": 0,
-					"running": 0,
-					"queued": 0
-				},
-				"earlier": [
-					3,
-					4
-				],
-				"outlines": [
-					{
-						"gen": 1,
-						"holes": 6,
-						"lemmas": 3,
-						"inplace": 3,
-						"prepass": {
-							"tried": 3,
-							"closed": 0,
-							"seconds": 268,
-							"by": {}
-						},
-						"prepass_holes": [
-							{
-								"hole": 1,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 2,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 3,
-								"closed_by": null,
-								"timed_out": false
-							}
-						]
-					},
-					{
-						"gen": 2,
-						"holes": 12,
-						"lemmas": 1,
-						"inplace": 11,
-						"prepass": {
-							"tried": 1,
-							"closed": 0,
-							"seconds": 118,
-							"by": {}
-						},
-						"prepass_holes": [
-							{
-								"hole": 1,
-								"closed_by": null,
-								"timed_out": true
-							}
-						]
-					}
-				]
-			}
-		],
-		"tasks": [
-			{
-				"id": "t5-C12",
-				"leaf": "C12",
-				"role": "skeleton",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 66,
-				"model_minutes": 110.2,
-				"prompt_tokens": 3754489,
-				"cached_tokens": 3539504,
-				"output_tokens": 155761
-			},
-			{
-				"id": "t5-C12-h01",
-				"leaf": "C12",
-				"role": "hole",
-				"gen": 1,
-				"hole": 1,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 25,
-				"model_minutes": 25.1,
-				"prompt_tokens": 871080,
-				"cached_tokens": 819942,
-				"output_tokens": 45988
-			},
-			{
-				"id": "t5-C12-asm",
-				"leaf": "C12",
-				"role": "asm",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "queued",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": 0,
-				"cached_tokens": 0,
-				"output_tokens": 0
-			},
-			{
-				"id": "t5-F01",
-				"leaf": "F01",
-				"role": "skeleton",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 29,
-				"model_minutes": 25.4,
-				"prompt_tokens": 1150455,
-				"cached_tokens": 1054156,
-				"output_tokens": 38264
-			},
-			{
-				"id": "t5-F01-h01",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 1,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 25,
-				"model_minutes": 19.5,
-				"prompt_tokens": 791550,
-				"cached_tokens": 742914,
-				"output_tokens": 31166
-			},
-			{
-				"id": "t5-F01-h02",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 2,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 35,
-				"model_minutes": 38.8,
-				"prompt_tokens": 1249877,
-				"cached_tokens": 1082189,
-				"output_tokens": 67415
-			},
-			{
-				"id": "t5-F01-h03",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 3,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 32,
-				"model_minutes": 19.6,
-				"prompt_tokens": 831044,
-				"cached_tokens": 775982,
-				"output_tokens": 48614
-			},
-			{
-				"id": "t5-F01-h04",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 4,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 81,
-				"model_minutes": 93.9,
-				"prompt_tokens": 4992159,
-				"cached_tokens": 4822309,
-				"output_tokens": 133334
-			},
-			{
-				"id": "t5-F01-h05",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 5,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 20,
-				"model_minutes": 6.3,
-				"prompt_tokens": 317394,
-				"cached_tokens": 302890,
-				"output_tokens": 14212
-			},
-			{
-				"id": "t5-F01-h06",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 6,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "compile_error",
-				"steps": 92,
-				"model_minutes": 130.2,
-				"prompt_tokens": 5223354,
-				"cached_tokens": 5043298,
-				"output_tokens": 183466
-			},
-			{
-				"id": "t5-F01-h06-a2",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 6,
-				"attempt": 2,
-				"state": "running",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			},
-			{
-				"id": "t5-F01-h07",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 7,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "compile_error",
-				"steps": 45,
-				"model_minutes": 130.3,
-				"prompt_tokens": 3040744,
-				"cached_tokens": 2883053,
-				"output_tokens": 177243
-			},
-			{
-				"id": "t5-F01-h07-a2",
-				"leaf": "F01",
-				"role": "hole",
-				"gen": 1,
-				"hole": 7,
-				"attempt": 2,
-				"state": "running",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			},
-			{
-				"id": "t5-O02",
-				"leaf": "O02",
-				"role": "skeleton",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 32,
-				"model_minutes": 55.8,
-				"prompt_tokens": 1724933,
-				"cached_tokens": 1687053,
-				"output_tokens": 77507
-			},
-			{
-				"id": "t5-O02-h01",
-				"leaf": "O02",
-				"role": "hole",
-				"gen": 1,
-				"hole": 1,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "infra",
-				"steps": 18,
-				"model_minutes": 18.9,
-				"prompt_tokens": 385902,
-				"cached_tokens": 351373,
-				"output_tokens": 42108
-			},
-			{
-				"id": "t5-O02-h01-a2",
-				"leaf": "O02",
-				"role": "hole",
-				"gen": 1,
-				"hole": 1,
-				"attempt": 2,
-				"state": "finished",
-				"outcome": "no-progress",
-				"steps": 91,
-				"model_minutes": 110.0,
-				"prompt_tokens": 5713935,
-				"cached_tokens": 5574448,
-				"output_tokens": 160177
-			},
-			{
-				"id": "t5-O02-h02",
-				"leaf": "O02",
-				"role": "hole",
-				"gen": 1,
-				"hole": 2,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "no-progress",
-				"steps": 25,
-				"model_minutes": 110.2,
-				"prompt_tokens": 955748,
-				"cached_tokens": 832463,
-				"output_tokens": 136415
-			},
-			{
-				"id": "t5-O02-h02-a2",
-				"leaf": "O02",
-				"role": "hole",
-				"gen": 1,
-				"hole": 2,
-				"attempt": 2,
-				"state": "finished",
-				"outcome": "refused",
-				"steps": 127,
-				"model_minutes": 87.6,
-				"prompt_tokens": 7321654,
-				"cached_tokens": 7184935,
-				"output_tokens": 130912
-			},
-			{
-				"id": "t5-O02-h03",
-				"leaf": "O02",
-				"role": "hole",
-				"gen": 1,
-				"hole": 3,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "refused",
-				"steps": 82,
-				"model_minutes": 130.4,
-				"prompt_tokens": 5207199,
-				"cached_tokens": 4991422,
-				"output_tokens": 186964
-			},
-			{
-				"id": "t5-O02-rest",
-				"leaf": "O02",
-				"role": "rest",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "no-progress",
-				"steps": 100,
-				"model_minutes": 68.0,
-				"prompt_tokens": 6043685,
-				"cached_tokens": 5856190,
-				"output_tokens": 147699
-			},
-			{
-				"id": "t5-O02-s2",
-				"leaf": "O02",
-				"role": "skeleton",
-				"gen": 2,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 44,
-				"model_minutes": 61.0,
-				"prompt_tokens": 2394291,
-				"cached_tokens": 2329230,
-				"output_tokens": 96640
-			},
-			{
-				"id": "t5-O02-s2-h01",
-				"leaf": "O02",
-				"role": "hole",
-				"gen": 2,
-				"hole": 1,
-				"attempt": 1,
-				"state": "cancelled",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			},
-			{
-				"id": "t5-O02-s2-rest",
-				"leaf": "O02",
-				"role": "rest",
-				"gen": 2,
-				"hole": null,
-				"attempt": 1,
-				"state": "cancelled",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			}
-		]
+		"leaves": [],
+		"tasks": []
 	},
 	"trials": [
 		{
@@ -1255,6 +741,743 @@
 					"output_tokens": 103028,
 					"earlier": [
 						3
+					]
+				}
+			]
+		},
+		{
+			"trial": 5,
+			"start": "2026-11-13",
+			"end": "2026-11-14",
+			"scaffold": "v5",
+			"caps": "90 steps / 90 min for the outline and for each hole, then 2 fix rounds of 20 / 20; up to 2 tries per task",
+			"summary": "The model first writes an outline of the proof in which every step it has not proved is a sorry hole. Each hole then becomes a task of its own, after a quick pass of standard tactics, a ledger keeps every hole Lean has checked, and an assembly puts the pieces together. 2 of 3 leaves proved. F01, an open leaf that trials 3 and 4 had failed, was proved and accepted by prove2me: its first outline left the main claim in two holes, which failed twice; a second outline split the index into four fields, as the leaf’s own statement does, and all 6 of its holes were proved and assembled on the first try. Calibration leaf C12 was proved on the second try of its assembly. We stopped O02, which is not scored.",
+			"leaves": [
+				{
+					"leaf": "F01",
+					"group": "open",
+					"theorem": "CodedSorting.proposition_7_1_transpose",
+					"title": "Proposition 7.1 (rearrangement part; companion: proposition_7_1_correctness) — $\\pi$ and $\\pi^{-1}$ are three adjacent field interchanges",
+					"url": "https://prove2.me/theorems/a146ce97-0acb-4c82-b423-3c10d4f0f2e8",
+					"outcome": "proved",
+					"proved_in_round": null,
+					"rounds": 2,
+					"scored": true,
+					"model_minutes": 1208.8,
+					"prompt_tokens": 44983923,
+					"cached_tokens": 43106072,
+					"output_tokens": 1771378,
+					"proved_in_outline": 2,
+					"tasks": [
+						{
+							"id": "t5-F01",
+							"leaf": "F01",
+							"role": "skeleton",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 29,
+							"model_minutes": 25.4,
+							"prompt_tokens": 1150455,
+							"cached_tokens": 1054156,
+							"output_tokens": 38264
+						},
+						{
+							"id": "t5-F01-h01",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 1,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 25,
+							"model_minutes": 19.5,
+							"prompt_tokens": 791550,
+							"cached_tokens": 742914,
+							"output_tokens": 31166
+						},
+						{
+							"id": "t5-F01-h02",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 2,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 35,
+							"model_minutes": 38.8,
+							"prompt_tokens": 1249877,
+							"cached_tokens": 1082189,
+							"output_tokens": 67415
+						},
+						{
+							"id": "t5-F01-h03",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 3,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 32,
+							"model_minutes": 19.6,
+							"prompt_tokens": 831044,
+							"cached_tokens": 775982,
+							"output_tokens": 48614
+						},
+						{
+							"id": "t5-F01-h04",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 4,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 81,
+							"model_minutes": 93.9,
+							"prompt_tokens": 4992159,
+							"cached_tokens": 4822309,
+							"output_tokens": 133334
+						},
+						{
+							"id": "t5-F01-h05",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 5,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 20,
+							"model_minutes": 6.3,
+							"prompt_tokens": 317394,
+							"cached_tokens": 302890,
+							"output_tokens": 14212
+						},
+						{
+							"id": "t5-F01-h06",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 6,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "compile_error",
+							"steps": 92,
+							"model_minutes": 130.2,
+							"prompt_tokens": 5223354,
+							"cached_tokens": 5043298,
+							"output_tokens": 183466
+						},
+						{
+							"id": "t5-F01-h06-a2",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 6,
+							"attempt": 2,
+							"state": "finished",
+							"outcome": "compile_error",
+							"steps": 65,
+							"model_minutes": 130.6,
+							"prompt_tokens": 3253526,
+							"cached_tokens": 3077741,
+							"output_tokens": 187332
+						},
+						{
+							"id": "t5-F01-h07",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 7,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "compile_error",
+							"steps": 45,
+							"model_minutes": 130.3,
+							"prompt_tokens": 3040744,
+							"cached_tokens": 2883053,
+							"output_tokens": 177243
+						},
+						{
+							"id": "t5-F01-h07-a2",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 1,
+							"hole": 7,
+							"attempt": 2,
+							"state": "finished",
+							"outcome": "refused",
+							"steps": 105,
+							"model_minutes": 130.4,
+							"prompt_tokens": 6170233,
+							"cached_tokens": 6071857,
+							"output_tokens": 179697
+						},
+						{
+							"id": "t5-F01-s2",
+							"leaf": "F01",
+							"role": "skeleton",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 27,
+							"model_minutes": 33.1,
+							"prompt_tokens": 1242302,
+							"cached_tokens": 1211644,
+							"output_tokens": 56477
+						},
+						{
+							"id": "t5-F01-s2-h01",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 1,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 31,
+							"model_minutes": 39.0,
+							"prompt_tokens": 1390494,
+							"cached_tokens": 1347679,
+							"output_tokens": 59092
+						},
+						{
+							"id": "t5-F01-s2-h02",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 2,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 36,
+							"model_minutes": 55.8,
+							"prompt_tokens": 2354543,
+							"cached_tokens": 2299907,
+							"output_tokens": 86148
+						},
+						{
+							"id": "t5-F01-s2-h03",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 3,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "compile_error",
+							"steps": 89,
+							"model_minutes": 130.3,
+							"prompt_tokens": 5715928,
+							"cached_tokens": 5480777,
+							"output_tokens": 192915
+						},
+						{
+							"id": "t5-F01-s2-h03-a2",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 3,
+							"attempt": 2,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 38,
+							"model_minutes": 90.1,
+							"prompt_tokens": 1902538,
+							"cached_tokens": 1759500,
+							"output_tokens": 101674
+						},
+						{
+							"id": "t5-F01-s2-h04",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 4,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 38,
+							"model_minutes": 66.7,
+							"prompt_tokens": 2710892,
+							"cached_tokens": 2644899,
+							"output_tokens": 100331
+						},
+						{
+							"id": "t5-F01-s2-h05",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 5,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 18,
+							"model_minutes": 13.5,
+							"prompt_tokens": 490373,
+							"cached_tokens": 477415,
+							"output_tokens": 25068
+						},
+						{
+							"id": "t5-F01-s2-h06",
+							"leaf": "F01",
+							"role": "hole",
+							"gen": 2,
+							"hole": 6,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 39,
+							"model_minutes": 55.3,
+							"prompt_tokens": 2156517,
+							"cached_tokens": 2027862,
+							"output_tokens": 88930
+						},
+						{
+							"id": "t5-F01-s2-asm",
+							"leaf": "F01",
+							"role": "asm",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 0,
+							"model_minutes": 0.0,
+							"prompt_tokens": 0,
+							"cached_tokens": 0,
+							"output_tokens": 0
+						}
+					],
+					"outlines": [
+						{
+							"gen": 1,
+							"holes": 7,
+							"lemmas": 7,
+							"inplace": 0,
+							"prepass": {
+								"tried": 7,
+								"closed": 0,
+								"seconds": 709,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": null,
+									"timed_out": true
+								},
+								{
+									"hole": 2,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 3,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 4,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 5,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 6,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 7,
+									"closed_by": null,
+									"timed_out": false
+								}
+							]
+						},
+						{
+							"gen": 2,
+							"holes": 6,
+							"lemmas": 6,
+							"inplace": 0,
+							"prepass": {
+								"tried": 6,
+								"closed": 0,
+								"seconds": 470,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 2,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 3,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 4,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 5,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 6,
+									"closed_by": null,
+									"timed_out": false
+								}
+							]
+						}
+					],
+					"earlier": [
+						3,
+						4
+					]
+				},
+				{
+					"leaf": "C12",
+					"group": "calibration",
+					"theorem": "InsiderDonations.price_recast",
+					"title": "§3.2, p.9 — $P^*=\\eta v+[1-\\eta]\\bar v-\\lambda^*u-\\sum_i(\\psi_i-\\bar\\psi)/(2\\tau_o)$",
+					"url": "https://prove2.me/theorems/6f7dce87-64fd-41e3-89fe-10985097e615",
+					"outcome": "proved",
+					"proved_in_round": null,
+					"rounds": 1,
+					"scored": true,
+					"model_minutes": 135.3,
+					"prompt_tokens": 4625569,
+					"cached_tokens": 4359446,
+					"output_tokens": 201749,
+					"proved_in_outline": 1,
+					"tasks": [
+						{
+							"id": "t5-C12",
+							"leaf": "C12",
+							"role": "skeleton",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 66,
+							"model_minutes": 110.2,
+							"prompt_tokens": 3754489,
+							"cached_tokens": 3539504,
+							"output_tokens": 155761
+						},
+						{
+							"id": "t5-C12-h01",
+							"leaf": "C12",
+							"role": "hole",
+							"gen": 1,
+							"hole": 1,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 25,
+							"model_minutes": 25.1,
+							"prompt_tokens": 871080,
+							"cached_tokens": 819942,
+							"output_tokens": 45988
+						},
+						{
+							"id": "t5-C12-asm",
+							"leaf": "C12",
+							"role": "asm",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "assembly_failed",
+							"steps": 0,
+							"model_minutes": 0.0,
+							"prompt_tokens": 0,
+							"cached_tokens": 0,
+							"output_tokens": 0
+						},
+						{
+							"id": "t5-C12-asm-a2",
+							"leaf": "C12",
+							"role": "asm",
+							"gen": 1,
+							"hole": null,
+							"attempt": 2,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 0,
+							"model_minutes": 0.0,
+							"prompt_tokens": 0,
+							"cached_tokens": 0,
+							"output_tokens": 0
+						}
+					],
+					"outlines": [
+						{
+							"gen": 1,
+							"holes": 1,
+							"lemmas": 1,
+							"inplace": 0,
+							"prepass": {
+								"tried": 1,
+								"closed": 0,
+								"seconds": 71,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": null,
+									"timed_out": false
+								}
+							]
+						}
+					],
+					"earlier": [
+						4
+					]
+				},
+				{
+					"leaf": "O02",
+					"group": "open",
+					"theorem": "BBPSSW.Distill.typical_set_sqrt",
+					"title": "Typical sets of size $2^{H+O(\\sqrt n)}$ carry almost all the weight",
+					"url": "https://prove2.me/theorems/83aae809-f2aa-433a-a5ed-c4380d0447d2",
+					"outcome": "cancelled",
+					"proved_in_round": null,
+					"rounds": 2,
+					"scored": false,
+					"model_minutes": 641.9,
+					"prompt_tokens": 29747347,
+					"cached_tokens": 28807114,
+					"output_tokens": 978422,
+					"proved_in_outline": null,
+					"tasks": [
+						{
+							"id": "t5-O02",
+							"leaf": "O02",
+							"role": "skeleton",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 32,
+							"model_minutes": 55.8,
+							"prompt_tokens": 1724933,
+							"cached_tokens": 1687053,
+							"output_tokens": 77507
+						},
+						{
+							"id": "t5-O02-h01",
+							"leaf": "O02",
+							"role": "hole",
+							"gen": 1,
+							"hole": 1,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "infra",
+							"steps": 18,
+							"model_minutes": 18.9,
+							"prompt_tokens": 385902,
+							"cached_tokens": 351373,
+							"output_tokens": 42108
+						},
+						{
+							"id": "t5-O02-h01-a2",
+							"leaf": "O02",
+							"role": "hole",
+							"gen": 1,
+							"hole": 1,
+							"attempt": 2,
+							"state": "finished",
+							"outcome": "no-progress",
+							"steps": 91,
+							"model_minutes": 110.0,
+							"prompt_tokens": 5713935,
+							"cached_tokens": 5574448,
+							"output_tokens": 160177
+						},
+						{
+							"id": "t5-O02-h02",
+							"leaf": "O02",
+							"role": "hole",
+							"gen": 1,
+							"hole": 2,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "no-progress",
+							"steps": 25,
+							"model_minutes": 110.2,
+							"prompt_tokens": 955748,
+							"cached_tokens": 832463,
+							"output_tokens": 136415
+						},
+						{
+							"id": "t5-O02-h02-a2",
+							"leaf": "O02",
+							"role": "hole",
+							"gen": 1,
+							"hole": 2,
+							"attempt": 2,
+							"state": "finished",
+							"outcome": "refused",
+							"steps": 127,
+							"model_minutes": 87.6,
+							"prompt_tokens": 7321654,
+							"cached_tokens": 7184935,
+							"output_tokens": 130912
+						},
+						{
+							"id": "t5-O02-h03",
+							"leaf": "O02",
+							"role": "hole",
+							"gen": 1,
+							"hole": 3,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "refused",
+							"steps": 82,
+							"model_minutes": 130.4,
+							"prompt_tokens": 5207199,
+							"cached_tokens": 4991422,
+							"output_tokens": 186964
+						},
+						{
+							"id": "t5-O02-rest",
+							"leaf": "O02",
+							"role": "rest",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "no-progress",
+							"steps": 100,
+							"model_minutes": 68.0,
+							"prompt_tokens": 6043685,
+							"cached_tokens": 5856190,
+							"output_tokens": 147699
+						},
+						{
+							"id": "t5-O02-s2",
+							"leaf": "O02",
+							"role": "skeleton",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 44,
+							"model_minutes": 61.0,
+							"prompt_tokens": 2394291,
+							"cached_tokens": 2329230,
+							"output_tokens": 96640
+						},
+						{
+							"id": "t5-O02-s2-h01",
+							"leaf": "O02",
+							"role": "hole",
+							"gen": 2,
+							"hole": 1,
+							"attempt": 1,
+							"state": "cancelled",
+							"outcome": null,
+							"steps": null,
+							"model_minutes": null,
+							"prompt_tokens": null,
+							"cached_tokens": null,
+							"output_tokens": null
+						},
+						{
+							"id": "t5-O02-s2-rest",
+							"leaf": "O02",
+							"role": "rest",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "cancelled",
+							"outcome": null,
+							"steps": null,
+							"model_minutes": null,
+							"prompt_tokens": null,
+							"cached_tokens": null,
+							"output_tokens": null
+						}
+					],
+					"outlines": [
+						{
+							"gen": 1,
+							"holes": 6,
+							"lemmas": 3,
+							"inplace": 3,
+							"prepass": {
+								"tried": 3,
+								"closed": 0,
+								"seconds": 268,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 2,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 3,
+									"closed_by": null,
+									"timed_out": false
+								}
+							]
+						},
+						{
+							"gen": 2,
+							"holes": 12,
+							"lemmas": 1,
+							"inplace": 11,
+							"prepass": {
+								"tried": 1,
+								"closed": 0,
+								"seconds": 118,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": null,
+									"timed_out": true
+								}
+							]
+						}
+					],
+					"not_scored_why": "stopped by us: its first outline proved none of its 6 holes, and a harness bug (since fixed) left 11 of its second outline’s 12 holes in place",
+					"earlier": [
+						3,
+						4
 					]
 				}
 			]

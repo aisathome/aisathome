@@ -368,7 +368,7 @@ const tokCell = (label: string, cls: string, v: number | null, title: string, at
 	`<td data-label="${label}" class="num ${cls}" ${attr}="${v ?? ''}" title="${esc(title)}">${v === null ? '–' : esc(compact(v))}</td>`;
 
 /** The leaf's tasks as an expandable table (a details element), with a totals row and a note per outline. */
-export function taskTableHTML(leaf: string, d: LeafDetail): string {
+export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): string {
 	if (!d.rows.length) return '';
 	const outl = (g: number) => d.outlines.find((o) => o.gen === g);
 	const rows = d.rows
@@ -399,7 +399,7 @@ export function taskTableHTML(leaf: string, d: LeafDetail): string {
 		`<td data-label="Computed" class="num tok" data-computed="${d.computed}" title="${esc(`${exact(d.computed)} computed`)}">${esc(compact(d.computed))}</td></tr>`;
 	const notes = d.outlines.map((o) => `<p class="outline-note" data-outline-note="${o.gen}">${esc(outlineNote(o))}</p>`).join('');
 	return (
-		`<details class="p2m-tasks" data-leaf-tasks="${esc(leaf)}"><summary>Tasks (${d.rows.length})</summary>` +
+		`<details class="p2m-tasks" data-leaf-tasks="${esc(leaf)}"><summary>${esc(label)} (${d.rows.length})</summary>` +
 		`<div class="p2m-tasks-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col" class="num">Outline</th><th scope="col" class="num">Try</th>` +
 		`<th scope="col">Result</th><th scope="col" class="num">Steps</th><th scope="col" class="num">Model min</th>` +
 		`<th scope="col" class="num">Qwen tokens</th><th scope="col" class="num">Computed</th></tr></thead>` +

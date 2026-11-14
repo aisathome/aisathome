@@ -24,7 +24,8 @@ const cards = [
 		numbers: [
 			{ key: 'accepted', value: String(t.accepted), label: `${t.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of ${t.submitted} submitted` },
 			{ key: 'open', value: `${t.open_leaves_proved} of ${t.open_leaves}`, label: 'open leaves proved' },
-			...(cur && running ? [{ key: 'trial', value: `Trial ${cur.trial}`, label: `running since ${dayLabel(cur.start)}` }] : []),
+			...(cur && running ? [{ key: 'trial', value: `Trial ${cur.trial}`, label: `running since ${dayLabel(cur.start ?? p2m.generated_at)}` }] : []),
+			...(cur?.state === 'preparing' ? [{ key: 'trial', value: `Trial ${cur.trial}`, label: 'being prepared' }] : []),
 		],
 		asOf: p2m.generated_at,
 	},

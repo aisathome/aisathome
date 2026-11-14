@@ -32,6 +32,10 @@ export interface LeafRun {
 	cached_tokens: number;
 	output_tokens: number;
 	earlier: number[];
+	/** Scaffold v5 on (a leaf is many tasks): the outline that was proved, every task and each outline's holes. */
+	proved_in_outline?: number | null;
+	tasks?: StaticTask[];
+	outlines?: Outline[];
 }
 
 export interface Trial {
@@ -100,7 +104,9 @@ export interface Prove2me {
 	submissions: Submission[];
 	current: {
 		trial: number;
-		start: string;
+		/** "preparing": the next trial's texts only, no leaves and no task yet. */
+		state?: 'preparing';
+		start: string | null;
 		scaffold: string;
 		caps: string;
 		summary: string;
@@ -124,6 +130,7 @@ export function outcomeLabel(r: LeafRun): string {
 	if (!r.scored) return 'Not scored';
 	switch (r.outcome) {
 		case 'proved':
+			if (r.proved_in_outline && r.rounds > 1) return `Proved with outline ${r.proved_in_outline}`;
 			return r.rounds > 1 && r.proved_in_round ? `Proved in round ${r.proved_in_round}` : 'Proved';
 		case 'refused':
 			return 'Not proved: a sorry left';
