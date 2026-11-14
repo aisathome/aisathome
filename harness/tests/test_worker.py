@@ -400,6 +400,24 @@ class Stops(Base):
         self.assertTrue(any("[t1] taken back" in l for l in w2.logs), w2.logs)
         self.assertEqual(w2.held(), [])
 
+    def test_a_stop_while_the_child_starts_neither_hangs_nor_waits_for_the_kill(self):
+        import subprocess
+        self.q.add("t1", self.spec(sleep=60))
+        w = self.worker(stop_wait_s=8)
+
+        def popen(*a, **k):                      # SIGTERM arrives while execute holds its lock to start the child
+            w.stop()
+            return subprocess.Popen(*a, **k)
+        w.popen = popen
+        th = threading.Thread(target=w.run_forever, daemon=True)
+        t0 = time.monotonic()
+        th.start()
+        th.join(20)
+        self.assertFalse(th.is_alive(), "the signal handler deadlocked on the worker's lock")
+        self.assertLess(time.monotonic() - t0, 6, "the child got no SIGTERM, only the SIGKILL after stop_wait_s")
+        self.assertEqual(self.q.tasks["t1"]["state"], "queued")          # given back
+        self.assertEqual(w.held()[0]["phase"], "interrupted")
+
     def test_with_hold_zero_another_worker_resumes_the_given_back_task(self):
         self.q.add("t1", self.spec(sleep=60, running=str(self.root / "t1.running"),
                                    progress=str(self.root / "t1.progress")))

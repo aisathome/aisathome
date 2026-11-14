@@ -148,10 +148,11 @@ class Worker:
         self.stop()
 
     def _signal_child(self, sig, p=None):
-        """`sig` to the running child's process group (or to `p`'s, a given child, while it still runs)."""
+        """`sig` to the running child's process group (or to `p`'s, a given child, while it still runs). No lock:
+        the signal handler runs this on the main thread, which may hold `self.lock` while it starts the child
+        (a child started meanwhile gets its SIGTERM from `_wait`)."""
         if p is None:
-            with self.lock:
-                p = self.proc
+            p = self.proc
         if p and p.poll() is None:
             try:
                 os.killpg(p.pid, sig)
@@ -407,6 +408,7 @@ class Worker:
             except subprocess.TimeoutExpired:
                 pass
             if self.stopping.is_set() or (lost is not None and lost.is_set()):
+                self._signal_child(signal.SIGTERM, p)       # again: a stop while the child started missed it
                 try:
                     return p.wait(timeout=self.stop_wait_s)
                 except subprocess.TimeoutExpired:
