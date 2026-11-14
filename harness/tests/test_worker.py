@@ -213,6 +213,31 @@ class Lifecycle(Base):
         self.assertIn("cleanup t2", self.events())
         self.assertEqual(w.held(), [])
 
+    def test_a_late_heartbeat_answer_never_stops_the_next_task(self):
+        # t1's heartbeat is still in flight when its child exits; its answer (lease lost) comes while t2 runs
+        self.q.add("t1", self.spec(sleep=0.5))
+        self.q.add("t2", self.spec(sleep=1.5, running=str(self.root / "t2.running")))
+        entered, answer = threading.Event(), threading.Event()
+        real = self.q.heartbeat
+
+        def heartbeat(tid, worker, lease):
+            if tid == "t1" and not entered.is_set():
+                entered.set()
+                answer.wait(20)
+                return 404, {"error": {"message": "no such task"}}
+            return real(tid, worker, lease)
+        self.q.heartbeat = heartbeat
+        w = self.worker(heartbeat_s=0.05)
+        th = threading.Thread(target=w.run_forever, kwargs={"once": True}, daemon=True)
+        th.start()
+        self.assertTrue(wait_for(entered.is_set))
+        wait_for((self.root / "t2.running").exists, timeout=3)
+        answer.set()
+        th.join(30)
+        self.assertFalse(th.is_alive())
+        t2 = self.q.tasks["t2"]
+        self.assertEqual((t2["state"], (t2["result"] or {}).get("outcome")), ("done", "ok"), w.logs)
+
     def test_a_crash_fails_the_task_and_three_in_a_row_pause_the_worker(self):
         for i in range(4):
             self.q.add(f"t{i}", self.spec(mode="crash"))

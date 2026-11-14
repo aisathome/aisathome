@@ -147,9 +147,11 @@ class Worker:
         self.notice_at = self.clock.monotonic()
         self.stop()
 
-    def _signal_child(self, sig):
-        with self.lock:
-            p = self.proc
+    def _signal_child(self, sig, p=None):
+        """`sig` to the running child's process group (or to `p`'s, a given child, while it still runs)."""
+        if p is None:
+            with self.lock:
+                p = self.proc
         if p and p.poll() is None:
             try:
                 os.killpg(p.pid, sig)
@@ -305,8 +307,9 @@ class Worker:
             return
         self.execute(rec)
 
-    def _beat(self, rec: dict, done: threading.Event, lost: threading.Event):
-        """The lease's heartbeats while the child runs; a lost lease stops the child."""
+    def _beat(self, rec: dict, done: threading.Event, lost: threading.Event, p):
+        """The lease's heartbeats while the child `p` runs; a lost lease stops it (that child only: never a later
+        task's). `execute` joins this thread before it reports, so a late answer acts before the report."""
         tid = rec["task"]
         while not done.wait(self.hb_s):
             try:
@@ -326,7 +329,7 @@ class Worker:
             if code in (404, 409):
                 self.log(f"[{tid}] lease lost ({error_text(body)}); stopping the task")
                 lost.set()
-                self._signal_child(signal.SIGTERM)
+                self._signal_child(signal.SIGTERM, p)
                 return
 
     def execute(self, rec: dict):
@@ -339,7 +342,6 @@ class Worker:
             f.unlink(missing_ok=True)
         lost = threading.Event()
         done = threading.Event()
-        hb = threading.Thread(target=self._beat, args=(rec, done, lost), daemon=True)
         with open(self.state / "logs" / f"{tid}.log", "ab") as logf, self._busy(tid):
             with self.lock:
                 if self.stopping.is_set():
@@ -352,9 +354,11 @@ class Worker:
                 done.set()
                 self.give_back(rec)
                 return
+            hb = threading.Thread(target=self._beat, args=(rec, done, lost, p), daemon=True)
             hb.start()
             rc = self._wait(p)
         done.set()
+        hb.join()                  # a heartbeat still in flight acts now (a new lease, lost), not after the report
         with self.lock:
             self.proc = None
         if lost.is_set():
