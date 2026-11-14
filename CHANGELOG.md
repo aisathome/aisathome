@@ -18,6 +18,9 @@ and **(site)** are live on aisathome.org once deployed.
   project's task queue (`/v1/projects/prove2me/queue`: task ids, states, outcomes, token counts
   and theorem names only) when the page loads and every minute, instead of a list made when the
   site was built. (gateway, site)
+- **Install on Windows** (`/node/windows/`): the v0.5.0 installer step by step, from checking
+  the download and the unsigned-installer warning to the setup page, the tray icon, diagnostics,
+  updating and uninstalling. The FAQ no longer says Windows is not supported. (site)
 
 ### Fixed
 

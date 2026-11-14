@@ -51,6 +51,13 @@ If you [built llama.cpp yourself](/node/install/#build-it-yourself), rebuild it 
 release notes say so, and run the installer as you did at first, adding `--keep-token`, for
 example with `--node-release latest`.
 
+## On Windows
+
+Download the newer `AIsAtHome-node-setup-<version>.exe`, check it as on
+[Install on Windows](/node/windows/#1-download-and-check) and run it over the installed one. It
+keeps the settings and the token, the local password and the node's state, and closes the tray
+icon while it updates.
+
 ## Without systemd (containers)
 
 A node in a container, for example on a rented GPU, does not use the installer. Update it by

@@ -31,12 +31,8 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
   (up to 10 per account; at most 10 of them connected from one internet address). The network
   takes 25 nodes for now; when it is full, the page says so.
 
-On Windows, run `AIsAtHome-node-setup-<version>.exe` from the
-[latest release](https://github.com/aisathome/aisathome/releases/latest) (new in v0.5.0). It
-installs the node as a service with a tray icon, and the node's local page walks through the
-card, the model download, the speed test and the node token. The installer is not code-signed
-yet, so Windows may warn before it runs: check it against `SHA256SUMS`, then choose
-**More info → Run anyway**.
+On Windows (new in v0.5.0), one installer sets up the node as a service with a tray icon, and
+the node's local page walks through the rest: see [Install on Windows](/node/windows/).
 
 ## Tested systems
 
@@ -61,7 +57,8 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
 - **Fewer traces on disk.** No core dumps, no swap for the services, a bounded prompt cache
   in RAM, no prompt logging.
 - **Anonymous requests.** Your node never learns who sent a request.
-- **Stop any time.** `sudo systemctl stop aisathome-node aisathome-llama` frees the GPU.
+- **Stop any time.** `sudo systemctl stop aisathome-node aisathome-llama` frees the GPU; on
+  Windows, **Stop engine** in the tray menu.
 
 ## How new nodes start
 
@@ -82,4 +79,4 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
   [terms](/about/terms/).
 - Keeping your node token secret, and telling us if it leaks.
 
-Next: [install on Linux](/node/install/).
+Next: [install on Linux](/node/install/) or [on Windows](/node/windows/).

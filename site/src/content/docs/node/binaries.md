@@ -12,7 +12,7 @@ GitHub Actions from the tagged source, in public, by the workflow
 | File | What |
 |---|---|
 | `aisathome-node-bundle-linux-amd64.tar.xz` | Everything a Linux volunteer needs (about 0.5 GB): the installer, the node agent and `llama-server` with its libraries. See [Install on Linux](/node/install/) |
-| `AIsAtHome-node-setup-<version>.exe` | The Windows node (one installer): the node agent as a service, its tray icon and upstream llama.cpp's Windows CUDA 12.4 `llama-server`. Not code-signed yet, so Windows may warn before it runs |
+| `AIsAtHome-node-setup-<version>.exe` | The Windows node (one installer): the node agent as a service, its tray icon and upstream llama.cpp's Windows CUDA 12.4 `llama-server`. Not code-signed yet, so Windows may warn before it runs. See [Install on Windows](/node/windows/) |
 | `aisathome-node-linux-amd64`, `-linux-arm64`, `-windows-amd64.exe` | The node agent alone, for people who build llama.cpp themselves |
 | `aisathome-gateway-linux-amd64`, `-linux-arm64` | The gateway, for people who run their own |
 | `SHA256SUMS` | The SHA-256 of every file above |

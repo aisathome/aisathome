@@ -29,7 +29,8 @@ No. There is no token and no payment; running a node is voluntary.
 
 ## Can I run a node on Windows or a smaller GPU?
 
-Windows: not yet, the node package is Linux only. Smaller GPUs: a 16 GB card can join (for
+Windows: yes, from v0.5.0, with one installer ([Install on Windows](/node/windows/)); so far
+tested on one RTX 4090. Smaller GPUs: a 16 GB card can join (for
 example an RTX 4080 or 5070 Ti), with at most a light desktop on it (about 1.5 GB of its memory);
 its settings were measured on an RTX 5070 Ti, but nobody has run the 16 GB tier through the
 installer yet. Cards under 16 GB, and 16 GB cards that are too slow (the installer tests the

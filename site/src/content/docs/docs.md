@@ -12,6 +12,7 @@ description: Everything about using AIs@home and running a node, in one place.
 
 - [Overview](/node/): what you need, how new nodes start, what you are responsible for.
 - [Install on Linux](/node/install/): the prebuilt bundle, or building llama.cpp yourself.
+- [Install on Windows](/node/windows/): one installer, a setup page and a tray icon.
 - [Model settings](/node/presets/): the one setting every node uses.
 - [Day to day](/node/operate/): the local status page, pausing, troubleshooting.
 - [Update your node](/node/update/): install a new release, keeping the token and settings.

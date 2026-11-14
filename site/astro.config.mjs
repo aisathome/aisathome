@@ -58,6 +58,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'node' },
 						{ label: 'Install on Linux', slug: 'node/install' },
+						{ label: 'Install on Windows', slug: 'node/windows' },
 						{ label: 'Model settings', slug: 'node/presets' },
 						{ label: 'Day to day', slug: 'node/operate' },
 						{ label: 'Update your node', slug: 'node/update' },
