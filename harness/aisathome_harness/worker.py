@@ -26,7 +26,9 @@ The loop (one task at a time; run several workers, on one host or several: the g
   - after a report (or a lost lease) the task's folders go: child + ["cleanup-task", SPEC] (unless
     `keep_trees` and the task did not fail);
   - reports retry `report_tries` times `report_wait_s` apart when the gateway is unreachable; one that never
-    lands stays held (phase unreported/failed) and is reported at the next step.
+    lands stays held (phase unreported/failed) and is reported at the next step. An unreported result is not
+    kept by the worker: the child runs again, so `run` must be idempotent (it finds the task finished in its
+    own state and returns the same result without redoing the work).
 
 No new claim while `pause_file` exists, below `min_free_gb` free on `disk_path`, or while paused after crashes,
 nor while `gate()` (optional, the project's) returns a reason, e.g. as many tasks running as the model has

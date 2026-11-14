@@ -23,9 +23,11 @@ same behaviour).
   before it. `safe_text` (one line the gateway's text check accepts), `task_headers` (`X-Aisathome-Task`).
 - `worker`: `Worker`, one task at a time: held tasks first (resumed with their lease, else claimed back by
   id), the lease renewed while a child process runs the task (an expired lease claimed back, a lost one stops
-  the child), the result or the crash reported (retried while the gateway is unreachable, else held and
-  reported later), three crashes in a row pause it, SIGTERM or a watcher's notice stops the child, takes its
-  checkpoint (`checkpoint-task`) and gives the task back with its try; a busy marker file while a child runs.
+  the child, as does a gateway unreachable until the lease would run out), the result or the crash reported
+  (retried while the gateway is unreachable, else held and reported later; for an unreported result the
+  child, which must be idempotent, runs again), three crashes in a row pause it, SIGTERM or a watcher's
+  notice stops the child, takes its checkpoint (`checkpoint-task`) and gives the task back with its try; a
+  busy marker file while a child runs.
   `child_main` dispatches the child's commands (`run-task`, `cleanup-task`, `checkpoint-task`) to the
   project's callbacks; `GiveBack` gives a task back instead of failing it. Clock and process calls injectable.
 - `checkpoint`: the store interface and `DirStore`; a task's state as a `Layout` of named parts (excluded
