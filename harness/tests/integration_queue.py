@@ -109,7 +109,7 @@ def main(argv=None) -> int:
         c.give_back(hold.body["task"]["id"], hold.body["lease"]["worker"], hold.body["lease"]["id"], "integration probe")
         print("refused: a task was queued while probing")
         return 2
-    hold_ok = hold.status == 204
+    hold_ok = hold.status == 204 and not c.hold_refused      # the client retries without the field on an older gateway
     root = Path(tempfile.mkdtemp(prefix="itest-"))
     store = Path(a.store) if a.store else root / "store"
     tid = f"{a.prefix}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
@@ -152,6 +152,13 @@ def main(argv=None) -> int:
     wb = W.Worker(c, name_b, root / "b" / "state", child, on_claim=on_claim_for(root / "b" / "work"), kinds=["other"],
                   heartbeat_s=2, poll_s=1, report_wait_s=2, checkpoints=True, hold_s=0 if hold_ok else None, log=say)
     t0 = time.monotonic()
+    claimed_at: list[float] = []
+
+    def say_b(m: str):
+        if f"[{tid}] claimed" in m and not claimed_at:
+            claimed_at.append(round(time.monotonic() - t0, 1))
+        say(m)
+    wb.log = say_b
     while True:
         wb.run_forever(once=True)
         t = c.get(tid).check()["task"]
@@ -162,7 +169,7 @@ def main(argv=None) -> int:
     score = res.get("score") or {}
     out = {"task": tid, "gateway": c.base, "hold_seconds": hold_ok, "a": name_a, "b": name_b,
            "after_a": {k: after_a.get(k) for k in ("state", "tries", "interrupted", "interruptions", "prefer_worker")},
-           "heartbeats_a": ca.beats, "final": {k: t.get(k) for k in ("state", "tries", "interruptions")},
+           "heartbeats_a": ca.beats, "b_claimed_after_s": claimed_at[0] if claimed_at else None, "final": {k: t.get(k) for k in ("state", "tries", "interruptions")},
            "result": {k: res.get(k) for k in ("outcome", "steps")}, "score": score,
            "b_log_restore": [l for l in (root / "b" / "state" / "logs" / f"{tid}.log").read_text().splitlines()
                              if "restored checkpoint" in l] if (root / "b" / "state" / "logs" / f"{tid}.log").exists() else []}
