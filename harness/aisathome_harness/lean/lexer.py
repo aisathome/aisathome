@@ -39,6 +39,17 @@ def strings(text: str) -> list[tuple[int, int, bool]]:
     return _lex(text, True)[1]
 
 
+def comments(text: str) -> list[tuple[int, int]]:
+    """(start, end) of every comment (line and block comments, a nested block comment as one), in order."""
+    return _lex(text, True)[2]
+
+
+def literal_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of the literal text of every string, raw string and char literal, in order: what
+    `code_mask` blanks besides comments (an interpolated string's code in braces is not part of it)."""
+    return _lex(text, True)[3]
+
+
 def braced_strings(text: str) -> list[int]:
     """Lines (1-based) of string literals with a `{` in them. Whether such a string is interpolated (its
     braces hold code that may contain strings and comments of its own) depends on the syntax that takes
@@ -46,11 +57,15 @@ def braced_strings(text: str) -> list[int]:
     return [text.count("\n", 0, a) + 1 for a, b, _ in strings(text) if "{" in text[a:b]]
 
 
-def _lex(text: str, literals: bool) -> tuple[str, list]:
+def _lex(text: str, literals: bool) -> tuple[str, list, list, list]:
     out = list(text)
     spans: list[tuple[int, int, bool]] = []
+    comment_spans: list[tuple[int, int]] = []
+    literal_ranges: list[tuple[int, int]] = []
 
     def blank(a: int, b: int, comment: bool = False):
+        if b > a:
+            (comment_spans if comment else literal_ranges).append((a, b))
         if not (comment or literals):
             return
         for k in range(a, b):
@@ -133,4 +148,4 @@ def _lex(text: str, literals: bool) -> tuple[str, list]:
         return n
 
     code(0)
-    return "".join(out), sorted(spans)
+    return "".join(out), sorted(spans), sorted(comment_spans), sorted(literal_ranges)

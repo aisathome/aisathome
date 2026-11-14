@@ -7,6 +7,25 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+## [0.2.1] - unreleased
+
+Three fixes in `lean.holes`, found on prove2me's trial-5 outlines and in a review.
+
+### Fixed
+
+- `commands`: the comment lines that belong to a declaration no longer stop at a blank line inside a block or
+  doc comment. The command then started inside the comment, and `dry_assembly` inserted hole lemmas there.
+- `normalise` (and so `statement_key`, `signature_key`) no longer collapses whitespace inside string and char
+  literals: `"a  b"` and `"a b"` are different values. Keys of statements with such literals change.
+- `context_text` also leaves out every declaration that uses a theorem it left out (one that still holds a
+  `sorry`), and what uses those in turn. Before, such a declaration stayed, the context module did not compile
+  ("Unknown identifier"), and every later hole's statement failed to compile alone, so the holes went in place
+  (prove2me's trial 5: 11 of 12 holes of one outline).
+
+### Added
+
+- `lexer.comments` and `lexer.literal_spans`: the spans of comments and of literal text.
+
 ## [0.2.0] - 2026-11-13
 
 A new module and two round-engine changes.

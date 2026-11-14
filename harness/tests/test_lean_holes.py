@@ -146,6 +146,15 @@ class Statements(unittest.TestCase):
         self.assertNotEqual(a, H.statement_key("(m : ℕ) : 0 < m + 1", "import Mathlib\n", "env1"))
         self.assertEqual(H.signature_key("(n : ℕ) : 0 < n"), H.signature_key("(n : ℕ)  :  0 < n"))
 
+    def test_normalise_keeps_whitespace_inside_string_and_char_literals(self):
+        self.assertEqual(H.normalise('def s :=   "a  b"   -- c\n'), 'def s := "a  b"')
+        self.assertNotEqual(H.normalise('def s := "a  b"'), H.normalise('def s := "a b"'))
+        self.assertNotEqual(H.normalise('def s := "a\n  b"'), H.normalise('def s := "a b"'))
+        self.assertEqual(H.normalise("def c :=  ' '\n\n theorem t : 1  = 1"), "def c := ' ' theorem t : 1 = 1")
+        self.assertEqual(H.normalise('def s := s!"x  {f  y}  z"'), 'def s := s!"x  {f y}  z"')   # code in braces
+        self.assertNotEqual(H.statement_key('(s : String) (h : s = "a  b") : True'),
+                            H.statement_key('(s : String) (h : s = "a b") : True'))
+
 
 class Commands(unittest.TestCase):
     def test_commands_kinds_names_and_docstrings(self):
@@ -159,6 +168,38 @@ class Commands(unittest.TestCase):
         self.assertTrue(OUTLINE[h.start:].startswith("@[simp]"))
         s = next(c for c in cs if c.name == "solution")
         self.assertTrue(OUTLINE[s.start:].startswith("open Foo in\ntheorem solution"))
+
+    def test_a_blank_line_inside_a_doc_comment_does_not_cut_the_comment_off(self):
+        text = ("import Mathlib\n\n/-- First paragraph.\n\nSecond paragraph. -/\ntheorem helper : 1 = 1 := by\n  sorry\n\n"
+                "/- a block comment\n\n   over blank lines -/\n-- and a line comment\n@[simp]\ndef two : ℕ := 2\n\n"
+                "/-- unrelated, a blank line before the next command -/\n\ntheorem solution : 1 = 1 := by\n  sorry\n")
+        cs = H.commands(text)
+        h = next(c for c in cs if c.name == "helper")
+        self.assertTrue(text[h.start:].startswith("/-- First paragraph."), text[h.start:h.start + 40])
+        d = next(c for c in cs if c.name == "two")
+        self.assertTrue(text[d.start:].startswith("/- a block comment"))
+        s = next(c for c in cs if c.name == "solution")
+        self.assertTrue(text[s.start:].startswith("theorem solution"))      # a real blank line still ends it
+        dry = H.dry_assembly(text, [{"offset": H.sorry_offsets(text)[0], "block": "P2MHole_a", "sig": ": 1 = 1",
+                                     "levels": [], "position": "tactic"}])
+        self.assertIn("end P2MHole_a\n\n/-- First paragraph.\n\nSecond paragraph. -/\ntheorem helper", dry)
+        self.assertEqual(H.blank(dry).count("namespace P2MHole_a"), 1)        # in code, not inside the comment
+
+    def test_the_context_leaves_out_what_uses_a_theorem_it_left_out(self):
+        text = ("import Mathlib\n\ndef c : ℕ := 2\n\ntheorem bound (n : ℕ) : n ≤ n * c := by\n  sorry\n\n"
+                "theorem uses_bound (n : ℕ) : n ≤ n * c + 1 := by\n  have := bound n\n  omega\n\n"
+                "theorem uses_that (n : ℕ) : n ≤ n * c + 2 := le_trans (Foo.uses_bound n) (by omega)\n\n"
+                "theorem fine (n : ℕ) : n ≤ n + 1 := by omega\n\n"
+                "def boundary : ℕ := c\n\n"
+                "theorem solution (n : ℕ) : n ≤ n * c + 3 := by\n  sorry\n")
+        cs = H.commands(text)
+        si = next(i for i, c in enumerate(cs) if c.name == "solution")
+        ctx = H.context_text(text, si, cs)
+        self.assertIn("def c", ctx)
+        self.assertIn("theorem fine", ctx)
+        self.assertIn("def boundary", ctx)              # `boundary` is not `bound`
+        for gone in ("theorem bound ", "theorem uses_bound", "theorem uses_that"):
+            self.assertNotIn(gone, ctx)
 
     def test_scope_lines_and_context(self):
         cs = H.commands(OUTLINE)

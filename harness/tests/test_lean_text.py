@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from aisathome_harness.lean import axioms, sorry_text
-from aisathome_harness.lean.lexer import code_mask
+from aisathome_harness.lean.lexer import code_mask, comments, literal_spans
 
 
 class LeanText(unittest.TestCase):
@@ -61,6 +61,11 @@ class LeanText(unittest.TestCase):
         text = 'def banner := "/-"\ntheorem a : True := by\n  sorry\n'
         diff = "diff --git a/A.lean b/A.lean\n+++ b/A.lean\n@@ -0,0 +1,3 @@\n" + "".join("+" + l + "\n" for l in text.splitlines())
         self.assertEqual([h["line"] for h in sorry_text.hits(diff, lambda p: text)], [3])
+
+    def test_comment_and_literal_spans(self):
+        text = 'def s := "a -- b" -- note\n/- x /- y -/\n\n -/ def c := \'q\' ++ r"z"\n'
+        self.assertEqual([text[a:b] for a, b in comments(text)], ["-- note", "/- x /- y -/\n\n -/"])
+        self.assertEqual([text[a:b] for a, b in literal_spans(text)], ['"a -- b"', "'q'", 'r"z"'])
 
     def test_mask_keeps_offsets(self):
         for text, _, _ in self.CASES:

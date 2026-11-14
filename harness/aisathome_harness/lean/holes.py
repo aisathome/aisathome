@@ -29,7 +29,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
-from .lexer import code_mask
+from .lexer import code_mask, comments, literal_spans
 
 STANDIN = "aisathome_hole"
 EXTRACTED = "aisathome_extracted"
@@ -284,8 +284,15 @@ def _top_colon(s: str) -> int:
 
 
 def normalise(text: str) -> str:
-    """Lean text for comparison: comments blanked, whitespace runs collapsed."""
-    return " ".join(code_mask(text, literals=False).split())
+    """Lean text for comparison: comments blanked, whitespace runs collapsed outside string and char literals
+    (inside them whitespace is the literal's value: `"a  b"` and `"a b"` stay different)."""
+    s = code_mask(text, literals=False)
+    out, pos = [], 0
+    for a, b in literal_spans(text):
+        out += [re.sub(r"\s+", " ", s[pos:a]), s[a:b]]
+        pos = b
+    out.append(re.sub(r"\s+", " ", s[pos:]))
+    return "".join(out).strip()
 
 
 def statement_key(sig: str, context: str = "", env: str = "") -> str:
@@ -332,6 +339,15 @@ def commands(text: str) -> list[Command]:
     code = blank(text)
     lines = code.splitlines(True)
     raw = text.splitlines(True)
+    line_at = [0]
+    for ln in lines:
+        line_at.append(line_at[-1] + len(ln))
+    spans = [(a, b) for a, b in comments(text) if "\n" in text[a:b]]
+
+    def in_comment(k: int) -> bool:
+        """Line k lies inside a comment that started on an earlier line (a blank line in a doc comment)."""
+        return any(a < line_at[k] < b for a, b in spans)
+
     starts, off = [], 0
     pending = None
     for i, ln in enumerate(lines):
@@ -339,8 +355,9 @@ def commands(text: str) -> list[Command]:
         if m:
             s = off
             k = i
-            while k > 0 and raw[k - 1].strip() and (not lines[k - 1].strip() or _ATTR_LINE.match(lines[k - 1])):
-                # the comment and attribute lines right above
+            while k > 0 and (raw[k - 1].strip() or in_comment(k - 1)) and (
+                    not lines[k - 1].strip() or _ATTR_LINE.match(lines[k - 1])):
+                # the comment and attribute lines right above (a blank line inside a comment does not end them)
                 k -= 1
                 s -= len(lines[k])
             if pending is not None:
@@ -429,9 +446,14 @@ def context_text(text: str, upto: int, cmds: list[Command] | None = None) -> str
     cmds = cmds if cmds is not None else commands(text)
     keep, decls = [], 0
     code = blank(text)
+    dropped: set[str] = set()                    # names of the theorems left out, and of what uses them
     for c in cmds[:upto]:
         body = text[c.start:c.end]
-        if c.kind == "example" or (c.kind == "theorem" and SORRY.search(code[c.start:c.end])):
+        if c.kind == "example" or (c.kind == "theorem" and SORRY.search(code[c.start:c.end])) or (
+                c.kind in ("theorem", "def", "other") and _uses(code[c.start:c.end], dropped, c.name)):
+            # a declaration that uses a theorem left out would not compile without it, so it goes too
+            if c.name:
+                dropped.add(c.name)
             continue
         if c.kind in ("theorem", "def", "other") and c.keyword not in ("macro", "syntax", "elab", "macro_rules", "elab_rules"):
             decls += 1
@@ -444,6 +466,23 @@ def context_text(text: str, upto: int, cmds: list[Command] | None = None) -> str
     for k, name, _ in reversed(stack[1:]):
         out = out.rstrip("\n") + f"\n\nend{(' ' + name) if name else ''}\n"
     return out
+
+
+_IDENT = re.compile(r"[^\s()\[\]{}⟨⟩,;:=@|`]+")
+
+
+def _uses(code: str, names: set[str], own: str | None = None) -> bool:
+    """`code` mentions one of the declaration names (by its full name or by its last component, as `open` and
+    namespaces allow), other than its own name."""
+    if not names:
+        return False
+    last = {n.rsplit(".", 1)[-1] for n in names}
+    for tok in _IDENT.findall(code):
+        if tok == own:
+            continue
+        if tok in names or tok in last or any(tok.endswith("." + n) for n in last):
+            return True
+    return False
 
 
 def imports_of(text: str) -> list[str]:
