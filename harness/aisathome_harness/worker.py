@@ -28,7 +28,10 @@ The loop (one task at a time; run several workers, on one host or several: the g
   - reports retry `report_tries` times `report_wait_s` apart when the gateway is unreachable; one that never
     lands stays held (phase unreported/failed) and is reported at the next step.
 
-No new claim while `pause_file` exists, below `min_free_gb` free on `disk_path`, or while paused after crashes.
+No new claim while `pause_file` exists, below `min_free_gb` free on `disk_path`, or while paused after crashes,
+nor while `gate()` (optional, the project's) returns a reason, e.g. as many tasks running as the model has
+slots (held tasks still resume: they are running already). With `claim_lock` (a file), the gate and the claim
+run under an exclusive lock on it, so the workers of one host never pass the gate together.
 `busy_file` (optional) holds the task id while any child runs, for a scale-in check; it is removed when the
 child ends.
 
@@ -88,6 +91,7 @@ class Worker:
                  min_free_gb: float = 0, disk_path: Path | None = None, pause_file: Path | None = None,
                  keep_trees: bool = False, checkpoints: bool = False, hold_s: int | None = None,
                  watchers: tuple = (), busy_file: Path | None = None, give_back_reason: str = GIVE_BACK_REASON,
+                 gate: Callable[[], str | None] | None = None, claim_lock: Path | None = None,
                  describe: str = "", log=print, clock=time, popen=subprocess.Popen, run=subprocess.run):
         self.c, self.name, self.state, self.child = client, name, Path(state), list(child)
         self.on_claim = on_claim or (lambda task: {**(task.get("spec") or {}), "task": task["id"]})
@@ -98,6 +102,9 @@ class Worker:
         self.min_free_gb, self.disk_path, self.pause_file = min_free_gb, Path(disk_path or state), pause_file
         self.keep_trees, self.checkpoints, self.hold_s = keep_trees, checkpoints, hold_s
         self.watchers, self.busy_file, self.give_back_reason = tuple(watchers), busy_file, give_back_reason
+        self.gate, self.claim_lock = gate, claim_lock
+        self.gated: str | None = None    # the gate's last reason (for the waiting line)
+        self._said_hold = False
         self.describe, self.log, self.clock, self.popen, self.run = describe, log, clock, popen, run
         self.stopping = threading.Event()
         self.crashes = 0                 # in a row, this run
@@ -198,7 +205,7 @@ class Worker:
             if once and not did:
                 break
             if not did:
-                why = self.paused() or "nothing queued"
+                why = self.paused() or self.gated or "nothing queued"
                 if why != said:
                     self.log(f"waiting: {why}")
                     said = why
@@ -219,11 +226,18 @@ class Worker:
             return True
         if self.paused():
             return False
-        try:
-            code, body = self.c.claim(self.name, self.lease_s, kinds=self.kinds, hold_seconds=self.hold_s)
-        except OSError as e:
-            self.log(f"claim: gateway unreachable ({type(e).__name__})")
-            return False
+        with self._claim_lock():
+            self.gated = self._gate()
+            if self.gated:
+                return False
+            try:
+                code, body = self.c.claim(self.name, self.lease_s, kinds=self.kinds, hold_seconds=self.hold_s)
+            except OSError as e:
+                self.log(f"claim: gateway unreachable ({type(e).__name__})")
+                return False
+        if getattr(self.c, "hold_refused", False) and not self._said_hold:
+            self._said_hold = True
+            self.log("claim: the gateway has no hold_seconds; a given-back task waits its default hold for this worker")
         if code == 204:
             return False
         if code != 200:
@@ -231,6 +245,29 @@ class Worker:
             return False
         self.start(body["task"], body["lease"]["id"])
         return True
+
+    def _gate(self) -> str | None:
+        if self.gate is None:
+            return None
+        try:
+            return self.gate()
+        except Exception as e:  # noqa: BLE001  (a broken gate must not stop the queue: claim as without one)
+            self.log(f"gate: {type(e).__name__}: {safe_text(e, 200)}; claiming as without it")
+            return None
+
+    @contextmanager
+    def _claim_lock(self):
+        if self.claim_lock is None:
+            yield
+            return
+        import fcntl
+        Path(self.claim_lock).parent.mkdir(parents=True, exist_ok=True)
+        with open(self.claim_lock, "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
 
     def start(self, task: dict, lease: str):
         try:

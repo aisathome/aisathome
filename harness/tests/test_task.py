@@ -81,6 +81,17 @@ class RunTask(unittest.TestCase):
             self.assertEqual(again["final"], st["final"])
             self.assertEqual(len(p.calls), 2)
 
+    def test_the_endpoints_headers_go_into_every_segments_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Demo(Path(d))
+            run_task(p, Task("t1"), Endpoint("https://api.example.org/v1", "m", headers={"X-Aisathome-Task": "q-t1"}),
+                     Caps(fix_rounds=0))
+            cfg = json.loads((p.workspace(Task("t1")).home / loop.CONFIG).read_text())
+            self.assertEqual(cfg["provider"]["endpoint"]["options"]["headers"], {"X-Aisathome-Task": "q-t1"})
+            run_task(p, Task("t2"), Endpoint("https://api.example.org/v1", "m"), Caps(fix_rounds=0))
+            cfg = json.loads((p.workspace(Task("t2")).home / loop.CONFIG).read_text())
+            self.assertNotIn("headers", cfg["provider"]["endpoint"]["options"])
+
     def test_a_running_task_is_not_prepared_again(self):
         """Another caller holds the task (its session runs): run_task refuses before prepare touches the tree."""
         with tempfile.TemporaryDirectory() as d:

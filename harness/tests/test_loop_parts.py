@@ -165,6 +165,21 @@ class Config(unittest.TestCase):
         self.assertFalse(c["tools"]["webfetch"] or c["tools"]["websearch"])
         self.assertEqual(loop.opencode_config("u", None, "m", 1)["provider"]["endpoint"]["options"]["apiKey"], "dummy")
 
+    def test_extra_request_headers(self):
+        c = loop.opencode_config("u", None, "m", 1, headers={"X-Aisathome-Task": "t7-F01-h03"})
+        self.assertEqual(c["provider"]["endpoint"]["options"]["headers"], {"X-Aisathome-Task": "t7-F01-h03"})
+        self.assertNotIn("headers", loop.opencode_config("u", None, "m", 1)["provider"]["endpoint"]["options"])
+        self.assertNotIn("headers", loop.opencode_config("u", None, "m", 1, headers={})["provider"]["endpoint"]["options"])
+        for bad in ({"Authorization": "Bearer x"}, {"X-A": "a\r\nHost: evil"}, {"X A": "v"}, {"X-A": "\u00e9"}):
+            with self.assertRaises(ValueError):
+                loop.opencode_config("u", None, "m", 1, headers=bad)
+        # the sandbox's forwarder passes the header on, with its own key instead of the client's
+        from aisathome_harness.sandbox import egress_forward
+        out = egress_forward.rewrite(b"POST /v1/chat/completions HTTP/1.1\r\nX-Aisathome-Task: t7-F01-h03\r\n"
+                                     b"Authorization: Bearer dummy", "api", "/v1", "k")
+        self.assertIn(b"\r\nX-Aisathome-Task: t7-F01-h03\r\n", out)
+        self.assertNotIn(b"dummy", out)
+
     def test_args(self):
         self.assertEqual(loop.opencode_args("m", None), ["run", "--standalone", "--auto", "--format", "json", "-m", "endpoint/m"])
         self.assertEqual(loop.opencode_args("m", SID)[-2:], ["--session", SID])

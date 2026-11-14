@@ -129,6 +129,24 @@ class Client(unittest.TestCase):
         self.assertEqual(self.c.complete("t1", "w", "L", {"outcome": "x", "cached_tokens": 1}).status, 400)
         self.assertEqual(len(self.gw.seen), 1)
 
+    def test_an_older_gateway_gets_the_claim_without_hold_seconds_from_then_on(self):
+        p = "/v1/projects/proj/tasks/claim"
+        self.gw.answers[p] = [(400, {"error": {"message": 'not a valid request: json: unknown field "hold_seconds"'}}),
+                              (204, {})]
+        self.assertEqual(self.c.claim("w", 600, kinds=["other"], hold_seconds=0).status, 204)
+        self.assertTrue(self.c.hold_refused)
+        self.c.claim("w", 600, task="t1", hold_seconds=0)
+        sent = [s["body"] for s in self.gw.seen]
+        self.assertEqual(sent, [{"worker": "w", "lease_seconds": 600, "kinds": ["other"], "hold_seconds": 0},
+                                {"worker": "w", "lease_seconds": 600, "kinds": ["other"]},
+                                {"worker": "w", "lease_seconds": 600, "task": "t1"}])
+        # another 400 (a value out of range) is the gateway's answer, not retried
+        c = Q.QueueClient(self.gw.url, None, "proj", key="k")
+        self.gw.seen.clear()
+        self.gw.answers[p] = [(400, {"error": {"message": "hold_seconds: 0 to 600"}})]
+        self.assertEqual(c.claim("w", hold_seconds=601).status, 400)
+        self.assertEqual((len(self.gw.seen), c.hold_refused), (1, False))
+
     def test_typed_errors_from_check(self):
         self.gw.answers["/v1/projects/proj/tasks/t1/heartbeat"] = [(409, {"error": {"message": "lease lost"}})]
         r = self.c.heartbeat("t1", "w", "L")

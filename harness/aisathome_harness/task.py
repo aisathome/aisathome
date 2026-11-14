@@ -21,10 +21,13 @@ from .project import Project, Task
 
 @dataclass
 class Endpoint:
-    """Any OpenAI-compatible endpoint: base URL (…/v1), model name, and a file holding the API key."""
+    """Any OpenAI-compatible endpoint: base URL (…/v1), model name, and a file holding the API key.
+    `headers`: extra headers on every model request of the task (a queue worker's task:
+    queue.task_headers(task_id)), for a session that sets none itself."""
     base_url: str
     model: str
     key_file: str | None = None
+    headers: dict | None = None
 
 
 @dataclass
@@ -46,7 +49,10 @@ def run_task(project: Project, task: Task, endpoint: Endpoint, caps: Caps = Caps
     e = endpoint
 
     def session():
-        return project.session(task, ws, e)
+        s = project.session(task, ws, e)
+        if e.headers and s.headers is None:
+            s.headers = dict(e.headers)
+        return s
 
     def start():
         project.prepare(task)

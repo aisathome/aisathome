@@ -272,6 +272,63 @@ class Lifecycle(Base):
         self.assertEqual(w.held(), [])
 
 
+class Gate(Base):
+    def test_the_gate_holds_new_claims_but_not_a_held_task(self):
+        self.q.add("t1", self.spec())
+        why = ["1 of 1 model slots busy"]
+        w = self.worker(gate=lambda: why[0], claim_lock=self.root / "claim.lock")
+        self.assertFalse(w.step())
+        self.assertEqual([c for c in self.q.calls if c[0] == "claim"], [])
+        self.assertEqual(w.gated, "1 of 1 model slots busy")
+        # a task this worker holds (claimed before a stop) resumes whatever the gate says
+        w.hold({"task": "t1", "lease": "L0", "spec": {**self.spec(), "task": "t1"}, "phase": "interrupted", "since": 0})
+        self.q.tasks["t1"]["worker"] = "w1"
+        self.q.expire("t1")                      # held for w1, which takes it back by id
+        self.assertTrue(w.step())
+        self.assertEqual(self.q.tasks["t1"]["state"], "done")
+        # the gate opens: claims again
+        self.q.add("t2", self.spec())
+        why[0] = None
+        self.assertTrue(w.step())
+        self.assertEqual(self.q.tasks["t2"]["state"], "done")
+
+    def test_a_broken_gate_claims_as_without_one(self):
+        self.q.add("t1", self.spec())
+
+        def gate():
+            raise ValueError("stats unreadable")
+        w = self.worker(gate=gate)
+        self.assertTrue(w.step())
+        self.assertEqual(self.q.tasks["t1"]["state"], "done")
+        self.assertTrue(any("gate: ValueError" in l for l in w.logs), w.logs)
+
+    def test_the_claim_lock_serialises_gate_and_claim_on_a_host(self):
+        import fcntl
+        self.q.add("t1", self.spec())
+        lock = self.root / "claim.lock"
+        seen = []
+
+        def gate():
+            with open(lock, "a") as fh:          # another worker of this host cannot take the lock now
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    seen.append("free")
+                except BlockingIOError:
+                    seen.append("held")
+            return None
+        self.worker(gate=gate, claim_lock=lock).step()
+        self.assertEqual(seen, ["held"])
+
+    def test_a_gateway_without_hold_seconds_is_said_once(self):
+        self.q.add("t1", self.spec())
+        self.q.add("t2", self.spec())
+        self.q.hold_refused = True
+        w = self.worker(hold_s=0)
+        w.step()
+        w.step()
+        self.assertEqual(sum("no hold_seconds" in l for l in w.logs), 1, w.logs)
+
+
 class Stops(Base):
     def run_until_stopped(self, w: W.Worker, running: Path, how="stop"):
         th = threading.Thread(target=w.run_forever)

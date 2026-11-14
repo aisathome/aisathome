@@ -33,7 +33,9 @@ The endpoints (gateway/tasks.go; all with the project's key, except the public q
 
 Compatibility: a gateway from before a newer optional result field (`cached_tokens`, 2026-11-14) refuses it
 with 400 `unknown field`; `complete` then sends the same result once more without it. `hold_seconds` at a
-claim is sent only when given: a gateway without it refuses the field.
+claim is sent only when given; a gateway from before it (2026-11-14) refuses the field, so `claim` sends the
+same claim once more without it and leaves it out from then on (`hold_refused`: the gateway's 10-minute hold
+applies).
 
 A model request may name the task it works for in the `TASK_HEADER` header (the gateway's account pages show
 it when it is one of the project's running tasks); `task_headers(task)` gives that header.
@@ -185,6 +187,7 @@ class QueueClient:
         self.retries, self.retry_wait_s, self._sleep = retries, retry_wait_s, sleep
         self._key = key.strip() if key is not None else None
         self._open = urllib.request.build_opener(_NoRedirect()).open
+        self.hold_refused = False      # the gateway refused `hold_seconds` once: claims go without it
 
     def _auth(self) -> str:
         if self._key is None:
@@ -236,7 +239,7 @@ class QueueClient:
               task: str | None = None, max_class: int | None = None, hold_seconds: int | None = None) -> Reply:
         """The next task and a lease (204: none), or with `task` that one only (a worker taking its own back).
         `hold_seconds`: how long the task, once given back, waits for this worker (the gateway's default: 10
-        minutes); sent only when given."""
+        minutes); sent only when given, and not after a gateway refused it (`hold_refused`)."""
         body: dict = {"worker": worker, "lease_seconds": lease_seconds}
         if max_class:
             body["max_class"] = max_class
@@ -244,9 +247,14 @@ class QueueClient:
             body["task"] = task
         elif kinds:
             body["kinds"] = list(kinds)
-        if hold_seconds is not None:
-            body["hold_seconds"] = hold_seconds
-        return self.call("POST", "/claim", body)
+        if hold_seconds is None or self.hold_refused:
+            return self.call("POST", "/claim", body)
+        r = self.call("POST", "/claim", {**body, "hold_seconds": hold_seconds})
+        if r.status == 400 and 'unknown field "hold_seconds"' in error_text(r.body):
+            # a gateway from before hold_seconds: the same claim without it (nothing was claimed)
+            self.hold_refused = True
+            r = self.call("POST", "/claim", body)
+        return r
 
     def heartbeat(self, task: str, worker: str, lease: str) -> Reply:
         """Renew the lease (its TTL from now)."""

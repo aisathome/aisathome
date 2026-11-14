@@ -166,27 +166,45 @@ def gateway_context(base_url: str, key_file: str | None, model: str, timeout: fl
         return DEFAULT_CONTEXT, f"default (/v1/models: {type(e).__name__})"
 
 
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_HEADER_VALUE = re.compile(r"[\x20-\x7e]*")
+
+
+def request_headers(headers: dict | None) -> dict:
+    """Extra headers for every model request (a queue task's `X-Aisathome-Task`), checked: a token as the
+    name, visible ASCII and spaces as the value; never Authorization (the key is the forwarder's or opencode's)."""
+    out = {}
+    for k, v in (headers or {}).items():
+        k, v = str(k), str(v)
+        if not _HEADER_NAME.fullmatch(k) or not _HEADER_VALUE.fullmatch(v) or k.lower() in ("authorization", "host"):
+            raise ValueError(f"model request header {k!r}: not allowed")
+        out[k] = v
+    return out
+
+
 def opencode_config(base_url: str, key_file: str | None, model: str, steps: int,
                     model_options: dict | None = None, context: int = DEFAULT_CONTEXT,
-                    provider: Provider = DEFAULT_PROVIDER) -> dict:
+                    provider: Provider = DEFAULT_PROVIDER, headers: dict | None = None) -> dict:
     """opencode v2 config. `model_options` uses the v1 `options` form that v2 migrates: `reasoningEffort`
     becomes the request's `reasoning_effort`, and every other key (temperature, top_p, top_k, min_p,
     presence_penalty, ...) is sent verbatim in the request body. Web tools are off. With `key_file`, the
     config names the key's path in the container (`provider.key_path`), never the key; without it (the
-    bundled sandbox, whose forwarder adds the key), a placeholder that the forwarder drops."""
+    bundled sandbox, whose forwarder adds the key), a placeholder that the forwarder drops. `headers` go with
+    every request (the provider's `headers` option; the forwarder passes them on); none: the config as before."""
     m: dict = {"name": model, "limit": {"context": context, "output": 32768}}
     if model_options:
         m["options"] = dict(model_options)
+    options = {"baseURL": base_url, "apiKey": "{file:" + provider.key_path + "}" if key_file else "dummy"}
+    extra = request_headers(headers)
+    if extra:
+        options["headers"] = extra
     return {
         "$schema": "https://opencode.ai/config.json",
         "provider": {
             provider.id: {
                 "npm": "@ai-sdk/openai-compatible",
                 "name": provider.name,
-                "options": {
-                    "baseURL": base_url,
-                    "apiKey": "{file:" + provider.key_path + "}" if key_file else "dummy",
-                },
+                "options": options,
                 "models": {model: m},
             }
         },
@@ -788,6 +806,9 @@ class Session:
     # (the bundled sandbox's forwarder): then the config holds no key path at all
     model_url: Callable[[str], str] | None = None
     usage: Callable[[Path], dict] = session_usage
+    # extra headers on every model request (request_headers), e.g. the queue task it works for
+    # (queue.task_headers: the gateway's account pages show it); run_task sets them from its Endpoint
+    headers: dict | None = None
     segment: Callable[..., dict] | None = None    # override run_segment (tests)
     log: Callable[[str], None] | None = None
 
@@ -1043,7 +1064,8 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         ctx, ctx_src = s.context(base_url, key_file, model)
         inner_url, inner_key = (s.model_url(base_url), None) if s.model_url else (base_url, key_file)
         safefs.write_text(home, CONFIG, json.dumps(
-            opencode_config(inner_url, inner_key, model, left_steps, s.model_options, ctx, s.provider), indent=1))
+            opencode_config(inner_url, inner_key, model, left_steps, s.model_options, ctx, s.provider, s.headers),
+            indent=1))
         active_used = sum(s_.get("active_s", 0) for s_ in segments[budget["segment"] if budget else 0:])
         model_left = wall_min * 60 - model_used_s(events, budget["events_offset"] if budget else ev_start, segments)
         left = T.awake_ceiling * wall_min * 60 - active_used

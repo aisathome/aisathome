@@ -37,6 +37,18 @@ same behaviour).
   `aws configure export-credentials`, or the instance role), `NoticeWatch` (spot interruption and Auto Scaling
   termination from IMDSv2).
 
+- `queue.QueueClient.claim`: a gateway from before `hold_seconds` refuses the field; the claim goes once more
+  without it and later claims leave it out (`hold_refused`; the worker says so once). Nothing is claimed twice:
+  the refused claim claimed nothing.
+- `task.Endpoint.headers` and `loop.Session.headers`: extra headers on every model request of a task (opencode's
+  provider `headers` option; the sandbox's forwarder passes them on). A queue worker's project sets
+  `queue.task_headers(task_id)`, so the gateway's account pages show which task a node is serving. Checked
+  (`loop.request_headers`): a token as the name, printable ASCII as the value, never Authorization or Host.
+  Without headers the opencode config is as before.
+- `Worker(gate=..., claim_lock=...)`: the project's gate (a reason to wait, or None) holds new claims, e.g. while
+  as many tasks run as the model has slots; held tasks still resume. A gate that raises is logged and ignored.
+  With `claim_lock`, the gate and the claim run under one host-wide file lock.
+
 ### Changed
 
 - `Worker.run_forever` installs its signal handlers only on the main thread (it can run in a thread in tests).
