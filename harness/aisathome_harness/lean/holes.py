@@ -471,16 +471,61 @@ def context_text(text: str, upto: int, cmds: list[Command] | None = None) -> str
 _IDENT = re.compile(r"[^\s()\[\]{}⟨⟩,;:=@|`]+")
 
 
+_LEAN_ID = re.compile(r"[^\W\d][\w'!?]*")
+_HEADER_BINDER = re.compile(r"[(\[{⦃]([^()\[\]{}⦃⦄:]*):(?!=)")
+_BINDS_TO_ARROW = re.compile(r"(?:(?<![\w.'])(?:fun|λ)|[∀∃ΣΠ]!?)([^\n]*?)(?:=>|↦|,)")
+_BINDS_TO_EOL = re.compile(r"(?<![\w.'])(?:intro|intros|rintro|obtain|with|let|have|set|suffices)(?![\w'])"
+                           r"([^\n;]*?)(?=:=|=>|<;>|;|$)", re.M)
+_ALTERNATIVE = re.compile(r"^\s*\|([^\n]*?)=>", re.M)
+
+
+def _binder_names(seg: str) -> list[str]:
+    """The identifiers in binder position at the start of `seg`: type ascriptions dropped, stopping at the first
+    token that is not an identifier (`∈`, `<`)."""
+    seg = re.sub(r":[^()\[\]{}⦃⦄⟨⟩]*", " ", seg)
+    out = []
+    for tok in re.findall(r"[^\s()\[\]{}⦃⦄⟨⟩,|]+", seg):
+        if tok in ("-", "_", "rfl", "with"):
+            continue
+        if not _LEAN_ID.fullmatch(tok):
+            break
+        out.append(tok)
+    return out
+
+
+def _locals(code: str) -> set[str]:
+    """The names a declaration binds locally (best effort): its header's binder groups (`(h : T)`), the
+    binders of `fun`, `λ`, `∀`, `∃`, the names of `intro`, `rintro`, `obtain`, `let`, `have`, `set`, the
+    patterns after `with` and in `| ctor a b =>` alternatives. A bare use of such a name is the local, not a
+    declaration of the same name; a qualified one (`_root_.h`, `Foo.h`) is still the declaration."""
+    head = re.split(r":=|(?<![\w'])where(?![\w'])|^\|", code, maxsplit=1, flags=re.M)[0]
+    out: set[str] = set()
+    for m in _HEADER_BINDER.finditer(head):
+        out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
+    for rx in (_BINDS_TO_ARROW, _BINDS_TO_EOL):
+        for m in rx.finditer(code):
+            out.update(_binder_names(m.group(1)))
+    for m in _ALTERNATIVE.finditer(code):
+        out.update(_binder_names(m.group(1))[1:])          # the first is the constructor
+    return out
+
+
 def _uses(code: str, names: set[str], own: str | None = None) -> bool:
     """`code` mentions one of the declaration names (by its full name or by its last component, as `open` and
-    namespaces allow), other than its own name."""
+    namespaces allow), other than its own name and other than a local of the same name (`def keep (h : Nat) :=
+    h` does not use a theorem `h`)."""
     if not names:
         return False
     last = {n.rsplit(".", 1)[-1] for n in names}
+    local = None
     for tok in _IDENT.findall(code):
         if tok == own:
             continue
         if tok in names or tok in last or any(tok.endswith("." + n) for n in last):
+            if "." not in tok:
+                local = _locals(code) if local is None else local
+                if tok in local:
+                    continue
             return True
     return False
 

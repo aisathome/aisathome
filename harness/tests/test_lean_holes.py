@@ -201,6 +201,23 @@ class Commands(unittest.TestCase):
         for gone in ("theorem bound ", "theorem uses_bound", "theorem uses_that"):
             self.assertNotIn(gone, ctx)
 
+    def test_a_local_binder_named_like_a_dropped_theorem_is_not_a_use(self):
+        text = ("import Mathlib\n\ntheorem h : True := by\n  sorry\n\n"
+                "def keep (h : Nat) : Nat := h\n\n"
+                "def keep_fun : Nat → Nat := fun h => h + 1\n\n"
+                "theorem keep_intro : ∀ n : Nat, n = n := by\n  intro h\n  rfl\n\n"
+                "theorem keep_have (n : Nat) : n = n := by\n  have h : n = n := rfl\n  exact h\n\n"
+                "theorem uses_h (n : Nat) : True := h\n\n"
+                "theorem uses_root (h : Nat) : True := _root_.h\n\n"
+                "theorem solution (n : Nat) : n = n := by\n  sorry\n")
+        cs = H.commands(text)
+        si = next(i for i, c in enumerate(cs) if c.name == "solution")
+        ctx = H.context_text(text, si, cs)
+        for kept in ("def keep ", "def keep_fun", "theorem keep_intro", "theorem keep_have"):
+            self.assertIn(kept, ctx)
+        for gone in ("theorem h ", "theorem uses_h", "theorem uses_root"):
+            self.assertNotIn(gone, ctx)
+
     def test_scope_lines_and_context(self):
         cs = H.commands(OUTLINE)
         hi = next(i for i, c in enumerate(cs) if c.name == "helper")
