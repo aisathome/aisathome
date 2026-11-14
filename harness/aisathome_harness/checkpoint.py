@@ -15,7 +15,7 @@ listing (a role that may only Get/Put/List-by-prefix reads a missing key as 403,
 A checkpoint under `prefix` (the project's choice, e.g. ckpt/<trial>/<task>/):
 
     <prefix>latest.tar.zst + latest.json        the newest
-    <prefix>previous.tar.zst + previous.json    the one before (copied before each upload)
+    <prefix>previous.tar.zst + previous.json    the one before (copied before each upload, if intact)
 
 The archive holds each part under its name (a part's `exclude` paths left out, symbolic links kept as links);
 the manifest: v, task, the project's `meta`, seq (one more than the newest anywhere), why, created, sha256 and
@@ -211,8 +211,9 @@ def sha256_file(path: Path) -> str:
 
 
 def save(st, lay: Layout, prefix: str, why: str, worker: str = "", meta: dict | None = None, log=print) -> dict:
-    """Pack the task and upload it as the newest checkpoint (the newest one before becomes `previous`); the
-    manifest. Raises StoreError (the caller decides whether that stops anything)."""
+    """Pack the task and upload it as the newest checkpoint (the newest one before becomes `previous` when its
+    archive matches its manifest: it is downloaded and checked); the manifest. Raises StoreError (the caller
+    decides whether that stops anything)."""
     if not lay.complete():
         raise StoreError(f"{lay.task}: nothing to checkpoint here (the local copy is incomplete)")
     t0 = time.monotonic()
@@ -227,8 +228,14 @@ def save(st, lay: Layout, prefix: str, why: str, worker: str = "", meta: dict | 
              "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "sha256": sha256_file(arc), "size": size,
              "work": lay.work, "worker": worker}
         if old and prefix + "latest.tar.zst" in keys:
-            st.copy(prefix + "latest.tar.zst", prefix + "previous.tar.zst")
-            st.copy(prefix + "latest.json", prefix + "previous.json")
+            # only an intact `latest` becomes `previous`: after an upload cut between archive and manifest,
+            # `previous` is the one checkpoint left to restore, and stays
+            if _fetch(st, prefix, "latest", Path(d) / "latest.tar.zst") is not None:
+                st.copy(prefix + "latest.tar.zst", prefix + "previous.tar.zst")
+                st.copy(prefix + "latest.json", prefix + "previous.json")
+            else:
+                log(f"[{lay.task}] checkpoint `latest` is not intact (an upload cut); `previous` stays")
+            (Path(d) / "latest.tar.zst").unlink(missing_ok=True)
         st.put_file(prefix + "latest.tar.zst", arc)
         st.put(prefix + "latest.json", (json.dumps(m, indent=1) + "\n").encode())
     mark(lay, m)

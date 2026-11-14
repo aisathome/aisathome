@@ -99,6 +99,24 @@ class Checkpoints(unittest.TestCase):
             K.restore(self.st, machine(self.d / "c"), self.pre, log=self.logs.append)
         self.assertFalse((self.d / "c" / "data").exists())             # nothing half-restored
 
+    def test_two_cut_uploads_in_a_row_keep_the_last_intact_checkpoint(self):
+        self.save("round", 1)
+        real = self.st.put_file
+
+        def cut(key, path):                       # the archive goes up, the worker dies before the manifest
+            real(key, path)
+            raise K.StoreError("cut")
+        self.st.put_file = cut
+        for n in (2, 3):
+            with self.assertRaises(K.StoreError):
+                self.save("round", n)
+        self.st.put_file = real
+        got = K.restore(self.st, machine(self.b), self.pre, log=self.logs.append)
+        self.assertEqual(got["seq"], 1)
+        self.assertEqual(json.loads((self.b / "data/t1/run.json").read_text()), {"round": 1})
+        self.assertTrue(any("`latest` is not intact (an upload cut); `previous` stays" in l for l in self.logs),
+                        self.logs)
+
     def test_which_copy_wins(self):
         self.save("round", 1)
         la = machine(self.a)

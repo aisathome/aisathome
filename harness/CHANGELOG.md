@@ -30,7 +30,7 @@ same behaviour).
   project's callbacks; `GiveBack` gives a task back instead of failing it. Clock and process calls injectable.
 - `checkpoint`: the store interface and `DirStore`; a task's state as a `Layout` of named parts (excluded
   paths, optional parts, parts cleared by the project's remover) packed into one tar.zst with a manifest,
-  `save` (latest and previous), `restore` (only when the store's copy is newer or the local one incomplete;
+  `save` (latest, and previous from a latest whose archive matches its manifest), `restore` (only when the store's copy is newer or the local one incomplete;
   sha256 checked, `previous` after a cut upload), `sync_evidence` and `fetch_evidence` (changed files only,
   an index, every file checked on the way back).
 - `aws` (optional): `S3Store` (path-style SigV4 requests, standard library only), `Credentials` (environment,
