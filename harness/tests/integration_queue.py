@@ -104,9 +104,10 @@ def main(argv=None) -> int:
     if queued:
         print(f"refused: the project has queued tasks of kind other ({', '.join(queued[:5])}); a worker here could take one")
         return 2
-    hold = c.claim(f"{socket.gethostname().split('.')[0]}-itest-probe", 30, kinds=["other"], hold_seconds=0)
+    probe = f"{socket.gethostname().split('.')[0]}-itest-probe"
+    hold = c.claim(probe, 30, kinds=["other"], hold_seconds=0)
     if hold.status == 200:                       # queued meanwhile: back at once, with its try
-        c.give_back(hold.body["task"]["id"], hold.body["lease"]["worker"], hold.body["lease"]["id"], "integration probe")
+        c.give_back(hold.body["task"]["id"], probe, hold.body["lease"]["id"], "integration probe")
         print("refused: a task was queued while probing")
         return 2
     hold_ok = hold.status == 204 and not c.hold_refused      # the client retries without the field on an older gateway
