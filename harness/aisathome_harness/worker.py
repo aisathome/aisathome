@@ -356,7 +356,7 @@ class Worker:
                 return
             hb = threading.Thread(target=self._beat, args=(rec, done, lost, p), daemon=True)
             hb.start()
-            rc = self._wait(p)
+            rc = self._wait(p, lost)
         done.set()
         hb.join()                  # a heartbeat still in flight acts now (a new lease, lost), not after the report
         with self.lock:
@@ -398,18 +398,19 @@ class Worker:
                                                f"{safe_text(why, 300)}\n")
             self.log(f"{self.crashes} tasks crashed in a row: no new task until {self.state / 'paused'} is removed")
 
-    def _wait(self, p) -> int:
-        """The child's exit code; after a stop, its time to exit, then SIGKILL to its group."""
+    def _wait(self, p, lost: threading.Event | None = None) -> int:
+        """The child's exit code; after a stop or a lost lease (both sent SIGTERM), its time to exit, then
+        SIGKILL to its group."""
         while True:
             try:
                 return p.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
-            if self.stopping.is_set():
+            if self.stopping.is_set() or (lost is not None and lost.is_set()):
                 try:
                     return p.wait(timeout=self.stop_wait_s)
                 except subprocess.TimeoutExpired:
-                    self._signal_child(signal.SIGKILL)
+                    self._signal_child(signal.SIGKILL, p)
                     return p.wait()
 
     def _report(self, what: str, fn) -> tuple[int, dict] | None:

@@ -152,7 +152,8 @@ class Base(unittest.TestCase):
 
     def worker(self, name="w1", state=None, **kw) -> W.Worker:
         logs: list[str] = []
-        w = W.Worker(self.q, name, state or self.root / name, CHILD, poll_s=0.05, report_wait_s=0, stop_wait_s=5,
+        kw.setdefault("stop_wait_s", 5)
+        w = W.Worker(self.q, name, state or self.root / name, CHILD, poll_s=0.05, report_wait_s=0,
                      log=logs.append, **kw)
         w.logs = logs
         return w
@@ -211,6 +212,18 @@ class Lifecycle(Base):
         self.assertTrue(any("[t2] lease lost" in l for l in w.logs), w.logs)
         self.assertFalse([c for c in self.q.calls if c[0] in ("complete", "fail") and c[1] == "t2"])
         self.assertIn("cleanup t2", self.events())
+        self.assertEqual(w.held(), [])
+
+    def test_a_lost_lease_kills_a_child_that_ignores_sigterm(self):
+        self.q.add("t1", self.spec(sleep=60, ignore_term=True, running=str(self.root / "t1.running")))
+        w = self.worker(heartbeat_s=0.1, stop_wait_s=1)
+        th = threading.Thread(target=w.run_forever, kwargs={"once": True}, daemon=True)
+        th.start()
+        self.assertTrue(wait_for((self.root / "t1.running").exists))
+        self.q.cancel("t1")
+        th.join(15)
+        self.assertFalse(th.is_alive(), "the worker waits on a child that ignored SIGTERM")
+        self.assertTrue(any("[t1] lease lost" in l for l in w.logs), w.logs)
         self.assertEqual(w.held(), [])
 
     def test_a_late_heartbeat_answer_never_stops_the_next_task(self):

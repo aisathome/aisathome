@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """A toy project's child for the worker tests (test_worker.py): worker.child_main with callbacks driven by the
-spec. "progress" stands in for a checkpoint: a first run writes it and works for `sleep` seconds; a run that
+spec ("ignore_term": a child that ignores SIGTERM). "progress" stands in for a checkpoint: a first run writes it and works for `sleep` seconds; a run that
 finds it resumes and finishes at once.
 
     python3 fake_worker_child.py run-task SPEC OUT ERR | cleanup-task SPEC | checkpoint-task SPEC
@@ -8,6 +8,7 @@ finds it resumes and finishes at once.
 from __future__ import annotations
 
 import json
+import signal
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,8 @@ def run(spec: dict) -> dict:
         return {"outcome": "ok", "resumed": True, "busy": busy, "worker": spec.get("worker")}
     if prog:
         prog.write_text("started\n")
+    if spec.get("ignore_term"):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     if spec.get("running"):
         Path(spec["running"]).write_text("running\n")
     time.sleep(float(spec.get("sleep") or 0))
