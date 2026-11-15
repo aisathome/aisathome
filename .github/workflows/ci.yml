@@ -1,4 +1,4 @@
-# Checks for every push and pull request; release.yml runs the same job before building.
+# Checks for every push and pull request; release.yml runs the same jobs before building.
 # SPDX-License-Identifier: Apache-2.0
 name: ci
 
@@ -12,19 +12,19 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # The Linux checks run as parallel jobs (lint, test, e2e in shards); the job named check
+  # passes only when all of them pass, so the required status check "check" keeps its meaning.
+  lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The release tags: e2e/compat_test.go builds the latest two node releases and runs
-          # the basic chat through them (decision 0013); without tags it fails in CI.
-          fetch-depth: 0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - id: go
+        uses: ./.github/actions/go
         with:
-          go-version-file: go.mod
+          cache: lint
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
@@ -37,8 +37,27 @@ jobs:
           if git grep -n -i -E "$pat" -- ':!.github' | sed -E 's#[a-z]+://[^ )>"]*##g' | grep -i -E "$pat"; then exit 1; fi
       - name: go vet
         run: go vet ./...
-      - name: go test -race
-        run: go test -race -count=1 ./...
+      - name: save the Go caches (main only)
+        if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.go.outputs.cache-paths }}
+          key: ${{ steps.go.outputs.cache-key }}
+
+  test:
+    # Every package but e2e (its own job below), and the packaging scripts.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: go
+        uses: ./.github/actions/go
+        with:
+          cache: test
+      - name: go test -race (all but e2e)
+        run: go test -race -count=1 $(go list ./... | grep -v -E '/e2e(/|$)')
       - name: install.sh tests
         run: ./node/packaging/linux/install_test.sh
       - name: prebuilt bundle packaging (fake llama-server)
@@ -58,6 +77,72 @@ jobs:
             MODEL_URL="file://$PWD/go.mod" MODEL_SHA256="$(sha256sum go.mod | cut -d' ' -f1)" MODEL_SIZE="$(stat -c %s go.mod)" \
             ./node/packaging/linux/install.sh --dry-run --node-release v0.0.0 --model go.mod | tee "$RUNNER_TEMP/dry-run.txt"
           grep -q '^tier: big: 1 x 196608 tokens' "$RUNNER_TEMP/dry-run.txt"
+      - name: save the Go caches (main only)
+        if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.go.outputs.cache-paths }}
+          key: ${{ steps.go.outputs.cache-key }}
+
+  e2e:
+    # The e2e tests share globals and run one at a time, so they are split across runners
+    # instead: shard i of n runs every n-th top-level test (by go test -list order), still
+    # one at a time and with -race.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      SHARDS: 4
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The release tags: e2e/compat_test.go builds the latest two node releases and runs
+          # the basic chat through them (decision 0013); without tags it fails in CI.
+          fetch-depth: 0
+      - id: go
+        uses: ./.github/actions/go
+        with:
+          cache: e2e
+      - name: go test -race ./e2e (one shard)
+        # One build (the test binary), then this shard's tests in e2e/, as go test runs them.
+        # The full output only on failure; otherwise each test's time, to keep shards even.
+        run: |
+          set -o pipefail
+          go test -race -c -o "$RUNNER_TEMP/e2e.test" ./e2e/
+          cd e2e
+          tests="$("$RUNNER_TEMP/e2e.test" -test.list '.*' | grep -E '^(Test|Example|Fuzz)' | awk -v n="$SHARDS" -v i="$SHARD" 'NR % n == i')"
+          if [ -z "$tests" ]; then echo "no tests in shard $SHARD"; exit 0; fi
+          if "$RUNNER_TEMP/e2e.test" -test.timeout=10m -test.v -test.run "^($(echo $tests | tr ' ' '|'))\$" > "$RUNNER_TEMP/e2e.log" 2>&1; then
+            grep -E '^(--- |PASS)' "$RUNNER_TEMP/e2e.log"
+          else
+            cat "$RUNNER_TEMP/e2e.log"; exit 1
+          fi
+      - name: save the Go caches (main only)
+        if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && matrix.shard == 0 }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.go.outputs.cache-paths }}
+          key: ${{ steps.go.outputs.cache-key }}
+
+  check:
+    # The required status check: green only when every Linux check above is green (a failed
+    # or skipped job counts as a failure here).
+    if: ${{ always() }}
+    needs: [lint, test, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: all Linux checks passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "lint, test, e2e: $RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
 
   windows:
     # The node agent on Windows, without a GPU: vet, build and unit tests of the node packages;
@@ -69,23 +154,40 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - id: go
+        uses: ./.github/actions/go
         with:
-          go-version-file: go.mod
+          cache: windows
       - name: go vet (node)
         run: go vet ./node/... ./protocol/...
       - name: go build (node)
         run: go build ./node/...
       - name: go test (node)
-        # No -race: on Windows it needs cgo and a C toolchain. The check job runs the same
+        # No -race: on Windows it needs cgo and a C toolchain. The test job runs the same
         # tests with it on Linux.
         run: go test -count=1 ./node/... ./protocol/...
+      - name: the small test model's pin
+        # fetch-llama pins it (smokeModel: URL, SHA-256, size); its SHA-256 names the cache.
+        id: smoke
+        shell: bash
+        run: |
+          sha="$(grep -A4 '^var smokeModel' node/packaging/windows/fetch-llama/main.go | sed -n -E 's/.*SHA256: *"([0-9a-f]{64})".*/\1/p')"
+          [ -n "$sha" ] || { echo "no smokeModel SHA-256 in fetch-llama"; exit 1; }
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: the small test model from the cache
+        # 563 MB from Hugging Face, sometimes slow. Keyed by its SHA-256, so a hit is the pinned
+        # file; fetch-llama still checks its size and SHA-256 and downloads it again if not.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/llama/smoke-model.gguf
+          key: smoke-model-${{ steps.smoke.outputs.sha256 }}
       - name: llama.cpp, the pinned upstream Windows build
         # node/setup/llama.go pins the zips (size and SHA-256); fetch-llama checks and unpacks
-        # them into one folder, and fetches the pinned small test model.
+        # them into one folder, and fetches the pinned small test model (unless the file there
+        # already has its size and SHA-256).
         shell: pwsh
         run: |
           go run ./node/packaging/windows/fetch-llama -out (Join-Path $env:RUNNER_TEMP 'llama') -smoke-model
@@ -201,6 +303,12 @@ jobs:
           if (-not (Test-Path (Join-Path $data 'state.json'))) { throw 'no state file in the default folder' }
           Remove-Service aisathome-node
           exit 0
+      - name: save the Go caches (main only)
+        if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.go.outputs.cache-paths }}
+          key: ${{ steps.go.outputs.cache-key }}
 
   node-setup:
     # The Windows installer (Inno Setup 6, preinstalled on the image), without a GPU, engine or
@@ -215,18 +323,25 @@ jobs:
       # The agent embeds its page's files: LF as in the repo, so the build matches the release's.
       - name: git keeps LF line ends
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - id: go
+        uses: ./.github/actions/go
         with:
-          go-version-file: go.mod
+          cache: node-setup
       - name: build the installer
         shell: pwsh
         run: ./node/packaging/windows/build-installer.ps1 -Version v0.0.0-ci -OutDir "$env:RUNNER_TEMP\installer"
       - name: silent install, update, uninstall and a fresh install
         shell: pwsh
         run: ./node/packaging/windows/installer_test.ps1 -Setup "$env:RUNNER_TEMP\installer\AIsAtHome-node-setup-v0.0.0-ci.exe"
+      - name: save the Go caches (main only)
+        if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.go.outputs.cache-paths }}
+          key: ${{ steps.go.outputs.cache-key }}
 
   harness:
     # harness/ (the Python package aisathome_harness): its offline tests. Standard library only, so the
@@ -234,7 +349,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: harness tests (offline)
@@ -250,7 +365,7 @@ jobs:
     env:
       ASTRO_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: build the website (site/)

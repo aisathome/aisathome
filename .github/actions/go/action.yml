@@ -1,0 +1,41 @@
+# Go from go.mod, with the module and build caches of the same job's last run on main. Each
+# job keeps its own cache (they build different things: vet, -race tests, Windows), and only
+# pushes to main save it (the job's last step, actions/cache/save with this action's outputs),
+# so branches and pull requests start from main's latest build cache instead of a stale one.
+# SPDX-License-Identifier: Apache-2.0
+name: go
+description: setup-go from go.mod, then restore this job's Go module and build caches
+inputs:
+  cache:
+    description: the cache's name, one per job
+    required: true
+outputs:
+  cache-paths:
+    description: GOCACHE and GOMODCACHE, one per line
+    value: ${{ steps.paths.outputs.paths }}
+  cache-key:
+    description: the key to save the caches under
+    value: ${{ steps.key.outputs.key }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+    - id: paths
+      shell: bash
+      run: |
+        { echo 'paths<<EOF'; go env GOCACHE GOMODCACHE; echo EOF; } >> "$GITHUB_OUTPUT"
+    - id: key
+      shell: bash
+      env:
+        PREFIX: go-${{ runner.os }}-${{ inputs.cache }}-${{ hashFiles('go.sum') }}-
+      run: echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"; echo "key=$PREFIX$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.paths }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.prefix }}
+          go-${{ runner.os }}-${{ inputs.cache }}-

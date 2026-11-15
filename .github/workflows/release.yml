@@ -39,7 +39,7 @@ jobs:
       CUDA_IMAGE: nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
       CUDA_ARCHS: ${{ inputs.cuda_archs || '86-real;89-real;120a-real' }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Free disk space (the CUDA image is about 10 GB unpacked)
@@ -61,7 +61,7 @@ jobs:
           # A tar keeps the library symlinks and modes, which artifacts do not.
           tar -C llama-out -cf llama.tar .
           { echo '### llama-server'; echo '```'; cat llama-out/BUILD-INFO; du -sh llama-out/bin/* llama-out/lib/* llama-out; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama
           path: llama.tar
@@ -83,10 +83,10 @@ jobs:
       # The agent embeds its page's files: LF as in the repo, or the bytes differ.
       - name: git keeps LF line ends
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false # no shared build cache in release builds
@@ -104,7 +104,7 @@ jobs:
         run: |
           $version = if ($env:IS_TAG -eq 'true') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 12))" }
           ./node/packaging/windows/build-installer.ps1 -Version $version -OutDir win-dist -EngineDir (Join-Path $env:RUNNER_TEMP 'engine\llama')
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AIsAtHome-node-setup
           path: win-dist/*.exe # the agent and AIsAtHome-node-setup-<version>.exe
@@ -120,18 +120,18 @@ jobs:
     env:
       IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false # no shared build cache in release builds
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: llama
           path: ${{ runner.temp }}/llama-artifact
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: AIsAtHome-node-setup
           path: ${{ runner.temp }}/windows
@@ -159,7 +159,7 @@ jobs:
         if: env.IS_TAG != 'true'
         run: |
           { echo "Not a v* tag: built, not published. Files: the 'dist' artifact (7 days)."; echo '```'; ls -l dist; cat dist/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.IS_TAG != 'true'
         with:
           name: dist
