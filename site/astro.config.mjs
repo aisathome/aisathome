@@ -81,6 +81,7 @@ export default defineConfig({
 						{ label: 'FAQ', slug: 'about/faq' },
 						{ label: 'Privacy', slug: 'about/privacy' },
 						{ label: 'Terms of use', slug: 'about/terms' },
+						{ label: 'Contribute', link: 'https://github.com/aisathome/aisathome/blob/main/CONTRIBUTING.md' },
 					],
 				},
 			],

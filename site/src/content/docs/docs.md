@@ -25,3 +25,10 @@ description: Everything about using AIs@home and running a node, in one place.
 - [FAQ](/about/faq/)
 - [Privacy](/about/privacy/): what happens to your messages, and what is kept.
 - [Terms of use](/about/terms/)
+
+## Contribute
+
+- [Contributing](https://github.com/aisathome/aisathome/blob/main/CONTRIBUTING.md): run a node,
+  report bugs, send code; dev setup, tests and pull requests.
+- [Architecture](https://github.com/aisathome/aisathome/blob/main/docs/architecture.md): how the
+  gateway, nodes, harness and site fit together, and who can see what.

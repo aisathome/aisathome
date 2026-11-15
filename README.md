@@ -35,8 +35,15 @@ can check, such as Lean proofs. The agent harness is in [`harness/`](harness/REA
 | `harness/` | `aisathome_harness` (Python): runs an open model behind any OpenAI-compatible endpoint as an agent on outside projects' tasks, checks the results mechanically and keeps the evidence ([harness/README.md](harness/README.md)) |
 | `e2e/` | End-to-end tests (user → gateway → node → mock engine) |
 | `tools/sitestats/` | The website's visitor statistics: daily counts from the web server's log, no cookies, no IPs kept (what it counts: `doc.go`) |
-| `docs/` | For operators and maintainers: [running a gateway](docs/gateway.md), [credit](docs/credit.md), [releasing](docs/RELEASING.md) |
+| `docs/` | [How the pieces fit together](docs/architecture.md) (components, request and task flows, trust boundaries); for operators and maintainers: [running a gateway](docs/gateway.md), [credit](docs/credit.md), [releasing](docs/RELEASING.md) |
 | `scripts/`, `examples/` | Release and bundle builds, test fixtures; example configs |
+
+## Contributing
+
+Run a node, report bugs, or send code: [CONTRIBUTING.md](CONTRIBUTING.md) has the dev setup,
+the tests, the pull-request flow and how to report a security problem. Start with
+[docs/architecture.md](docs/architecture.md) for how the gateway, node, protocol, harness and
+site fit together, and who can see what.
 
 ## Run a node
 
