@@ -64,9 +64,9 @@
 // queue, and recovers the same way (owner 2026-10-31). What is on disk is the truth: a call whose
 // change did not reach the disk answers 503 and changes nothing, so it may be repeated, and the
 // project's memory is dropped and read again at the next call or sweep, with no rollback to get
-// wrong. One exception, information only: the classes of the nodes that served a running task's
-// requests (node_classes) are noted in memory and reach the disk with the task's next save (a
-// heartbeat or its end).
+// wrong. Two exceptions, information only: the classes of the nodes that served a running task's
+// requests (node_classes) and the live counts of its model calls (live, tasks_live.go) are noted in
+// memory and reach the disk with the task's next save (a heartbeat or its end).
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -191,11 +191,14 @@ type Task struct {
 	StartedAt *time.Time `json:"started_at,omitempty"` // the first claim
 	// NodeClasses: the classes (trusted, volunteer) of the nodes that served the task's model
 	// requests, as far as its worker named the task (X-Aisathome-Task, nodework.go).
-	NodeClasses []string    `json:"node_classes,omitempty"`
-	Lease       *taskLease  `json:"lease,omitempty"` // the current lease, or the last one when finished
-	Result      *TaskResult `json:"result,omitempty"`
-	Error       string      `json:"error,omitempty"` // the last failure, expiry or cancel reason
-	Events      []taskEvent `json:"events,omitempty"`
+	NodeClasses []string `json:"node_classes,omitempty"`
+	// Live: the gateway's own count of the model calls its worker named the task in, this try
+	// (tasks_live.go); the result's numbers, from the worker, stay the authoritative ones.
+	Live   *taskLive   `json:"live,omitempty"`
+	Lease  *taskLease  `json:"lease,omitempty"` // the current lease, or the last one when finished
+	Result *TaskResult `json:"result,omitempty"`
+	Error  string      `json:"error,omitempty"` // the last failure, expiry or cancel reason
+	Events []taskEvent `json:"events,omitempty"`
 	// PreferWorker holds a task that came back for its last worker until PreferUntil.
 	PreferWorker string     `json:"prefer_worker,omitempty"`
 	PreferUntil  *time.Time `json:"prefer_until,omitempty"`
@@ -301,6 +304,10 @@ func (t *Task) view(full bool) *Task {
 	c.Events = slices.Clone(t.Events)
 	c.Needs = slices.Clone(t.Needs)
 	c.NodeClasses = slices.Clone(t.NodeClasses)
+	if t.Live != nil {
+		l := *t.Live
+		c.Live = &l
+	}
 	if t.Labels != nil {
 		c.Labels = make(map[string]string, len(t.Labels))
 		for k, v := range t.Labels {

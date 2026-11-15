@@ -10,6 +10,8 @@
 //	steps, model_min, tokens (prompt + completion), prompt_tokens, cached_tokens, completion_tokens,
 //	created_at, started_at, finished_at, updated_at,
 //	node_classes                                    trusted or volunteer: the nodes that served it
+//	live                                            while it runs: the gateway's own count of its
+//	                                                model calls so far (tasks_live.go), else null
 //
 // A field the task does not have is null (labels {}, needs and node_classes []): a task made before
 // the typed fields has no relations, and its role and labels come from its spec as on the public
@@ -71,6 +73,7 @@ type publicTaskV1 struct {
 	FinishedAt       *time.Time        `json:"finished_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	NodeClasses      []string          `json:"node_classes"`
+	Live             *publicLive       `json:"live"`
 }
 
 func strOrNil(s string) *string {
@@ -112,7 +115,7 @@ func (t *Task) publicV1() publicTaskV1 {
 	p := publicTaskV1{Project: t.Project, ID: t.ID, Kind: keepPublic(t.Kind, taskKindRe), State: t.State,
 		Parent: strOrNil(t.Parent), Needs: []string{}, RetryOf: strOrNil(t.RetryOf), Replaces: strOrNil(t.Replaces),
 		ClosedBy: strOrNil(t.ClosedBy), Labels: t.publicLabels(), HoleID: strOrNil(t.HoleID),
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, NodeClasses: []string{}}
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, NodeClasses: []string{}, Live: t.publicLive()}
 	if p.Kind == "" { // an older kind with a character today's pattern refuses
 		p.Kind = kindOther
 	}

@@ -440,6 +440,7 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, only 
 		note = fmt.Sprintf("try %d of %d continues after an interruption (%s; %d so far)", t.Tries, t.MaxTries, t.Interrupted, t.Interruptions)
 	} else {
 		t.Tries++
+		t.Live = nil // a new try counts its own model calls (tasks_live.go)
 		note = fmt.Sprintf("try %d of %d", t.Tries, t.MaxTries)
 	}
 	t.PreferWorker, t.PreferUntil, t.Interrupted = "", nil, ""

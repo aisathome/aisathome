@@ -10,6 +10,7 @@
 //     changed, and when its lease began while it runs;
 //   - from the result: a short outcome word ("proved", "outline"), the steps, the token counts (the
 //     prompt tokens computed, those re-read from the cache, and those written) and model minutes;
+//   - while it runs, `live`: the gateway's own count of its model calls so far (tasks_live.go);
 //   - the trial, the leaf and its group, the theorem's name, and for a hole task its role, outline
 //     generation and hole number: from the task's typed fields (decision 0019: its role and its labels
 //     trial, leaf, group, theorem, outline and hole) when it has them, else, for a task made before
@@ -76,6 +77,8 @@ type publicTask struct {
 	CachedTokens     *int64  `json:"cached_tokens,omitempty"`
 	CompletionTokens int64   `json:"completion_tokens,omitempty"`
 	ModelMin         float64 `json:"model_min,omitempty"`
+	// Live: while the task runs and once a model call counted (tasks_live.go).
+	Live *publicLive `json:"live,omitempty"`
 }
 
 // specRef is what the public view and the account page show of a task's place: from its typed
@@ -153,7 +156,7 @@ func readSpecRef(spec json.RawMessage) specRef {
 func (t *Task) public() publicTask {
 	ref := t.ref()
 	p := publicTask{ID: t.ID, State: t.State, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Trial: ref.Trial, Leaf: ref.Leaf,
-		Group: ref.Group, Theorem: ref.Theorem, Role: ref.Role, Gen: ref.Gen, Hole: ref.Hole}
+		Group: ref.Group, Theorem: ref.Theorem, Role: ref.Role, Gen: ref.Gen, Hole: ref.Hole, Live: t.publicLive()}
 	if t.State == TaskLeased && t.Lease != nil {
 		since := t.Lease.Since
 		p.Since = &since
