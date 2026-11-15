@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aisathome/aisathome/node/modelcheck"
 	"github.com/aisathome/aisathome/node/setup"
 )
 
@@ -24,7 +25,8 @@ import (
 // budget's message really reaches the model's thinking. It needs AISATHOME_LLAMA_SERVER (the
 // program) and AISATHOME_SMOKE_MODEL (a small GGUF with a thinking chat template whose head
 // size the q4_0 KV cache can split); CI sets both on Windows with the pinned upstream build and
-// runs it on the CPU. Elsewhere it is skipped.
+// runs it on the CPU. Elsewhere it is skipped. It also runs the model check's client against the
+// real server: a short reference, then a check against it.
 func TestLlamaServerSmoke(t *testing.T) {
 	exe, model := os.Getenv("AISATHOME_LLAMA_SERVER"), os.Getenv("AISATHOME_SMOKE_MODEL")
 	if exe == "" || model == "" {
@@ -72,6 +74,36 @@ func TestLlamaServerSmoke(t *testing.T) {
 			stopEngine(t, s)
 		})
 	}
+
+	// The model check against a real llama-server: its logprob answers parse, and a second run on
+	// the same engine passes against a reference recorded from the first.
+	t.Run("model check", func(t *testing.T) {
+		e := setup.Tiers[0].Engine(exe, model)
+		e.Port = freePort(t)
+		s := serveEngine(t, e)
+		c := &modelcheck.Client{BaseURL: e.Upstream()}
+		rq := modelcheck.Request{MaxTokens: 8, TopLogprobs: 20}
+		prompts := modelcheck.Prompts()[:4]
+		mk := func(kind string) *modelcheck.Reference {
+			return &modelcheck.Reference{Format: modelcheck.Format, Kind: kind, Name: "smoke", Request: rq,
+				Results: c.Run(context.Background(), prompts, rq, nil)}
+		}
+		ref := mk(modelcheck.KindReference)
+		if err := ref.Validate(); err != nil {
+			t.Fatalf("reference: %v (%+v)", err, ref.Results)
+		}
+		for _, r := range ref.Results {
+			if r.Error != "" || len(r.Tokens) == 0 || len(r.Tokens[0].Top) < 2 {
+				t.Fatalf("prompt %s: %q, %d tokens", r.ID, r.Error, len(r.Tokens))
+			}
+		}
+		rep := modelcheck.Compare(ref, mk(modelcheck.KindRun), modelcheck.DefaultThresholds)
+		if rep.Verdict != modelcheck.Pass || rep.Prompts != 4 {
+			t.Errorf("check against itself: %s %v", rep.Verdict, rep.Reasons)
+		}
+		t.Logf("model check on the CPU: %d positions, largest group KL %.6f", rep.Positions, rep.CheckKLMax)
+		stopEngine(t, s)
+	})
 
 	// The thinking budget: with a budget of a few tokens, the budget message (passed as one
 	// argument with spaces, parentheses and a semicolon) ends the model's thinking.
