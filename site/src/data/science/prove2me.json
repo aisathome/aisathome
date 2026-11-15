@@ -2,7 +2,7 @@
 	"project": "prove2me",
 	"project_url": "https://prove2.me/",
 	"model": "Qwen3.8 27B",
-	"generated_at": "2026-11-15T10:54:56Z",
+	"generated_at": "2026-11-15T20:06:04Z",
 	"as_of": "2026-11-15",
 	"lean": "v4.33.1",
 	"mathlib": "0df444a",
@@ -19,10 +19,18 @@
 		"prompt_tokens": 132058593,
 		"cached_tokens": 123891070,
 		"output_tokens": 5603324,
-		"submitted": 4,
-		"accepted": 4,
+		"submitted": 5,
+		"accepted": 5,
 		"reused": 2,
-		"leaves": 31
+		"leaves": 31,
+		"probes": {
+			"rounds": 1,
+			"tasks": 6,
+			"model_hours": 3.0,
+			"prompt_tokens": 6278230,
+			"cached_tokens": 5988591,
+			"output_tokens": 268179
+		}
 	},
 	"submissions": [
 		{
@@ -82,6 +90,17 @@
 				"author": "mikedeng1",
 				"relation": "part"
 			}
+		},
+		{
+			"leaf": "N03",
+			"trial": 6,
+			"kind": "proof",
+			"theorem": "PerturbedWF.eq_2_3",
+			"title": "Eq. (2.3): $\\langle v,x-y\\rangle\\le\\|x-y\\|$ for $v\\in B^*$ and $x,y\\in\\mathcal C$",
+			"url": "https://prove2.me/theorems/dbd69f70-c8c7-4b16-b27d-a8ea3d7ac435",
+			"submitted_at": "2026-11-15T14:49:32Z",
+			"verdict": "accepted",
+			"verdict_at": "2026-11-15T14:51:04Z"
 		}
 	],
 	"current": {
@@ -109,7 +128,40 @@
 				"earlier": [
 					3
 				],
-				"outlines": []
+				"outlines": [
+					{
+						"gen": 1,
+						"holes": 3,
+						"lemmas": 3,
+						"inplace": 0,
+						"prepass": {
+							"tried": 3,
+							"closed": 2,
+							"seconds": 479,
+							"by": {
+								"formalpedia:WilliamsonShmoys.drawable_subgraph__p2m_39578764_0198_4707_9e11_eef0219b5111_a1": 1,
+								"simp_all": 1
+							}
+						},
+						"prepass_holes": [
+							{
+								"hole": 1,
+								"closed_by": "formalpedia:WilliamsonShmoys.drawable_subgraph__p2m_39578764_0198_4707_9e11_eef0219b5111_a1",
+								"timed_out": false
+							},
+							{
+								"hole": 2,
+								"closed_by": null,
+								"timed_out": false
+							},
+							{
+								"hole": 3,
+								"closed_by": "simp_all",
+								"timed_out": false
+							}
+						]
+					}
+				]
 			},
 			{
 				"leaf": "N03",
@@ -117,16 +169,65 @@
 				"theorem": "PerturbedWF.eq_2_3",
 				"title": "Eq. (2.3): $\\langle v,x-y\\rangle\\le\\|x-y\\|$ for $v\\in B^*$ and $x,y\\in\\mathcal C$",
 				"url": "https://prove2.me/theorems/dbd69f70-c8c7-4b16-b27d-a8ea3d7ac435",
-				"state": "running",
+				"state": "finished",
 				"outline": "finished",
 				"hole_tasks": {
-					"n": 1,
-					"proved": 0,
-					"running": 1,
+					"n": 5,
+					"proved": 3,
+					"running": 0,
 					"queued": 0
 				},
 				"earlier": [],
-				"outlines": []
+				"outlines": [
+					{
+						"gen": 1,
+						"holes": 2,
+						"lemmas": 1,
+						"inplace": 1,
+						"prepass": {
+							"tried": 1,
+							"closed": 0,
+							"seconds": 89,
+							"by": {}
+						},
+						"prepass_holes": [
+							{
+								"hole": 2,
+								"closed_by": null,
+								"timed_out": false
+							}
+						]
+					},
+					{
+						"gen": 2,
+						"holes": 4,
+						"lemmas": 3,
+						"inplace": 1,
+						"prepass": {
+							"tried": 3,
+							"closed": 0,
+							"seconds": 316,
+							"by": {}
+						},
+						"prepass_holes": [
+							{
+								"hole": 1,
+								"closed_by": null,
+								"timed_out": false
+							},
+							{
+								"hole": 3,
+								"closed_by": null,
+								"timed_out": false
+							},
+							{
+								"hole": 4,
+								"closed_by": null,
+								"timed_out": false
+							}
+						]
+					}
+				]
 			},
 			{
 				"leaf": "N05",
@@ -208,7 +309,22 @@
 				"gen": 1,
 				"hole": 2,
 				"attempt": 1,
-				"state": "running",
+				"state": "finished",
+				"outcome": "check_error",
+				"steps": 19,
+				"model_minutes": 7.0,
+				"prompt_tokens": 371921,
+				"cached_tokens": 346971,
+				"output_tokens": 14304
+			},
+			{
+				"id": "t6-p2m-dbd69f-s1-h02-a2",
+				"leaf": "N03",
+				"role": "hole",
+				"gen": 1,
+				"hole": 2,
+				"attempt": 2,
+				"state": "cancelled",
 				"outcome": null,
 				"steps": null,
 				"model_minutes": null,
@@ -223,13 +339,103 @@
 				"gen": 1,
 				"hole": null,
 				"attempt": 1,
-				"state": "queued",
+				"state": "cancelled",
 				"outcome": null,
 				"steps": null,
 				"model_minutes": null,
 				"prompt_tokens": null,
 				"cached_tokens": null,
 				"output_tokens": null
+			},
+			{
+				"id": "t6-p2m-dbd69f-s2",
+				"leaf": "N03",
+				"role": "skeleton",
+				"gen": 2,
+				"hole": null,
+				"attempt": 1,
+				"state": "finished",
+				"outcome": "outline",
+				"steps": 28,
+				"model_minutes": 12.8,
+				"prompt_tokens": 1038055,
+				"cached_tokens": 1017441,
+				"output_tokens": 29579
+			},
+			{
+				"id": "t6-p2m-dbd69f-s2-h01",
+				"leaf": "N03",
+				"role": "hole",
+				"gen": 2,
+				"hole": 1,
+				"attempt": 1,
+				"state": "finished",
+				"outcome": "proved",
+				"steps": 21,
+				"model_minutes": 4.8,
+				"prompt_tokens": 355660,
+				"cached_tokens": 340797,
+				"output_tokens": 6106
+			},
+			{
+				"id": "t6-p2m-dbd69f-s2-h03",
+				"leaf": "N03",
+				"role": "hole",
+				"gen": 2,
+				"hole": 3,
+				"attempt": 1,
+				"state": "finished",
+				"outcome": "proved",
+				"steps": 47,
+				"model_minutes": 44.2,
+				"prompt_tokens": 2305510,
+				"cached_tokens": 2234549,
+				"output_tokens": 104559
+			},
+			{
+				"id": "t6-p2m-dbd69f-s2-h04",
+				"leaf": "N03",
+				"role": "hole",
+				"gen": 2,
+				"hole": 4,
+				"attempt": 1,
+				"state": "finished",
+				"outcome": "proved",
+				"steps": 15,
+				"model_minutes": 7.6,
+				"prompt_tokens": 328943,
+				"cached_tokens": 312866,
+				"output_tokens": 12365
+			},
+			{
+				"id": "t6-p2m-dbd69f-s2-rest",
+				"leaf": "N03",
+				"role": "rest",
+				"gen": 2,
+				"hole": null,
+				"attempt": 1,
+				"state": "finished",
+				"outcome": "rest_done",
+				"steps": 118,
+				"model_minutes": 62.2,
+				"prompt_tokens": 9018032,
+				"cached_tokens": 8880281,
+				"output_tokens": 136161
+			},
+			{
+				"id": "t6-p2m-dbd69f-s2-asm",
+				"leaf": "N03",
+				"role": "asm",
+				"gen": 2,
+				"hole": null,
+				"attempt": 1,
+				"state": "finished",
+				"outcome": "proved",
+				"steps": 0,
+				"model_minutes": 0.0,
+				"prompt_tokens": 0,
+				"cached_tokens": 0,
+				"output_tokens": 0
 			},
 			{
 				"id": "t6-p2m-f181df-s1",
@@ -1731,6 +1937,128 @@
 					]
 				}
 			]
+		}
+	],
+	"probes": [
+		{
+			"trial": "t6p",
+			"for_trial": 6,
+			"state": "finished",
+			"start": "2026-11-14",
+			"end": "2026-11-14",
+			"scaffold": "v6",
+			"caps": "one outline task per leaf, 45 steps / 45 min, no fix round",
+			"leaves": [
+				{
+					"id": "p2m-63eff5",
+					"alias": "C11",
+					"role": "calibration",
+					"theorem": "Ideal.Factors.quotientResidueEquiv_mk",
+					"title": "Factors: quotient Residue Equiv mk",
+					"url": "https://prove2.me/theorems/63eff57f-f30c-4c49-94df-9fd2cbab5292"
+				},
+				{
+					"id": "p2m-26d409",
+					"alias": "N01",
+					"role": "open",
+					"theorem": "predictable_section_measurable_local",
+					"title": "predictable_section_measurable_local",
+					"url": "https://prove2.me/theorems/26d40915-3275-47f1-b9d9-b01aaf8b630c"
+				},
+				{
+					"id": "p2m-b1d59e",
+					"alias": "N02",
+					"role": "open",
+					"theorem": "occupation_bind_sections_integrable_local",
+					"title": "occupation_bind_sections_integrable_local",
+					"url": "https://prove2.me/theorems/b1d59eba-4373-4046-8d79-4f717dd511ca"
+				},
+				{
+					"id": "p2m-dbd69f",
+					"alias": "N03",
+					"role": "open",
+					"theorem": "PerturbedWF.eq_2_3",
+					"title": "Eq. (2.3): $\\langle v,x-y\\rangle\\le\\|x-y\\|$ for $v\\in B^*$ and $x,y\\in\\mathcal C$",
+					"url": "https://prove2.me/theorems/dbd69f70-c8c7-4b16-b27d-a8ea3d7ac435"
+				},
+				{
+					"id": "p2m-c1b761",
+					"alias": "N04",
+					"role": "open",
+					"theorem": "PochetWolsey.Variants.sales_extreme_points",
+					"title": "Proposition 11.3 — extreme points with sales",
+					"url": "https://prove2.me/theorems/c1b76191-2505-4388-a1d3-261237853d33"
+				},
+				{
+					"id": "p2m-f181df",
+					"alias": "N05",
+					"role": "open",
+					"theorem": "NestedSeatAlloc.IntPolicy.expRevenue_one_right_derivative",
+					"title": "Equation (27) right derivative for one-class expected revenue",
+					"url": "https://prove2.me/theorems/f181dfe1-72dd-485a-90a4-331ac8998977"
+				}
+			],
+			"tasks": 6,
+			"model_minutes": 180.4,
+			"prompt_tokens": 6278230,
+			"cached_tokens": 5988591,
+			"output_tokens": 268179
+		},
+		{
+			"trial": "t7p",
+			"for_trial": 7,
+			"state": "running",
+			"start": "2026-11-15",
+			"end": null,
+			"scaffold": "v7",
+			"caps": "one outline task per leaf, 45 steps / 45 min, no fix round",
+			"leaves": [
+				{
+					"id": "p2m-51d621",
+					"alias": "N06",
+					"role": "open",
+					"theorem": "QiFixedDesign.Concentration.lemma_4",
+					"title": "Lemma 4 — variance bound from the light-tail coefficients",
+					"url": "https://prove2.me/theorems/51d6211c-ddf8-4f27-b33c-dd1fe2527fb2"
+				},
+				{
+					"id": "p2m-d00cfc",
+					"alias": "N07",
+					"role": "open",
+					"theorem": "MatchIndiff.PublicSM.lemma_2_1",
+					"title": "Lemma 2.1 — accepted profiles of a fixed board form a product, and a row and board fix the decoded component",
+					"url": "https://prove2.me/theorems/d00cfcfa-a762-4b4a-9579-0c6db222c030"
+				},
+				{
+					"id": "p2m-115f6c",
+					"alias": "N08",
+					"role": "open",
+					"theorem": "QAlgorithms.Papers.Independent.Intake100.P73.pinsker_full_l1",
+					"title": "Pinsker inequality in the source full-L1/nats convention",
+					"url": "https://prove2.me/theorems/115f6c5f-c75e-4b73-b209-623860ff8a1a"
+				},
+				{
+					"id": "p2m-17cf43",
+					"alias": "N09",
+					"role": "open",
+					"theorem": "MatchIndiff.PublicSM.lemma_D_9",
+					"title": "Lemma D.9 — a nonempty strong or super stable set has a school-best matching",
+					"url": "https://prove2.me/theorems/17cf4352-7213-42ef-869b-7d0382d27347"
+				},
+				{
+					"id": "p2m-aec6a2",
+					"alias": "N10",
+					"role": "open",
+					"theorem": "thm_5_6",
+					"title": "Chapter 5, thm_5_6",
+					"url": "https://prove2.me/theorems/aec6a23d-d2cd-4715-a939-1209afe40694"
+				}
+			],
+			"tasks": null,
+			"model_minutes": null,
+			"prompt_tokens": null,
+			"cached_tokens": null,
+			"output_tokens": null
 		}
 	],
 	"leaves": [
@@ -3457,7 +3785,8 @@
 				"trial": "5",
 				"leaf": "p2m-a146ce",
 				"alias": "F01",
-				"outline": "1"
+				"outline": "1",
+				"holes": "7"
 			}
 		},
 		{
@@ -3716,7 +4045,8 @@
 				"trial": "5",
 				"leaf": "p2m-a146ce",
 				"alias": "F01",
-				"outline": "2"
+				"outline": "2",
+				"holes": "6"
 			}
 		},
 		{
@@ -3955,7 +4285,8 @@
 				"trial": "5",
 				"leaf": "p2m-6f7dce",
 				"alias": "C12",
-				"outline": "1"
+				"outline": "1",
+				"holes": "1"
 			}
 		},
 		{
@@ -4060,7 +4391,8 @@
 				"trial": "5",
 				"leaf": "p2m-83aae8",
 				"alias": "O02",
-				"outline": "1"
+				"outline": "1",
+				"holes": "6"
 			}
 		},
 		{
@@ -4240,7 +4572,8 @@
 				"trial": "5",
 				"leaf": "p2m-83aae8",
 				"alias": "O02",
-				"outline": "2"
+				"outline": "2",
+				"holes": "12"
 			}
 		},
 		{
@@ -4310,13 +4643,14 @@
 			"steps": 19,
 			"model_min": 6.6,
 			"tokens": 440357,
-			"started_at": null,
-			"finished_at": null,
+			"started_at": "2026-11-15T09:12:30Z",
+			"finished_at": "2026-11-15T09:31:09Z",
 			"labels": {
 				"trial": "6",
 				"leaf": "p2m-3ad60f",
 				"alias": "C07",
-				"outline": "1"
+				"outline": "1",
+				"holes": "3"
 			}
 		},
 		{
@@ -4336,8 +4670,8 @@
 			"steps": 6,
 			"model_min": 1.7,
 			"tokens": 86107,
-			"started_at": null,
-			"finished_at": null,
+			"started_at": "2026-11-15T09:50:02Z",
+			"finished_at": "2026-11-15T09:54:21Z",
 			"labels": {
 				"trial": "6",
 				"leaf": "p2m-3ad60f",
@@ -4389,13 +4723,14 @@
 			"steps": 59,
 			"model_min": 27.0,
 			"tokens": 2582259,
-			"started_at": null,
-			"finished_at": null,
+			"started_at": "2026-11-15T09:57:08Z",
+			"finished_at": "2026-11-15T10:27:55Z",
 			"labels": {
 				"trial": "6",
 				"leaf": "p2m-dbd69f",
 				"alias": "N03",
-				"outline": "1"
+				"outline": "1",
+				"holes": "2"
 			}
 		},
 		{
@@ -4405,12 +4740,39 @@
 			"role": "hole",
 			"gateway_kind": "p2m-v7",
 			"hole_id": "h-3ad4181432a9",
-			"state": "running",
-			"outcome": null,
+			"state": "done",
+			"outcome": "check_error",
 			"try": 1,
 			"parent": "t6-p2m-dbd69f-s1",
 			"needs": [],
 			"retry_of": null,
+			"replaces": null,
+			"steps": 19,
+			"model_min": 7.0,
+			"tokens": 386225,
+			"started_at": "2026-11-15T10:45:07Z",
+			"finished_at": "2026-11-15T10:56:20Z",
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "1",
+				"hole": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s1-h02-a2",
+			"kind": "hole",
+			"role": "hole",
+			"gateway_kind": "p2m-v7",
+			"hole_id": "h-3ad4181432a9",
+			"state": "cancelled",
+			"outcome": null,
+			"try": 2,
+			"parent": "t6-p2m-dbd69f-s1",
+			"needs": [],
+			"retry_of": "t6-p2m-dbd69f-s1-h02",
 			"replaces": null,
 			"steps": null,
 			"model_min": null,
@@ -4431,7 +4793,7 @@
 			"kind": "rest",
 			"role": "rest",
 			"gateway_kind": "p2m-v7",
-			"state": "queued",
+			"state": "cancelled",
 			"outcome": null,
 			"try": 1,
 			"parent": "t6-p2m-dbd69f-s1",
@@ -4448,6 +4810,168 @@
 				"leaf": "p2m-dbd69f",
 				"alias": "N03",
 				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s2",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": "p2m-v7",
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": "t6-p2m-dbd69f-s1",
+			"steps": 28,
+			"model_min": 12.8,
+			"tokens": 1067634,
+			"started_at": "2026-11-15T11:26:34Z",
+			"finished_at": "2026-11-15T11:42:37Z",
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "2",
+				"holes": "4"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s2-h01",
+			"kind": "hole",
+			"role": "hole",
+			"gateway_kind": "p2m-v7",
+			"hole_id": "h-64bc841c37be",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t6-p2m-dbd69f-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 21,
+			"model_min": 4.8,
+			"tokens": 361766,
+			"started_at": "2026-11-15T12:02:55Z",
+			"finished_at": "2026-11-15T12:11:08Z",
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "2",
+				"hole": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s2-h03",
+			"kind": "hole",
+			"role": "hole",
+			"gateway_kind": "p2m-v7",
+			"hole_id": "h-cac3ab8ef3b6",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t6-p2m-dbd69f-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 47,
+			"model_min": 44.2,
+			"tokens": 2410069,
+			"started_at": "2026-11-15T12:12:29Z",
+			"finished_at": "2026-11-15T13:18:01Z",
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "2",
+				"hole": "3"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s2-h04",
+			"kind": "hole",
+			"role": "hole",
+			"gateway_kind": "p2m-v7",
+			"hole_id": "h-b308af8d430c",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t6-p2m-dbd69f-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 15,
+			"model_min": 7.6,
+			"tokens": 341308,
+			"started_at": "2026-11-15T13:18:43Z",
+			"finished_at": "2026-11-15T13:29:34Z",
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "2",
+				"hole": "4"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s2-rest",
+			"kind": "rest",
+			"role": "rest",
+			"gateway_kind": "p2m-v7",
+			"state": "done",
+			"outcome": "rest_done",
+			"try": 1,
+			"parent": "t6-p2m-dbd69f-s2",
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 118,
+			"model_min": 62.2,
+			"tokens": 9154193,
+			"started_at": "2026-11-15T13:32:02Z",
+			"finished_at": "2026-11-15T14:42:06Z",
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6-p2m-dbd69f-s2-asm",
+			"kind": "assembly",
+			"role": "assembly",
+			"gateway_kind": "p2m-v7",
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": "t6-p2m-dbd69f-s2",
+			"needs": [
+				"t6-p2m-dbd69f-s2-h01",
+				"t6-p2m-dbd69f-s2-h03",
+				"t6-p2m-dbd69f-s2-h04",
+				"t6-p2m-dbd69f-s2-rest"
+			],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 0,
+			"model_min": 0.0,
+			"tokens": 0,
+			"started_at": null,
+			"finished_at": null,
+			"labels": {
+				"trial": "6",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "2"
 			}
 		},
 		{
@@ -4498,6 +5022,157 @@
 				"leaf": "p2m-f181df",
 				"alias": "N05",
 				"outline": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6p-C11",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": null,
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 19,
+			"model_min": 14.3,
+			"tokens": 498304,
+			"started_at": "2026-11-14T21:01:07Z",
+			"finished_at": "2026-11-14T21:21:09Z",
+			"labels": {
+				"trial": "6p",
+				"leaf": "p2m-63eff5",
+				"alias": "C11",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6p-N01",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": null,
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 41,
+			"model_min": 38.6,
+			"tokens": 2043914,
+			"started_at": "2026-11-14T21:01:26Z",
+			"finished_at": "2026-11-14T21:51:23Z",
+			"labels": {
+				"trial": "6p",
+				"leaf": "p2m-26d409",
+				"alias": "N01",
+				"outline": "1",
+				"holes": "2"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6p-N02",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": null,
+			"state": "done",
+			"outcome": "proved",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 11,
+			"model_min": 4.3,
+			"tokens": 211505,
+			"started_at": "2026-11-14T21:21:35Z",
+			"finished_at": "2026-11-14T21:29:47Z",
+			"labels": {
+				"trial": "6p",
+				"leaf": "p2m-b1d59e",
+				"alias": "N02",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6p-N03",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": null,
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 33,
+			"model_min": 45.1,
+			"tokens": 1468353,
+			"started_at": "2026-11-14T21:31:21Z",
+			"finished_at": "2026-11-14T22:21:14Z",
+			"labels": {
+				"trial": "6p",
+				"leaf": "p2m-dbd69f",
+				"alias": "N03",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6p-N04",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": null,
+			"state": "done",
+			"outcome": "compile_error",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 16,
+			"model_min": 45.0,
+			"tokens": 589911,
+			"started_at": "2026-11-14T22:05:11Z",
+			"finished_at": "2026-11-14T22:54:27Z",
+			"labels": {
+				"trial": "6p",
+				"leaf": "p2m-c1b761",
+				"alias": "N04",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t6p-N05",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": null,
+			"state": "done",
+			"outcome": "outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 43,
+			"model_min": 33.1,
+			"tokens": 1734422,
+			"started_at": "2026-11-14T22:23:05Z",
+			"finished_at": "2026-11-14T23:20:51Z",
+			"labels": {
+				"trial": "6p",
+				"leaf": "p2m-f181df",
+				"alias": "N05",
+				"outline": "1"
 			}
 		}
 	]
