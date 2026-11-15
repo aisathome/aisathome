@@ -89,18 +89,23 @@ A preempted attempt is logged with outcome `preempted`, counted as `preempted` p
 project in `/v1/stats`, credited to the node for what reached the client (as a cancelled
 answer), and charged to the project's quota only if something reached the client.
 
-A **project** is a workload the operator runs (decision 0011; TauCeti first), for example an
-agent runner. It exists only in the config, has its own keys, its own daily quota instead of
+A **project** is a workload the operator runs (decision 0011), for example an agent runner.
+Everything the gateway knows of a project is this data; no project's name or workflow is in the
+code (decision 0019). It exists only in the config, has its own keys, its own daily quota instead of
 an account's budget, the lowest priority, and a cap on its share of the nodes:
 
 ```json
 "projects": [{
-  "id": "tauceti",
+  "id": "prove2me",
   "key_sha256": ["<64 hex characters>"],
   "daily_tokens": 0,
   "max_node_share": 0.7,
   "agent_ok": true,
-  "queue_timeout_seconds": 300
+  "queue_timeout_seconds": 300,
+  "kinds": ["p2m-v7"],
+  "public_queue": true,
+  "page": "/science/prove2me/",
+  "page_anchor": "leaf"
 }]
 ```
 
@@ -114,15 +119,19 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `min_trust` | `"trusted"` keeps all its requests on trusted nodes. |
 | `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
 | `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
-| `auto_rounds` | The gateway acts on a task's end. A task that passes its local checks is `ready-for-operator`, with no review task. One that fails them gets the runner's recipe as an automatic round, a skipped one a fresh base. |
-| `review_loop` | As `auto_rounds` (which it includes), and a passing task gets a Qwen review task first; a green verdict makes it `ready-for-operator`, a red one a fix round. Off for TauCeti (decision 0017). Turned off with work under way, a candidate waiting at `in-review` becomes `ready-for-operator` at the queue's next call or sweep, the loop's open reviews are cancelled, and a verdict still owed records and schedules nothing. A chain a person's round moved on keeps its status. A review a person created stays as it is. |
-| `max_review_rounds` | Automatic rounds per chain, of any kind, default 3; past them the task is `needs-operator` and the recipe waits there for `continue`. |
-| `public_queue` | Publishes the public fields of the project's task queue at `GET /v1/projects/<id>/queue`, without a key: each task's id, state and times, from its spec only the trial, leaf, group, theorem name and a hole task's role, generation and hole number, and from its result the outcome word, token counts and model minutes. Never the rest of the spec, the title, the worker, the lease, the error text or the raw evidence. Built at most every 15 s. The website's prove2me page reads it. Off: 404. |
+| `kinds` | The task kinds the project may create besides `other`: one per scaffold generation (`p2m-v7`), 1-32 lower-case letters, digits, `_` or `-`. Its workers claim by kind, so a worker never takes a task of a generation it does not run. None: `other` only. |
+| `public_queue` | Publishes the public fields of the project's tasks without a key, at `GET /v1/projects/<id>/queue` and in `GET /v1/tasks` (below). Never the spec, the title, the worker, the lease, the error text or the raw evidence. Built at most every 15 s. The website's prove2me page reads it. Off: 404, and none of its tasks in `/v1/tasks`. |
+| `page`, `page_anchor` | The project's page on the website (a path such as `/science/prove2me/`), and a label name whose value places a task on it (`leaf`: `#leaf-<value>`). The account page links a node's science work there. Both optional. |
+
+Before decision 0019 the gateway also ran TauCeti's review loop (`auto_rounds`, `review_loop`,
+`max_review_rounds`, and the `review`, `decide` and `continue` calls) and kept TauCeti's public
+results (`/v1/projects/<id>/science`). They are gone; a config that still has those keys starts,
+and they are ignored.
 
 Make a key with:
 
 ```bash
-aisathome-gateway project-key /path/to/tauceti.key   # writes the key (mode 600), prints its SHA-256
+aisathome-gateway project-key /path/to/prove2me.key   # writes the key (mode 600), prints its SHA-256
 ```
 
 The key goes only into the file (an existing file is never overwritten); put the printed hash
@@ -132,11 +141,36 @@ removing a hash revokes the key. A config with an invalid project does not start
 old config stays).
 
 A task is created with `kind`, `spec` (an object the worker reads, at most 64 KiB) and,
-optionally, `order`: within its claim class, after tasks that came back from a lease, lower
-`order` is claimed first (default 0), then oldest first. A project that runs a planned sequence
-sets it, as prove2me's trials do (calibration leaves first, then a comparison set, then new
-leaves). A project with neither `auto_rounds` nor `review_loop` gets nothing from the gateway at
-a task's end: its worker reports `complete` or `fail` and that is all.
+optionally, `order`: after tasks that came back from a lease, lower `order` is claimed first
+(default 0), then oldest first. A project that runs a planned sequence sets it, as prove2me's
+trials do (calibration leaves first, then a comparison set, then new leaves). The gateway does
+nothing at a task's end: its worker reports `complete` or `fail` and that is all, and what comes
+next is the project's business.
+
+A task may also carry, written when it is created (decision 0019), the typed fields every project
+shares, all of them public:
+
+| Field | What |
+|---|---|
+| `role` | Its part in the project's pipeline (`outline`, `hole`, `rest`, `assembly`), like a kind. |
+| `parent` | The task that defined its place (a hole's outline). |
+| `needs` | The tasks whose results it uses (at most 64), for information: the gateway schedules nothing by it. |
+| `retry_of` | The try before it. The gateway counts `try` from it: 1, or one more than that task's (2 when it is gone). |
+| `replaces` | The task it supersedes (the outline before). |
+| `labels` | The project's own short public names (`trial`, `leaf`, `alias`, `outline`, `hole`, ...): at most 16, names of lower-case letters, digits and `_`, values of 1-200 printable bytes, nothing key-shaped and no e-mail address. |
+| `hole_id` | The hole it works on (prove2me: `h-` and 12 hex of its ledger key). |
+
+`closed_by` comes with `complete` or `cancel` when a task ended without work because something else
+closed it: another task's id, or `reuse:<by>`. A claim names the `kinds` its worker runs (none: any).
+A task made before these fields has none of them, and the public views read its spec as before.
+
+`GET /v1/tasks`, without a key, lists the tasks of every project with `public_queue` in one schema:
+`project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,
+hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens, created_at,
+started_at, finished_at, updated_at, node_classes` (the classes, trusted or volunteer, of the nodes
+that served the requests that named the task). A field a task does not have is `null`. Query
+`project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500, default 100) and `after` (the
+answer's `next`); newest first.
 
 A project's model request may name the task it belongs to in an `X-Aisathome-Task` header. The
 gateway uses it only to tell a node's operator, on the account page, which task the node is working
@@ -145,20 +179,12 @@ running task is taken to be working on that one.
 
 ### The task queue when the disk fails
 
-A project's task queue lives in `state_dir` (`tasks-<project>/` and `task-chains-<project>/`), one
-file per task and per chain. A write that fails (a full disk, a read-only directory) is handled
-like a crash of that project's queue, and what is on disk stays the truth:
+A project's task queue lives in `state_dir` (`tasks-<project>/`), one file per task. A write that
+fails (a full disk, a read-only directory) is handled like a crash of that project's queue, and what
+is on disk stays the truth:
 
 - A call whose change did not reach the disk answers 503 with `Retry-After` and changes nothing, so
   a worker repeats it. The log says `task queue write failed`, with the file and the reason.
-- A task's end is saved together with what it still owes the review loop. Once that save worked the
-  call answers ok, even if a later write of the loop fails: a restart loses nothing.
-- A chain's count is written before the round it counts, so that the round limit holds. If it
-  cannot be written, no round is made. The debt stays on the task (`loop_pending`), is tried again
-  at every call and every 30 s, and until it is paid `claim` answers 503 and no work goes out.
-  `continue` answers 503 in that state too, but its request is saved: the round comes by itself.
-- A project's review that cannot be ended once its reviews are off holds `claim` the same way: it
-  is tried again at every call and every 30 s, and no work goes out until the end is saved.
 - A queue that cannot be read answers 503, never an empty list, and the ops page says so.
 
 The queue heals by itself once the disk can be written again: free the space or fix the directory;

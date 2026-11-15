@@ -9,6 +9,16 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **`GET /v1/tasks`: every public science task in one schema.** Without a key, the tasks of each
+  project that publishes its queue: kind, role, state, outcome, try, the relations between tasks
+  (`parent`, `needs`, `retry_of`, `replaces`, `closed_by`), the project's public labels, steps,
+  minutes, tokens, times and the classes of the nodes that served them; never prompts, model text,
+  workers or node owners. Paged, newest first. (gateway)
+- **Typed task fields and kinds per project.** A task carries its `kind` (a project's declared
+  claim key, one per scaffold generation, such as `p2m-v7`), `role`, relations, `labels` and
+  `hole_id`, written when it is made; workers claim only the kinds they run. Older tasks and
+  clients keep working. (gateway)
+
 - **The account page shows what each of your nodes is doing.** Under each node: its average
   speed (output tokens a second over its last 50 answers, as the gateway measured them) and,
   while it is connected, what it serves right now: a chat or API request (never what was asked
@@ -21,6 +31,14 @@ and **(site)** are live on aisathome.org once deployed.
 - **Install on Windows** (`/node/windows/`): the v0.5.0 installer step by step, from checking
   the download and the unsigned-installer warning to the setup page, the tray icon, diagnostics,
   updating and uninstalling. The FAQ no longer says Windows is not supported. (site)
+
+### Changed
+
+- **Tau Ceti is a finished project.** Its science page keeps the record of the pull requests as it
+  stands, labelled finished, without a live part; its data is a static file
+  (`/science/tauceti.json`, where the old gateway address now points). The gateway's Tau Ceti
+  review loop (`review`, `decide`, `continue`, automatic rounds) and its science results endpoint
+  are removed. (gateway, site)
 
 ### Fixed
 
