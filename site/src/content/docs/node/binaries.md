@@ -21,9 +21,9 @@ GitHub Actions from the tagged source, in public, by the workflow
 
 - **The node agent and the gateway** are Go programs built with `CGO_ENABLED=0` (static
   binaries) by `scripts/build-release.sh`. `aisathome-node -version` prints the release.
-- **`llama-server`** is [llama.cpp](https://github.com/ggml-org/llama.cpp) release **b12323**, pinned
-  to commit `93cf736a8d1d46aa922e27eb64aa712bcd5ebc30`: measured against the earlier v0.5.0 on our
-  agent workload before the switch.
+- **`llama-server`** is [llama.cpp](https://github.com/ggml-org/llama.cpp) release **b12342**, pinned
+  to commit `0fb8f157702702f33f4e018de8701b2569a1bc28`: measured on our agent workload before the
+  switch (with and without speculative decoding).
   The build stops if the tag ever points elsewhere. `scripts/build-llama.sh` builds it inside
   NVIDIA's own image `nvidia/cuda:12.8.1-devel-ubuntu22.04`, pinned by its digest, for the
   RTX 30 (`sm_86`), RTX 40 (`sm_89`) and RTX 50 (`sm_120`) series.

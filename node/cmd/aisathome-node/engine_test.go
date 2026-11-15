@@ -123,6 +123,154 @@ func TestEngineSettings(t *testing.T) {
 	}
 }
 
+// engine.speculation: the drafter's flags on the big tier when the build is new enough and the
+// pinned draft file is in place (by default beside the model); otherwise the agent refuses,
+// and says why, instead of starting a different engine than node.json asks for.
+func TestEngineSpeculation(t *testing.T) {
+	build := 12342
+	old := engineBuild
+	engineBuild = func(string) int { return build }
+	t.Cleanup(func() { engineBuild = old })
+	card := setup.GPU{Index: 0, UUID: "GPU-3090", Name: "NVIDIA GeForce RTX 3090", TotalMiB: 24576, FreeMiB: 24126}
+	var cardErr error
+	var asked []string
+	oldGPU := engineGPU
+	engineGPU = func(device string) (setup.GPU, error) { asked = append(asked, device); return card, cardErr }
+	t.Cleanup(func() { engineGPU = oldGPU })
+
+	dir := t.TempDir()
+	model, exe := filepath.Join(dir, "model.gguf"), filepath.Join(dir, "llama-server")
+	mtp := setup.Drafters[setup.SpecMTP]
+	sized := func(path string, n int64) {
+		t.Helper()
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Truncate(n); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	sized(filepath.Join(dir, mtp.Model.File()), mtp.Model.Size)
+
+	cfg := node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp"}}
+	es, err := engineSettings(&cfg, node.LinuxLayout, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := es.Args()
+	if i := slices.Index(args, "-md"); i < 0 || args[i+1] != filepath.Join(dir, mtp.Model.File()) ||
+		!slices.Contains(args, "draft-mtp") || cfg.Preset != "big: 1 x 196608 tokens, KV q4_0, speculation mtp" {
+		t.Errorf("mtp: %q, preset %q", args, cfg.Preset)
+	}
+
+	// "off" is the plain command.
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "off"}}
+	if es, err = engineSettings(&cfg, node.LinuxLayout, dir); err != nil || slices.Contains(es.Args(), "--spec-type") {
+		t.Errorf("off: %q %v", es.Args(), err)
+	}
+
+	// A configured draft file is used; a wrong size (not the pinned file) is refused.
+	other := filepath.Join(dir, "other.gguf")
+	sized(other, mtp.Model.Size)
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp", DraftModel: other}}
+	if es, err = engineSettings(&cfg, node.LinuxLayout, dir); err != nil || !slices.Contains(es.Args(), other) {
+		t.Errorf("configured draft: %v", err)
+	}
+	sized(other, 1000)
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp", DraftModel: other}}
+	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), "not the pinned file") {
+		t.Errorf("wrong draft file: %v", err)
+	}
+
+	for name, c := range map[string]struct {
+		ec    node.EngineConfig
+		build int
+		want  string
+	}{
+		// An explicit llama_server: on Windows the default one is the pinned release, whatever
+		// engineBuild says (Codex review 2026-11-14: these cases failed there).
+		"dflash2, b12323 (no #31533)": {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "dflash2"}, 12323, "needs llama.cpp b12342"},
+		"dflash2, build unknown":      {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "dflash2"}, 0, "unknown llama.cpp build"},
+		"dflash2, no draft file":      {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "dflash2"}, 12342, "missing"},
+		"standard tier":               {node.EngineConfig{Tier: "standard", Model: model, LlamaServer: exe, Speculation: "mtp"}, 12342, "big tier"},
+		"unknown mode":                {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "eagle3"}, 12342, "off, mtp or dflash2"},
+	} {
+		build = c.build
+		ec := c.ec
+		cfg := node.Config{Engine: &ec}
+		if _, err := engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", name, err, c.want)
+		}
+	}
+
+	// The card must have the tier's free memory plus the drafter's (Codex review 2026-11-15:
+	// MinFree was never checked, so a node short of room started an engine that failed to
+	// allocate). Exactly enough runs; one MiB less, or no reading of the card, is refused.
+	build = 12342
+	big, _ := setup.TierByName("big")
+	asked = nil
+	card.FreeMiB = big.MinFree(mtp)
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp", CUDADevice: "GPU-3090"}}
+	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err != nil || !slices.Equal(asked, []string{"GPU-3090"}) {
+		t.Errorf("exactly enough free memory: %v (asked %q)", err, asked)
+	}
+	card.FreeMiB = big.MinFree(mtp) - 1
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp"}}
+	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("has %d MiB free", card.FreeMiB)) ||
+		!strings.Contains(err.Error(), "set speculation off") {
+		t.Errorf("too little free memory: %v", err)
+	}
+	card.FreeMiB, cardErr = 24126, setup.ErrNoSMI
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp"}}
+	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), "cannot read the GPU's free memory") {
+		t.Errorf("no nvidia-smi: %v", err)
+	}
+	// Off never asks for the card.
+	asked = nil
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "off"}}
+	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err != nil || len(asked) != 0 {
+		t.Errorf("off: %v (asked %q)", err, asked)
+	}
+}
+
+// The card the engine runs on: cuda_device's (by UUID or index), else the largest, on a tie the
+// one with more free memory.
+func TestPickGPU(t *testing.T) {
+	gpus := []setup.GPU{
+		{Index: 0, UUID: "GPU-a", TotalMiB: 16376, FreeMiB: 16000},
+		{Index: 1, UUID: "GPU-b", TotalMiB: 24576, FreeMiB: 20000},
+		{Index: 2, UUID: "GPU-c", TotalMiB: 24576, FreeMiB: 23000},
+	}
+	for device, want := range map[string]string{"": "GPU-c", "GPU-a": "GPU-a", "1": "GPU-b"} {
+		if g, err := pickGPU(gpus, device); err != nil || g.UUID != want {
+			t.Errorf("%q: %s %v, want %s", device, g.UUID, err, want)
+		}
+	}
+	if _, err := pickGPU(gpus, "GPU-x"); err == nil || !strings.Contains(err.Error(), "no GPU") {
+		t.Errorf("unknown device: %v", err)
+	}
+	if _, err := pickGPU(nil, ""); err == nil {
+		t.Error("no GPU: no error")
+	}
+}
+
+// The build comes from a Linux bundle's BUILD-INFO first (its llama-server says "build 1": a
+// shallow clone), else from --version; a build number below 1000 is unknown.
+func TestEngineBuild(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "bin", "llama-server")
+	os.MkdirAll(filepath.Dir(exe), 0o755)
+	if n := engineBuild(exe); n != 0 {
+		t.Errorf("no program, no BUILD-INFO: %d", n)
+	}
+	os.WriteFile(filepath.Join(dir, "BUILD-INFO"), []byte("llama_cpp_tag=b12323\nllama_cpp_commit=93cf736a8d1d46aa922e27eb64aa712bcd5ebc30\n"), 0o644)
+	if n := engineBuild(exe); n != 12323 {
+		t.Errorf("BUILD-INFO one folder up: %d", n)
+	}
+}
+
 // syncBuffer is a log writer the test may read while the agent writes.
 type syncBuffer struct {
 	mu sync.Mutex

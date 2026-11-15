@@ -14,6 +14,13 @@ type EngineConfig struct {
 	CUDADevice string `json:"cuda_device,omitempty"`
 	// Port is the engine's port on 127.0.0.1; default 8000, as on Linux.
 	Port int `json:"port,omitempty"`
+	// Speculation is speculative decoding: "off" (default), "mtp" or "dflash2" (setup.Drafters).
+	// The node runs it only on the big tier, with a llama.cpp build new enough for the mode, and
+	// with its draft model file in place and room for it on the card (the tier's free memory plus
+	// the drafter's); otherwise the agent refuses to start and says why.
+	Speculation string `json:"speculation,omitempty"`
+	// DraftModel is the draft model file; default: the mode's file name beside the model.
+	DraftModel string `json:"draft_model,omitempty"`
 }
 
 // EngineControl is the engine process the agent runs: package engine's Supervisor.
