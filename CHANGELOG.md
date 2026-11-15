@@ -9,6 +9,14 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **`aisathome-node modelcheck`: check that your engine and model compute correctly.** It sends
+  100 built-in prompts to the local llama-server (greedy, top-20 logprobs) and compares the answers
+  with a published reference: KL divergence per group of 4 prompts (limit 0.0085) and confident
+  flips (at most 2). Exit 0 pass, 1 fail, 2 could not check. Useful after an update or a llama.cpp
+  upgrade, or with speculative decoding on; nothing leaves the computer. The references ship inside
+  the program: the big tier's on llama.cpp b12342, this release's engine (a node with MTP passes it),
+  and an older one on b11146; the standard tier's (b11146) is provisional. `modelcheck record` makes
+  new ones at a release. See "Model check" on the operator page. (node)
 - **Architecture overview and contributing guide.** `docs/architecture.md` (the components, how a
   chat request and a science task flow, trust boundaries and what is public) and `CONTRIBUTING.md`
   (dev setup, tests, pull requests, security reports); linked from the README and the site's docs

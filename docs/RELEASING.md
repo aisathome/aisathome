@@ -18,7 +18,9 @@ commit, tagged with where it applies: (node), (gateway), (site) or (docs).
 3. **Test the artifact on a GPU** before tagging: unpack, `./install.sh --dry-run`, a real
    install with a throwaway node token from staging, one chat request through the node, then
    `uninstall.sh --purge`. Do it on at least one RTX 30 with an older driver (535) and one RTX
-   40; add an RTX 50 when its build changed.
+   40; add an RTX 50 when its build changed. On each, `aisathome-node modelcheck` must pass;
+   when llama.cpp or a model file changed, record the new reference on the RTX 40 first
+   ([modelcheck.md](modelcheck.md)).
 
 ## Building locally
 
@@ -49,8 +51,9 @@ release's notes. The owner approves the text before the draft is published; then
 ## Changing what is built
 
 - **llama.cpp:** change `LLAMA_TAG` and `LLAMA_COMMIT` in `scripts/build-llama.sh` together,
-  rerun the benchmarks and the model-check references (a new llama.cpp can change the
-  numbers the model check compares against), and say so in the release notes.
+  rerun the benchmarks and record a model-check reference on the new build with
+  `aisathome-node modelcheck record` (a new llama.cpp moves the numbers the model check
+  compares against; [modelcheck.md](modelcheck.md)), and say so in the release notes.
 - **CUDA image:** update the digest in `release.yml` and the driver minimums in
   `install.sh`, the packaging README and the site page if the CUDA version changes.
 - **Model:** the pin (repository, revision, file, SHA-256, size) lives in `install.sh`; keep

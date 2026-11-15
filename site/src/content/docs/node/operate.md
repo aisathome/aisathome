@@ -10,6 +10,7 @@ description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home n
 | Pause and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` |
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
+| Check the engine computes correctly | `aisathome-node modelcheck`: see [Model check](#model-check) |
 | Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` |
 | Update | `sudo ./install.sh --keep-token` from the new release's bundle: see [Update your node](/node/update/) |
 | Remove | `sudo ./uninstall.sh` in the unpacked bundle, so keep that directory (keeps the model; `--purge` removes it and the `aisathome` user too). From a source checkout: `sudo ./node/packaging/linux/uninstall.sh` |
@@ -77,6 +78,55 @@ Then choose **Options → Read config files** in BOINC Manager, or restart the c
   fits.
 - It has no effect while BOINC's GPU mode is set to **always**; use **based on
   preferences** (BOINC Manager's Activity menu).
+
+## Model check
+
+From release `v0.6.0`, `aisathome-node modelcheck` checks that your engine and model compute
+like a published reference. Run it after you update the node or llama.cpp, when you turn
+speculative decoding on, or when a new GPU type or driver behaves oddly:
+
+```bash
+aisathome-node modelcheck
+```
+
+On Windows, in PowerShell: `& "$env:ProgramFiles\AIsAtHome\aisathome-node.exe" modelcheck`.
+
+It sends 100 short prompts to your local `llama-server` (greedy, thinking off, the top 20
+token probabilities at each step) and compares the answers with a reference recorded on a known
+llama.cpp build, model file and GPU. It takes one to two minutes on a 24 GB card. Nothing leaves
+your computer: the prompts are built in, and the references ship inside the program. **Pause**
+the node in the [local UI](#local-ui) first, so served requests do not wait behind the check;
+resume it afterwards.
+
+What it reports:
+
+- **KL divergence** (how far your token probabilities are from the reference's), per group of
+  4 prompts. The limit is **0.0085** for the largest group. Honest nodes on other GPUs and
+  llama.cpp builds stay well below it; a different quantisation of the model does not.
+- **Confident flips:** your greedy answer picks another token where the reference was sure
+  (its first choice led by more than 0.5 nats). At most **2** in 100 prompts. Answers that part
+  at near-ties are normal (GPUs round differently) and do not count.
+
+| Exit code | Result | What to do |
+|---|---|---|
+| 0 | `PASS` | Nothing. Your engine and model compute like the reference. |
+| 1 | `FAIL` | The numbers differ more than the limits allow: usually another model file, a broken or unusual llama.cpp build, or a corrupted GPU state. Check the model's SHA-256 (the installer does), restart the engine, and run it again; if it still fails, tell us and send the saved run (below). |
+| 2 | `COULD NOT CHECK` | No engine answered at `http://127.0.0.1:8000` (`-server` to change it), no reference for the model it serves, or some prompts got no answer. The message says which. |
+
+The report names the reference and notes what differs from it. A reference recorded on
+another llama.cpp build moves the numbers a little: a pass still counts, but a narrow failure on
+a newer build than the reference's is not conclusive. Speculative decoding (`--speculation
+mtp`) does not need its own reference; it passes the plain one. The standard tier's reference
+(16 GB cards) is still provisional.
+
+Options: `-out run.json.gz` saves your run (prompts, answers and token probabilities, plus the
+llama.cpp build, model file name and GPU model; no node token or paths) to send to us or to
+compare later; `-json` prints the result for scripts; `modelcheck list` shows the built-in
+references; `-ref` takes another reference file, or an `https://` address together with its
+`-ref-sha256`.
+
+The prompts are public, so this is a check of your own setup, not a way for the network to check
+nodes.
 
 ## Privacy hardening
 

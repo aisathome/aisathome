@@ -3,6 +3,8 @@
 // On Windows it also runs as a service, started by the Service Control Manager, and
 // `aisathome-node service install|uninstall|stop` registers it (the installer runs these).
 // `aisathome-node diagnose` writes a zip for finding out why a node does not work.
+// `aisathome-node modelcheck` checks that the local engine and model compute like a published
+// reference (package modelcheck).
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -35,6 +37,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "diagnose" {
 		os.Exit(runDiagnose(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "modelcheck" {
+		os.Exit(runModelcheck(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "service" {
 		os.Exit(runServiceCommand(os.Args[2:], os.Stdout, os.Stderr))
