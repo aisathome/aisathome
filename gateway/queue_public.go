@@ -10,8 +10,10 @@
 //     changed, and when its lease began while it runs;
 //   - from the result: a short outcome word ("proved", "outline"), the steps, the token counts (the
 //     prompt tokens computed, those re-read from the cache, and those written) and model minutes;
-//   - from the spec: the trial, the leaf and its group, the theorem's name, and for a hole task its
-//     role, outline generation and hole number (prove2me's scaffold v5).
+//   - the trial, the leaf and its group, the theorem's name, and for a hole task its role, outline
+//     generation and hole number: from the task's typed fields (decision 0019: its role and its labels
+//     trial, leaf, group, theorem, outline and hole) when it has them, else, for a task made before
+//     them, from its spec (prove2me's scaffold v5: spec.trial, .leaf, .group, .theorem, .v5).
 //
 // Never in it: the spec beyond those fields, the title, the worker, the lease id, the error text, the
 // events, reviews, decisions and the raw evidence's location. The answer is built at most every
@@ -26,6 +28,8 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -41,7 +45,7 @@ var (
 	pubTrialRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,15}$`)
 	pubLeafRe    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 	pubGroupRe   = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
-	pubRoleRe    = regexp.MustCompile(`^[a-z]{1,16}$`)
+	pubRoleRe    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	pubOutcomeRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	// A Lean declaration name: letters (any script), digits, subscripts and _ . ' ! ? -.
 	pubTheoremRe = regexp.MustCompile(`^[\p{L}\p{N}_][\p{L}\p{N}_.'!?\x{2080}-\x{2089}-]{0,199}$`)
@@ -74,14 +78,47 @@ type publicTask struct {
 	ModelMin         float64 `json:"model_min,omitempty"`
 }
 
-// specRef is what the public view and the account page read from a spec (prove2me's fields).
+// specRef is what the public view and the account page show of a task's place: from its typed
+// fields, or from the spec of a task made before them (prove2me's fields).
 type specRef struct {
 	Trial, Leaf, Group, Theorem, Role string
 	Gen, Hole                         int
 }
 
-// readSpecRef reads the public fields of a task's spec; a field that does not match its pattern is
-// left empty, a spec that is not an object gives nothing.
+// typed: the task was made with the typed fields (decision 0019); its spec is not read.
+func (t *Task) typed() bool { return t.Role != "" || len(t.Labels) > 0 }
+
+// keepPublic returns v when it matches re, else "".
+func keepPublic(v string, re *regexp.Regexp) string {
+	if re.MatchString(v) {
+		return v
+	}
+	return ""
+}
+
+// labelNum reads a small number from a label ("3", "h03", "s2"): 1-999, else 0.
+func labelNum(v string) int {
+	v = strings.TrimLeft(v, "hs")
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 999 {
+		return 0
+	}
+	return n
+}
+
+// ref is the task's place for the public views.
+func (t *Task) ref() specRef {
+	if !t.typed() {
+		return readSpecRef(t.Spec)
+	}
+	l := t.Labels
+	return specRef{Trial: keepPublic(l["trial"], pubTrialRe), Leaf: keepPublic(l["leaf"], pubLeafRe),
+		Group: keepPublic(l["group"], pubGroupRe), Theorem: keepPublic(l["theorem"], pubTheoremRe),
+		Role: keepPublic(t.Role, pubRoleRe), Gen: labelNum(l["outline"]), Hole: labelNum(l["hole"])}
+}
+
+// readSpecRef reads the public fields of an older task's spec; a field that does not match its
+// pattern is left empty, a spec that is not an object gives nothing.
 func readSpecRef(spec json.RawMessage) specRef {
 	var s struct {
 		Trial   string `json:"trial"`
@@ -97,12 +134,7 @@ func readSpecRef(spec json.RawMessage) specRef {
 	if len(spec) == 0 || json.Unmarshal(spec, &s) != nil {
 		return specRef{}
 	}
-	keep := func(v string, re *regexp.Regexp) string {
-		if re.MatchString(v) {
-			return v
-		}
-		return ""
-	}
+	keep := keepPublic
 	r := specRef{Trial: keep(s.Trial, pubTrialRe), Leaf: keep(s.Leaf, pubLeafRe), Group: keep(s.Group, pubGroupRe),
 		Theorem: keep(s.Theorem, pubTheoremRe)}
 	if v := s.V5; v != nil {
@@ -119,7 +151,7 @@ func readSpecRef(spec json.RawMessage) specRef {
 
 // public copies the public fields of a task (see the top of the file).
 func (t *Task) public() publicTask {
-	ref := readSpecRef(t.Spec)
+	ref := t.ref()
 	p := publicTask{ID: t.ID, State: t.State, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Trial: ref.Trial, Leaf: ref.Leaf,
 		Group: ref.Group, Theorem: ref.Theorem, Role: ref.Role, Gen: ref.Gen, Hole: ref.Hole}
 	if t.State == TaskLeased && t.Lease != nil {
@@ -192,14 +224,30 @@ func (s *taskStore) publicList(project string) ([]publicTask, map[string]int, er
 	return out, counts, nil
 }
 
+// leasedRef is a running task as the account page names it: its id, theorem and public labels.
+type leasedRef struct {
+	ID, Theorem string
+	labels      map[string]string
+}
+
 // leasedRefs returns the public reference of each running task of a project, by when it began.
-func (s *taskStore) leasedRefs(project string) []publicTask {
-	ts, _, _ := s.publicList(project)
-	var out []publicTask
-	for _, t := range ts {
-		if t.State == TaskLeased {
-			out = append(out, t)
+func (s *taskStore) leasedRefs(project string) []leasedRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.load(project)
+	if err != nil {
+		return nil
+	}
+	var ts []*Task
+	for _, t := range p.byID {
+		if t.State == TaskLeased && t.Lease != nil && pubTaskIDRe.MatchString(t.ID) {
+			ts = append(ts, t)
 		}
+	}
+	sort.Slice(ts, func(i, j int) bool { return ts[i].Lease.Since.Before(ts[j].Lease.Since) })
+	out := make([]leasedRef, 0, len(ts))
+	for _, t := range ts {
+		out = append(out, leasedRef{ID: t.ID, Theorem: t.ref().Theorem, labels: t.publicLabels()})
 	}
 	return out
 }

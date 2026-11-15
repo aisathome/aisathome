@@ -89,7 +89,7 @@ func TestHeldNodeIsNotOnline(t *testing.T) {
 		t.Fatalf("holds %+v", holds)
 	}
 	var texts []string
-	for _, w := range s.g.healthOf("tauceti", at) {
+	for _, w := range s.g.healthOf("lab", at) {
 		if w.Rule == ruleNodeHeld {
 			texts = append(texts, w.Text)
 		}
@@ -107,7 +107,7 @@ func TestOnlyHeldNodesWarnNoNodes(t *testing.T) {
 	s := newStickyRig(t)
 	s.g.holdNode(s.node("h", "vol", false, 0), guardHit{rule: "file-upload"}, "req")
 	found := false
-	for _, w := range s.g.healthOf("tauceti", time.Now()) {
+	for _, w := range s.g.healthOf("lab", time.Now()) {
 		found = found || w.Rule == ruleNoNodes
 	}
 	if !found {

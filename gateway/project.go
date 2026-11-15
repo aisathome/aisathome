@@ -6,18 +6,20 @@
 // could use (routing.go). A chat or agent request that has waited preempt_after_seconds stops a
 // science request on a node it could use (preempt.go); people's requests are never preempted.
 //
-// A project is an operator-run workload (TauCeti first): it exists only in the gateway config,
-// is called with its own keys (by SHA-256), has its own daily quota instead of an account's,
-// and may use at most max_node_share of the nodes that may serve it at once.
+// A project is an operator-run workload: it exists only in the gateway config, is called with its
+// own keys (by SHA-256), has its own daily quota instead of an account's, and may use at most
+// max_node_share of the nodes that may serve it at once. What the gateway knows of a project is
+// that data (decision 0019: no project's name or workflow in the code): its task kinds, whether its
+// queue is public, and where its public page is.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
 
 import (
-	"cmp"
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -44,7 +46,7 @@ var classes = []string{ClassChat, ClassAgent, ClassScience}
 
 // Project is an operator-run workload (Config.Projects).
 type Project struct {
-	// ID names the project in statistics and the usage log ("tauceti"): lower-case letters,
+	// ID names the project in statistics and the usage log ("prove2me"): lower-case letters,
 	// digits and dashes. Public: it appears in /v1/stats.
 	ID string `json:"id"`
 	// KeySHA256 lists the SHA-256 (hex) of the project's API keys. The keys themselves are
@@ -67,18 +69,23 @@ type Project struct {
 	// QueueTimeoutSec is how long a request waits for a node; science waits behind people's
 	// requests, so it may wait longer than they do. Default the gateway's queue_timeout_seconds.
 	QueueTimeoutSec int `json:"queue_timeout_seconds,omitempty"`
-	// ReviewLoop: a task that passes its checks gets a review task, and a red verdict a fix round
-	// (tasks.go, "The review loop"). AutoRounds: no reviews, but what the gateway does with a task's
-	// end stays: a pass waits for the operator, a failed check or a skip gets its round. ReviewLoop
-	// includes it. MaxReviewRounds: automatic rounds per chain; 0 = 3.
-	ReviewLoop      bool `json:"review_loop,omitempty"`
-	AutoRounds      bool `json:"auto_rounds,omitempty"`
-	MaxReviewRounds int  `json:"max_review_rounds,omitempty"`
-	// PublicQueue publishes the public fields of the project's task queue (ids, states, outcomes,
-	// token counts, the trial, leaf and theorem names) at GET /v1/projects/<id>/queue, without a key
-	// (queue_public.go). Off: 404.
+	// PublicQueue publishes the public fields of the project's tasks (ids, kinds, roles, states,
+	// outcomes, relations, labels, token counts) at GET /v1/projects/<id>/queue and GET /v1/tasks,
+	// without a key (queue_public.go, tasks_public.go). Off: 404, and none in /v1/tasks.
 	PublicQueue bool `json:"public_queue,omitempty"`
+	// Kinds: the task kinds the project may create besides "other" (tasks.go): one per scaffold
+	// generation ("p2m-v7"), each 1-32 lower-case letters, digits, '_' or '-'. Its workers claim by
+	// kind. A config written before decision 0019 has none and stays valid.
+	Kinds []string `json:"kinds,omitempty"`
+	// Page: the project's public page on the website, a path ("/science/prove2me/"); the account
+	// page links a node's science work to it. PageAnchor: a label name ("leaf") whose value places a
+	// task on that page ("#leaf-<value>"). Both optional.
+	Page       string `json:"page,omitempty"`
+	PageAnchor string `json:"page_anchor,omitempty"`
 }
+
+// projectPageRe: a project's page, a site path.
+var projectPageRe = regexp.MustCompile(`^/[a-z0-9][a-z0-9/_-]{0,99}$`)
 
 var projectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
@@ -89,21 +96,12 @@ type projectTable struct {
 	ids    []string // in the config's order
 }
 
-// loopSetting is the task store's view of a project's loop. reviews: candidates get a review task.
-// rounds: the gateway acts on a task's end at all. limit: automatic rounds per chain.
-type loopSetting struct {
-	reviews, rounds bool
-	limit           int
-}
-
-// loopOf is a project's loop.
-func (g *Gateway) loopOf(project string) loopSetting {
-	t := g.projects.Load()
-	if t == nil || t.byID[project] == nil {
-		return loopSetting{limit: defaultReviewRounds}
+// projectKinds is a project's declared task kinds (none: only "other").
+func (g *Gateway) projectKinds(project string) []string {
+	if t := g.projects.Load(); t != nil && t.byID[project] != nil {
+		return t.byID[project].Kinds
 	}
-	p := t.byID[project]
-	return loopSetting{p.ReviewLoop, p.ReviewLoop || p.AutoRounds, cmp.Or(p.MaxReviewRounds, defaultReviewRounds)}
+	return nil
 }
 
 // newProjectTable checks the projects of a config.
@@ -125,6 +123,21 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 		}
 		if p.MinTrust != "" && p.MinTrust != "trusted" && p.MinTrust != "any" {
 			return nil, fmt.Errorf("project %q: min_trust must be trusted or any", p.ID)
+		}
+		if len(p.Kinds) > maxProjectKinds {
+			return nil, fmt.Errorf("project %q: at most %d kinds", p.ID, maxProjectKinds)
+		}
+		for j, k := range p.Kinds {
+			if !taskKindRe.MatchString(k) || k == kindOther || slices.Contains(p.Kinds[:j], k) {
+				return nil, fmt.Errorf("project %q: kind %q: 1-32 lower-case letters, digits, '_' or '-', a letter first, once, not other", p.ID, k)
+			}
+		}
+		p.Kinds = slices.Clone(p.Kinds)
+		if p.Page != "" && (!projectPageRe.MatchString(p.Page) || strings.Contains(p.Page, "//")) {
+			return nil, fmt.Errorf("project %q: page must be a site path such as /science/%s/", p.ID, p.ID)
+		}
+		if p.PageAnchor != "" && (!taskLabelKeyRe.MatchString(p.PageAnchor) || p.Page == "") {
+			return nil, fmt.Errorf("project %q: page_anchor must be a label name, with a page", p.ID)
 		}
 		if len(p.KeySHA256) == 0 {
 			return nil, fmt.Errorf("project %q has no key_sha256", p.ID)

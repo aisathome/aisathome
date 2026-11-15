@@ -16,7 +16,7 @@ func rules(ws []healthWarning) []string {
 }
 
 func stored(st *runnerStatus, received time.Time) *storedStatus {
-	return &storedStatus{Project: "tauceti", ReceivedAt: received, Status: st}
+	return &storedStatus{Project: "lab", ReceivedAt: received, Status: st}
 }
 
 func tp(s string) *time.Time {

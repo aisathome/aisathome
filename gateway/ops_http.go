@@ -126,8 +126,8 @@ type opsData struct {
 
 // opsTask is one row of the gateway's task queue.
 type opsTask struct {
-	ID, Kind, State, Tries, Worker, Lease, Outcome, Review, Loop, Decision, Updated string
-	Exported, Held                                                                  bool
+	ID, Kind, Role, State, Tries, Worker, Lease, Outcome, ClosedBy, Updated string
+	Exported, Held                                                          bool
 }
 
 // opsKeptFinished: the queue card shows this many finished tasks, newest first.
@@ -138,8 +138,7 @@ func (g *Gateway) opsTasks(d *opsData, project string, now time.Time) {
 		d.TaskCounts = err.Error()
 		return
 	}
-	ts, counts := g.tasks.list(project, nil, nil, "")
-	rounds := g.tasks.loop(project).limit
+	ts, counts := g.tasks.list(project, nil, nil, nil, "")
 	var parts []string
 	for _, st := range queueStates {
 		if counts[st] > 0 {
@@ -157,7 +156,7 @@ func (g *Gateway) opsTasks(d *opsData, project string, now time.Time) {
 				continue
 			}
 		}
-		row := opsTask{ID: t.ID, Kind: t.Kind, State: t.State, Tries: fmt.Sprintf("%d of %d", t.Tries, t.MaxTries),
+		row := opsTask{ID: t.ID, Kind: t.Kind, Role: t.Role, ClosedBy: t.ClosedBy, State: t.State, Tries: fmt.Sprintf("%d of %d", t.Tries, t.MaxTries),
 			Updated: ago(now.Sub(t.UpdatedAt)), Exported: t.ExportedAt != nil, Held: heldFor(t, "", now)}
 		if t.Lease != nil {
 			row.Worker = t.Lease.Worker
@@ -174,33 +173,8 @@ func (g *Gateway) opsTasks(d *opsData, project string, now time.Time) {
 		} else if t.Error != "" && t.State != TaskLeased {
 			row.Outcome = t.Error
 		}
-		if t.Review != nil {
-			row.Review = reviewLine(t.Review)
-		}
-		if t.QwenReview != nil { // beside the operator's verdict, never in its place
-			row.Review = strings.TrimPrefix(row.Review+"; "+reviewLine(t.QwenReview), "; ")
-		}
-		row.Loop = t.Stage
-		if c := g.tasks.chainView(project, t.Chain); c != nil && t.Stage != "" {
-			row.Loop = strings.TrimSpace(fmt.Sprintf("%s: %d reviews, %d of %d rounds, %.0f GPU min. %s", t.Stage, c.Reviews, c.AutoRounds, rounds,
-				c.ReviewModelMin+c.RoundModelMin, c.Stop))
-		}
-		if t.Decision != nil {
-			row.Decision = t.Decision.Decision
-			if t.Decision.PR > 0 {
-				row.Decision += fmt.Sprintf(" #%d", t.Decision.PR)
-			}
-		}
 		d.Tasks = append(d.Tasks, row)
 	}
-}
-
-// reviewLine is a verdict for the queue card; Qwen's says so, since the operator's stands apart.
-func reviewLine(v *TaskReview) string {
-	if v.Judge == judgeQwen {
-		return "qwen " + v.Verdict + " (" + v.By + ")"
-	}
-	return v.Verdict + " (" + v.By + ")"
 }
 
 type opsCandidate struct {
@@ -208,8 +182,7 @@ type opsCandidate struct {
 }
 
 // opsProjects are the projects the page can show, in the config's order: ?project=<id>, else the
-// first configured one. Not sorted: a second project (prove2me, 2026-11-11) sorted before tauceti
-// and took the page's default from it.
+// first configured one. Not sorted: the operator's order of the config decides the default.
 func (g *Gateway) opsProjects() []string {
 	t := g.projects.Load()
 	if t == nil {
@@ -525,11 +498,11 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{else}}<p class="mut">The queue is empty.</p>{{end}}</div>
 <div class="card" id="tasks"><h2>Task queue (gateway)</h2>
 <p class="mut small">{{if .TaskCounts}}{{.TaskCounts}}{{else}}No tasks.{{end}}{{if .TaskExport}} · <strong>{{.TaskExport}} finished waiting for the export to the ledger</strong>{{end}}</p>
-{{if .Tasks}}<div class="table-wrap"><table><tr><th>Task</th><th>Kind</th><th>State</th><th>Tries</th><th>Worker</th><th>Outcome</th><th>Review</th><th>Loop</th><th>Decision</th><th>Updated</th></tr>
-{{range .Tasks}}<tr data-task="{{.ID}}"><td data-label="Task"><code>{{.ID}}</code></td><td data-label="Kind">{{.Kind}}</td>
+{{if .Tasks}}<div class="table-wrap"><table><tr><th>Task</th><th>Kind</th><th>State</th><th>Tries</th><th>Worker</th><th>Outcome</th><th>Closed by</th><th>Updated</th></tr>
+{{range .Tasks}}<tr data-task="{{.ID}}"><td data-label="Task"><code>{{.ID}}</code></td><td data-label="Kind">{{.Kind}}{{with .Role}} <span class="mut small">{{.}}</span>{{end}}</td>
 <td data-label="State"><span class="badge {{badge .State}}">{{.State}}</span>{{if .Exported}} <span class="mut small">exported</span>{{end}}</td>
 <td data-label="Tries">{{.Tries}}</td><td data-label="Worker">{{with .Worker}}<code>{{.}}</code>{{end}}{{with .Lease}} <span class="mut small">{{.}}</span>{{end}}</td>
-<td data-label="Outcome">{{.Outcome}}</td><td data-label="Review">{{.Review}}</td><td data-label="Loop">{{.Loop}}</td><td data-label="Decision">{{.Decision}}</td><td data-label="Updated">{{.Updated}}</td></tr>{{end}}</table></div>
+<td data-label="Outcome">{{.Outcome}}</td><td data-label="Closed by">{{with .ClosedBy}}<code>{{.}}</code>{{end}}</td><td data-label="Updated">{{.Updated}}</td></tr>{{end}}</table></div>
 {{end}}</div>
 <div class="card" id="candidates"><h2>Candidates waiting</h2>
 {{if .Candidates}}<div class="table-wrap"><table><tr><th>Attempt</th><th>Since</th><th>Waiting</th><th>Outcome</th></tr>

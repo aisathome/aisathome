@@ -11,7 +11,11 @@
 // content and never who asked: a person's request is "chat" or "API" only. A project's runner may
 // name its task in the X-Aisathome-Task header; the name counts only when it is one of the project's
 // running tasks on the gateway's queue. Without it, a project with one running task is taken to be
-// working on it; with several, the page says how many.
+// working on it; with several, the page says how many. The link goes to the project's page and the
+// task's place on it as the project's configuration says (Project.Page, PageAnchor).
+//
+// The task's node_classes (tasks.go): a named task's request notes the class of the node serving
+// it, trusted or volunteer, never which node or whose.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -106,8 +110,18 @@ type workItem struct {
 	Href   string // the project's science page (a leaf's place on it), or ""
 }
 
-// sciencePages: the projects whose results the website shows, at /science/<id>/.
-var sciencePages = map[string]bool{"prove2me": true, "tauceti": true}
+// The classes of node a task's public node_classes names.
+const (
+	nodeClassTrusted   = "trusted"
+	nodeClassVolunteer = "volunteer"
+)
+
+func nodeClassOf(trusted bool) string {
+	if trusted {
+		return nodeClassTrusted
+	}
+	return nodeClassVolunteer
+}
 
 // nodeWorkView says what an account's node is serving now (nil when nothing or when it is not the
 // account's), and its speed ("" before any answer).
@@ -145,14 +159,15 @@ func (g *Gateway) nodeWorkView(account, id string) (items []workItem, speed stri
 // the project's only running task, else how many it may be one of.
 func (g *Gateway) scienceWork(w nodeWork) workItem {
 	it := workItem{Text: w.project}
-	if sciencePages[w.project] {
-		it.Href = "/science/" + w.project + "/"
+	var anchor string
+	if pt := g.projects.Load(); pt != nil && pt.byID[w.project] != nil {
+		it.Href, anchor = pt.byID[w.project].Page, pt.byID[w.project].PageAnchor
 	}
 	if g.tasks == nil {
 		return it
 	}
 	running := g.tasks.leasedRefs(w.project)
-	var t *publicTask
+	var t *leasedRef
 	for i := range running {
 		if running[i].ID == w.task {
 			t = &running[i]
@@ -165,8 +180,8 @@ func (g *Gateway) scienceWork(w nodeWork) workItem {
 	case t != nil:
 		it.Text += " · " + t.ID
 		it.Detail = t.Theorem
-		if t.Leaf != "" && it.Href != "" && w.project == "prove2me" {
-			it.Href += "#leaf-" + t.Leaf
+		if v := t.labels[anchor]; anchor != "" && it.Href != "" && pubLeafRe.MatchString(v) {
+			it.Href += "#" + anchor + "-" + v
 		}
 	case len(running) > 1:
 		it.Detail = fmt.Sprintf("one of %d running tasks", len(running))

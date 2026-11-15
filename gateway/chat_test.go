@@ -72,10 +72,10 @@ func TestChatPrepareProject(t *testing.T) {
 	g := newTestGateway(t, Config{})
 	defer g.Close()
 	c := &chatCaller{acct: KeyInfo{User: "p"}, userKey: "p", class: ClassScience, charge: []string{"p"},
-		proj: &Project{ID: "tauceti", MaxNodeShare: 0.7, QueueTimeoutSec: 77}}
+		proj: &Project{ID: "lab", MaxNodeShare: 0.7, QueueTimeoutSec: 77}}
 	job := prepared(t, g, c, "hi", nil)
-	if job.rt.project != "tauceti" || job.rt.share != 0.7 || job.rt.class != ClassScience || job.queueWait != 77 ||
-		job.req.project != "tauceti" || job.req.class != ClassScience {
+	if job.rt.project != "lab" || job.rt.share != 0.7 || job.rt.class != ClassScience || job.queueWait != 77 ||
+		job.req.project != "lab" || job.req.class != ClassScience {
 		t.Fatalf("route %+v, wait %d, request %+v", job.rt, job.queueWait, job.req)
 	}
 }

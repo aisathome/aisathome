@@ -14,7 +14,7 @@ import (
 
 // project-key writes the key to a new file only (mode 600) and prints its hash, never the key.
 func TestProjectKey(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tauceti.key")
+	path := filepath.Join(t.TempDir(), "lab.key")
 	var out bytes.Buffer
 	if err := runProjectKey([]string{path}, &out); err != nil {
 		t.Fatal(err)

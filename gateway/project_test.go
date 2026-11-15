@@ -80,7 +80,7 @@ func TestPriorityOrder(t *testing.T) {
 	a.inflight = 1 // busy with someone's request
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	got := s.queue(ctx, classRoute(ClassScience, "tauceti", 0), classRoute(ClassAgent, "", 0), classRoute(ClassChat, "", 0))
+	got := s.queue(ctx, classRoute(ClassScience, "lab", 0), classRoute(ClassAgent, "", 0), classRoute(ClassChat, "", 0))
 	a.mu.Lock()
 	a.inflight--
 	a.mu.Unlock()
@@ -114,7 +114,7 @@ func TestScienceNeverDelaysWaitingUser(t *testing.T) {
 	a.mu.Lock()
 	a.inflight--
 	a.mu.Unlock()
-	sci := classRoute(ClassScience, "tauceti", 0)
+	sci := classRoute(ClassScience, "lab", 0)
 	if n, _ := s.g.pick(sci); n != nil {
 		t.Fatalf("science took %s while a user request waits for it", n.id)
 	}
@@ -136,7 +136,7 @@ func TestScienceNeverDelaysWaitingUser(t *testing.T) {
 	}
 	// With nobody waiting, science takes a free node at once.
 	s.release(a, chat)
-	if n, _ := s.g.pick(classRoute(ClassScience, "tauceti", 0)); n != a {
+	if n, _ := s.g.pick(classRoute(ClassScience, "lab", 0)); n != a {
 		t.Fatalf("science with no one waiting: %v", n)
 	}
 }
@@ -154,7 +154,7 @@ func TestYieldOnlyNodesTheWaiterWouldTake(t *testing.T) {
 	chat := classRoute(ClassChat, "", 0)
 	chat.need, chat.needMin = 90000, 74000
 	got := s.queue(ctx, chat)
-	for _, lower := range []*route{classRoute(ClassAgent, "", 0), classRoute(ClassScience, "tauceti", 0)} {
+	for _, lower := range []*route{classRoute(ClassAgent, "", 0), classRoute(ClassScience, "lab", 0)} {
 		n, _ := s.g.pick(lower)
 		if n != small {
 			t.Fatalf("%s got %v while the waiting chat would not take the 80k node, want small", lower.class, n)
@@ -180,7 +180,7 @@ func TestProjectShareCap(t *testing.T) {
 	for _, id := range []string{"a", "b", "c"} {
 		s.node(id, "op", true, 0)
 	}
-	sci := func() *route { return classRoute(ClassScience, "tauceti", 0.7) }
+	sci := func() *route { return classRoute(ClassScience, "lab", 0.7) }
 	n1, _ := s.g.pick(sci())
 	n2, _ := s.g.pick(sci())
 	if n1 == nil || n2 == nil || n1 == n2 {
@@ -191,7 +191,7 @@ func TestProjectShareCap(t *testing.T) {
 	}
 	// Another project has its own share.
 	if n, _ := s.g.pick(classRoute(ClassScience, "other", 0.7)); n == nil {
-		t.Fatal("another project was held to tauceti's share")
+		t.Fatal("another project was held to lab's share")
 	}
 	s.release(n1, sci())
 	if n, _ := s.g.pick(classRoute(ClassAgent, "", 0)); n == nil || n != n1 {
@@ -205,7 +205,7 @@ func TestProjectShareCap(t *testing.T) {
 	// One node and a share below 1: the project may still use it when people do not.
 	s1 := newStickyRig(t)
 	s1.node("solo", "op", true, 0)
-	if n, _ := s1.g.pick(classRoute(ClassScience, "tauceti", 0.5)); n == nil {
+	if n, _ := s1.g.pick(classRoute(ClassScience, "lab", 0.5)); n == nil {
 		t.Fatal("a capped project never runs on a one-node network")
 	}
 }
@@ -223,7 +223,7 @@ func TestShareCap(t *testing.T) {
 
 func TestProjectConfigChecked(t *testing.T) {
 	h := strings.Repeat("ab", 32)
-	ok := Project{ID: "tauceti", KeySHA256: []string{h}, MaxNodeShare: 0.7, DailyTokens: 1000}
+	ok := Project{ID: "lab", KeySHA256: []string{h}, MaxNodeShare: 0.7, DailyTokens: 1000}
 	if _, err := newProjectTable([]Project{ok}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,13 +249,13 @@ func TestProjectConfigChecked(t *testing.T) {
 }
 
 // The ops page shows the first configured project by default, and lists them in the config's order:
-// prove2me (2026-11-11), configured after tauceti, sorted before it and took the page's default.
+// prove2me (2026-11-11), configured after lab, sorted before it and took the page's default.
 func TestOpsProjectsKeepTheConfigOrder(t *testing.T) {
 	g := newTestGateway(t, Config{Projects: []Project{
-		{ID: "tauceti", KeySHA256: []string{keyHash(testProjectKey)}},
+		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}},
 		{ID: "prove2me", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
-	if got := g.opsProjects(); !slices.Equal(got, []string{"tauceti", "prove2me"}) {
-		t.Fatalf("ops projects %v, want [tauceti prove2me]", got)
+	if got := g.opsProjects(); !slices.Equal(got, []string{"lab", "prove2me"}) {
+		t.Fatalf("ops projects %v, want [lab prove2me]", got)
 	}
 }

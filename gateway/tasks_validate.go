@@ -8,44 +8,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"unicode/utf8"
 )
 
-func (v *TaskReview) validate() error {
-	errs := []error{checkID("by", v.By), checkText("summary", v.Summary, 500)}
-	if v.Judge != "" {
-		errs = append(errs, checkID("judge", v.Judge))
-	}
-	if v.Verdict != "green" && v.Verdict != "red" {
-		errs = append(errs, errors.New("verdict: green or red"))
-	}
-	if v.Round < 0 || v.Round > 1000 || (v.Findings != nil && (*v.Findings < 0 || *v.Findings > 100000)) {
-		errs = append(errs, errors.New("round or findings out of range"))
-	}
-	if v.Detail != nil {
-		if err := checkObject("detail", v.Detail, maxTaskReviewDetail); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if !v.At.IsZero() {
-		errs = append(errs, errors.New("at: set by the gateway"))
-	}
-	return errors.Join(errs...)
-}
-
-func (d *TaskDecision) validate() error {
-	errs := []error{checkID("by", d.By), checkText("note", d.Note, 500)}
-	if !slices.Contains([]string{"approved", "rejected", "opened"}, d.Decision) {
-		errs = append(errs, errors.New("decision: approved, rejected or opened"))
-	}
-	if d.PR < 0 || d.PR > 999999999 || (d.Decision == "opened") != (d.PR > 0) {
-		errs = append(errs, errors.New("pr: the pull request number, with opened only"))
-	}
-	if !d.At.IsZero() {
-		errs = append(errs, errors.New("at: set by the gateway"))
-	}
-	return errors.Join(errs...)
-}
+var (
+	// publicSecret: key-shaped text (secretLike without its long-run rule: public text quotes long
+	// Lean names).
+	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9]{8})|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
+	// publicEmail: an e-mail address, which no public label carries.
+	publicEmail = regexp.MustCompile(`[^\s@]+@[^\s@]+\.[^\s@]+`)
+)
 
 func (r *TaskResult) validate() error {
 	errs := []error{checkText("result.outcome", r.Outcome, 200), checkNum("result.model_min", r.ModelMin, 1e5),
@@ -53,20 +27,9 @@ func (r *TaskResult) validate() error {
 	if r.Outcome == "" {
 		errs = append(errs, errors.New("result.outcome: required"))
 	}
-	if len(r.Diff) > maxTaskDiff || len(r.PRBody) > maxTaskPRBody || len(r.CommitMsg) > maxTaskCommitMsg {
-		errs = append(errs, fmt.Errorf("result: diff at most %d bytes, pr_body %d, commit_msg %d", maxTaskDiff, maxTaskPRBody, maxTaskCommitMsg))
-	}
 	if r.Score != nil {
 		if err := checkObject("result.score", r.Score, maxTaskScore); err != nil {
 			errs = append(errs, err)
-		}
-	}
-	if r.Review != nil {
-		if err := r.Review.validate(); err != nil {
-			errs = append(errs, err)
-		}
-		if r.Review.Judge != judgeQwen {
-			errs = append(errs, errors.New("result.review: a review task's verdict names its judge, qwen"))
 		}
 	}
 	if r.Steps < 0 || r.Steps > 100000 || r.PromptTokens < 0 || r.PromptTokens > 1e12 || (r.CachedTokens != nil && (*r.CachedTokens < 0 || *r.CachedTokens > 1e12)) || r.CompletionTokens < 0 || r.CompletionTokens > 1e12 {
@@ -111,41 +74,98 @@ func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(v)
 }
 
-func (n *taskNew) validate() error {
+// checkKind accepts a kind or a role: lower-case letters, digits, '_' and '-', 1-32, a letter first.
+func checkKind(field, s string) error {
+	if !taskKindRe.MatchString(s) {
+		return fmt.Errorf("%s: 1-32 lower-case letters, digits, '_' or '-', a letter first", field)
+	}
+	return nil
+}
+
+// checkClosedBy accepts what closed a task: a task's id, or "reuse:<by>".
+func checkClosedBy(s string) error {
+	if !taskClosedByRe.MatchString(s) || publicSecret.MatchString(s) {
+		return errors.New("closed_by: a task's id or reuse:<by>, 1-200 characters without spaces")
+	}
+	return nil
+}
+
+// checkLabels accepts at most maxTaskLabels public labels: a name of lower-case letters, digits and
+// '_', and a value of 1-maxTaskLabelValue printable bytes that holds nothing key-shaped and no
+// e-mail address. Labels are public (GET /v1/tasks).
+func checkLabels(labels map[string]string) error {
+	if len(labels) > maxTaskLabels {
+		return fmt.Errorf("labels: at most %d", maxTaskLabels)
+	}
+	var errs []error
+	for k, v := range labels {
+		switch {
+		case !taskLabelKeyRe.MatchString(k):
+			errs = append(errs, fmt.Errorf("labels: name %q: 1-32 lower-case letters, digits or '_', a letter first", k))
+		case v == "" || len(v) > maxTaskLabelValue || !utf8.ValidString(v) || !utf8Printable(v):
+			errs = append(errs, fmt.Errorf("labels.%s: 1-%d printable bytes", k, maxTaskLabelValue))
+		case publicSecret.MatchString(v) || publicEmail.MatchString(v):
+			errs = append(errs, fmt.Errorf("labels.%s: looks like a key or an e-mail address; labels are public", k))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// validate checks a create request. kinds are the project's declared kinds: a task's kind is one of
+// them or "other".
+func (n *taskNew) validate(kinds []string) error {
 	errs := []error{checkID("id", n.ID), checkID("created_by", n.CreatedBy), checkText("title", n.Title, 200)}
-	if n.CreatedBy == gatewayCreator {
-		errs = append(errs, errors.New("created_by: gateway is the review loop's own"))
-	}
-	if _, ok := taskKinds[n.Kind]; !ok {
-		errs = append(errs, errors.New("kind: "+kindsHelp))
-	}
-	if _, ok := findingsClass[n.FindingsSource]; n.FindingsSource != "" && !ok {
-		errs = append(errs, fmt.Errorf("findings_source: %s, %s or %s", findingsReview, findingsPrereview, findingsPrereviewQwen))
-	}
-	if n.FindingsSource != "" && n.Kind != "fix_round" && n.Kind != "followup" {
-		errs = append(errs, errors.New("findings_source: for a fix round or a follow-up"))
-	}
-	if n.Kind == "review" {
-		errs = append(errs, checkID("parent", n.Parent))
-	} else if n.Parent != "" {
-		errs = append(errs, errors.New("parent: for a review task"))
+	if err := checkKind("kind", n.Kind); err != nil {
+		errs = append(errs, err)
+	} else if n.Kind != kindOther && !slices.Contains(kinds, n.Kind) {
+		errs = append(errs, fmt.Errorf("kind: %q is not one of this project's kinds (other, or one its configuration declares)", n.Kind))
 	}
 	if n.Spec == nil {
 		errs = append(errs, errors.New("spec: required (a JSON object)"))
 	} else if err := checkObject("spec", n.Spec, maxTaskSpec); err != nil {
 		errs = append(errs, err)
 	}
-	if n.BaseRef != "" && !taskRefRe.MatchString(n.BaseRef) {
-		errs = append(errs, errors.New("base_ref: a branch or commit, 1-200 of letters, digits, '.', '_', '/' or '-'"))
-	}
-	if n.PR < 0 || n.PR > 999999999 {
-		errs = append(errs, errors.New("pr: a pull request number"))
-	}
 	if n.Order < -maxTaskOrder || n.Order > maxTaskOrder {
 		errs = append(errs, fmt.Errorf("order: %d to %d (lower is claimed first)", -maxTaskOrder, maxTaskOrder))
 	}
 	if n.MaxTries < 0 || n.MaxTries > maxMaxTries {
 		errs = append(errs, fmt.Errorf("max_tries: 1 to %d (0: %d)", maxMaxTries, defaultMaxTries))
+	}
+	if n.Role != "" {
+		if err := checkKind("role", n.Role); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, f := range []struct{ field, ref string }{{"parent", n.Parent}, {"retry_of", n.RetryOf}, {"replaces", n.Replaces}} {
+		if f.ref == "" {
+			continue
+		}
+		if err := checkID(f.field, f.ref); err != nil {
+			errs = append(errs, err)
+		} else if f.ref == n.ID {
+			errs = append(errs, fmt.Errorf("%s: not the task itself", f.field))
+		}
+	}
+	if len(n.Needs) > maxTaskNeeds {
+		errs = append(errs, fmt.Errorf("needs: at most %d tasks", maxTaskNeeds))
+	} else {
+		seen := map[string]bool{}
+		for _, ref := range n.Needs {
+			if err := checkID("needs", ref); err != nil {
+				errs = append(errs, err)
+			} else if ref == n.ID {
+				errs = append(errs, errors.New("needs: not the task itself"))
+			} else if seen[ref] {
+				errs = append(errs, fmt.Errorf("needs: %s twice", ref))
+			}
+			seen[ref] = true
+		}
+	}
+	if n.HoleID != "" && !taskHoleRe.MatchString(n.HoleID) {
+		errs = append(errs, errors.New("hole_id: 1-64 lower-case letters, digits, '.', '_', ':' or '-'"))
+	}
+	if err := checkLabels(n.Labels); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

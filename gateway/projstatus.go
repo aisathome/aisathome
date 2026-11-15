@@ -159,6 +159,40 @@ var (
 	runKinds = []string{"", "new", "rerun", "rerun-more-time", "fix-review", "fix-ci", "fix-internal", "review", "followup"}
 )
 
+// reviewerModel: a status names no reviewer model in a task's title (owner, 2026-10-24).
+var reviewerModel = regexp.MustCompile(`(?i)claude|anthropic|\bopus\b|\bsonnet\b|\bhaiku\b|\bcodex\b|\bgpt-|\bgemini\b`)
+
+// checkPublic accepts printable text up to maxLen bytes that names no reviewer model and holds
+// nothing key-shaped.
+func checkPublic(field, s string, maxLen int) error {
+	if len(s) > maxLen {
+		return fmt.Errorf("%s: longer than %d bytes", field, maxLen)
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%s: control characters", field)
+		}
+	}
+	if reviewerModel.MatchString(s) {
+		return fmt.Errorf("%s: names a reviewer model; the public page never does", field)
+	}
+	if publicSecret.MatchString(s) {
+		return fmt.Errorf("%s: looks like a key or token", field)
+	}
+	return nil
+}
+
+// checkTask accepts a task's id, or none (older statuses).
+func checkTask(field, s string) error {
+	if s == "" {
+		return nil
+	}
+	if !statusTaskRe.MatchString(s) {
+		return fmt.Errorf("%s: %q is not allowed here", field, s)
+	}
+	return checkPublic(field, s, 24)
+}
+
 func oneOf(v string, set []string) bool {
 	for _, s := range set {
 		if v == s {

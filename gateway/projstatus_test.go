@@ -14,14 +14,14 @@ import (
 )
 
 const (
-	testProjectKey  = "ak-tauceti-test-key-0123456789"
+	testProjectKey  = "ak-lab-test-key-0123456789abcd"
 	otherProjectKey = "ak-other-project-key-987654321"
 )
 
 func statusGateway(t *testing.T, dir string) *Gateway {
 	t.Helper()
 	return newTestGateway(t, Config{StateDir: dir, Projects: []Project{
-		{ID: "tauceti", KeySHA256: []string{keyHash(testProjectKey)}},
+		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, Kinds: []string{"p2m-v7"}},
 		{ID: "other", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
 }
@@ -70,32 +70,32 @@ func TestStatusPostKeys(t *testing.T) {
 		{"wrong key", "ak-not-a-project-key-at-all-000", http.StatusUnauthorized},
 		{"other project's key", otherProjectKey, http.StatusForbidden},
 	} {
-		if w := postStatus(t, g, "tauceti", c.key, body); w.Code != c.want {
+		if w := postStatus(t, g, "lab", c.key, body); w.Code != c.want {
 			t.Errorf("%s: HTTP %d, want %d: %s", c.name, w.Code, c.want, w.Body)
 		}
 	}
-	if g.pstatus.get("tauceti") != nil {
+	if g.pstatus.get("lab") != nil {
 		t.Fatal("a refused post was stored")
 	}
-	if w := postStatus(t, g, "tauceti", testProjectKey, body); w.Code != http.StatusOK {
+	if w := postStatus(t, g, "lab", testProjectKey, body); w.Code != http.StatusOK {
 		t.Fatalf("own key: HTTP %d: %s", w.Code, w.Body)
 	}
 	// A second post within 10 s is refused (the runner posts every minute).
-	if w := postStatus(t, g, "tauceti", testProjectKey, body); w.Code != http.StatusTooManyRequests {
+	if w := postStatus(t, g, "lab", testProjectKey, body); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("second post at once: HTTP %d", w.Code)
 	}
 	g.Close()
-	if _, err := os.Stat(filepath.Join(dir, "status-tauceti.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "status-lab.json")); err != nil {
 		t.Fatal("status not kept in state_dir")
 	}
 	g = statusGateway(t, dir)
 	defer g.Close()
-	s := g.pstatus.get("tauceti")
+	s := g.pstatus.get("lab")
 	if s == nil || len(s.Status.Attempts) != 1 || s.Status.Attempts[0].Attempt != "T2-NS-2.a-A" || s.Status.Runner.Instance == "" {
 		t.Fatalf("after a restart: %+v", s)
 	}
 	// GET with the project's key: the warnings (for the runner's summary), nothing else.
-	r := httptest.NewRequest("GET", "/v1/projects/tauceti/status", nil)
+	r := httptest.NewRequest("GET", "/v1/projects/lab/status", nil)
 	r.Header.Set("Authorization", "Bearer "+testProjectKey)
 	w := httptest.NewRecorder()
 	g.Handler().ServeHTTP(w, r)
@@ -143,12 +143,12 @@ func TestStatusPostSchema(t *testing.T) {
 		"too large": append(statusJSON(minimalStatus(now)), bytes.Repeat([]byte(" "), maxStatusBody)...),
 	}
 	for name, body := range cases {
-		w := postStatus(t, g, "tauceti", testProjectKey, body)
+		w := postStatus(t, g, "lab", testProjectKey, body)
 		if w.Code != http.StatusBadRequest && w.Code != http.StatusRequestEntityTooLarge {
 			t.Errorf("%s: HTTP %d, want 400 or 413: %s", name, w.Code, w.Body)
 		}
 	}
-	if g.pstatus.get("tauceti") != nil {
+	if g.pstatus.get("lab") != nil {
 		t.Fatal("a refused status was stored")
 	}
 	// The T2-NEW-1 fixtures (made by the runner's reporter) are valid at their own time.

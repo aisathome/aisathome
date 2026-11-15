@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,9 +25,8 @@ import (
 
 // projectTasks is one project's queue.
 type projectTasks struct {
-	byID   map[string]*Task
-	chains map[string]*taskChain
-	seq    int64
+	byID map[string]*Task
+	seq  int64
 	// stale: a write failed, so this memory may be ahead of the disk; load replaces it.
 	stale bool
 }
@@ -38,16 +38,12 @@ type taskStore struct {
 	now  func() time.Time
 	log  *slog.Logger
 	byPr map[string]*projectTasks
-	// loop: the project's reviews and automatic rounds (its config).
-	loop func(project string) loopSetting
 	// write stores one file; a test stops it to crash between two writes.
 	write func(path string, raw []byte) error
 }
 
 func newTaskStore(dir string, log *slog.Logger) *taskStore {
-	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{},
-		loop:  func(string) loopSetting { return loopSetting{limit: defaultReviewRounds} },
-		write: writeFileAtomic}
+	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{}, write: writeFileAtomic}
 }
 
 func (s *taskStore) pdir(project string) string { return filepath.Join(s.dir, "tasks-"+project) }
@@ -70,12 +66,9 @@ func (s *taskStore) load(project string) (*projectTasks, error) {
 // read reads a project's queue from state_dir. A file that does not parse is left out, as at every
 // start; a disk that does not answer is an error, not an empty queue.
 func (s *taskStore) read(project string) (*projectTasks, error) {
-	p := &projectTasks{byID: map[string]*Task{}, chains: map[string]*taskChain{}}
+	p := &projectTasks{byID: map[string]*Task{}}
 	if s.dir == "" || !projectID.MatchString(project) {
 		return p, nil
-	}
-	if err := s.loadChains(project, p); err != nil {
-		return nil, err
 	}
 	ents, err := os.ReadDir(s.pdir(project))
 	if errors.Is(err, os.ErrNotExist) {
@@ -103,8 +96,6 @@ func (s *taskStore) read(project string) (*projectTasks, error) {
 			continue
 		}
 		t.size = len(raw)
-		t.Class = taskClass(t.Kind, t.FindingsSource) // files written before the classes split keep the old number
-		t.Chain = chainFor(t.ID, t.Parent)
 		p.byID[t.ID] = &t
 		p.seq = max(p.seq, t.Seq)
 	}
@@ -135,18 +126,6 @@ func (s *taskStore) save(t *Task) error {
 		t.size = len(raw)
 	}
 	return err
-}
-
-// conclude saves a change that may owe the loop a step, and does the step. Only the save decides
-// the answer: past it, a failed step waits on disk for the next call or sweep. Holds s.mu.
-func (s *taskStore) conclude(p *projectTasks, t *Task, now time.Time) error {
-	if err := s.save(t); err != nil {
-		return err
-	}
-	if err := s.settle(p, t, now); err != nil {
-		s.log.Warn("the loop's step waits for the next sweep", "project", t.Project, "task", t.ID)
-	}
-	return nil
 }
 
 // drop forgets a finished task once its file is gone; a file that stays keeps the task, and the
@@ -180,13 +159,11 @@ func (s *taskStore) giveBack(p *projectTasks, t *Task, now time.Time, kind, reas
 	if t.Interruptions >= maxInterruptions {
 		t.State, t.Interrupted = TaskFailed, ""
 		t.event(now, what, worker, fmt.Sprintf("%s; failed after %d interruptions", reason, t.Interruptions))
-		t.LoopPending = &loopPending{Step: owedStop, Why: "failed after too many interruptions"}
 	} else if kind == interruptExpired && t.Tries >= t.MaxTries && hold <= 0 {
 		// held for nobody: the wait for its worker (the sweep below) is over at once
 		t.State, t.Interrupted, t.Lease = TaskFailed, "", nil
 		t.Error = fmt.Sprintf("lease expired on try %d of %d (no hold for its worker)", t.Tries, t.MaxTries)
 		t.event(now, "failed", worker, t.Error)
-		t.LoopPending = &loopPending{Step: owedStop, Why: "the lease expired on the last try"}
 	} else {
 		t.State, t.Requeued, t.Interrupted = TaskQueued, true, kind
 		t.Lease = nil
@@ -200,7 +177,7 @@ func (s *taskStore) giveBack(p *projectTasks, t *Task, now time.Time, kind, reas
 		}
 		t.event(now, what, worker, note)
 	}
-	if err := s.conclude(p, t, now); err != nil {
+	if err := s.save(t); err != nil {
 		return err
 	}
 	s.log.Info("task given back", "project", t.Project, "task", t.ID, "worker", worker, "why", what, "state", t.State,
@@ -219,13 +196,10 @@ func continues(t *Task, worker string, now time.Time) bool {
 	return false
 }
 
-// sweep does what the loop is still owed, ends what waits for a review that a project turned off,
-// returns the project's expired leases to the queue, and fails a task whose lease expired on its
-// last try when its worker has not taken it back within the window. It stops at a failed write,
+// sweep returns the project's expired leases to the queue, and fails a task whose lease expired on
+// its last try when its worker has not taken it back within the hold. It stops at a failed write,
 // leaving p stale. Holds s.mu.
 func (s *taskStore) sweep(p *projectTasks, now time.Time) {
-	s.settleAll(p, now)
-	s.endReviews(p, now)
 	for _, t := range p.byID {
 		if p.stale {
 			return
@@ -239,16 +213,15 @@ func (s *taskStore) sweep(p *projectTasks, now time.Time) {
 			t.State, t.Interrupted, t.PreferWorker, t.PreferUntil = TaskFailed, "", "", nil
 			t.Error = fmt.Sprintf("lease expired on try %d of %d and %s did not take it back in time", t.Tries, t.MaxTries, worker)
 			t.event(now, "failed", worker, t.Error)
-			t.LoopPending = &loopPending{Step: owedStop, Why: "the lease expired on the last try"}
-			if s.conclude(p, t, now) == nil {
+			if s.save(t) == nil {
 				s.log.Info("task failed", "project", t.Project, "task", t.ID, "worker", worker, "why", "expired on the last try")
 			}
 		}
 	}
 }
 
-// sweepAll sweeps every loaded project (the background check), so that a debt or an expired lease
-// does not wait for a call.
+// sweepAll sweeps every loaded project (the background check), so that an expired lease does not
+// wait for a call.
 func (s *taskStore) sweepAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -279,20 +252,18 @@ func (s *taskStore) ready(project string) error {
 }
 
 // prune drops the oldest exported finished tasks while the finished ones are beyond
-// maxKeptTasks or maxKeptBytes. A task not exported (again) is never dropped, nor one an open task
-// still needs, nor one a round waits on or that still owes the loop a step. Holds s.mu.
+// maxKeptTasks or maxKeptBytes. A task not exported (again) is never dropped. Holds s.mu.
 func (s *taskStore) prune(p *projectTasks) {
 	if p.stale {
 		return
 	}
 	var fin []*Task
 	n, kept := 0, 0
-	needed := neededByOpen(p)
 	for _, t := range p.byID {
 		if finished(t.State) {
 			n++
 			kept += t.size
-			if t.ExportedAt != nil && !needed[t.ID] && t.NextFix == nil && t.LoopPending == nil {
+			if t.ExportedAt != nil {
 				fin = append(fin, t)
 			}
 		}
@@ -305,28 +276,6 @@ func (s *taskStore) prune(p *projectTasks) {
 		}
 		fin = fin[1:]
 	}
-}
-
-// neededByOpen: the tasks an open task follows: a review's candidate, a round's predecessor. A task
-// that still owes the loop a step counts as open: the step reads them.
-func neededByOpen(p *projectTasks) map[string]bool {
-	needed := map[string]bool{}
-	for _, t := range p.byID {
-		if finished(t.State) && t.LoopPending == nil {
-			continue
-		}
-		if t.Parent != "" {
-			needed[t.Parent] = true
-		}
-		if c := p.chains[t.Chain]; c != nil {
-			for _, r := range c.Rounds {
-				if r.Task == t.ID {
-					needed[r.From] = true
-				}
-			}
-		}
-	}
-	return needed
 }
 
 // unexported counts the finished tasks that wait for the owner's export, and their bytes.
@@ -350,6 +299,14 @@ func (e *taskErr) Error() string { return e.msg }
 
 func terr(code int, format string, a ...any) error { return &taskErr{code, fmt.Sprintf(format, a...)} }
 
+// sameNew: an existing task was made by this create request (its content, not its state).
+func sameNew(t *Task, n *taskNew, spec json.RawMessage, maxTries int) bool {
+	return t.Kind == n.Kind && t.Title == n.Title && bytes.Equal(t.Spec, spec) && t.CreatedBy == n.CreatedBy &&
+		t.MaxTries == maxTries && t.Order == n.Order && t.Role == n.Role && t.Parent == n.Parent &&
+		slices.Equal(t.Needs, n.Needs) && t.RetryOf == n.RetryOf && t.Replaces == n.Replaces &&
+		t.HoleID == n.HoleID && maps.Equal(t.Labels, n.Labels)
+}
+
 // create adds a task, or returns the existing one with the same id and content (created false).
 func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	s.mu.Lock()
@@ -366,10 +323,14 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	if maxTries == 0 {
 		maxTries = defaultMaxTries
 	}
+	if len(n.Needs) == 0 {
+		n.Needs = nil
+	}
+	if len(n.Labels) == 0 {
+		n.Labels = nil
+	}
 	if t, ok := p.byID[n.ID]; ok {
-		if t.Kind != n.Kind || t.Title != n.Title || !bytes.Equal(t.Spec, spec) || t.BaseRef != n.BaseRef ||
-			t.PR != n.PR || t.CreatedBy != n.CreatedBy || t.MaxTries != maxTries ||
-			t.FindingsSource != n.FindingsSource || t.Parent != n.Parent || t.Order != n.Order {
+		if !sameNew(t, n, spec, maxTries) {
 			return nil, false, terr(http.StatusConflict, "task %s exists with other content; a new task needs a new id", n.ID)
 		}
 		return t.view(true), false, nil
@@ -378,21 +339,23 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 		return nil, false, err
 	}
 	p.seq++
-	t := &Task{ID: n.ID, Project: project, Kind: n.Kind, Class: taskClass(n.Kind, n.FindingsSource), Title: n.Title, Spec: spec,
-		BaseRef: n.BaseRef, PR: n.PR, CreatedBy: n.CreatedBy, State: TaskQueued, MaxTries: maxTries, Seq: p.seq, CreatedAt: now,
-		FindingsSource: n.FindingsSource, Parent: n.Parent, Chain: chainFor(n.ID, n.Parent), Order: n.Order}
-	t.event(now, "created", "", n.CreatedBy)
-	if t.Kind == "fix_round" { // a person's round: above the automatic limit, and counted apart
-		if err := s.countPersonsRound(p, t, now); err != nil {
-			return nil, false, err
+	t := &Task{ID: n.ID, Project: project, Kind: n.Kind, Title: n.Title, Spec: spec, CreatedBy: n.CreatedBy,
+		State: TaskQueued, MaxTries: maxTries, Seq: p.seq, CreatedAt: now, Order: n.Order, Role: n.Role,
+		Parent: n.Parent, Needs: slices.Clone(n.Needs), RetryOf: n.RetryOf, Replaces: n.Replaces, HoleID: n.HoleID,
+		Labels: maps.Clone(n.Labels), Try: 1}
+	if n.RetryOf != "" { // one more than the try before; that task may have been dropped after its export
+		t.Try = 2
+		if prev := p.byID[n.RetryOf]; prev != nil && prev.Try > 0 {
+			t.Try = prev.Try + 1
 		}
 	}
+	t.event(now, "created", "", n.CreatedBy)
 	p.byID[t.ID] = t
 	if err := s.save(t); err != nil {
 		return nil, false, err
 	}
 	s.prune(p)
-	s.log.Info("task created", "project", project, "task", t.ID, "kind", t.Kind, "by", t.CreatedBy)
+	s.log.Info("task created", "project", project, "task", t.ID, "kind", t.Kind, "role", t.Role, "by", t.CreatedBy)
 	return t.view(true), true, nil
 }
 
@@ -413,15 +376,11 @@ func admit(p *projectTasks) error {
 	return nil
 }
 
-// claimOrder sorts queued tasks: class, then requeued first within it (the owner's rule (a):
-// interrupted work resumes first only within its own class), then the client's order, then
-// creation order.
+// claimOrder sorts queued tasks: requeued first (interrupted work resumes first), then the
+// client's order, then creation order.
 func claimOrder(ts []*Task) {
 	sort.Slice(ts, func(i, j int) bool {
 		a, b := ts[i], ts[j]
-		if a.Class != b.Class {
-			return a.Class < b.Class
-		}
 		if a.Requeued != b.Requeued {
 			return a.Requeued
 		}
@@ -432,35 +391,20 @@ func claimOrder(ts []*Task) {
 	})
 }
 
-// owes: a task still owes the loop a step, or a review could not be ended, because a write failed.
-// Nothing is claimed meanwhile: a round or review half made must not run before its chain says so,
-// nor a review the project turned off.
-func (s *taskStore) owes(p *projectTasks) bool {
-	for _, t := range p.byID {
-		if t.LoopPending != nil || s.reviewEnds(t) {
-			return true
-		}
-	}
-	return false
-}
-
 // heldFor: a task that came back waits for its last worker until PreferUntil.
 func heldFor(t *Task, worker string, now time.Time) bool {
 	return t.PreferWorker != "" && t.PreferWorker != worker && t.PreferUntil != nil && now.Before(*t.PreferUntil)
 }
 
-// claim leases the next queued task to worker, or returns nil when none is queued. With only,
-// it leases that task if it is queued and not held for another worker (404 or 409 otherwise).
-// maxClass > 0 limits it to classes up to that one.
-func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxClass int, only string, hold *int) (*Task, error) {
+// claim leases the next queued task of the given kinds (none: any) to worker, or returns nil when
+// none is queued. With only, it leases that task if it is queued and not held for another worker
+// (404 or 409 otherwise).
+func (s *taskStore) claim(project, worker string, ttl int, kinds []string, only string, hold *int) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, now, err := s.open(project)
 	if err != nil {
 		return nil, err
-	}
-	if s.owes(p) {
-		return nil, terr(http.StatusServiceUnavailable, "the task queue could not save a step of the review loop; no work goes out until it has")
 	}
 	var t *Task
 	if only != "" {
@@ -476,8 +420,7 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxCl
 	} else {
 		var q []*Task
 		for _, t := range p.byID {
-			if t.State == TaskQueued && (len(kinds) == 0 || slices.Contains(kinds, t.Kind)) && !heldFor(t, worker, now) &&
-				(maxClass == 0 || t.Class <= maxClass) {
+			if t.State == TaskQueued && (len(kinds) == 0 || slices.Contains(kinds, t.Kind)) && !heldFor(t, worker, now) {
 				q = append(q, t)
 			}
 		}
@@ -501,6 +444,10 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, maxCl
 	}
 	t.PreferWorker, t.PreferUntil, t.Interrupted = "", nil, ""
 	t.State, t.Error = TaskLeased, ""
+	if t.StartedAt == nil {
+		at := now.UTC()
+		t.StartedAt = &at
+	}
 	t.Lease = &taskLease{ID: hex.EncodeToString(id[:]), Worker: worker, TTLSec: ttl, Since: now, HeartbeatAt: now,
 		ExpiresAt: now.Add(time.Duration(ttl) * time.Second), HoldSec: hold}
 	t.event(now, "claimed", worker, note)
@@ -550,7 +497,7 @@ func (s *taskStore) heartbeat(project, id, worker, lease string) (*Task, error) 
 	return t.view(false), nil
 }
 
-func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult) (*Task, error) {
+func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult, closedBy string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, now, err := s.open(project)
@@ -564,9 +511,6 @@ func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult) (
 		}
 		return nil, err
 	}
-	if r.Review != nil && t.Kind != "review" {
-		return nil, terr(http.StatusBadRequest, "result.review: only a review task's result carries a verdict")
-	}
 	r.FinishedAt = now.UTC()
 	if r.Score != nil {
 		if b, err := canonicalJSON(r.Score); err == nil {
@@ -574,29 +518,21 @@ func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult) (
 		}
 	}
 	t.State, t.Result, t.Error, t.Requeued = TaskDone, r, "", false
-	fix := r.Fix
-	r.Fix = nil
-	if v := r.Review; v != nil { // kept on the task and the parent, not in the result
-		r.Review = nil
-		v.At = now.UTC()
-		if v.Detail != nil {
-			if b, err := canonicalJSON(v.Detail); err == nil {
-				v.Detail = b
-			}
-		}
-		t.Review = v
+	t.ClosedBy = closedBy
+	note := r.Outcome
+	if closedBy != "" {
+		note += "; closed by " + closedBy
 	}
-	t.event(now, "done", worker, r.Outcome)
-	t.LoopPending = &loopPending{Step: owedDone, Fix: fix}
-	if err := s.conclude(p, t, now); err != nil {
+	t.event(now, "done", worker, note)
+	if err := s.save(t); err != nil {
 		return nil, err
 	}
 	s.prune(p)
-	s.log.Info("task done", "project", project, "task", id, "worker", worker, "outcome", r.Outcome, "diff_bytes", len(r.Diff))
+	s.log.Info("task done", "project", project, "task", id, "worker", worker, "outcome", r.Outcome)
 	return t.view(false), nil
 }
 
-func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool, fix *taskNew) (*Task, error) {
+func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, now, err := s.open(project)
@@ -620,11 +556,7 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 	} else {
 		t.State, t.Error = TaskFailed, reason
 		t.event(now, "failed", worker, reason)
-		t.LoopPending = &loopPending{Step: owedStop, Why: reason}
-		if strings.HasPrefix(reason, skippedPrefix) {
-			t.LoopPending = &loopPending{Step: owedSkipped, Fix: fix}
-		}
-		if err := s.conclude(p, t, now); err != nil {
+		if err := s.save(t); err != nil {
 			return nil, err
 		}
 		s.log.Info("task failed", "project", project, "task", id, "worker", worker)
@@ -633,7 +565,8 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 	return t.view(false), nil
 }
 
-func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
+// cancel ends an open task; closedBy names what made its work unnecessary, if anything.
+func (s *taskStore) cancel(project, id, reason, closedBy string) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, now, err := s.open(project)
@@ -652,27 +585,22 @@ func (s *taskStore) cancel(project, id, reason string) (*Task, error) {
 	if reason == "" {
 		reason = "cancelled"
 	}
-	if err := s.endTask(p, t, reason, now); err != nil {
-		return nil, err
-	}
-	s.prune(p)
-	return t.view(false), nil
-}
-
-// endTask cancels an open task. Holds s.mu.
-func (s *taskStore) endTask(p *projectTasks, t *Task, reason string, now time.Time) error {
 	worker := ""
 	if t.Lease != nil {
 		worker = t.Lease.Worker
 	}
-	t.State, t.Error = TaskCancelled, reason
-	t.event(now, "cancelled", worker, reason)
-	t.LoopPending = &loopPending{Step: owedStop, Why: "cancelled: " + reason}
-	if err := s.conclude(p, t, now); err != nil {
-		return err
+	t.State, t.Error, t.ClosedBy = TaskCancelled, reason, closedBy
+	note := reason
+	if closedBy != "" {
+		note += "; closed by " + closedBy
+	}
+	t.event(now, "cancelled", worker, note)
+	if err := s.save(t); err != nil {
+		return nil, err
 	}
 	s.log.Info("task cancelled", "project", t.Project, "task", t.ID, "worker", worker)
-	return nil
+	s.prune(p)
+	return t.view(false), nil
 }
 
 // setMaxTries changes an open task's max_tries (n is 1 to maxMaxTries): not below the tries it
@@ -704,75 +632,8 @@ func (s *taskStore) setMaxTries(project, id string, n int) (*Task, error) {
 	return t.view(false), nil
 }
 
-// doneTask finds a done task for a review or a decision (404, 409).
-func doneTask(p *projectTasks, id string) (*Task, error) {
-	t, ok := p.byID[id]
-	if !ok {
-		return nil, terr(http.StatusNotFound, "no task %s", id)
-	}
-	if t.State != TaskDone {
-		return nil, terr(http.StatusConflict, "task %s is %s; only a done task has a result to review or decide on", id, t.State)
-	}
-	return t, nil
-}
-
-// review stores a review's verdict (the latest replaces an earlier one): Qwen's in qwen_review,
-// so that it never replaces the operator's. The task needs another export.
-func (s *taskStore) review(project, id string, v *TaskReview) (*Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, now, err := s.open(project)
-	if err != nil {
-		return nil, err
-	}
-	t, err := doneTask(p, id)
-	if err != nil {
-		return nil, err
-	}
-	if v.Detail != nil {
-		if b, err := canonicalJSON(v.Detail); err == nil {
-			v.Detail = b
-		}
-	}
-	v.At = now.UTC()
-	if v.Judge == judgeQwen {
-		t.QwenReview = v
-	} else {
-		t.Review = v
-	}
-	t.ExportedAt = nil
-	t.event(now, "reviewed", "", v.Verdict+" by "+v.By)
-	if err := s.save(t); err != nil {
-		return nil, err
-	}
-	s.log.Info("task reviewed", "project", project, "task", id, "verdict", v.Verdict, "by", v.By)
-	return t.view(false), nil
-}
-
-// decide stores the owner's decision on a candidate; the task needs another export.
-func (s *taskStore) decide(project, id string, d *TaskDecision) (*Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, now, err := s.open(project)
-	if err != nil {
-		return nil, err
-	}
-	t, err := doneTask(p, id)
-	if err != nil {
-		return nil, err
-	}
-	d.At = now.UTC()
-	t.Decision, t.ExportedAt = d, nil
-	t.event(now, "decided", "", d.Decision+" by "+d.By)
-	if err := s.save(t); err != nil {
-		return nil, err
-	}
-	s.log.Info("task decided", "project", project, "task", id, "decision", d.Decision, "pr", d.PR)
-	return t.view(false), nil
-}
-
 // exported marks a finished task as taken into the ledger as it was at seen (its updated_at
-// when the export read it): a task changed since (a review, a decision) gives 409, so the next
+// when the export read it): a task changed since gives 409, so the next
 // export takes the change. It does not change updated_at (the pruning order).
 func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) {
 	s.mu.Lock()
@@ -815,10 +676,10 @@ func (s *taskStore) get(project, id string) *Task {
 	return nil
 }
 
-// list returns summaries of a project's tasks in the given states and kinds (empty: all), and
+// list returns summaries of a project's tasks in the given states, kinds and roles (empty: all), and
 // with exported "true" or "false" only the finished tasks exported or not: open tasks in claim
 // order first, then finished ones, newest first; and the count per state.
-func (s *taskStore) list(project string, states, kinds []string, exported string) ([]*Task, map[string]int) {
+func (s *taskStore) list(project string, states, kinds, roles []string, exported string) ([]*Task, map[string]int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	counts := map[string]int{}
@@ -829,7 +690,8 @@ func (s *taskStore) list(project string, states, kinds []string, exported string
 	var queued, leased, fin []*Task
 	for _, t := range p.byID {
 		counts[t.State]++
-		if (len(states) > 0 && !slices.Contains(states, t.State)) || (len(kinds) > 0 && !slices.Contains(kinds, t.Kind)) {
+		if (len(states) > 0 && !slices.Contains(states, t.State)) || (len(kinds) > 0 && !slices.Contains(kinds, t.Kind)) ||
+			(len(roles) > 0 && !slices.Contains(roles, t.Role)) {
 			continue
 		}
 		if exported != "" && (!finished(t.State) || (t.ExportedAt != nil) != (exported == "true")) {
@@ -856,32 +718,21 @@ func (s *taskStore) list(project string, states, kinds []string, exported string
 	return out, counts
 }
 
-// chainView returns a chain's record, or nil. It comes with a list or a get, which have swept, so it
-// only loads: a list of 200 chains must not retry a failing write 200 times.
-func (s *taskStore) chainView(project, id string) *taskChain {
+// noteNode records that a node of class (trusted, volunteer) served a request of a project's running
+// task, the task its worker named (nodework.go). In memory only: it reaches the disk with the task's
+// next save (a heartbeat, its end), and a task not loaded or not running is left alone. Information
+// for the public views, never a reason to refuse anything.
+func (s *taskStore) noteNode(project, id, class string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, err := s.load(project)
-	if err != nil {
-		return nil
+	p := s.byPr[project]
+	if p == nil || p.stale {
+		return
 	}
-	if c, ok := p.chains[id]; ok {
-		v := *c
-		v.Verdicts = slices.Clone(c.Verdicts)
-		v.Rounds = slices.Clone(c.Rounds) // costRound writes in them while an answer is written out
-		return &v
+	t := p.byID[id]
+	if t == nil || t.State != TaskLeased || slices.Contains(t.NodeClasses, class) || len(t.NodeClasses) >= maxTaskNodeClasses {
+		return
 	}
-	return nil
-}
-
-// chainsOf returns the records of the given chains, for a list.
-func (s *taskStore) chainsOf(project string, ids []string) map[string]*taskChain {
-	out := map[string]*taskChain{}
-	for _, id := range ids {
-		if c := s.chainView(project, id); c != nil {
-			c.Verdicts = nil
-			out[id] = c
-		}
-	}
-	return out
+	t.NodeClasses = append(t.NodeClasses, class)
+	slices.Sort(t.NodeClasses)
 }

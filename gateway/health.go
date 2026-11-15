@@ -117,7 +117,7 @@ func health(s *storedStatus, nodesOnline int, now time.Time) []healthWarning {
 	}
 	if ci := st.CI; ci != nil && ci.Pause && ci.Since != nil {
 		if d := now.Sub(*ci.Since); d > ciBackoffMax {
-			reason := "TauCeti's CI"
+			reason := "the project's CI"
 			if len(ci.Reasons) > 0 {
 				reason = ci.Reasons[0]
 			}

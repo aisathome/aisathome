@@ -76,7 +76,7 @@ func (g *Gateway) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	if !decodeTaskBody(w, r, maxTaskCreateBody, &n) {
 		return
 	}
-	if err := n.validate(); err != nil {
+	if err := n.validate(g.projectKinds(id)); err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -108,8 +108,9 @@ func (g *Gateway) handleTaskList(w http.ResponseWriter, r *http.Request) {
 		taskError(w, err)
 		return
 	}
-	states, kinds := splitList(r.URL.Query().Get("state")), splitList(r.URL.Query().Get("kind"))
-	exported := r.URL.Query().Get("exported")
+	q := r.URL.Query()
+	states, kinds, roles := splitList(q.Get("state")), splitList(q.Get("kind")), splitList(q.Get("role"))
+	exported := q.Get("exported")
 	if exported != "" && exported != "true" && exported != "false" {
 		apiError(w, http.StatusBadRequest, "exported: true or false")
 		return
@@ -120,20 +121,15 @@ func (g *Gateway) handleTaskList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for _, k := range kinds {
-		if _, ok := taskKinds[k]; !ok {
-			apiError(w, http.StatusBadRequest, "kind: "+kindsHelp)
+	for _, k := range append(slices.Clone(kinds), roles...) {
+		if err := checkKind("kind and role", k); err != nil {
+			apiError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	ts, counts := g.tasks.list(id, states, kinds, exported)
+	ts, counts := g.tasks.list(id, states, kinds, roles, exported)
 	w.Header().Set("Cache-Control", "no-store")
-	var chains []string
-	for _, t := range ts {
-		chains = append(chains, t.Chain)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": id, "counts": counts, "tasks": ts,
-		"chains": g.tasks.chainsOf(id, chains)})
+	writeJSON(w, http.StatusOK, map[string]any{"project": id, "counts": counts, "tasks": ts})
 }
 
 func (g *Gateway) handleTaskGet(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +147,7 @@ func (g *Gateway) handleTaskGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"task": t, "chain": g.tasks.chainView(id, t.Chain)})
+	writeJSON(w, http.StatusOK, map[string]any{"task": t})
 }
 
 func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
@@ -174,13 +170,17 @@ func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, fmt.Sprintf("lease_seconds: %d to %d", minLeaseSec, maxLeaseSec))
 		return
 	}
+	if len(c.Kinds) > maxTaskClaimKinds {
+		apiError(w, http.StatusBadRequest, fmt.Sprintf("kinds: at most %d", maxTaskClaimKinds))
+		return
+	}
 	for _, k := range c.Kinds {
-		if _, ok := taskKinds[k]; !ok {
-			apiError(w, http.StatusBadRequest, "kinds: "+kindsHelp)
+		if err := checkKind("kinds", k); err != nil {
+			apiError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	if c.Lease != "" || c.Result != nil || c.Reason != "" || c.Requeue {
+	if c.Lease != "" || c.Result != nil || c.Reason != "" || c.Requeue || c.ClosedBy != "" {
 		apiError(w, http.StatusBadRequest, "claim takes worker, lease_seconds, kinds, max_class, task and hold_seconds only")
 		return
 	}
@@ -188,8 +188,8 @@ func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, fmt.Sprintf("hold_seconds: 0 to %d", int(affinityWindow/time.Second)))
 		return
 	}
-	if c.MaxClass < 0 || c.MaxClass > classOther {
-		apiError(w, http.StatusBadRequest, fmt.Sprintf("max_class: 1 to %d", classOther))
+	if c.MaxClass < 0 || c.MaxClass > legacyMaxClass { // an older client's; the classes are gone
+		apiError(w, http.StatusBadRequest, fmt.Sprintf("max_class: 1 to %d (ignored)", legacyMaxClass))
 		return
 	}
 	if c.Task != "" {
@@ -198,7 +198,7 @@ func (g *Gateway) handleTaskClaim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	t, err := g.tasks.claim(id, c.Worker, c.LeaseSec, c.Kinds, c.MaxClass, c.Task, c.HoldSec)
+	t, err := g.tasks.claim(id, c.Worker, c.LeaseSec, c.Kinds, c.Task, c.HoldSec)
 	if err != nil {
 		taskError(w, err)
 		return
@@ -240,7 +240,7 @@ func (g *Gateway) handleTaskHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if c.Result != nil || c.Reason != "" || c.Requeue {
+	if c.Result != nil || c.Reason != "" || c.Requeue || c.ClosedBy != "" {
 		apiError(w, http.StatusBadRequest, "heartbeat takes worker and lease only")
 		return
 	}
@@ -258,14 +258,18 @@ func (g *Gateway) handleTaskComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c.Result == nil || c.Reason != "" || c.Requeue {
-		apiError(w, http.StatusBadRequest, "complete takes worker, lease and result")
+		apiError(w, http.StatusBadRequest, "complete takes worker, lease, result and closed_by")
 		return
 	}
-	if err := c.Result.validate(); err != nil {
+	err := c.Result.validate()
+	if c.ClosedBy != "" {
+		err = errors.Join(err, checkClosedBy(c.ClosedBy))
+	}
+	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := g.tasks.complete(id, r.PathValue("task"), c.Worker, c.Lease, c.Result)
+	t, err := g.tasks.complete(id, r.PathValue("task"), c.Worker, c.Lease, c.Result, c.ClosedBy)
 	if err != nil {
 		taskError(w, err)
 		return
@@ -274,11 +278,11 @@ func (g *Gateway) handleTaskComplete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) handleTaskFail(w http.ResponseWriter, r *http.Request) {
-	id, c, ok := g.leaseRequest(w, r, maxTaskCompleteBody) // a skipped task may bring a recipe
+	id, c, ok := g.leaseRequest(w, r, maxTaskControlBody)
 	if !ok {
 		return
 	}
-	if c.Result != nil {
+	if c.Result != nil || c.ClosedBy != "" {
 		apiError(w, http.StatusBadRequest, "fail takes worker, lease, reason and requeue")
 		return
 	}
@@ -286,7 +290,7 @@ func (g *Gateway) handleTaskFail(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := g.tasks.fail(id, r.PathValue("task"), c.Worker, c.Lease, c.Reason, c.Requeue, c.Fix)
+	t, err := g.tasks.fail(id, r.PathValue("task"), c.Worker, c.Lease, c.Reason, c.Requeue)
 	if err != nil {
 		taskError(w, err)
 		return
@@ -327,97 +331,24 @@ func (g *Gateway) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 	if !decodeTaskBody(w, r, maxTaskControlBody, &c) {
 		return
 	}
-	if c.Worker != "" || c.Lease != "" || c.LeaseSec != 0 || len(c.Kinds) > 0 || c.MaxClass != 0 || c.Result != nil || c.Requeue || c.Task != "" {
-		apiError(w, http.StatusBadRequest, "cancel takes a reason only")
+	if c.Worker != "" || c.Lease != "" || c.LeaseSec != 0 || len(c.Kinds) > 0 || c.MaxClass != 0 || c.Result != nil || c.Requeue || c.Task != "" || c.HoldSec != nil {
+		apiError(w, http.StatusBadRequest, "cancel takes a reason and closed_by only")
 		return
 	}
-	if err := checkText("reason", c.Reason, 500); err != nil {
+	err := checkText("reason", c.Reason, 500)
+	if c.ClosedBy != "" {
+		err = errors.Join(err, checkClosedBy(c.ClosedBy))
+	}
+	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	t, err := g.tasks.cancel(id, r.PathValue("task"), c.Reason)
+	t, err := g.tasks.cancel(id, r.PathValue("task"), c.Reason, c.ClosedBy)
 	if err != nil {
 		taskError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"state": t.State})
-}
-
-// handleTaskContinue schedules the round waiting on a task, as the operator's (project key only).
-func (g *Gateway) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !g.projectFor(w, r, id) {
-		return
-	}
-	var body struct {
-		CreatedBy string `json:"created_by"`
-		Note      string `json:"note"` // a fact for the round, in its fix round's ledger entry
-	}
-	if !decodeTaskBody(w, r, maxTaskControlBody, &body) {
-		return
-	}
-	err := errors.Join(checkID("created_by", body.CreatedBy), checkText("note", body.Note, 500))
-	if body.CreatedBy == gatewayCreator {
-		err = errors.New("created_by: gateway is the review loop's own")
-	}
-	if err != nil {
-		apiError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	t, created, err := g.tasks.resume(id, r.PathValue("task"), body.CreatedBy, body.Note)
-	if err != nil {
-		taskError(w, err)
-		return
-	}
-	code := http.StatusOK
-	if created {
-		code = http.StatusCreated
-	}
-	writeJSON(w, code, map[string]any{"created": created, "task": t})
-}
-
-// handleTaskReview stores the internal review's verdict on a done task (project key only).
-func (g *Gateway) handleTaskReview(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !g.projectFor(w, r, id) {
-		return
-	}
-	var v TaskReview
-	if !decodeTaskBody(w, r, maxTaskCreateBody, &v) {
-		return
-	}
-	if err := v.validate(); err != nil {
-		apiError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	t, err := g.tasks.review(id, r.PathValue("task"), &v)
-	if err != nil {
-		taskError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "review": t.Review})
-}
-
-// handleTaskDecide stores the owner's decision on a done task's candidate (project key only).
-func (g *Gateway) handleTaskDecide(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !g.projectFor(w, r, id) {
-		return
-	}
-	var d TaskDecision
-	if !decodeTaskBody(w, r, maxTaskControlBody, &d) {
-		return
-	}
-	if err := d.validate(); err != nil {
-		apiError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	t, err := g.tasks.decide(id, r.PathValue("task"), &d)
-	if err != nil {
-		taskError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"state": t.State, "decision": t.Decision})
 }
 
 // handleTaskExported marks a finished task as exported to the ledger (project key only).
@@ -454,8 +385,6 @@ func (g *Gateway) taskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/fail", g.handleTaskFail)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/cancel", g.handleTaskCancel)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/max_tries", g.handleTaskMaxTries)
-	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/review", g.handleTaskReview)
-	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/decide", g.handleTaskDecide)
 	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/exported", g.handleTaskExported)
-	mux.HandleFunc("POST /v1/projects/{id}/tasks/{task}/continue", g.handleTaskContinue)
+	mux.HandleFunc("GET /v1/tasks", g.handlePublicTasks)
 }

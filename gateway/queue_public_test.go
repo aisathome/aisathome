@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// publicRig: prove2me with a public queue (key testProjectKey), tauceti without one.
+// publicRig: prove2me with a public queue (key testProjectKey), lab without one.
 func publicRig(t *testing.T) *taskRig {
 	t.Helper()
 	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
 		{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true},
-		{ID: "tauceti", KeySHA256: []string{keyHash(otherProjectKey)}},
+		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
 	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)}
 	g.tasks.now = func() time.Time { return r.now }
@@ -57,7 +57,7 @@ func (r *taskRig) publicQueue() (int, string, map[string]any) {
 func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 	r := publicRig(t)
 	mk := func(id string, spec map[string]any) {
-		r.p2m("", map[string]any{"id": id, "kind": "attempt", "title": "prove2me t5 secret title", "created_by": "owner", "spec": spec})
+		r.p2m("", map[string]any{"id": id, "kind": "other", "title": "prove2me t5 secret title", "created_by": "owner", "spec": spec})
 	}
 	mk("t5-F01", p2mSpec("F01", "CodedSorting.proposition_7_1_transpose", map[string]any{"role": "skeleton", "gen": 1, "task": "t5-F01"}))
 	mk("t5-F01-h02", p2mSpec("F01", "CodedSorting.proposition_7_1_transpose", map[string]any{"role": "hole", "gen": 1, "index": 1, "key": "abcdef0123"}))
@@ -70,7 +70,7 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 	lease := r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t5-C12", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.p2m("/t5-C12/complete", map[string]any{"worker": "runner-host-7", "lease": lease, "result": map[string]any{"outcome": "proved",
 		"checks_passed": true, "steps": 12, "prompt_tokens": 120000, "completion_tokens": 3000, "model_min": 4.5, "awake_min": 9,
-		"raw_ref": "raw/2026-11-13/t5-C12", "diff": "--- secret diff", "score": map[string]any{"note": "secret score"}}})
+		"raw_ref": "raw/2026-11-13/t5-C12", "score": map[string]any{"note": "secret score"}}})
 	r.now = r.now.Add(time.Minute)
 	lease = r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t5-X", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.p2m("/t5-X/complete", map[string]any{"worker": "runner-host-7", "lease": lease, "result": map[string]any{"outcome": "Lake Build failed: /srv/x",
@@ -129,7 +129,7 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 	}
 
 	// Served from memory for publicQueueTTL: a change shows after it, not before.
-	r.p2m("", map[string]any{"id": "t5-O02", "kind": "attempt", "created_by": "owner", "spec": p2mSpec("O02", "BBPSSW.Distill.typical_set_sqrt", nil)})
+	r.p2m("", map[string]any{"id": "t5-O02", "kind": "other", "created_by": "owner", "spec": p2mSpec("O02", "BBPSSW.Distill.typical_set_sqrt", nil)})
 	if _, again, _ := r.publicQueue(); again != body {
 		t.Fatal("a second request within the TTL built the view again")
 	}
@@ -142,10 +142,39 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 		t.Fatal("the view was not built again after the TTL")
 	}
 
-	for _, path := range []string{"/v1/projects/tauceti/queue", "/v1/projects/nosuch/queue"} {
+	for _, path := range []string{"/v1/projects/lab/queue", "/v1/projects/nosuch/queue"} {
 		if w, _ := r.call("GET", path, "", nil); w.Code != http.StatusNotFound {
 			t.Errorf("%s: HTTP %d, want 404 (no public queue)", path, w.Code)
 		}
+	}
+}
+
+// A task with the typed fields (decision 0019) shows its role and labels on the public queue, and
+// its spec is not read even when it says otherwise; one without them still shows its spec's fields.
+func TestPublicQueueReadsTypedFields(t *testing.T) {
+	r := publicRig(t)
+	r.p2m("", map[string]any{"id": "t6-p2m-a146ce-s2-h03", "kind": "other", "created_by": "owner", "role": "hole",
+		"labels": map[string]string{"trial": "t6", "leaf": "p2m-a146ce", "group": "open", "theorem": "CodedSorting.prop_7_1",
+			"outline": "2", "hole": "3", "alias": "F01"},
+		"spec": p2mSpec("F01", "Spec.says.otherwise", map[string]any{"role": "skeleton", "gen": 9, "index": 8})})
+	r.p2m("", map[string]any{"id": "t5-F01-h02", "kind": "other", "created_by": "owner",
+		"spec": p2mSpec("F01", "CodedSorting.proposition_7_1_transpose", map[string]any{"role": "hole", "gen": 1, "index": 1})})
+	_, body, _ := r.publicQueue()
+	var view struct{ Tasks []map[string]any }
+	json.Unmarshal([]byte(body), &view)
+	byID := map[string]map[string]any{}
+	for _, tk := range view.Tasks {
+		byID[tk["id"].(string)] = tk
+	}
+	if h := byID["t6-p2m-a146ce-s2-h03"]; h["role"] != "hole" || h["trial"] != "t6" || h["leaf"] != "p2m-a146ce" || h["theorem"] != "CodedSorting.prop_7_1" ||
+		h["gen"] != 2.0 || h["hole"] != 3.0 || h["group"] != "open" {
+		t.Errorf("a typed task: %v", h)
+	}
+	if strings.Contains(body, "Spec.says.otherwise") || strings.Contains(body, "skeleton") {
+		t.Errorf("the spec of a typed task was read: %s", body)
+	}
+	if o := byID["t5-F01-h02"]; o["role"] != "hole" || o["gen"] != 1.0 || o["hole"] != 2.0 || o["leaf"] != "F01" {
+		t.Errorf("an older task: %v", o)
 	}
 }
 
@@ -155,7 +184,7 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 func TestPublicQueueCachedTokens(t *testing.T) {
 	r := publicRig(t)
 	done := func(id string, result map[string]any) int {
-		r.p2m("", map[string]any{"id": id, "kind": "attempt", "created_by": "owner", "spec": p2mSpec("C12", "InsiderDonations.price_recast",
+		r.p2m("", map[string]any{"id": id, "kind": "other", "created_by": "owner", "spec": p2mSpec("C12", "InsiderDonations.price_recast",
 			map[string]any{"role": "hole", "gen": 1, "index": 0})})
 		lease := r.p2m("/claim", map[string]any{"worker": "w", "task": id, "lease_seconds": 600})["lease"].(map[string]any)["id"]
 		w, _ := r.call("POST", p2mTasks+"/"+id+"/complete", testProjectKey, map[string]any{"worker": "w", "lease": lease, "result": result})

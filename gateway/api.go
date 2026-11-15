@@ -61,8 +61,6 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/stats/history", g.handleHistory)
 	mux.HandleFunc("POST /v1/projects/{id}/status", g.handleStatusPost)
 	mux.HandleFunc("GET /v1/projects/{id}/status", g.handleStatusGet)
-	mux.HandleFunc("POST /v1/projects/{id}/science", g.handleSciencePost)
-	mux.HandleFunc("GET /v1/projects/{id}/science", g.handleScienceGet)
 	mux.HandleFunc("GET /v1/projects/{id}/queue", g.handlePublicQueue)
 	g.taskRoutes(mux)
 	mux.HandleFunc("GET /stats/{$}", handleExportIndex)

@@ -124,7 +124,7 @@ func TestPreemptOnlyUsableNodes(t *testing.T) {
 		t.Fatalf("the agent got %v", p.n)
 	}
 	// Science waiting on science never preempts.
-	sci := classRoute(ClassScience, "tauceti", 0)
+	sci := classRoute(ClassScience, "lab", 0)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
