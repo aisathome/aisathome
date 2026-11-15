@@ -67,8 +67,11 @@ same behaviour).
   out too (and what used `keep`). The names a declaration binds (its header's binder groups before its type,
   `fun`, `∀`, `∃`, `intro`, `obtain`, `have`, `let`, patterns after `with` and in `|` alternatives) shadow a
   bare use of the same name; a qualified use (`_root_.h`, `Foo.h`) still counts, and so does `(h : T)` in the
-  type, a term with a type ascription, unless a dependent arrow follows it (`(h : Nat) → h = h`). Best effort:
-  a local bound anywhere in the declaration shadows the name in all of it.
+  type, a term with a type ascription, unless a dependent arrow follows it (`(h : Nat) → h = h`). A group binds
+  only where a term starts: an argument (`P (h : T) → B`) or a group inside a binder's type (`(p : P (h : T))`,
+  `∀ (p : P (h : T)), …`) is an ascription, so `h` there is a use; a binder nested in a binder's type
+  (`∀ (p : ∀ (h : Nat), h = h), …`, `(p : (h : Nat) → h = h)`) still binds. Best effort: a local bound anywhere
+  in the declaration shadows the name in all of it.
 
 ## [0.2.1] - unreleased
 

@@ -477,12 +477,30 @@ _BINDS_TO_ARROW = re.compile(r"(?:(?<![\w.'])(?:fun|λ)|[∀∃ΣΠ]!?)([^\n]*?)
 _BINDS_TO_EOL = re.compile(r"(?<![\w.'])(?:intro|intros|rintro|obtain|with|let|have|set|suffices)(?![\w'])"
                            r"([^\n;]*?)(?=:=|=>|<;>|;|$)", re.M)
 _ALTERNATIVE = re.compile(r"^\s*\|([^\n]*?)=>", re.M)
+_OPEN, _CLOSE = "([{⦃⟨", ")]}⦄⟩"
+
+
+def _drop_types(seg: str) -> str:
+    """`seg` with each type ascription blanked: from a `:` (not `:=`) to the bracket that closes the group holding
+    it (or the end), nested brackets included, so `(p : P (h : T))` leaves `p` and not `h`."""
+    out, depth, skip = [], 0, None
+    for i, ch in enumerate(seg):
+        if ch in _OPEN:
+            depth += 1
+        elif ch in _CLOSE:
+            depth -= 1
+            if skip is not None and depth < skip:
+                skip = None
+        elif skip is None and ch == ":" and seg[i + 1:i + 2] != "=":
+            skip = depth
+        out.append(" " if skip is not None else ch)
+    return "".join(out)
 
 
 def _binder_names(seg: str) -> list[str]:
     """The identifiers in binder position at the start of `seg`: type ascriptions dropped, stopping at the first
     token that is not an identifier (`∈`, `<`)."""
-    seg = re.sub(r":[^()\[\]{}⦃⦄⟨⟩]*", " ", seg)
+    seg = _drop_types(seg)
     out = []
     for tok in re.findall(r"[^\s()\[\]{}⦃⦄⟨⟩,|]+", seg):
         if tok in ("-", "_", "rfl", "with"):
@@ -491,9 +509,6 @@ def _binder_names(seg: str) -> list[str]:
             break
         out.append(tok)
     return out
-
-
-_OPEN, _CLOSE = "([{⦃⟨", ")]}⦄⟩"
 
 
 def _binders_part(head: str) -> str:
@@ -526,44 +541,63 @@ def _close(s: str, i: int) -> int:
     return len(s)
 
 
+# What may precede a term (so a group there can open a dependent arrow): the start, an arrow, an opening bracket, a
+# separator. After anything else (an identifier, `)`, an operator) a group is an argument or an operand.
+_TERM_START = re.compile(r"(?:^|→|->|[(\[{⦃⟨,:]|:=|=>|↦|<\||\$|(?<![\w.'])(?:then|else))$")
+
+
 def _arrow_binders(typ: str) -> set[str]:
-    """The names of a type's dependent arrows: a group `(h : T)` (or `{}`, `[]`, `⦃⦄`) followed, after any more
-    such groups, by `→` or `->`. A group followed by anything else (`(h : True) = x`) is a type ascription."""
+    """The names of a type's dependent arrows: a group `(h : T)` (or `{}`, `[]`, `⦃⦄`) where a term starts,
+    followed, after any more such groups, by `→` or `->`. A group followed by anything else (`(h : True) = x`) or
+    used as an argument (`P (h : T) → B`, the inner group of `(p : P (h : T)) → B`) is a type ascription."""
     out: set[str] = set()
     for i, ch in enumerate(typ):
         if ch not in "([{⦃":
             continue
-        j = _close(typ, i)
-        m = _GROUP_NAMES.match(typ, i + 1)
-        if j >= len(typ) or not m or m.end() > j:
+        b = i
+        while b > 0 and typ[b - 1].isspace():
+            b -= 1
+        if not _TERM_START.search(typ, max(b - 6, 0), b):          # `^` matches only at the real start
             continue
-        k = j + 1
+        names, k = [], i
         while True:
             while k < len(typ) and typ[k].isspace():
                 k += 1
-            if k < len(typ) and typ[k] in "([{⦃" and _GROUP_NAMES.match(typ, k + 1):
-                k = _close(typ, k) + 1
-                continue
-            break
-        if typ.startswith("→", k) or typ.startswith("->", k):
-            out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
+            m = _GROUP_NAMES.match(typ, k + 1) if k < len(typ) and typ[k] in "([{⦃" else None
+            j = _close(typ, k) if m else len(typ)
+            if not m or j >= len(typ) or m.end() > j:
+                break
+            names.extend(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
+            k = j + 1
+        if names and (typ.startswith("→", k) or typ.startswith("->", k)):
+            out.update(names)
     return out
 
 
 def _locals(code: str) -> set[str]:
-    """The names a declaration binds locally (best effort): its header's binder groups before the type
-    (`(h : T)`) and the type's dependent arrows (`(h : T) → …`), the binders of `fun`, `λ`, `∀`, `∃`, the names of `intro`, `rintro`, `obtain`, `let`, `have`,
+    """The names a declaration binds locally (best effort): its header's top-level binder groups before the type
+    (`(h : T)`), dependent arrows (`(h : T) → …`, also inside a binder's type), the binders of `fun`, `λ`, `∀`, `∃`
+    (nested ones too), the names of `intro`, `rintro`, `obtain`, `let`, `have`,
     `set`, the patterns after `with` and in `| ctor a b =>` alternatives. A bare use of such a name is the local, not a
     declaration of the same name; a qualified one (`_root_.h`, `Foo.h`) is still the declaration."""
     head = re.split(r":=|(?<![\w'])where(?![\w'])|^\|", code, maxsplit=1, flags=re.M)[0]
     out: set[str] = set()
     binders = _binders_part(head)
-    for m in _HEADER_BINDER.finditer(binders):
-        out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
-    out.update(_arrow_binders(head[len(binders):]))
+    depth = 0
+    for i, ch in enumerate(binders):                    # top-level groups only: `(p : P (h : T))` binds `p`
+        if ch in _OPEN:
+            m = _HEADER_BINDER.match(binders, i) if depth == 0 else None
+            if m:
+                out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
+            depth += 1
+        elif ch in _CLOSE:
+            depth = max(depth - 1, 0)
+    out.update(_arrow_binders(code))                     # anywhere, a binder's type included: `(p : (h : T) → B)`
     for rx in (_BINDS_TO_ARROW, _BINDS_TO_EOL):
-        for m in rx.finditer(code):
+        pos = 0
+        while m := rx.search(code, pos):                 # overlapping: `∀ (p : ∀ (h : T), …), …` binds both
             out.update(_binder_names(m.group(1)))
+            pos = m.start(1)
     for m in _ALTERNATIVE.finditer(code):
         out.update(_binder_names(m.group(1))[1:])          # the first is the constructor
     return out

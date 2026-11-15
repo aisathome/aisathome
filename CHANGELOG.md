@@ -36,7 +36,8 @@ and **(site)** are live on aisathome.org once deployed.
   `--speculation dflash2` (z-lab's DFlash2 drafter, 1.1 GB, 21,400 MiB) needs llama.cpp b12342. 16 GB
   cards: not available. On Windows: `"engine": {"speculation": "mtp"}` in `node.json`; the agent refuses
   to start, and says why, when the node does not qualify (tier, llama.cpp build, draft model file, or free
-  memory on the card). (node)
+  memory on the card the engine uses: `engine.cuda_device`, else the first in `CUDA_VISIBLE_DEVICES`, else the
+  largest). (node)
 
 - **The account page shows what each of your nodes is doing.** Under each node: its average
   speed (output tokens a second over its last 50 answers, as the gateway measured them) and,

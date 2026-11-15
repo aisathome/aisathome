@@ -225,6 +225,32 @@ class Commands(unittest.TestCase):
                      "theorem uses_after_dep"):
             self.assertNotIn(gone, ctx)
 
+    def test_a_type_ascription_used_as_an_argument_is_a_use_not_a_binder(self):
+        # `(h : T)` binds `h` only where a term starts (`(h : T) → B`, `∀ (h : T), …`, a header group); as an
+        # argument (`P (h : T) → B`) or inside a binder's type (`(p : P (h : T))`) it is an ascription: `h` is used.
+        text = ("import Mathlib\n\ntheorem h : True := by\n  sorry\n\n"
+                "def Holds (_ : True) : Prop := True\n\n"
+                "def Holds2 (_ : True) (_ : Nat) : Prop := True\n\n"
+                "theorem uses_app_arrow : Holds (h : True) → True := fun _ => trivial\n\n"
+                "theorem uses_app_chain : Holds2 (h : True) (n : Nat) → True := fun _ => trivial\n\n"
+                "theorem uses_in_header_type (p : Holds (h : True)) : True := trivial\n\n"
+                "theorem uses_in_forall_type : ∀ (p : Holds (h : True)), True := fun _ => trivial\n\n"
+                "def keep_dep_paren : Nat → ((h : Nat) → h = h) := fun _ _ => rfl\n\n"
+                "def keep_dep_after : Nat → (h : Nat) → h = h := fun _ _ => rfl\n\n"
+                "theorem keep_nested_forall : ∀ (p : ∀ (h : Nat), h = h), True := fun _ => trivial\n\n"
+                "def keep_nested_dep (p : (h : Nat) → h = h) : Nat := 0\n\n"
+                "def keep_fun_dep : Nat := (fun (p : (h : Nat) → h = h) => 0) (fun _ => rfl)\n\n"
+                "theorem solution (n : Nat) : n = n := by\n  sorry\n")
+        cs = H.commands(text)
+        si = next(i for i, c in enumerate(cs) if c.name == "solution")
+        ctx = H.context_text(text, si, cs)
+        for kept in ("def Holds ", "def Holds2", "def keep_dep_paren", "def keep_dep_after", "theorem keep_nested_forall",
+                     "def keep_nested_dep", "def keep_fun_dep"):           # binders nested in a binder's type
+            self.assertIn(kept, ctx, kept)
+        for gone in ("theorem h ", "theorem uses_app_arrow", "theorem uses_app_chain", "theorem uses_in_header_type",
+                     "theorem uses_in_forall_type"):
+            self.assertNotIn(gone, ctx, gone)
+
     def test_scope_lines_and_context(self):
         cs = H.commands(OUTLINE)
         hi = next(i for i, c in enumerate(cs) if c.name == "helper")

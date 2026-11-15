@@ -89,8 +89,19 @@ func engineSettings(cfg *node.Config, layout node.Layout, exeDir string) (*setup
 			}
 			// The drafter needs room on the card beyond the tier's (Linux: install.sh's pick_spec).
 			// The node's own engine is not running yet, so the card's free memory is all there is.
-			g, err := engineGPU(ec.CUDADevice)
+			// The card is the engine's: cuda_device (it replaces CUDA_VISIBLE_DEVICES in the
+			// engine's environment), else the first one CUDA_VISIBLE_DEVICES lets it see.
+			device, from := ec.CUDADevice, "engine.cuda_device"
+			if v, set := os.LookupEnv("CUDA_VISIBLE_DEVICES"); device == "" && set {
+				if device, from = visibleDevice(v), "CUDA_VISIBLE_DEVICES"; device == "" {
+					return nil, fmt.Errorf("engine.speculation %s: CUDA_VISIBLE_DEVICES=%q leaves the engine no GPU; set engine.cuda_device or fix the variable", d.Mode, v)
+				}
+			}
+			g, err := engineGPU(device)
 			if err != nil {
+				if device != "" {
+					err = fmt.Errorf("%w (%s)", err, from)
+				}
 				return nil, fmt.Errorf("engine.speculation %s: cannot read the GPU's free memory to check that the draft model fits: %w", d.Mode, err)
 			}
 			if need := tier.MinFree(d); g.FreeMiB < need {
@@ -133,9 +144,9 @@ var engineBuild = func(exe string) int {
 	return n
 }
 
-// engineGPU is the card the engine will run on, as nvidia-smi reports it now: the one
-// cuda_device names (its UUID or index), else the one the setup picks (the largest). A
-// variable for tests.
+// engineGPU is the card the engine will run on, as nvidia-smi reports it now: the one device
+// names (cuda_device or CUDA_VISIBLE_DEVICES' first entry: a UUID or an index), else the one the
+// setup picks (the largest). A variable for tests.
 var engineGPU = func(device string) (setup.GPU, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -146,8 +157,10 @@ var engineGPU = func(device string) (setup.GPU, error) {
 	return pickGPU(gpus, device)
 }
 
-// pickGPU is the card device names (a UUID or an index), or with no device the largest one (on
-// a tie, the one with more free memory, as setup.ChooseCard).
+// pickGPU is the card device names, or with no device the largest one (on a tie, the one with
+// more free memory, as setup.ChooseCard). device is a UUID, or a prefix of one that names a
+// single card (CUDA accepts both), or an index. The index is nvidia-smi's, which is CUDA's when
+// CUDA_DEVICE_ORDER=PCI_BUS_ID or the cards are alike; the setup pins by UUID.
 func pickGPU(gpus []setup.GPU, device string) (setup.GPU, error) {
 	if device == "" {
 		c, err := setup.ChooseCard(gpus, nil)
@@ -156,12 +169,33 @@ func pickGPU(gpus []setup.GPU, device string) (setup.GPU, error) {
 		}
 		return c.GPU, nil
 	}
+	var prefixed []setup.GPU
 	for _, g := range gpus {
 		if g.UUID == device || strconv.Itoa(g.Index) == device {
 			return g, nil
 		}
+		if strings.HasPrefix(device, "GPU-") && strings.HasPrefix(g.UUID, device) {
+			prefixed = append(prefixed, g)
+		}
 	}
-	return setup.GPU{}, fmt.Errorf("nvidia-smi lists no GPU %q (engine.cuda_device)", device)
+	switch len(prefixed) {
+	case 0:
+		return setup.GPU{}, fmt.Errorf("nvidia-smi lists no GPU %q", device)
+	case 1:
+		return prefixed[0], nil
+	}
+	return setup.GPU{}, fmt.Errorf("%q matches %d GPUs; give more of the UUID", device, len(prefixed))
+}
+
+// visibleDevice is the first card a CUDA_VISIBLE_DEVICES value lets a program see, as written
+// there (an index or a UUID), or "" when it hides them all (empty, or a negative first entry:
+// CUDA stops at the first invalid entry).
+func visibleDevice(v string) string {
+	first := strings.TrimSpace(strings.SplitN(v, ",", 2)[0])
+	if n, err := strconv.Atoi(first); err == nil && n < 0 {
+		return ""
+	}
+	return first
 }
 
 // newEngine is the supervisor for the engine settings, with the engine's output to out.
