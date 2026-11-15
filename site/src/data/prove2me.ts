@@ -109,6 +109,22 @@ export interface Leaf {
 	output_tokens: number | null;
 }
 
+export interface ProbeRound {
+	trial: string;
+	for_trial: number;
+	state: 'finished' | 'running';
+	start: string;
+	end: string | null;
+	scaffold: string;
+	caps: string;
+	leaves: { id: string; alias: string; role: string; theorem: string; title: string; url: string }[];
+	tasks: number | null;
+	model_minutes: number | null;
+	prompt_tokens: number | null;
+	cached_tokens: number | null;
+	output_tokens: number | null;
+}
+
 export interface RoleScore {
 	role: 'calibration' | 'open' | 'comparison';
 	leaves: number;
@@ -149,6 +165,9 @@ export interface Prove2me {
 		reused: number;
 		/** Leaves ever tried (rows of `leaves`). */
 		leaves: number;
+		/** The finished outline probe rounds (`probes`): not runs, so outside every count above; the page adds their
+		 * model hours and tokens to its totals and names them as probes. */
+		probes?: { rounds: number; tasks: number; model_hours: number; prompt_tokens: number; cached_tokens: number; output_tokens: number };
 	};
 	submissions: Submission[];
 	current: {
@@ -165,6 +184,9 @@ export interface Prove2me {
 		tasks?: StaticTask[];
 	} | null;
 	trials: Trial[];
+	/** Outline probe rounds (t6p: trial 6's leaves chosen by one outline task each): "finished" with its tasks' sums,
+	 * "running" with its leaves only (its tasks come live from the gateway). */
+	probes?: ProbeRound[];
 	leaves: Leaf[];
 	by_role: RoleScore[];
 	/** Every task of every trial in the generic task table's fields (task-table.ts), relations included. */

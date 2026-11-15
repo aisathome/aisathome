@@ -198,19 +198,31 @@ export function trialQueue(v: TasksView, doc: CurrentDoc): QueueView {
 
 const kindOf: Record<string, string> = { outline: 'outline', skeleton: 'outline', hole: 'hole', rest: 'rest', assembly: 'assembly', asm: 'assembly' };
 
-/** The current trial's tasks as rows of the task table (every state: the live row replaces the build's of the same id). */
-export function taskTableRows(v: TasksView, doc: CurrentDoc, leafIds: Record<string, string> = {}): TaskTableRow[] {
+/** An outline probe round's trial label: t<N>p (trial N's leaves chosen by one outline task each). */
+export const PROBE_TRIAL = /^t([0-9]+)p$/;
+const inTable = (t: PublicTask, doc: CurrentDoc) => t.labels.trial === doc.trial.id || PROBE_TRIAL.test(t.labels.trial ?? '');
+
+/** The current trial's tasks and every outline probe round's as rows of the task table (every state: the live row
+ * replaces the build's of the same id). `leafIds`: theorem -> leaf id (a task made before v7 names its leaf by alias);
+ * `holes`: a written outline's hole count by task id, from the build (the document's own outlines win). */
+export function taskTableRows(v: TasksView, doc: CurrentDoc, leafIds: Record<string, string> = {}, holes: Record<string, string> = {}): TaskTableRow[] {
 	return v.tasks
-		.filter((t) => t.labels.trial === doc.trial.id)
+		.filter((t) => inTable(t, doc))
+		.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)) // as they were made
 		.map((t) => {
 			const c = counts(t);
 			const lab = t.labels;
-			const leaf = docLeaf(doc, lab);
+			const probe = PROBE_TRIAL.test(lab.trial ?? '');
+			const leaf = probe ? undefined : docLeaf(doc, lab);
 			const tokens = c.cached_tokens !== undefined ? (c.prompt_tokens ?? 0) + c.cached_tokens + (c.completion_tokens ?? 0) : null;
+			const kind = kindOf[t.role ?? ''] ?? t.role ?? 'task';
+			const gen = int(lab.outline) ?? 1;
+			const docHoles = leaf?.outlines?.find((o) => o.outline === gen)?.holes.length;
+			const n = kind === 'outline' && t.state === 'done' && t.outcome === 'outline' ? (docHoles ? String(docHoles) : holes[t.id]) : undefined;
 			return {
 				project: 'prove2me',
 				id: t.id,
-				kind: kindOf[t.role ?? ''] ?? t.role ?? 'task',
+				kind,
 				state: t.state === 'leased' ? 'running' : t.state,
 				outcome: t.state === 'done' ? t.outcome : null, // as the export: an outcome only for a task that ended by itself
 				try: t.try ?? 1,
@@ -218,20 +230,39 @@ export function taskTableRows(v: TasksView, doc: CurrentDoc, leafIds: Record<str
 				needs: t.needs ?? [],
 				retry_of: t.retry_of,
 				replaces: t.replaces,
+				closed_by: t.closed_by ?? null,
 				steps: c.steps ?? null,
 				model_min: c.model_min ?? null,
 				tokens,
 				started_at: t.started_at,
 				finished_at: t.finished_at,
 				labels: {
-					trial: doc.trial.id.slice(1),
+					trial: (probe ? lab.trial : doc.trial.id).slice(1),
 					leaf: leaf?.id ?? (lab.leaf && leafID.test(lab.leaf) ? lab.leaf : (lab.theorem && leafIds[lab.theorem]) || ''),
-					alias: lab.alias ?? leaf?.alias ?? lab.leaf ?? '',
+					alias: lab.alias ?? leaf?.alias ?? (lab.leaf && !leafID.test(lab.leaf) ? lab.leaf : ''),
 					...(lab.outline ? { outline: lab.outline } : {}),
 					...(lab.hole ? { hole: lab.hole } : {}),
+					...(n ? { holes: n } : {}),
 				},
 			};
 		});
+}
+
+/** The document's outlines with a false hole, as the task table's refuted keys ("<trial number>|<leaf id>|<outline>"). */
+export function refutedOutlines(doc: CurrentDoc): Set<string> {
+	const out = new Set<string>();
+	for (const l of doc.leaves) for (const o of l.outlines ?? []) if (o.holes.some((h) => h.state === 'false')) out.add(`${doc.trial.id.slice(1)}|${l.id}|${o.outline}`);
+	return out;
+}
+
+/** The outline probes choosing the next trial's leaves, while any is queued or running and the document's trial is not
+ * running: round t<N+1>p after trial N ended, t<N>p while trial N is prepared. Null otherwise. */
+export function probeRound(v: TasksView, doc: CurrentDoc): { trial: string; forTrial: number; tasks: PublicTask[] } | null {
+	if (doc.trial.status === 'running') return null;
+	const n = doc.trial.status === 'preparing' ? doc.trial.number : doc.trial.number + 1;
+	const tasks = v.tasks.filter((t) => t.labels.trial === `t${n}p`);
+	if (!tasks.some((t) => t.state === 'queued' || t.state === 'leased')) return null;
+	return { trial: `t${n}p`, forTrial: n, tasks: [...tasks].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)) };
 }
 
 // ---- Markdown-light (the trial's description): paragraphs, `code`, **strong**, *em*, [text](https://...). Everything

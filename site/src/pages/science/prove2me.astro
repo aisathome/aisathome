@@ -4,7 +4,7 @@
 // records; the page works without JavaScript); the browser adds the network's share of the work from the gateway's
 // public /v1/stats (project prove2me), which stays hidden until real numbers arrive.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
-import { compact, counts, day, hhmm, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, shortSpan, outcomeLabel, p2m, plainTitle, qwenTokens, span, stateLabel, sumTokens, theoremURL, tokTitle } from '../../data/prove2me';
+import { compact, counts, day, hhmm, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, shortSpan, outcomeLabel, p2m, plainTitle, qwenTokens, span, stateLabel, sumTokens, theoremURL, tokTitle, type ProbeRound, type Tok } from '../../data/prove2me';
 import { fromStatic, leafDetail, leafTokensText, taskTableHTML } from '../../data/prove2me-live';
 import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 import { taskTableHTML as allTasksHTML } from '../../data/task-table';
@@ -45,7 +45,16 @@ const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' &
 // Leaves closed by reuse: the same statement as a theorem already proved on prove2me, or a part of one; the proof imports it.
 const reuses = p2m.submissions.filter((s) => s.kind === 'reuse' && s.reuses);
 // A leaf's id (p2m- and the start of prove2me's theorem id) leads everywhere; the trials' alias (O04, F01) is shown small.
-const idOfTheorem = (theorem: string) => p2m.leaves.find((l) => l.theorem === theorem)?.id;
+// A leaf of the running trial or of an outline probe round only (no run of a finished trial yet): its id from the
+// probe rounds' leaves, else from its theorem page.
+const probeLeaves = (p2m.probes ?? []).flatMap((r) => r.leaves);
+const idOfTheorem = (theorem: string) =>
+	p2m.leaves.find((l) => l.theorem === theorem)?.id ??
+	probeLeaves.find((l) => l.theorem === theorem)?.id ??
+	(() => {
+		const l = cur?.leaves.find((x) => x.theorem === theorem && safe(x.url));
+		return l ? `p2m-${l.url.slice(-36).replace(/-/g, '').slice(0, 6)}` : undefined;
+	})();
 const idOfAlias = (alias: string) => p2m.leaves.find((l) => l.aliases.includes(alias))?.id ?? alias;
 const named = (id: string | undefined, alias: string) => (id && id !== alias ? `${id} (${alias})` : alias);
 // Every leaf ever tried: the scorecard by role and the list (the browser filters and sorts it; see the script).
@@ -53,14 +62,31 @@ const roles = p2m.by_role.filter((r) => r.leaves > 0);
 const outcomesShown = leafOutcomes.filter((o) => p2m.leaves.some((l) => l.outcome === o));
 const leafTok = (l: (typeof p2m.leaves)[number]) =>
 	l.prompt_tokens === null ? null : { prompt_tokens: l.prompt_tokens, cached_tokens: l.cached_tokens ?? 0, output_tokens: l.output_tokens ?? 0 };
-// Every task: the generic task table with prove2me's options; the browser adds the current trial's tasks from the gateway.
-const curTrialNo = cur?.trial ?? null;
-const tasksHTML = allTasksHTML(p2m.tasks, p2mTaskOptions(p2m.tasks, curTrialNo));
+// Every task: the generic task table with prove2me's options; the browser adds the current trial's and the outline
+// probes' tasks from the gateway. Each leaf's theorem and page for its group cell (the trials', the running trial's and
+// the probe rounds' leaves), and a written outline's hole count by task id for the live rows.
 const leafIds: Record<string, string> = Object.fromEntries([
 	...(cur?.leaves ?? []).filter((l) => safe(l.url)).map((l) => [l.theorem, `p2m-${l.url.slice(-36).replace(/-/g, '').slice(0, 6)}`]),
+	...probeLeaves.map((l) => [l.theorem, l.id]),
 	...p2m.leaves.map((l) => [l.theorem, l.id]),
 ]);
-const taskKnown = { rows: p2m.tasks, trial: curTrialNo, leafIds };
+const taskLeaves: Record<string, { theorem: string; url: string }> = Object.fromEntries([
+	...(cur?.leaves ?? []).filter((l) => leafIds[l.theorem]).map((l) => [leafIds[l.theorem], { theorem: l.theorem, url: safe(l.url) ?? '' }]),
+	...probeLeaves.map((l) => [l.id, { theorem: l.theorem, url: safe(l.url) ?? '' }]),
+	...p2m.leaves.map((l) => [l.id, { theorem: l.theorem, url: safe(l.url) ?? '' }]),
+]);
+const taskHoles: Record<string, string> = Object.fromEntries(p2m.tasks.filter((r) => r.labels.holes).map((r) => [r.id, r.labels.holes]));
+const tasksHTML = allTasksHTML(p2m.tasks, p2mTaskOptions(taskLeaves));
+const taskKnown = { rows: p2m.tasks, leafIds, leaves: taskLeaves, holes: taskHoles };
+// The finished outline probe rounds: not runs, but their model time and tokens count in the totals, named as probes.
+const probesDone = (p2m.probes ?? []).filter((r) => r.state === 'finished' && r.prompt_tokens !== null) as (ProbeRound & Tok)[];
+const probeTok = sumTokens(probesDone);
+const probeHours = probesDone.reduce((a, r) => a + (r.model_minutes ?? 0), 0) / 60;
+const allTok = sumTokens([t, probeTok]);
+const allHours = t.model_hours + probeHours;
+const probeLeafCount = new Set(probesDone.flatMap((r) => r.leaves.map((l) => l.id))).size;
+// The trials table in time order: trial N's outline probes just before trial N.
+const trialRows = [...trials.map((tr) => ({ at: tr.trial, tr, p: undefined })), ...probesDone.map((p) => ({ at: p.for_trial - 0.5, tr: undefined, p }))].sort((a, b) => a.at - b.at);
 const leafCols = [
 	{ key: 'leaf', label: 'Leaf' },
 	{ key: 'theorem', label: 'Theorem' },
@@ -115,7 +141,7 @@ const leafCols = [
 		Small numbers. The {t.open_leaves_proved} open leaves proved show that the model can do it, not how often: {named(idOfAlias('O04'), 'O04')} (trial 3) was a short
 		proof of a leaf nobody had tried yet, and {named(idOfAlias('F01'), 'F01')} (trial 5) took a new scaffold, two outlines and {f01?.tasks?.length} tasks after
 		trials 3 and 4 had failed on it.{reuses.length > 0 && ` ${reuses.map((s) => named(idOfTheorem(s.theorem), s.leaf)).join(' and ')}, closed by reuse, ${reuses.length === 1 ? 'is' : 'are'} not among them.`} On calibration leaves, which others had proved before, {t.calibration_proved} of
-		{' '}{t.calibration_runs} runs succeeded. All runs together took {t.model_hours} hours of model time.
+		{' '}{t.calibration_runs} runs succeeded. All runs together took {t.model_hours} hours of model time{probesDone.length > 0 && `, and the outline probes that chose leaves ${probeHours.toFixed(1)} more`}.
 	</p>
 
 	<section class="p2m-live not-content" data-p2m-live hidden aria-labelledby="p2m-live-head">
@@ -205,6 +231,10 @@ const leafCols = [
 			{cur && !preparing && <>Trial {cur.trial}, since {day(cur.start ?? p2m.generated_at)} · scaffold {cur.scaffold}</>}
 			{!cur && 'No trial is running.'}
 		</p>
+		<div class="probes" data-now-probes hidden>
+			<p class="probes-head" data-probes-head></p>
+			<ul data-probes-list></ul>
+		</div>
 		<div class="about" data-now-about hidden={!cur?.summary} set:html={cur?.summary ? mdLightHTML(cur.summary) : ''} />
 		<p class="caps" data-now-budget hidden={!cur?.caps}>{cur?.caps && `Budget: ${cur.caps}.`}</p>
 		<ul data-now-leaves>
@@ -269,6 +299,18 @@ const leafCols = [
 						<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(r)} title={tokTitle(r)}>{compact(qwenTokens(r))}</td>
 					</tr>
 				))}
+				{probesDone.length > 0 && (
+					<tr data-role="probes">
+						<th scope="row">Outline probes</th>
+						<td data-label="Leaves" class="num" data-cell="leaves">{probeLeafCount}</td>
+						<td data-label="Runs" class="num" data-cell="runs">–</td>
+						<td data-label="Runs proved" class="num" data-cell="proved">–</td>
+						<td data-label="Proofs accepted" class="num" data-cell="accepted">–</td>
+						<td data-label="Closed by reuse" class="num" data-cell="reused">–</td>
+						<td data-label="Model hours" class="num" data-cell="hours">{probeHours.toFixed(1)}</td>
+						<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(probeTok)} title={tokTitle(probeTok)}>{compact(qwenTokens(probeTok))}</td>
+					</tr>
+				)}
 			</tbody>
 			<tfoot>
 				<tr data-role="all">
@@ -278,8 +320,8 @@ const leafCols = [
 					<td data-label="Runs proved" class="num" data-cell="proved">{t.proved}</td>
 					<td data-label="Proofs accepted" class="num" data-cell="accepted">{t.accepted - t.reused}</td>
 					<td data-label="Closed by reuse" class="num" data-cell="reused">{t.reused}</td>
-					<td data-label="Model hours" class="num" data-cell="hours">{t.model_hours.toFixed(1)}</td>
-					<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(t)} title={tokTitle(t)}>{compact(qwenTokens(t))}</td>
+					<td data-label="Model hours" class="num" data-cell="hours">{allHours.toFixed(1)}</td>
+					<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(allTok)} title={tokTitle(allTok)}>{compact(qwenTokens(allTok))}</td>
 				</tr>
 			</tfoot>
 		</table>
@@ -287,7 +329,7 @@ const leafCols = [
 	<p class="caps">
 		A comparison leaf is an open leaf run again to compare a new scaffold with the trials before it. A leaf can have more than one role
 		over its trials, so the leaves by role add up to more than {t.leaves}. A proof accepted counts under the role of the run that proved
-		it; a leaf closed by reuse has no run.
+		it; a leaf closed by reuse has no run.{probesDone.length > 0 && ' An outline probe is one short outline task on a candidate leaf, run to choose a trial’s leaves: it is no run, but its model time and tokens count in the totals.'}
 	</p>
 	<details class="p2m-list" data-p2m-list>
 		<summary>All {t.leaves} leaves</summary>
@@ -349,9 +391,8 @@ const leafCols = [
 
 	<h2 id="tasks">Every task</h2>
 	<p>
-		Every task of every trial: from trial 5 a leaf is many tasks (its outlines, one task per hole, the tries and the assembly), and a
-		run of trials 1 to 4 counts as one task. A task’s links name the tasks it comes from: the outline a hole is from, the try a task
-		retries, the outline it replaces, the holes an assembly needs. Queued and running tasks come live from the gateway’s queue.
+		Every task of every trial and of the outline probes, grouped by leaf and outline; a run of trials 1 to 4 is one task.
+		Queued and running tasks come live from the gateway.
 	</p>
 	<script is:inline type="application/json" data-p2m-tasks-known set:html={JSON.stringify(taskKnown).replace(/</g, '\\u003c')} />
 	<details class="p2m-list p2m-alltasks not-content" data-p2m-alltasks>
@@ -374,16 +415,27 @@ const leafCols = [
 				</tr>
 			</thead>
 			<tbody>
-				{trials.map((tr) => (
-					<tr data-trial={tr.trial}>
-						<th scope="row"><a href={`#trial-${tr.trial}`}>Trial {tr.trial}</a></th>
-						<td data-label="Dates" class="nowrap"><time datetime={tr.start}>{shortSpan(tr)}</time></td>
-						<td data-label="Scaffold">{tr.scaffold}</td>
-						<td data-label="Proved" class="num" data-cell="proved">{tr.c.all.proved} of {tr.c.all.runs}</td>
-						<td data-label="Calibration" class="num" data-cell="calibration">{tr.c.calibration.runs ? `${tr.c.calibration.proved} of ${tr.c.calibration.runs}` : '–'}</td>
-						<td data-label="Open" class="num" data-cell="open">{tr.c.open.proved} of {tr.c.open.runs}</td>
-						<td data-label="Model hours" class="num">{tr.hours.toFixed(1)}</td>
-						<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(tr.tok)} data-output={tr.tok.output_tokens} data-cached={tr.tok.cached_tokens} title={tokTitle(tr.tok)}>{compact(qwenTokens(tr.tok))}</td>
+				{trialRows.map((x) => x.tr ? (
+					<tr data-trial={x.tr!.trial}>
+						<th scope="row"><a href={`#trial-${x.tr!.trial}`}>Trial {x.tr!.trial}</a></th>
+						<td data-label="Dates" class="nowrap"><time datetime={x.tr!.start}>{shortSpan(x.tr!)}</time></td>
+						<td data-label="Scaffold">{x.tr!.scaffold}</td>
+						<td data-label="Proved" class="num" data-cell="proved">{x.tr!.c.all.proved} of {x.tr!.c.all.runs}</td>
+						<td data-label="Calibration" class="num" data-cell="calibration">{x.tr!.c.calibration.runs ? `${x.tr!.c.calibration.proved} of ${x.tr!.c.calibration.runs}` : '–'}</td>
+						<td data-label="Open" class="num" data-cell="open">{x.tr!.c.open.proved} of {x.tr!.c.open.runs}</td>
+						<td data-label="Model hours" class="num">{x.tr!.hours.toFixed(1)}</td>
+						<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(x.tr!.tok)} data-output={x.tr!.tok.output_tokens} data-cached={x.tr!.tok.cached_tokens} title={tokTitle(x.tr!.tok)}>{compact(qwenTokens(x.tr!.tok))}</td>
+					</tr>
+				) : (
+					<tr data-trial={x.p!.trial.slice(1)} data-probes>
+						<th scope="row"><span title={x.p!.caps}>Trial {x.p!.for_trial} probes</span></th>
+						<td data-label="Dates" class="nowrap"><time datetime={x.p!.start}>{shortSpan({ start: x.p!.start, end: x.p!.end ?? x.p!.start })}</time></td>
+						<td data-label="Scaffold">{x.p!.scaffold}</td>
+						<td data-label="Proved" class="num" data-cell="proved">–</td>
+						<td data-label="Calibration" class="num" data-cell="calibration">–</td>
+						<td data-label="Open" class="num" data-cell="open">–</td>
+						<td data-label="Model hours" class="num">{((x.p!.model_minutes ?? 0) / 60).toFixed(1)}</td>
+						<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(x.p!)} data-output={x.p!.output_tokens} data-cached={x.p!.cached_tokens} title={tokTitle(x.p!)}>{compact(qwenTokens(x.p!))}</td>
 					</tr>
 				))}
 			</tbody>
@@ -393,8 +445,8 @@ const leafCols = [
 					<td data-label="Proved" class="num" data-cell="proved">{t.proved} of {t.runs}</td>
 					<td data-label="Calibration" class="num" data-cell="calibration">{t.calibration_proved} of {t.calibration_runs}</td>
 					<td data-label="Open" class="num" data-cell="open">{trials.reduce((a, tr) => a + tr.c.open.proved, 0)} of {t.open_runs}</td>
-					<td data-label="Model hours" class="num">{t.model_hours.toFixed(1)}</td>
-					<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(t)} data-output={t.output_tokens} data-cached={t.cached_tokens} title={tokTitle(t)}>{compact(qwenTokens(t))}</td>
+					<td data-label="Model hours" class="num">{allHours.toFixed(1)}</td>
+					<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(allTok)} data-output={allTok.output_tokens} data-cached={allTok.cached_tokens} title={tokTitle(allTok)}>{compact(qwenTokens(allTok))}</td>
 				</tr>
 			</tfoot>
 		</table>
@@ -490,8 +542,8 @@ const leafCols = [
 		<li>
 			<strong>Model minutes</strong> are the time the model spent generating, summed over a run’s rounds (from trial 5, its tasks).
 			{' '}<strong>Qwen tokens</strong> are everything the model read and wrote in a run, as on the Tau Ceti page:
-			{' '}{compact(qwenTokens(t))} in all, of which {compact(t.output_tokens)} written. Most of what it reads is the same files again:
-			{' '}{Math.round((100 * t.cached_tokens) / t.prompt_tokens)}% came from the cache. Hover a token count for the exact numbers. Two first tries in
+			{' '}{compact(qwenTokens(allTok))} in all{probesDone.length > 0 && ' (the outline probes included)'}, of which {compact(allTok.output_tokens)} written. Most of what it reads is the same files again:
+			{' '}{Math.round((100 * allTok.cached_tokens) / allTok.prompt_tokens)}% came from the cache. Hover a token count for the exact numbers. Two first tries in
 			trial 2 that the gateway’s personal-data filter cut off are not in the counts.
 		</li>
 		<li>
@@ -542,19 +594,22 @@ const leafCols = [
 	import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 	import type { LiveLeaf, Outline, StaticTask } from '../../data/prove2me-live';
 	import { compareLeaves, leafFirstDir, type LeafKeys, type LeafSort, type LeafSortKey } from '../../data/prove2me-live';
-	import { attachTaskTable, type TaskTableRow } from '../../data/task-table';
-	import { p2mTaskOptions } from '../../data/prove2me-tasks';
-	import { CURRENT_URL, TASKS_URL, day, hhmm, mdLightHTML, parseCurrent, parseTasks, roleLabel, submissionText, taskTableRows, theoremURL, trialQueue } from '../../data/prove2me-current';
+	import { attachTaskTable, workText, type TaskTableRow } from '../../data/task-table';
+	import { p2mTaskOptions, taskResult, type LeafInfo } from '../../data/prove2me-tasks';
+	import { CURRENT_URL, TASKS_URL, day, hhmm, mdLightHTML, parseCurrent, parseTasks, probeRound, refutedOutlines, roleLabel, submissionText, taskTableRows, theoremURL, trialQueue } from '../../data/prove2me-current';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
 
-	// Every task: the build's rows, filtered and sorted here; the current trial's tasks from the gateway replace or join them.
+	// Every task: the build's rows, filtered here; the current trial's and the outline probes' tasks from the gateway
+	// replace or join them.
 	const taskBox = document.querySelector<HTMLElement>('[data-p2m-alltasks]');
-	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"trial":null,"leafIds":{}}') as {
+	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"leafIds":{},"leaves":{},"holes":{}}') as {
 		rows: TaskTableRow[];
-		trial: number | null;
 		leafIds: Record<string, string>;
+		leaves: LeafInfo;
+		holes: Record<string, string>;
 	};
-	const taskTable = taskBox ? attachTaskTable(taskBox, p2mTaskOptions(taskKnown.rows, taskKnown.trial), taskKnown.rows) : null;
+	let refuted = new Set<string>();
+	const taskTable = taskBox ? attachTaskTable(taskBox, p2mTaskOptions(taskKnown.leaves, () => refuted), taskKnown.rows) : null;
 
 	// "Working on now", live: the project's data document (its trial, text, leaves, submissions) and the gateway's public
 	// task list, on load and every minute. Both must answer with what they should; otherwise the build's copy stays.
@@ -653,8 +708,46 @@ const leafCols = [
 		return li;
 	};
 
+	/** The outline probes choosing the next trial's leaves, while they run and the document's trial does not. */
+	const showProbes = (doc: CurrentDoc, tasks: TasksView) => {
+		const box = nowBox?.querySelector<HTMLElement>('[data-now-probes]');
+		if (!nowBox || !box) return;
+		const round = probeRound(tasks, doc);
+		box.hidden = !round;
+		nowBox.dataset.probes = round?.trial ?? '';
+		if (!round) return;
+		const rows = taskTableRows({ updated: tasks.updated, tasks: round.tasks }, doc, taskKnown.leafIds, taskKnown.holes);
+		const n = new Set(rows.map((r) => r.labels.leaf || r.labels.alias)).size;
+		box.querySelector<HTMLElement>('[data-probes-head]')!.textContent = `Choosing trial ${round.forTrial}’s leaves: ${n} outline probe${n === 1 ? '' : 's'}`;
+		const items = rows.map((r) => {
+			const li = el('li');
+			li.dataset.probe = r.id;
+			li.dataset.state = r.state;
+			const id = r.labels.leaf || r.labels.alias;
+			const leaf = el('span', 'leaf', id);
+			if (r.labels.alias && r.labels.alias !== id) leaf.title = r.labels.alias;
+			li.append(leaf);
+			const info = taskKnown.leaves[r.labels.leaf];
+			if (info) {
+				const a = el(theoremURL.test(info.url) ? 'a' : 'span', 'thm-name', info.theorem);
+				if (a instanceof HTMLAnchorElement) a.href = info.url;
+				li.append(' ', a);
+			}
+			const res = taskResult(r, rows);
+			const st = el('span', `state state-${r.state}`, res.text);
+			st.dataset.probeResult = '';
+			li.append(st);
+			const work = workText(r);
+			if (r.state !== 'running' && work !== '–') li.append(el('span', 'meta', work));
+			return li;
+		});
+		box.querySelector<HTMLElement>('[data-probes-list]')!.replaceChildren(...items);
+	};
+
 	const showNow = (doc: CurrentDoc, tasks: TasksView) => {
-		taskTable?.setLive(taskTableRows(tasks, doc, taskKnown.leafIds));
+		refuted = refutedOutlines(doc);
+		taskTable?.setLive(taskTableRows(tasks, doc, taskKnown.leafIds, taskKnown.holes));
+		showProbes(doc, tasks);
 		if (!nowBox) return;
 		const t = doc.trial;
 		const sameTrial = t.id === known.trial;
@@ -878,31 +971,36 @@ const leafCols = [
 	.p2m-lt tbody tr[hidden] { display: none; }
 	.p2m-lt .thm { min-width: 12rem; }
 
-	/* The task table (task-table.ts renders it as HTML, outside this page's style scope). */
-	:global(.tt-filters) { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.6rem 0 0.2rem; }
-	:global(.tt-filters button) { padding: 0.15rem 0.6rem; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
-	:global(.tt-filters button[aria-pressed='true']) { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-white); }
-	:global(.tt-filters .sep) { width: 0.75rem; }
+	/* The task table (task-table.ts renders it as HTML, outside this page's style scope): five columns, rows grouped by
+	   leaf (its cell on the first row in sight of a group), two drop-downs and the Show switch. */
+	:global(.tt-filters) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin: 0.6rem 0 0.2rem; }
+	:global(.tt-select) { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+	:global(.tt-select select) { max-width: 11rem; padding: 0.15rem 0.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.3rem; background: var(--sl-color-bg); color: var(--sl-color-white); font: inherit; font-size: 0.8rem; }
+	:global(.tt-show) { display: inline-flex; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; overflow: hidden; }
+	:global(.tt-show button) { padding: 0.15rem 0.6rem; border: 0; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
+	:global(.tt-show button + button) { border-left: 1px solid var(--sl-color-gray-5); }
+	:global(.tt-show button[aria-pressed='true']) { background: var(--sl-color-accent-low); color: var(--sl-color-white); }
 	:global(.tt-count) { font-size: 0.85rem; color: var(--sl-color-gray-3); }
 	:global(.tt-wrap) { overflow-x: auto; margin-top: 0.5rem; }
 	:global(.tt-table) { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-	:global(.tt-table :is(th, td)) { padding: 0.35rem 0.6rem 0.35rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+	:global(.tt-table :is(th, td)) { padding: 0.3rem 0.6rem 0.3rem 0; text-align: left; vertical-align: baseline; }
 	:global(.tt-table :is(th, td):last-child) { padding-right: 0; }
-	:global(.tt-table thead th) { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
-	:global(.tt-table thead button) { all: unset; cursor: pointer; }
-	:global(.tt-table thead button:focus-visible) { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
-	:global(.tt-table thead th[aria-sort] button) { color: var(--sl-color-white); }
-	:global(.tt-table .sort-mark) { display: inline-block; min-width: 1em; margin-left: 0.2em; color: var(--sl-color-accent-high); }
+	:global(.tt-table thead th) { border-bottom: 1px solid var(--sl-color-gray-5); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
+	:global(.tt-table tbody tr[data-first]) { border-top: 1px solid var(--sl-color-gray-5); }
+	:global(.tt-table tbody tr:not([data-first]) .tt-group > *) { visibility: hidden; }
 	:global(.tt-table tbody th) { font-weight: 400; }
-	:global(.tt-table .tt-id) { font: 600 0.78rem var(--font-mono, monospace); white-space: nowrap; color: var(--sl-color-white); }
-	:global(.tt-table .tt-rel > span) { display: block; font-size: 0.75rem; color: var(--sl-color-gray-3); }
+	:global(.tt-table .tt-group) { width: 9rem; max-width: 9rem; }
+	:global(.tt-table .tt-leaf) { display: block; font: 600 0.8rem var(--font-mono, monospace); white-space: nowrap; color: var(--sl-color-white); }
+	:global(.tt-table .tt-leaf[title]) { cursor: help; }
+	:global(.tt-table .tt-thm) { display: block; overflow: hidden; font: 0.72rem var(--font-mono, monospace); white-space: nowrap; text-overflow: ellipsis; color: var(--sl-color-accent-high); }
+	:global(.tt-table .tt-round) { display: block; font-size: 0.72rem; color: var(--sl-color-gray-3); }
+	:global(.tt-table .tt-task) { color: var(--sl-color-white); }
+	:global(.tt-table .tt-note > span) { display: block; font-size: 0.75rem; color: var(--sl-color-gray-3); }
 	:global(.tt-table a) { color: var(--sl-color-accent-high); }
-	:global(.tt-table .tt-leaf) { font: 0.78rem var(--font-mono, monospace); white-space: nowrap; cursor: help; }
-	:global(.tt-table .tt-sub) { display: block; font-size: 0.75rem; color: var(--sl-color-gray-3); }
-	:global(.tt-table .num) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-	:global(.tt-table .tt-times) { white-space: nowrap; }
-	:global(.tt-table .tt-running), :global(.tt-table tr[data-outcome='proved'] [data-cell='outcome']) { font-weight: 600; color: var(--sl-color-accent-high); }
-	:global(.tt-table .tt-cancelled) { font-style: italic; color: var(--sl-color-gray-3); }
+	:global(.tt-table .tt-r-proved), :global(.tt-table .tt-r-running) { font-weight: 600; color: var(--sl-color-accent-high); }
+	:global(.tt-table tr[data-state='cancelled'] .tt-r) { font-style: italic; color: var(--sl-color-gray-3); }
+	:global(.tt-table .tt-work) { min-width: 6.5rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+	:global(.tt-table .tt-time) { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
 	:global(.tt-table tr[hidden]) { display: none; }
 	:global(.tt-table tr:target) { outline: 2px solid var(--sl-color-accent); outline-offset: -2px; }
 
@@ -927,6 +1025,12 @@ const leafCols = [
 	:global(.p2m-now .meta > span + span::before) { content: ' · '; }
 	:global(.p2m-now .state) { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
 	:global(.p2m-now .state-running) { color: var(--sl-color-accent-high); }
+	:global(.p2m-now .probes) { margin: 0 0 0.9rem; padding: 0 0 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+	:global(.p2m-now .probes[hidden]) { display: none; }
+	:global(.p2m-now .probes-head) { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+	:global(.p2m-now [data-probes-list]) { margin: 0.4rem 0 0; padding: 0; list-style: none; }
+	:global(.p2m-now [data-probes-list] > li + li) { margin-top: 0.35rem; }
+	:global(.p2m-now [data-probes-list] .leaf[title]) { cursor: help; }
 	/* A leaf's outlines (prove2me-outlines.ts renders them as HTML): newest first, a heading line each, one row per hole. */
 	:global(.p2m-plan) { margin: 0.35rem 0 0; font-size: 0.85rem; }
 	:global(.p2m-plan .p2m-sum) { margin: 0 0 0.3rem; font-weight: 600; color: var(--sl-color-gray-2); }
@@ -979,18 +1083,18 @@ const leafCols = [
 		.p2m-lt thead th { padding: 0; border: 0; }
 		.p2m-lt thead th.nosort { display: none; }
 		.p2m-lt tbody tr[hidden] { display: none; }
+		/* a task as a small card: its leaf (first of a group), the task, the result, then the work and when it finished */
 		:global(.tt-table), :global(.tt-table tbody) { display: block; }
-		:global(.tt-table thead) { display: block; }
-		:global(.tt-table thead tr) { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; padding: 0 0 0.5rem; }
-		:global(.tt-table thead th) { padding: 0; border: 0; }
-		:global(.tt-table thead th:not([data-sort-col])) { display: none; }
-		:global(.tt-table tbody tr) { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+		:global(.tt-table thead) { display: none; }
+		:global(.tt-table tbody tr) { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.1rem 0.75rem; padding: 0.4rem 0; border-top: 1px dashed var(--sl-color-gray-5); }
+		:global(.tt-table tbody tr[data-first]) { margin-top: 0.4rem; border-top: 1px solid var(--sl-color-gray-4); }
 		:global(.tt-table tbody tr[hidden]) { display: none; }
-		:global(.tt-table tbody :is(th, td)) { padding: 0; border: 0; }
-		:global(.tt-table tbody th) { grid-column: 1 / -1; }
-		:global(.tt-table .num) { text-align: left; }
-		:global(.tt-table td[data-label]::before) { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
-		:global(.tt-table .tt-sub) { display: inline; margin-left: 0.3rem; }
+		:global(.tt-table tbody :is(th, td)) { padding: 0; }
+		:global(.tt-table .tt-group) { grid-column: 1 / -1; width: auto; max-width: none; }
+		:global(.tt-table .tt-thm) { white-space: normal; overflow-wrap: anywhere; }
+		:global(.tt-table tbody tr:not([data-first]) .tt-group) { display: none; }
+		:global(.tt-table tbody th), :global(.tt-table .tt-r) { grid-column: 1 / -1; }
+		:global(.tt-table .tt-time) { text-align: right; }
 		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table), :global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot)) { display: block; }
 		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead) { display: none; }
 		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot) tr) { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
