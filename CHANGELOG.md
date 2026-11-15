@@ -18,6 +18,16 @@ and **(site)** are live on aisathome.org once deployed.
   claim key, one per scaffold generation, such as `p2m-v7`), `role`, relations, `labels` and
   `hole_id`, written when it is made; workers claim only the kinds they run. Older tasks and
   clients keep working. (gateway)
+- **Speculative decoding on 24 GB nodes, off unless you turn it on.** `install.sh --speculation mtp`
+  loads Qwen3.8's multi-token-prediction head (1.4 GB, pinned and checked like the model) beside the
+  model, so llama-server drafts two tokens at a time and the model checks them in one step: the node
+  writes faster on the same card, with the model's own output distribution. It needs 21,000 MiB free on
+  the card instead of 18,500 and llama.cpp b12323 or newer; without those the node runs plain and the
+  installer says why. The setting is kept on updates (`--speculation off` turns it off).
+  `--speculation dflash2` (z-lab's DFlash2 drafter, 1.1 GB, 21,400 MiB) needs llama.cpp b12342. 16 GB
+  cards: not available. On Windows: `"engine": {"speculation": "mtp"}` in `node.json`; the agent refuses
+  to start, and says why, when the node does not qualify (tier, llama.cpp build, draft model file, or free
+  memory on the card). (node)
 
 - **The account page shows what each of your nodes is doing.** Under each node: its average
   speed (output tokens a second over its last 50 answers, as the gateway measured them) and,
@@ -39,6 +49,9 @@ and **(site)** are live on aisathome.org once deployed.
   (`/science/tauceti.json`, where the old gateway address now points). The gateway's Tau Ceti
   review loop (`review`, `decide`, `continue`, automatic rounds) and its science results endpoint
   are removed. (gateway, site)
+- **llama.cpp b12342** (was b12323): the release with PR #31533, faster small-batch kernels for the
+  verify step of speculative decoding. The Linux bundle's `llama-server --version` now names the release
+  (it said "build 1"). (node)
 
 ### Fixed
 

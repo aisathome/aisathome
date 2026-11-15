@@ -138,6 +138,49 @@ for gone in balanced low-vram long-context-dual turbo; do
   usage_err "removed preset $gone"; has "removed preset $gone" "unknown preset '$gone'; presets are gone"
 done
 
+# Speculation (--speculation): on only for the big tier, with a llama.cpp build new enough for the
+# mode (from `llama-server --version` for --llama-build, BUILD-INFO for the bundle) and free memory
+# for the draft model; otherwise the node runs without it and the installer says why.
+fakellama() {  # fakellama <dir> <version line>: a llama.cpp build whose llama-server prints that version
+  mkdir -p "$1/bin"
+  printf '#!/bin/sh\necho "ggml_cuda_init: found 1 CUDA devices:" >&2\necho "%s" >&2\necho "built with GNU 11.4.0 for Linux x86_64" >&2\n' "$2" > "$1/bin/llama-server"
+  chmod +x "$1/bin/llama-server"
+}
+fakellama "$tmp/llb12342" "version: 0.9.0-dev (build 12342, commit 0fb8f1577)"
+fakellama "$tmp/llb12323" "version: 12323 (93cf736a)"
+fakellama "$tmp/llb11146" "version: 0.5.0-dev (build 11146, commit 7fe450e19)"
+fakellama "$tmp/llbshallow" "version: 0.9.0-dev (build 1, commit 93cf736)"
+run -- --dry-run --speculation eagle
+usage_err "bad speculation"; has "bad speculation" "--speculation must be off, mtp or dflash2"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12342" --speculation mtp
+ok "spec mtp"; has "spec mtp" "speculation: mtp (llama.cpp b12342, 24000 MiB free, 21000 needed)"
+has "spec mtp" "--metrics \\
+  --spec-type draft-mtp -md /var/lib/aisathome-node/models/mtp-Qwen3.8-27B-Q4_0.gguf --spec-draft-n-max 2"
+has "spec mtp" "tier: big, speculation mtp: 1 x 196608 tokens"; has "spec mtp" "draft model: $hf/MTP/mtp-Qwen3.8-27B-Q4_0.gguf"
+has "spec mtp" "AISATHOME_PRESET=big, speculation mtp: 1 x 196608 tokens"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12342" --speculation dflash2
+ok "spec dflash2"; has "spec dflash2" "--spec-type draft-dflash -md /var/lib/aisathome-node/models/Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-n-max 7"
+has "spec dflash2" "21400 needed"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12323" --speculation dflash2
+ok "spec dflash2, b12323"; has "spec dflash2, b12323" "speculation: off; dflash2 needs llama.cpp b12342 or newer, and this llama-server is b12323"
+lacks "spec dflash2, b12323" "--spec-type"; has "spec dflash2, b12323" "tier: big: 1 x 196608"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12323" --speculation mtp
+ok "spec mtp, b12323"; has "spec mtp, b12323" "speculation: mtp (llama.cpp b12323"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb11146" --speculation mtp
+ok "spec mtp, b11146"; has "spec mtp, b11146" "speculation: off; mtp needs llama.cpp b12323 or newer, and this llama-server is b11146"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llbshallow" --speculation mtp
+ok "spec, shallow build"; has "spec, shallow build" "this llama-server is an unknown build"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --speculation mtp
+ok "spec, no build"; has "spec, no build" "this llama-server is an unknown build"; lacks "spec, no build" "--spec-type"
+run FAKE_MEM="$(card 24576 20999)" -- --dry-run --llama-build "$tmp/llb12342" --speculation mtp
+ok "spec, little free"; has "spec, little free" "speculation: off; mtp needs 21000 MiB free on the card, and it has 20999"
+lacks "spec, little free" "--spec-type"
+run FAKE_MEM="$(card 16303 15000 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run --llama-build "$tmp/llb12342" --speculation mtp
+ok "spec, standard"; has "spec, standard" "mtp runs on the big tier (24 GB cards) only, and this card is in the standard tier"
+lacks "spec, standard" "--spec-type"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12342" --speculation off
+ok "spec off"; lacks "spec off" "--spec-type"; lacks "spec off" "speculation:"
+
 # Explicit variables override the tier, one at a time (testing); the free-memory check is skipped.
 run SLOTS=3 -- --dry-run
 ok "SLOTS override"; has "SLOTS override" "-np 3 --kv-unified-per-slot 196608 "; has "SLOTS override" "check is skipped"
@@ -621,8 +664,8 @@ printf '#!/bin/sh\necho fake node\n' > "$b/bin/aisathome-node"
 chmod +x "$b/bin/"*
 : > "$b/lib/libggml-cuda.so"
 cat > "$b/BUILD-INFO" <<'INFO'
-llama_cpp_tag=b12323
-llama_cpp_commit=93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
+llama_cpp_tag=b12342
+llama_cpp_commit=0fb8f157702702f33f4e018de8701b2569a1bc28
 cuda_version=12.8
 cuda_archs=86-real;89-real;120a-real
 compute_caps=8.6 8.9 12.0
@@ -632,7 +675,7 @@ INFO
 repo_installer="$installer" installer="$b/install.sh"
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   run -- --dry-run --node-id test-node
-  ok "bundle"; has "bundle" "llama-server: prebuilt, llama.cpp b12323 (93cf736a8d1d), CUDA 12.8"
+  ok "bundle"; has "bundle" "llama-server: prebuilt, llama.cpp b12342 (0fb8f1577027), CUDA 12.8"
   has "bundle" "GPU 0: NVIDIA GeForce RTX 3090, driver 535.183.01, compute capability 8.6: supported"
   has "bundle" "model: https://huggingface.co/unsloth/"; has "bundle" '"node_id": "test-node"'
   has "bundle" "-np 1 --kv-unified-per-slot 196608 "

@@ -230,6 +230,104 @@ func TestInstallShEngineDrift(t *testing.T) {
 	}
 }
 
+// Speculation: install.sh's spec_* table must be Drafters, and set_engine with a mode must give
+// exactly the arguments EngineSettings.WithSpec gives.
+func TestInstallShSpecDrift(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	b, err := os.ReadFile(installSh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	m := regexp.MustCompile(`case "\$want_spec" in\s*\n\s*""\|([a-z0-9|]+)\)`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal(`install.sh: cannot find the --speculation values (case "$want_spec" in ""|...)`)
+	}
+	shModes := strings.Split(m[1], "|")
+	goModes := []string{SpecOff}
+	for mode := range Drafters {
+		goModes = append(goModes, mode)
+	}
+	slices.Sort(shModes)
+	slices.Sort(goModes)
+	if !slices.Equal(shModes, goModes) {
+		t.Errorf("speculation modes: install.sh %v, Go %v", shModes, goModes)
+	}
+
+	var defaults []string
+	for _, re := range []string{`(?m)^target=.*$`, `(?m)^custom=0$`, `(?m)^slots="\$\{SLOTS:-[0-9]+\}" ctx_per_slot=.*$`,
+		`(?m)^reasoning_budget="\$\{REASONING_BUDGET:-[-0-9]+\}"$`, `(?m)^cache_ram=.*$`} {
+		l := regexp.MustCompile(re).FindString(script)
+		if l == "" {
+			t.Fatalf("install.sh: no line matching %s", re)
+		}
+		defaults = append(defaults, l)
+	}
+	var sb strings.Builder
+	sb.WriteString("set -eu\n" + shellFunc(t, script, "cache_ram_for") + "\n" + shellFunc(t, script, "mem_total_mib") + "\n")
+	sb.WriteString(strings.Join(defaults, "\n") + "\n")
+	for _, f := range []string{"tier_ctx", "tier_kv", "tier_alias", "spec_type", "spec_draft_max", "spec_extra", "spec_min_build", "spec_model", "set_engine"} {
+		sb.WriteString(shellFunc(t, script, f) + "\n")
+	}
+	for mode := range Drafters {
+		fmt.Fprintf(&sb, "printf 'spec %[1]s|%%s|%%s|%%s|%%s|%%s\\n' \"$(spec_type %[1]s)\" \"$(spec_draft_max %[1]s)\" \"$(spec_extra %[1]s)\" \"$(spec_min_build %[1]s)\" \"$(spec_model %[1]s)\"\n", mode)
+		fmt.Fprintf(&sb, "tier=big alias=\"$(tier_alias big)\" ctx_per_slot= kv_type= spec=%[1]s draft_target=/d/%[1]s.gguf\nset_engine\neval \"argv=($llama_exec)\"\nprintf 'engine %[1]s|%%s' \"$tier_label\"; printf '\\x1f%%s' \"${argv[@]}\"; echo\n", mode)
+	}
+	cmd := exec.Command(bash, "-c", sb.String())
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash: %v\n%s", err, out)
+	}
+	big, _ := TierByName("big")
+	target := strings.TrimPrefix(defaults[0], "target=")
+	seen := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		kind, rest, _ := strings.Cut(line, " ")
+		switch kind {
+		case "spec":
+			f := strings.Split(rest, "|")
+			d, ok := Drafters[f[0]]
+			if !ok {
+				t.Fatalf("unexpected mode %q", f[0])
+			}
+			model := fmt.Sprintf("%s %s %d", d.Model.URL, d.Model.SHA256, d.Model.Size)
+			for _, c := range []struct{ what, sh, goVal string }{
+				{"spec_type", f[1], d.SpecType}, {"spec_draft_max", f[2], strconv.Itoa(d.DraftMax)},
+				{"spec_extra", f[3], strconv.Itoa(d.ExtraMiB)}, {"spec_min_build", f[4], strconv.Itoa(d.MinBuild)},
+				{"spec_model", f[5], model},
+			} {
+				if c.sh != c.goVal {
+					t.Errorf("%s %s: install.sh %q, Go %q", c.what, d.Mode, c.sh, c.goVal)
+				}
+			}
+			seen++
+		case "engine":
+			mode, rest, _ := strings.Cut(rest, "|")
+			f := strings.Split(rest, "\x1f")
+			e := big.Engine(f[1], target).WithSpec(Drafters[mode], "/d/"+mode+".gguf")
+			if err := e.Validate(); err != nil {
+				t.Errorf("%s: %v", mode, err)
+			}
+			if want := e.Args(); !slices.Equal(f[2:], want) {
+				t.Errorf("%s: set_engine's arguments differ from Go's\n install.sh %q\n Go         %q", mode, f[2:], want)
+			}
+			if want := "big, speculation " + mode; f[0] != want {
+				t.Errorf("%s: tier label %q, want %q", mode, f[0], want)
+			}
+			seen++
+		default:
+			t.Errorf("unexpected bash output %q", line)
+		}
+	}
+	if seen != 2*len(Drafters) {
+		t.Errorf("checked %d lines, want %d", seen, 2*len(Drafters))
+	}
+}
+
 // The Windows build is upstream's release of the commit the Linux bundle builds: moving one
 // fails until the other follows.
 func TestLlamaCommitDrift(t *testing.T) {

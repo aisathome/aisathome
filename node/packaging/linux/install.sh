@@ -8,7 +8,8 @@
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --enable-at-boot, --keep-token, --dry-run, --download-only <dir> [--tier standard|big].
+#   --enable-at-boot, --keep-token, --dry-run, --download-only <dir> [--tier standard|big],
+#   --speculation off|mtp|dflash2 (default: off, or what an earlier install chose).
 #
 # Without --model, the tier's pinned model is downloaded from Hugging Face, resumed if
 # interrupted and checked against its SHA-256 (a --model file must be that same file).
@@ -44,7 +45,7 @@ usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
-node_id="" gateway_url="" download_only="" keep_token=0 want_tier=""
+node_id="" gateway_url="" download_only="" keep_token=0 want_tier="" want_spec=""
 conf=/etc/aisathome-node
 preset="${PRESET:-}" alias="${MODEL_ALIAS:-}"
 while [[ $# -gt 0 ]]; do
@@ -58,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --gateway-url) gateway_url="$2"; shift 2 ;;
     --download-only) download_only="$2"; shift 2 ;;
     --tier) want_tier="$2"; shift 2 ;;
+    --speculation) want_spec="$2"; shift 2 ;;
     --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
     --keep-token) keep_token=1; shift ;;
@@ -103,6 +105,10 @@ case "$want_tier" in
 esac
 [[ -z "$want_tier" || -n "$download_only" ]] ||
   die "--tier is for --download-only; an install takes the tier from the card" 2
+case "$want_spec" in
+  ""|off|mtp|dflash2) ;;
+  *) die "--speculation must be off, mtp or dflash2" 2 ;;
+esac
 # The Windows node has the same table in Go (node/setup/tiers.go); its drift test runs these
 # tier_* functions and fails until both agree. Change both together.
 tier_ctx() { case "$1" in standard) echo 81920 ;; big) echo 196608 ;; esac; }
@@ -168,6 +174,30 @@ tier_model() {
   case "$1" in
     standard) echo "$base/Qwen3.8-27B-UD-Q3_K_XL.gguf 8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e 13146393504" ;;
     big) echo "$base/Qwen3.8-27B-UD-IQ4_XS.gguf 40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199 14252845984" ;;
+  esac
+}
+# Speculative decoding (--speculation): llama-server drafts tokens with a small model and checks
+# them in one step of the big one, so the node writes faster; the output distribution is the
+# model's own. Off by default; on only for the big tier, with free memory for the draft model,
+# and on a llama.cpp build new enough for the mode, else the node runs without it (pick_spec says
+# why). The Windows node has the same table in Go (node/setup/speculation.go); drift_test.go
+# runs these spec_* functions and fails until both agree. Change both together.
+#   mtp      Qwen3.8's multi-token-prediction head (Unsloth's sidecar, the model's revision), 2
+#            drafted tokens a step; decode x1.8 on long agent steps, +2.5 GB (RTX 3090, 2026-11-12).
+#   dflash2  z-lab's DFlash2 drafter (Apache-2.0), 7 a step; x2.27, +2.9 GB, but only with
+#            llama.cpp PR #31533 (0fb8f15, first released as b12342; without it x1.6).
+spec_type() { case "$1" in mtp) echo draft-mtp ;; dflash2) echo draft-dflash ;; esac; }
+spec_draft_max() { case "$1" in mtp) echo 2 ;; dflash2) echo 7 ;; esac; }
+# spec_extra (MiB): what the draft model adds to tier_min_free.
+spec_extra() { case "$1" in mtp) echo 2500 ;; dflash2) echo 2900 ;; esac; }
+# spec_min_build: the oldest llama.cpp release (b<N>) the mode may run on.
+spec_min_build() { case "$1" in mtp) echo 12323 ;; dflash2) echo 12342 ;; esac; }
+# spec_model <mode>: "<url> <sha256> <bytes>" of the draft model (x-linked-etag and
+# x-linked-size of the resolve URLs, Checked 2026-11-14).
+spec_model() {
+  case "$1" in
+    mtp) echo "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502/MTP/mtp-Qwen3.8-27B-Q4_0.gguf 50d9ce5a6da381bbcfb31061cf73df94a90e6faf8efeddee379a9cb8f1501c6e 1369590656" ;;
+    dflash2) echo "https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2-GGUF/resolve/2d9571f8ce46e151f61c6499c99dee6079e1d610/Qwen3.8-27B-DFlash2-Q4_K_M.gguf 1a25c56858e1ebe93f2718ac1d49d1151f9323325c1bbfd6209370f4db131ebd 1143006816" ;;
   esac
 }
 # MODEL_URL, MODEL_SHA256 and MODEL_SIZE (bytes) replace the tier's file, all three together
@@ -245,6 +275,11 @@ set_engine() {
   --reasoning-budget $reasoning_budget \\
   --reasoning-budget-message \"(Thinking budget reached; answering now.)\" --no-reasoning-preserve \\
   -ctk $kv_type -ctv $kv_type --cache-prompt --cache-ram $cache_ram --metrics"
+  if [[ "${spec:-off}" != off ]]; then
+    llama_exec="$llama_exec \\
+  --spec-type $(spec_type "$spec") -md $draft_target --spec-draft-n-max $(spec_draft_max "$spec")"
+    tier_label="$tier_label, speculation $spec"
+  fi
 }
 
 # GPU access for the sandboxed services. Their device allowlist (implied by ProtectClock=)
@@ -399,6 +434,58 @@ check_fit() {
   (( gpu_free >= need )) ||
     die "GPU $gpu_idx ($gpu_name) has $gpu_free MiB free; the $tier tier ($(tier_text "$tier")) needs $need MiB free. $(fit_advice)"
   echo "memory: $gpu_free MiB free${gpu_own:+$( (( gpu_own > 0 )) && echo " (incl. $gpu_own MiB of this node's running llama-server)")}, the $tier tier needs $need: fits" >&2
+}
+
+# llama_build_number: the llama.cpp build (the N of release bN) of the llama-server this install
+# uses: the bundle's BUILD-INFO, else what `llama-server --version` prints ("version: 0.9.0-dev
+# (build 12342, commit 0fb8f1577)", or the older "version: 12342 (0fb8f157)"); 0 when unknown.
+llama_build_number() {
+  local v=""
+  if [[ $bundle = 1 ]]; then
+    v="$(info llama_cpp_tag)"; v="${v#b}"
+  elif [[ -n "$llama_build" && -x "$llama_build/bin/llama-server" ]]; then
+    v="$("$llama_build/bin/llama-server" --version 2>&1 | sed -n -e 's/.*(build \([0-9][0-9]*\), commit .*/\1/p' -e 's/^version: \([0-9][0-9]*\) (.*/\1/p' | head -n1)"
+  fi
+  # A build from a shallow clone counts 1 commit (v0.5.0's bundle said "build 1"): not a release.
+  [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1000 )) && echo "$v" || echo 0
+}
+
+# The speculation an earlier install chose (/etc/aisathome-node/speculation), so an update keeps
+# it without --speculation.
+installed_spec() {
+  local v=""
+  [[ -r "$conf/speculation" ]] && v="$(head -c 16 "$conf/speculation" | tr -dc 'a-z0-9')"
+  case "$v" in mtp|dflash2) echo "$v" ;; *) echo off ;; esac
+}
+
+# pick_spec (after pick_tier and check_fit): the speculation this node runs: --speculation, else
+# an earlier install's, when the node qualifies (big tier, a new enough llama.cpp, free memory for
+# the draft model); otherwise off, and it says why. Sets spec, draft_target and the draft file.
+spec=off draft_target="" draft_url="" draft_sha="" draft_size=0
+pick_spec() {
+  local want="${want_spec:-$(installed_spec)}" build need min
+  spec=off
+  [[ "$want" != off ]] || return 0
+  build="$(llama_build_number)" min="$(spec_min_build "$want")" need=$(( $(tier_min_free "$tier") + $(spec_extra "$want") ))
+  if [[ "$tier" != big ]]; then
+    echo "speculation: off; $want runs on the big tier (24 GB cards) only, and this card is in the $tier tier" >&2
+  elif (( build < min )); then
+    echo "speculation: off; $want needs llama.cpp b$min or newer, and this llama-server is $( (( build > 0 )) && echo "b$build" || echo "an unknown build")" >&2
+  elif [[ $custom = 0 ]] && (( gpu_free < need )); then
+    echo "speculation: off; $want needs $need MiB free on the card, and it has $gpu_free" >&2
+  else
+    spec="$want"
+    read -r draft_url draft_sha draft_size <<<"$(spec_model "$spec")"
+    draft_target="/var/lib/aisathome-node/models/${draft_url##*/}"
+    echo "speculation: $spec (llama.cpp b$build, $gpu_free MiB free, $need needed), draft model ${draft_url##*/}" >&2
+  fi
+}
+
+# fetch_draft <file>: download the draft model to <file> and verify it, as fetch_model does for
+# the model (the same function, with the draft's file).
+fetch_draft() {
+  local model_url="$draft_url" model_sha="$draft_sha" model_size="$draft_size"
+  fetch_model "$1"
 }
 
 # speed_probe <url>: decode speed after a ~$speed_ctx-token prompt, from llama-server's own
@@ -771,6 +858,10 @@ if [[ -n "$download_only" ]]; then
   set_model "$tier"
   echo "model: the $tier tier's $model_name" >&2
   fetch_model "$download_only/$model_name"
+  if [[ -n "$want_spec" && "$want_spec" != off ]]; then
+    read -r draft_url draft_sha draft_size <<<"$(spec_model "$want_spec")"
+    fetch_draft "$download_only/${draft_url##*/}"
+  fi
   echo "Downloaded. Install with --model $download_only/$model_name (the file is moved)." >&2
   exit 0
 fi
@@ -781,6 +872,7 @@ fi
 [[ $bundle = 0 ]] || check_bundle
 pick_tier
 check_fit
+pick_spec
 set_model "$tier"
 set_engine
 if [[ -n "$model" ]]; then
@@ -790,6 +882,7 @@ else
   echo "model: $model_url (sha256 $model_sha, $(gb "$model_size") GB) to $target" >&2
   check_disk "$(dirname "$target")" $(( $(model_missing "$target") + reserve ))
 fi
+[[ $spec = off ]] || echo "draft model: $draft_url (sha256 $draft_sha, $(gb "$draft_size") GB) to $draft_target" >&2
 [[ -z "$node_config" || -f "$node_config" ]] || die "no node config: $node_config"
 [[ -z "$node_release" ]] || fetch_node_release
 
@@ -848,6 +941,15 @@ elif [[ "$(readlink -f "$model")" != "$target" ]]; then
   mv "$model" "$target"
 fi
 chown aisathome:aisathome "$target"; chmod 0640 "$target"
+if [[ $spec != off ]]; then
+  # A draft downloaded with --download-only beside the --model file is moved along (fetch_draft
+  # then checks it and keeps it), instead of downloading it again.
+  if [[ -n "$model" && ! -f "$draft_target" && -f "$(dirname "$model")/${draft_target##*/}" ]]; then
+    mv "$(dirname "$model")/${draft_target##*/}" "$draft_target"
+  fi
+  fetch_draft "$draft_target"
+  chown aisathome:aisathome "$draft_target"; chmod 0640 "$draft_target"
+fi
 
 # 4. Config and token.
 install -d -o root -g aisathome -m 0750 /etc/aisathome-node
@@ -857,6 +959,8 @@ python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c.pop("token",None)
 install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json
 rm -f /etc/aisathome-node/node.json.new
 umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/token.env; umask 022
+# The speculation asked for (not what ran: a later update on a card with room may turn it on).
+printf '%s\n' "${want_spec:-$(installed_spec)}" > /etc/aisathome-node/speculation; chmod 0644 /etc/aisathome-node/speculation
 chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env
 
 # 5. systemd units (the sandbox and llama-server's unit are defined above).

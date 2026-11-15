@@ -64,6 +64,16 @@ type EngineSettings struct {
 	// CUDADevice pins the engine to one card (CUDA_VISIBLE_DEVICES) when the machine has
 	// several (Choice.Several): the card's UUID. Empty: no pin.
 	CUDADevice string
+	// Speculative decoding (WithSpec): the mode, its --spec-type, the draft model file and
+	// --spec-draft-n-max. Spec empty: none.
+	Spec, SpecType, Draft string
+	DraftMax              int
+}
+
+// WithSpec is e with drafter d, whose model file is at draft.
+func (e EngineSettings) WithSpec(d Drafter, draft string) EngineSettings {
+	e.Spec, e.SpecType, e.Draft, e.DraftMax = d.Mode, d.SpecType, draft, d.DraftMax
+	return e
 }
 
 // Engine is the tier's llama-server command with the program at exe and the model at model,
@@ -102,6 +112,9 @@ func (e EngineSettings) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("KV type %q: must be q8_0, q4_0 or f16", e.KV))
 	}
+	if e.Spec != "" && (e.SpecType == "" || e.Draft == "" || e.DraftMax < 1) {
+		errs = append(errs, fmt.Errorf("speculation %s: no draft model file, type or draft size", e.Spec))
+	}
 	if e.ReasoningBudget < -1 || e.CacheRAMMiB < 0 {
 		errs = append(errs, fmt.Errorf("reasoning budget (%d) must be -1 or more, cache RAM (%d) 0 or more", e.ReasoningBudget, e.CacheRAMMiB))
 	}
@@ -111,7 +124,7 @@ func (e EngineSettings) Validate() error {
 // Args is llama-server's arguments (without the program), in install.sh's order. They are
 // passed as separate arguments, never through a shell, so the budget message needs no quoting.
 func (e EngineSettings) Args() []string {
-	return []string{
+	args := []string{
 		"-m", e.Model, "--alias", e.Alias,
 		"--host", e.Host, "--port", strconv.Itoa(e.Port), "-ngl", "all", "-fa", "on",
 		"-np", strconv.Itoa(e.Slots), "--kv-unified-per-slot", strconv.Itoa(e.CtxPerSlot),
@@ -119,6 +132,10 @@ func (e EngineSettings) Args() []string {
 		"--reasoning-budget-message", e.ReasoningBudgetMessage, "--no-reasoning-preserve",
 		"-ctk", e.KV, "-ctv", e.KV, "--cache-prompt", "--cache-ram", strconv.Itoa(e.CacheRAMMiB), "--metrics",
 	}
+	if e.Spec != "" {
+		args = append(args, "--spec-type", e.SpecType, "-md", e.Draft, "--spec-draft-n-max", strconv.Itoa(e.DraftMax))
+	}
+	return args
 }
 
 // Env is what the engine's environment adds to the agent's: no crash backtrace (on Linux, ggml
@@ -141,9 +158,13 @@ func (e EngineSettings) ModelInfo() protocol.ModelInfo {
 }
 
 // Preset is the label the local UI shows for these settings, as install.sh's AISATHOME_PRESET:
-// "standard: 1 x 81920 tokens, KV q4_0".
+// "standard: 1 x 81920 tokens, KV q4_0", with ", speculation mtp" when it speculates.
 func (e EngineSettings) Preset(tier string) string {
-	return fmt.Sprintf("%s: %d x %d tokens, KV %s", tier, e.Slots, e.CtxPerSlot, e.KV)
+	p := fmt.Sprintf("%s: %d x %d tokens, KV %s", tier, e.Slots, e.CtxPerSlot, e.KV)
+	if e.Spec != "" {
+		p += ", speculation " + e.Spec
+	}
+	return p
 }
 
 // CheckPort refuses when something already listens on the engine's port: the agent would

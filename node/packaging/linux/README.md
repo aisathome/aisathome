@@ -37,7 +37,7 @@ What is in it (`BUILD-INFO` has the exact values):
 
 | | |
 |---|---|
-| llama.cpp | release `b12323`, commit `93cf736a8d1d46aa922e27eb64aa712bcd5ebc30` (the presets were benchmarked with v0.5.0 and re-measured with this release) |
+| llama.cpp | release `b12342`, commit `0fb8f157702702f33f4e018de8701b2569a1bc28` (the presets were benchmarked with v0.5.0 and re-measured with b12323 and this release) |
 | CUDA | 12.8.1 (`nvidia/cuda:12.8.1-devel-ubuntu22.04`, pinned by digest), real code for `86-real;89-real;120a-real`, no PTX |
 | Libraries | llama.cpp's, `libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12` (NVIDIA, unmodified), `libgomp.so.1`; see `THIRD_PARTY_NOTICES.md` |
 | Size | 497 MB packed (xz), 927 MiB unpacked; cuBLAS is most of it (869 MB unpacked, 439 MB packed). Measured on a local build with the same CUDA 12.8.1 libraries, 2026-10-11 |
@@ -104,7 +104,7 @@ For other GPUs, older systems, or if you prefer to compile.
   sudo apt-get install -y cuda-toolkit-12-2 cmake ninja-build build-essential
   export PATH=/usr/local/cuda/bin:$PATH   # nvcc is not on PATH by default
 
-  git clone --depth 1 --branch b12323 https://github.com/ggml-org/llama.cpp && cd llama.cpp
+  git clone --depth 1 --branch b12342 https://github.com/ggml-org/llama.cpp && cd llama.cpp
   cmake -B build -G Ninja -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=86;89" -DCMAKE_BUILD_TYPE=Release
   cmake --build build --target llama-server
   ```
@@ -139,6 +139,7 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot`.
+- `--speculation off|mtp|dflash2`: speculative decoding on 24 GB cards (below); off by default.
 - `--dry-run` runs the checks (bundle, driver, GPU, the tier's free memory, disk), prints the generated `node.json`,
   the `llama-server` command and its systemd unit, and exits without installing (no root
   needed; with `--node-release` it downloads and verifies the binary too).
@@ -179,6 +180,23 @@ session never switches between the two files midway; both serve the roles `deep`
   fails at start with 768 MiB.) Big, `UD-IQ4_XS` (2026-10-22/23): 256k on an RTX 3090 used
   19,202 MiB at the peak, hard needles 77/80 at ~195k and 62/80 at ~247k (hence 192k).
   `q8_0` KV with `UD-IQ4_XS` does not fit 80k in 16 GB.
+
+### Speculative decoding (big tier, opt-in)
+
+`--speculation mtp` (or `dflash2`) lets `llama-server` draft a few tokens with a small model and
+check them in one step of the big one: the node writes faster, and the output follows the model's
+own distribution (a draft is only kept where the model agrees). It is off by default and kept on
+updates (`/etc/aisathome-node/speculation`; `--speculation off` turns it off again). The node runs
+it only when it qualifies, else it runs without and the installer says why:
+
+| Mode | Draft model (downloaded and checked like the model) | Needs llama.cpp | Extra free GPU memory |
+|---|---|---|---|
+| `mtp` | Qwen3.8's multi-token-prediction head, `mtp-Qwen3.8-27B-Q4_0.gguf` (1.4 GB, Unsloth, the model's revision), 2 tokens a step | b12323 | 2,500 MiB (21,000 in all) |
+| `dflash2` | z-lab's DFlash2 drafter, `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (1.1 GB, Apache-2.0), 7 tokens a step | b12342 (PR #31533) | 2,900 MiB (21,400 in all) |
+
+Big tier only: on 16 GB cards neither fits beside the standard tier's context. The Windows node
+takes the same setting as `"engine": {"speculation": "mtp"}` in `node.json`, with the draft
+model beside the model (or `"draft_model"`); the setup page does not offer it yet.
 
 For testing only, `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE`, `REASONING_BUDGET` (`-1` =
 unlimited), `CACHE_RAM_MIB`, `MODEL_ALIAS` and `MIN_DECODE_TPS` (`0`: measure, never refuse)

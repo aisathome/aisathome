@@ -16,10 +16,11 @@ set -euo pipefail
 
 [[ $# -eq 1 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-# The llama.cpp release the node runs (b12323, 2026-11-12: the newest release with a Windows CUDA 12.4 build, which
-# the Windows node ships; node/setup/llama.go pins the same commit). The commit pins the tag: a moved tag fails the build.
-LLAMA_TAG=b12323
-LLAMA_COMMIT=93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
+# The llama.cpp release the node runs (b12342, 2026-11-13: the release at PR #31533, few-row MMQ for batch sizes
+# 2-24, which speculative decoding's verify step uses; it has upstream's Windows CUDA 12.4 build, which the Windows
+# node ships; node/setup/llama.go pins the same commit). The commit pins the tag: a moved tag fails the build.
+LLAMA_TAG=b12342
+LLAMA_COMMIT=0fb8f157702702f33f4e018de8701b2569a1bc28
 # Real (SASS) code only, no PTX: RTX 30 (8.6), RTX 40 (8.9), RTX 50 (12.0; llama.cpp turns
 # 120 into 120a anyway). Without PTX, a CUDA 12.8 build runs on any CUDA 12 driver (>= 525)
 # through minor version compatibility, which does not cover PTX; see MIN_DRIVER.
@@ -73,13 +74,16 @@ build="${LLAMA_BUILD_DIR:-$work/build}"
 linkstub="$work/linkstub"; mkdir -p "$linkstub"
 [[ -f "$cuda_lib/stubs/libcuda.so" ]] || { echo "no driver stub in $cuda_lib/stubs" >&2; exit 1; }
 ln -sf "$cuda_lib/stubs/libcuda.so" "$linkstub/libcuda.so.1"
+# LLAMA_BUILD_NUMBER is the release's number (b12342 -> 12342): llama.cpp counts the commits of the
+# checkout otherwise, which is 1 in this shallow clone, so `llama-server --version` said "build 1"
+# (v0.5.0's bundle) and nothing could tell from it which release it is (speculation needs that).
 # shellcheck disable=SC2016 # $ORIGIN is for the linker, not the shell
 cmake -S "$src" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,$linkstub" "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-rpath-link,$linkstub" \
   -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=$archs" -DGGML_NATIVE=OFF -DGGML_CUDA_NCCL=OFF \
   -DGGML_CUDA_COMPRESSION_MODE=none \
   -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
-  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF "-DLLAMA_BUILD_NUMBER=${LLAMA_TAG#b}" \
   '-DCMAKE_INSTALL_RPATH=$ORIGIN/../lib' -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
 cmake --build "$build" --target llama-server -j "$jobs"
 
@@ -122,6 +126,7 @@ done <<<"$deps"
 LD_LIBRARY_PATH="$stub" "$out/bin/llama-server" --version > "$work/version.txt" 2>&1 || true
 cat "$work/version.txt"
 grep -q "$(cut -c1-7 <<<"$LLAMA_COMMIT")" "$work/version.txt" || { echo "llama-server --version does not name the pinned commit" >&2; exit 1; }
+grep -q "build ${LLAMA_TAG#b}," "$work/version.txt" || { echo "llama-server --version does not name build ${LLAMA_TAG#b}" >&2; exit 1; }
 
 # Licences: llama.cpp (MIT) and the third-party code it compiles in.
 cp "$src/LICENSE" "$out/licenses/llama.cpp/LICENSE"
