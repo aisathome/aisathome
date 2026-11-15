@@ -1,12 +1,9 @@
-// The prove2me page's task table (2026-11-15): prove2me's options for the generic task table (task-table.ts) and its
-// live rows, the queued and running tasks of the gateway's public queue (GET /v1/projects/prove2me/queue). The build's
-// rows come from the export (science/prove2me.json "tasks", relations included); a live row's relations are derived
-// here from the task ids the same way (site_json.py task_relations): a hole or rest task is from its outline (the
-// outline's newest try), a try -aN is a retry of the try before, an outline -sN replaces outline N-1, an assembly
-// needs its outline's holes and rest. Outline probes (t<N>p-...) and anything not a trial's task stay out.
+// The prove2me page's task table (2026-11-15): prove2me's options for the generic task table (task-table.ts). The build's
+// rows come from the export (science/prove2me.json "tasks", relations included); the current trial's live rows come from
+// the gateway's GET /v1/tasks with the relations the tasks were made with (prove2me-current.ts taskTableRows). A task
+// of trials 1 to 5 that a relation names without a row is named from its id (taskRef).
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { QueueTask, QueueView } from './prove2me-live';
 import type { TaskTableOptions, TaskTableRow } from './task-table';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -81,50 +78,4 @@ export function p2mTaskOptions(rows: TaskTableRow[], currentTrial: number | null
 		outcomeLabel: (o) => taskOutcomeLabel(o),
 		describe: describeTask,
 	};
-}
-
-type Ref = { id: string; trial: string; leaf: string; kind: string; gen: number; hole: number | null; attempt: number };
-
-/** The relations of `ids` among `refs` (the trial's tasks so far): the same rules as the export's. */
-export function relations(refs: Ref[], id: string): Pick<TaskTableRow, 'parent' | 'needs' | 'retry_of' | 'replaces'> {
-	const r = refs.find((x) => x.id === id)!;
-	const mine = refs.filter((x) => x.leaf === r.leaf && x.trial === r.trial);
-	const newest = (p: (x: Ref) => boolean) => mine.filter(p).sort((a, b) => b.attempt - a.attempt)[0]?.id ?? null;
-	const outline = (g: number) => newest((x) => x.kind === 'outline' && x.gen === g);
-	const ids = new Set(refs.map((x) => x.id));
-	const base = r.id.replace(/-a[0-9]+$/, '');
-	const prev = r.attempt === 2 ? base : `${base}-a${r.attempt - 1}`;
-	const holes = [...new Set(mine.filter((x) => x.kind === 'hole' && x.gen === r.gen).map((x) => x.hole!))].sort((a, b) => a - b);
-	const rest = newest((x) => x.kind === 'rest' && x.gen === r.gen);
-	return {
-		parent: ['hole', 'rest', 'assembly'].includes(r.kind) ? outline(r.gen) : null,
-		retry_of: r.attempt > 1 && ids.has(prev) ? prev : null,
-		replaces: r.kind === 'outline' && r.gen > 1 && r.attempt === 1 ? outline(r.gen - 1) : null,
-		needs: r.kind === 'assembly' ? [...holes.map((h) => newest((x) => x.kind === 'hole' && x.gen === r.gen && x.hole === h)!), ...(rest ? [rest] : [])] : [],
-	};
-}
-
-/** The queue's queued and running tasks of a trial (no probe, nothing else) as rows, their relations among the build's
- * rows and each other; `leafIds` maps a theorem to its p2m- id (the build's leaf table). */
-export function liveTaskRows(q: QueueView, built: TaskTableRow[], leafIds: Record<string, string>): TaskTableRow[] {
-	const open = q.tasks.filter((t) => (t.state === 'queued' || t.state === 'leased') && !/^t[0-9]+p-/.test(t.id) && taskRef(t.id)); // a trial's task ids only
-	const ref = (r: TaskTableRow): Ref => ({ id: r.id, trial: `t${r.labels.trial}`, leaf: r.labels.alias, kind: r.kind, gen: Number(r.labels.outline ?? 1), hole: r.labels.hole ? Number(r.labels.hole) : null, attempt: r.try });
-	const live = open.map((t: QueueTask): TaskTableRow => {
-		const x = taskRef(t.id)!;
-		const kind = t.role ? ({ skeleton: 'outline', hole: 'hole', rest: 'rest', asm: 'assembly' } as Record<string, string>)[t.role] ?? x.kind : x.kind;
-		const gen = t.gen ?? x.gen, hole = t.hole ?? x.hole;
-		const tok = t.cached_tokens !== undefined ? (t.prompt_tokens ?? 0) + t.cached_tokens + (t.completion_tokens ?? 0) : null;
-		return {
-			project: 'prove2me', id: t.id, kind, state: t.state === 'leased' ? 'running' : 'queued', outcome: null, try: x.attempt,
-			parent: null, needs: [], retry_of: null, replaces: null, steps: t.steps ?? null, model_min: t.model_min ?? null, tokens: tok,
-			started_at: t.state === 'leased' ? t.since ?? t.updated_at : null, finished_at: null,
-			labels: {
-				trial: (t.trial ?? x.trial).replace(/^t/, ''), leaf: (t.theorem && leafIds[t.theorem]) || '', alias: t.leaf ?? x.leaf,
-				...(kind === 'run' ? {} : { outline: String(gen) }), ...(hole ? { hole: String(hole) } : {}),
-			},
-		};
-	});
-	const ids = new Set(live.map((r) => r.id));
-	const refs = [...built.filter((r) => !ids.has(r.id)), ...live].filter((r) => r.kind !== 'run').map(ref);
-	return live.map((r) => ({ ...r, ...relations(refs, r.id) }));
 }

@@ -1,15 +1,13 @@
-// "Working on now" on the prove2me page, live (owner, 2026-11-13: the page lagged behind the trial):
-// the gateway's public view of prove2me's task queue (GET /v1/projects/prove2me/queue; gateway
-// queue_public.go: task ids, states, outcomes, steps, token counts, the trial, leaf and theorem names only)
-// turned into the leaves the page lists, each with a table of its tasks (owner, 2026-11-14: "I also
-// want insights into the tasks"). The build renders the committed JSON's list with the same code; in the
-// browser the live view replaces it when the queue answers. No data here, so the browser's bundle stays
-// small.
+// "Working on now" on the prove2me page (owner, 2026-11-13: the page lagged behind the trial): a trial's tasks turned
+// into the leaves the page lists, each with a table of its tasks (owner, 2026-11-14: "I also want insights into the
+// tasks"). The build renders the committed JSON's list with the same code; in the browser the tasks come from the
+// gateway's GET /v1/tasks, read into the QueueTask shape below (prove2me-current.ts). No data here, so the browser's
+// bundle stays small.
 //
 // Tokens (owner, 2026-11-14: the live counts were about a tenth of the real ones): "Qwen tokens" are
 // everything the model read, cache re-reads included, and wrote, as on the Tau Ceti page and in the
 // trial tables; "computed" are what the GPU processed fresh (read without the cache, plus written). The
-// queue's prompt_tokens are the computed prompt only; its cached_tokens (workers from 2026-11-14 on)
+// gateway's prompt_tokens are the computed prompt only; its cached_tokens (workers from 2026-11-14 on)
 // complete them. A task finished before that takes its totals from the build's data (the export
 // script's per-task counts from the task's own records); with neither, its total is unknown and the
 // leaf's total says "at least".
@@ -17,7 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { CurrentLeaf } from './prove2me';
 
-/** One task of the public view (only the fields the page uses). */
+/** One task as the leaf view reads it (prove2me-current.ts asQueueTask makes it from GET /v1/tasks). */
 export interface QueueTask {
 	id: string;
 	state: 'queued' | 'leased' | 'done' | 'failed' | 'cancelled';
@@ -31,6 +29,8 @@ export interface QueueTask {
 	role?: string;
 	gen?: number;
 	hole?: number;
+	/** The try (GET /v1/tasks `try`); absent: read from the id's -aN. */
+	attempt?: number;
 	outcome?: string;
 	steps?: number;
 	prompt_tokens?: number;
@@ -119,31 +119,7 @@ export interface GenView {
 /** A leaf as the live view sees it: the page's CurrentLeaf plus its tasks. */
 export type LiveLeaf = Omit<CurrentLeaf, 'title' | 'url' | 'earlier'> & { tokens: number; proved: boolean; detail: LeafDetail };
 
-const states = ['queued', 'leased', 'done', 'failed', 'cancelled'];
-const str = (v: unknown) => typeof v === 'string';
-const num = (v: unknown) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
-
-/** The queue's JSON, or null when it is not what the gateway sends (the page then keeps the build's list). */
-export function parseQueue(d: unknown): QueueView | null {
-	const v = d as QueueView;
-	if (!v || !str(v.updated) || Number.isNaN(Date.parse(v.updated)) || !Array.isArray(v.tasks)) return null;
-	const tasks = v.tasks.filter(
-		(t) =>
-			t && str(t.id) && states.includes(t.state) && str(t.updated_at) &&
-			[t.trial, t.leaf, t.group, t.theorem, t.role, t.outcome].every((x) => x === undefined || str(x)) &&
-			[t.gen, t.hole, t.steps, t.prompt_tokens, t.cached_tokens, t.completion_tokens, t.model_min].every(num),
-	);
-	return { updated: v.updated, tasks };
-}
-
 const taskState: Record<string, string> = { leased: 'running', queued: 'queued', done: 'finished', failed: 'failed', cancelled: 'cancelled' };
-
-/** The trial the queue is working on: that of the latest open task, else null (nothing runs or waits). */
-export function currentTrial(q: QueueView): string | null {
-	const open = q.tasks.filter((t) => (t.state === 'leased' || t.state === 'queued') && t.trial);
-	open.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
-	return open[0]?.trial ?? null;
-}
 
 /** A task of the build's data as a row. */
 export function fromStatic(t: StaticTask): TaskRow {
@@ -162,7 +138,7 @@ export function fromQueue(t: QueueTask, known?: StaticTask): TaskRow {
 	const s = known ? fromStatic(known) : undefined;
 	const role = t.role ?? (t.leaf && t.id.endsWith(`-${t.leaf}`) ? 'skeleton' : 'other');
 	const row: TaskRow = {
-		id: t.id, leaf: t.leaf ?? '', role, gen: t.gen ?? 1, hole: t.hole ?? null, attempt: Number(/-a([0-9]+)$/.exec(t.id)?.[1] ?? 1),
+		id: t.id, leaf: t.leaf ?? '', role, gen: t.gen ?? 1, hole: t.hole ?? null, attempt: t.attempt ?? Number(/-a([0-9]+)$/.exec(t.id)?.[1] ?? 1),
 		state: taskState[t.state] ?? t.state, outcome: t.state === 'done' ? t.outcome ?? null : null,
 		steps: t.steps ?? s?.steps ?? null, minutes: t.model_min ?? s?.minutes ?? null,
 		total: null, computed: null, cached: null, output: null,
