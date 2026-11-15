@@ -2,34 +2,34 @@
 	"project": "prove2me",
 	"project_url": "https://prove2.me/",
 	"model": "Qwen3.8 27B",
-	"generated_at": "2026-11-15T20:06:04Z",
+	"generated_at": "2026-11-15T21:15:19Z",
 	"as_of": "2026-11-15",
 	"lean": "v4.33.1",
 	"mathlib": "0df444a",
 	"totals": {
-		"runs": 42,
-		"proved": 10,
-		"scored": 38,
-		"calibration_runs": 13,
-		"calibration_proved": 8,
-		"open_runs": 29,
-		"open_leaves": 17,
-		"open_leaves_proved": 2,
-		"model_hours": 64.9,
-		"prompt_tokens": 132058593,
-		"cached_tokens": 123891070,
-		"output_tokens": 5603324,
+		"runs": 44,
+		"proved": 12,
+		"scored": 40,
+		"calibration_runs": 14,
+		"calibration_proved": 9,
+		"open_runs": 30,
+		"open_leaves": 18,
+		"open_leaves_proved": 3,
+		"model_hours": 67.8,
+		"prompt_tokens": 148504061,
+		"cached_tokens": 139957637,
+		"output_tokens": 5987774,
 		"submitted": 5,
 		"accepted": 5,
 		"reused": 2,
-		"leaves": 31,
+		"leaves": 32,
 		"probes": {
-			"rounds": 1,
-			"tasks": 6,
-			"model_hours": 3.0,
-			"prompt_tokens": 6278230,
-			"cached_tokens": 5988591,
-			"output_tokens": 268179
+			"rounds": 2,
+			"tasks": 11,
+			"model_hours": 4.0,
+			"prompt_tokens": 8315143,
+			"cached_tokens": 7903189,
+			"output_tokens": 397230
 		}
 	},
 	"submissions": [
@@ -104,11 +104,11 @@
 		}
 	],
 	"current": {
-		"trial": 6,
+		"trial": 7,
 		"start": "2026-11-15",
-		"scaffold": "v7",
+		"scaffold": "v8",
 		"caps": "one round of 110 steps / 110 min for the outline and for each hole, then one fix round of 20 / 20; up to 2 tries per task",
-		"summary": "Scaffold v7, from what trial 5 and the outline probes taught. The outline task now starts with a plan: the method the leaf’s statement or paper names, and its steps, each a lemma in words. The outline then leaves every step as a `sorry` hole, combined by a short final proof; an outline has at most 12 holes and 300 lines. An outline that does not compile is not lost: the parts Lean rejects become holes (at most three passes), and an inline proof that is too long comes back as advice instead of a refusal.\n\nAs in v6, an outline whose hole is the leaf’s main claim is refused, every hole is first checked for a counterexample, and our index of prove2me’s library (333,690 statements) means the agent never re-proves what is already proved there and may import proved theorems.\n\nThe leaves: calibration leaf C07, and open leaves N03 and N05, chosen by quick outline probes. Since 15 November the node runs Qwen with multi-token prediction (MTP), which wrote long steps 1.7 to 1.9 times faster in our test on an RTX 3090.",
+		"summary": "Scaffold v8: v7 with what trial 6 taught. A hole whose check failed on our side costs the model no try; a counterexample found for a false hole goes into the next outline's prompt; an outline that proves the leaf ends it; holes are extracted with their types, so more of them become lemmas of their own; and an outline whose repair replaced the main proof with a hole is refused. The proof's explanation for prove2me is written from the model's own plan.\n\nThe leaves: calibration leaf p2m-3ad60f again, to compare v7 and v8 on one leaf, and open leaves p2m-aec6a2, p2m-d00cfc and p2m-115f6c (Pinsker's inequality, the hard one), one more than in trial 6. They were chosen by reading and our index; the trial's first outline is the probe.",
 		"holes_as_of": null,
 		"leaves": [
 			{
@@ -117,357 +117,45 @@
 				"theorem": "WilliamsonShmoys.planar_drawing_maximal_supergraph__p2m_97829890_428d_4657_a899_f7e200a68a7c_a4",
 				"title": "A finite maximal drawable supergraph exists",
 				"url": "https://prove2.me/theorems/3ad60fc3-1bed-4725-aaf6-264d650d407f",
-				"state": "finished",
-				"outline": "finished",
-				"hole_tasks": {
-					"n": 1,
-					"proved": 1,
-					"running": 0,
-					"queued": 0
-				},
+				"state": "queued",
+				"outline": "queued",
 				"earlier": [
-					3
-				],
-				"outlines": [
-					{
-						"gen": 1,
-						"holes": 3,
-						"lemmas": 3,
-						"inplace": 0,
-						"prepass": {
-							"tried": 3,
-							"closed": 2,
-							"seconds": 479,
-							"by": {
-								"formalpedia:WilliamsonShmoys.drawable_subgraph__p2m_39578764_0198_4707_9e11_eef0219b5111_a1": 1,
-								"simp_all": 1
-							}
-						},
-						"prepass_holes": [
-							{
-								"hole": 1,
-								"closed_by": "formalpedia:WilliamsonShmoys.drawable_subgraph__p2m_39578764_0198_4707_9e11_eef0219b5111_a1",
-								"timed_out": false
-							},
-							{
-								"hole": 2,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 3,
-								"closed_by": "simp_all",
-								"timed_out": false
-							}
-						]
-					}
+					3,
+					6
 				]
 			},
 			{
-				"leaf": "N03",
+				"leaf": "N10",
 				"group": "open",
-				"theorem": "PerturbedWF.eq_2_3",
-				"title": "Eq. (2.3): $\\langle v,x-y\\rangle\\le\\|x-y\\|$ for $v\\in B^*$ and $x,y\\in\\mathcal C$",
-				"url": "https://prove2.me/theorems/dbd69f70-c8c7-4b16-b27d-a8ea3d7ac435",
-				"state": "finished",
-				"outline": "finished",
-				"hole_tasks": {
-					"n": 5,
-					"proved": 3,
-					"running": 0,
-					"queued": 0
-				},
-				"earlier": [],
-				"outlines": [
-					{
-						"gen": 1,
-						"holes": 2,
-						"lemmas": 1,
-						"inplace": 1,
-						"prepass": {
-							"tried": 1,
-							"closed": 0,
-							"seconds": 89,
-							"by": {}
-						},
-						"prepass_holes": [
-							{
-								"hole": 2,
-								"closed_by": null,
-								"timed_out": false
-							}
-						]
-					},
-					{
-						"gen": 2,
-						"holes": 4,
-						"lemmas": 3,
-						"inplace": 1,
-						"prepass": {
-							"tried": 3,
-							"closed": 0,
-							"seconds": 316,
-							"by": {}
-						},
-						"prepass_holes": [
-							{
-								"hole": 1,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 3,
-								"closed_by": null,
-								"timed_out": false
-							},
-							{
-								"hole": 4,
-								"closed_by": null,
-								"timed_out": false
-							}
-						]
-					}
-				]
+				"theorem": "thm_5_6",
+				"title": "Chapter 5, thm_5_6",
+				"url": "https://prove2.me/theorems/aec6a23d-d2cd-4715-a939-1209afe40694",
+				"state": "queued",
+				"outline": "queued",
+				"earlier": []
 			},
 			{
-				"leaf": "N05",
+				"leaf": "N07",
 				"group": "open",
-				"theorem": "NestedSeatAlloc.IntPolicy.expRevenue_one_right_derivative",
-				"title": "Equation (27) right derivative for one-class expected revenue",
-				"url": "https://prove2.me/theorems/f181dfe1-72dd-485a-90a4-331ac8998977",
-				"state": "cancelled",
-				"outline": "finished",
-				"earlier": [],
-				"outlines": []
+				"theorem": "MatchIndiff.PublicSM.lemma_2_1",
+				"title": "Lemma 2.1 — accepted profiles of a fixed board form a product, and a row and board fix the decoded component",
+				"url": "https://prove2.me/theorems/d00cfcfa-a762-4b4a-9579-0c6db222c030",
+				"state": "queued",
+				"outline": "queued",
+				"earlier": []
+			},
+			{
+				"leaf": "N08",
+				"group": "open",
+				"theorem": "QAlgorithms.Papers.Independent.Intake100.P73.pinsker_full_l1",
+				"title": "Pinsker inequality in the source full-L1/nats convention",
+				"url": "https://prove2.me/theorems/115f6c5f-c75e-4b73-b209-623860ff8a1a",
+				"state": "queued",
+				"outline": "queued",
+				"earlier": []
 			}
 		],
-		"tasks": [
-			{
-				"id": "t6-p2m-3ad60f-s1",
-				"leaf": "C07",
-				"role": "skeleton",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 19,
-				"model_minutes": 6.6,
-				"prompt_tokens": 418413,
-				"cached_tokens": 385762,
-				"output_tokens": 21944
-			},
-			{
-				"id": "t6-p2m-3ad60f-s1-h02",
-				"leaf": "C07",
-				"role": "hole",
-				"gen": 1,
-				"hole": 2,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 6,
-				"model_minutes": 1.7,
-				"prompt_tokens": 83353,
-				"cached_tokens": 71893,
-				"output_tokens": 2754
-			},
-			{
-				"id": "t6-p2m-3ad60f-s1-asm",
-				"leaf": "C07",
-				"role": "asm",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 0,
-				"model_minutes": 0.0,
-				"prompt_tokens": 0,
-				"cached_tokens": 0,
-				"output_tokens": 0
-			},
-			{
-				"id": "t6-p2m-dbd69f-s1",
-				"leaf": "N03",
-				"role": "skeleton",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 59,
-				"model_minutes": 27.0,
-				"prompt_tokens": 2525581,
-				"cached_tokens": 2476007,
-				"output_tokens": 56678
-			},
-			{
-				"id": "t6-p2m-dbd69f-s1-h02",
-				"leaf": "N03",
-				"role": "hole",
-				"gen": 1,
-				"hole": 2,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "check_error",
-				"steps": 19,
-				"model_minutes": 7.0,
-				"prompt_tokens": 371921,
-				"cached_tokens": 346971,
-				"output_tokens": 14304
-			},
-			{
-				"id": "t6-p2m-dbd69f-s1-h02-a2",
-				"leaf": "N03",
-				"role": "hole",
-				"gen": 1,
-				"hole": 2,
-				"attempt": 2,
-				"state": "cancelled",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			},
-			{
-				"id": "t6-p2m-dbd69f-s1-rest",
-				"leaf": "N03",
-				"role": "rest",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "cancelled",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			},
-			{
-				"id": "t6-p2m-dbd69f-s2",
-				"leaf": "N03",
-				"role": "skeleton",
-				"gen": 2,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "outline",
-				"steps": 28,
-				"model_minutes": 12.8,
-				"prompt_tokens": 1038055,
-				"cached_tokens": 1017441,
-				"output_tokens": 29579
-			},
-			{
-				"id": "t6-p2m-dbd69f-s2-h01",
-				"leaf": "N03",
-				"role": "hole",
-				"gen": 2,
-				"hole": 1,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 21,
-				"model_minutes": 4.8,
-				"prompt_tokens": 355660,
-				"cached_tokens": 340797,
-				"output_tokens": 6106
-			},
-			{
-				"id": "t6-p2m-dbd69f-s2-h03",
-				"leaf": "N03",
-				"role": "hole",
-				"gen": 2,
-				"hole": 3,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 47,
-				"model_minutes": 44.2,
-				"prompt_tokens": 2305510,
-				"cached_tokens": 2234549,
-				"output_tokens": 104559
-			},
-			{
-				"id": "t6-p2m-dbd69f-s2-h04",
-				"leaf": "N03",
-				"role": "hole",
-				"gen": 2,
-				"hole": 4,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 15,
-				"model_minutes": 7.6,
-				"prompt_tokens": 328943,
-				"cached_tokens": 312866,
-				"output_tokens": 12365
-			},
-			{
-				"id": "t6-p2m-dbd69f-s2-rest",
-				"leaf": "N03",
-				"role": "rest",
-				"gen": 2,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "rest_done",
-				"steps": 118,
-				"model_minutes": 62.2,
-				"prompt_tokens": 9018032,
-				"cached_tokens": 8880281,
-				"output_tokens": 136161
-			},
-			{
-				"id": "t6-p2m-dbd69f-s2-asm",
-				"leaf": "N03",
-				"role": "asm",
-				"gen": 2,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 0,
-				"model_minutes": 0.0,
-				"prompt_tokens": 0,
-				"cached_tokens": 0,
-				"output_tokens": 0
-			},
-			{
-				"id": "t6-p2m-f181df-s1",
-				"leaf": "N05",
-				"role": "skeleton",
-				"gen": 1,
-				"hole": null,
-				"attempt": 1,
-				"state": "finished",
-				"outcome": "proved",
-				"steps": 11,
-				"model_minutes": 2.9,
-				"prompt_tokens": 234282,
-				"cached_tokens": 212163,
-				"output_tokens": 6854
-			},
-			{
-				"id": "t6-p2m-f181df-s2",
-				"leaf": "N05",
-				"role": "skeleton",
-				"gen": 2,
-				"hole": null,
-				"attempt": 1,
-				"state": "cancelled",
-				"outcome": null,
-				"steps": null,
-				"model_minutes": null,
-				"prompt_tokens": null,
-				"cached_tokens": null,
-				"output_tokens": null
-			}
-		]
+		"tasks": []
 	},
 	"trials": [
 		{
@@ -1937,6 +1625,337 @@
 					]
 				}
 			]
+		},
+		{
+			"trial": 6,
+			"start": "2026-11-15",
+			"end": "2026-11-15",
+			"scaffold": "v7",
+			"caps": "one round of 110 steps / 110 min for the outline and for each hole, then one fix round of 20 / 20; up to 2 tries per task",
+			"summary": "The outline task now starts with a plan, every step of it becomes a sorry hole (at most 12 holes and 300 lines), and an outline that does not compile is repaired by turning the parts Lean rejects into holes. All 3 leaves were closed. Open leaf p2m-dbd69f was proved by the model and accepted by prove2me: its first outline had a false hole, which the model disproved; its second outline, the paper's duality argument in four steps, had every hole proved and was assembled. Open leaf p2m-f181df was closed by reuse of a theorem already proved on prove2me, and calibration leaf p2m-3ad60f was proved by assembly.",
+			"leaves": [
+				{
+					"leaf": "C07",
+					"group": "calibration",
+					"role": "calibration",
+					"theorem": "WilliamsonShmoys.planar_drawing_maximal_supergraph__p2m_97829890_428d_4657_a899_f7e200a68a7c_a4",
+					"title": "A finite maximal drawable supergraph exists",
+					"url": "https://prove2.me/theorems/3ad60fc3-1bed-4725-aaf6-264d650d407f",
+					"outcome": "proved",
+					"proved_in_round": null,
+					"rounds": 1,
+					"scored": true,
+					"model_minutes": 8.3,
+					"prompt_tokens": 501766,
+					"cached_tokens": 457655,
+					"output_tokens": 24698,
+					"proved_in_outline": 1,
+					"tasks": [
+						{
+							"id": "t6-p2m-3ad60f-s1",
+							"leaf": "C07",
+							"role": "skeleton",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 19,
+							"model_minutes": 6.6,
+							"prompt_tokens": 418413,
+							"cached_tokens": 385762,
+							"output_tokens": 21944
+						},
+						{
+							"id": "t6-p2m-3ad60f-s1-h02",
+							"leaf": "C07",
+							"role": "hole",
+							"gen": 1,
+							"hole": 2,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 6,
+							"model_minutes": 1.7,
+							"prompt_tokens": 83353,
+							"cached_tokens": 71893,
+							"output_tokens": 2754
+						},
+						{
+							"id": "t6-p2m-3ad60f-s1-asm",
+							"leaf": "C07",
+							"role": "asm",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 0,
+							"model_minutes": 0.0,
+							"prompt_tokens": 0,
+							"cached_tokens": 0,
+							"output_tokens": 0
+						}
+					],
+					"outlines": [
+						{
+							"gen": 1,
+							"holes": 3,
+							"lemmas": 3,
+							"inplace": 0,
+							"prepass": {
+								"tried": 3,
+								"closed": 2,
+								"seconds": 479,
+								"by": {
+									"formalpedia:WilliamsonShmoys.drawable_subgraph__p2m_39578764_0198_4707_9e11_eef0219b5111_a1": 1,
+									"simp_all": 1
+								}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": "formalpedia:WilliamsonShmoys.drawable_subgraph__p2m_39578764_0198_4707_9e11_eef0219b5111_a1",
+									"timed_out": false
+								},
+								{
+									"hole": 2,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 3,
+									"closed_by": "simp_all",
+									"timed_out": false
+								}
+							]
+						}
+					],
+					"earlier": [
+						3
+					]
+				},
+				{
+					"leaf": "N03",
+					"group": "open",
+					"role": "open",
+					"theorem": "PerturbedWF.eq_2_3",
+					"title": "Eq. (2.3): $\\langle v,x-y\\rangle\\le\\|x-y\\|$ for $v\\in B^*$ and $x,y\\in\\mathcal C$",
+					"url": "https://prove2.me/theorems/dbd69f70-c8c7-4b16-b27d-a8ea3d7ac435",
+					"outcome": "proved",
+					"proved_in_round": null,
+					"rounds": 2,
+					"scored": true,
+					"model_minutes": 165.6,
+					"prompt_tokens": 15943702,
+					"cached_tokens": 15608912,
+					"output_tokens": 359752,
+					"proved_in_outline": 2,
+					"tasks": [
+						{
+							"id": "t6-p2m-dbd69f-s1",
+							"leaf": "N03",
+							"role": "skeleton",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 59,
+							"model_minutes": 27.0,
+							"prompt_tokens": 2525581,
+							"cached_tokens": 2476007,
+							"output_tokens": 56678
+						},
+						{
+							"id": "t6-p2m-dbd69f-s1-h02",
+							"leaf": "N03",
+							"role": "hole",
+							"gen": 1,
+							"hole": 2,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "check_error",
+							"steps": 19,
+							"model_minutes": 7.0,
+							"prompt_tokens": 371921,
+							"cached_tokens": 346971,
+							"output_tokens": 14304
+						},
+						{
+							"id": "t6-p2m-dbd69f-s1-h02-a2",
+							"leaf": "N03",
+							"role": "hole",
+							"gen": 1,
+							"hole": 2,
+							"attempt": 2,
+							"state": "cancelled",
+							"outcome": null,
+							"steps": null,
+							"model_minutes": null,
+							"prompt_tokens": null,
+							"cached_tokens": null,
+							"output_tokens": null
+						},
+						{
+							"id": "t6-p2m-dbd69f-s1-rest",
+							"leaf": "N03",
+							"role": "rest",
+							"gen": 1,
+							"hole": null,
+							"attempt": 1,
+							"state": "cancelled",
+							"outcome": null,
+							"steps": null,
+							"model_minutes": null,
+							"prompt_tokens": null,
+							"cached_tokens": null,
+							"output_tokens": null
+						},
+						{
+							"id": "t6-p2m-dbd69f-s2",
+							"leaf": "N03",
+							"role": "skeleton",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "outline",
+							"steps": 28,
+							"model_minutes": 12.8,
+							"prompt_tokens": 1038055,
+							"cached_tokens": 1017441,
+							"output_tokens": 29579
+						},
+						{
+							"id": "t6-p2m-dbd69f-s2-h01",
+							"leaf": "N03",
+							"role": "hole",
+							"gen": 2,
+							"hole": 1,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 21,
+							"model_minutes": 4.8,
+							"prompt_tokens": 355660,
+							"cached_tokens": 340797,
+							"output_tokens": 6106
+						},
+						{
+							"id": "t6-p2m-dbd69f-s2-h03",
+							"leaf": "N03",
+							"role": "hole",
+							"gen": 2,
+							"hole": 3,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 47,
+							"model_minutes": 44.2,
+							"prompt_tokens": 2305510,
+							"cached_tokens": 2234549,
+							"output_tokens": 104559
+						},
+						{
+							"id": "t6-p2m-dbd69f-s2-h04",
+							"leaf": "N03",
+							"role": "hole",
+							"gen": 2,
+							"hole": 4,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 15,
+							"model_minutes": 7.6,
+							"prompt_tokens": 328943,
+							"cached_tokens": 312866,
+							"output_tokens": 12365
+						},
+						{
+							"id": "t6-p2m-dbd69f-s2-rest",
+							"leaf": "N03",
+							"role": "rest",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "rest_done",
+							"steps": 118,
+							"model_minutes": 62.2,
+							"prompt_tokens": 9018032,
+							"cached_tokens": 8880281,
+							"output_tokens": 136161
+						},
+						{
+							"id": "t6-p2m-dbd69f-s2-asm",
+							"leaf": "N03",
+							"role": "asm",
+							"gen": 2,
+							"hole": null,
+							"attempt": 1,
+							"state": "finished",
+							"outcome": "proved",
+							"steps": 0,
+							"model_minutes": 0.0,
+							"prompt_tokens": 0,
+							"cached_tokens": 0,
+							"output_tokens": 0
+						}
+					],
+					"outlines": [
+						{
+							"gen": 1,
+							"holes": 2,
+							"lemmas": 1,
+							"inplace": 1,
+							"prepass": {
+								"tried": 1,
+								"closed": 0,
+								"seconds": 89,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 2,
+									"closed_by": null,
+									"timed_out": false
+								}
+							]
+						},
+						{
+							"gen": 2,
+							"holes": 4,
+							"lemmas": 3,
+							"inplace": 1,
+							"prepass": {
+								"tried": 3,
+								"closed": 0,
+								"seconds": 316,
+								"by": {}
+							},
+							"prepass_holes": [
+								{
+									"hole": 1,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 3,
+									"closed_by": null,
+									"timed_out": false
+								},
+								{
+									"hole": 4,
+									"closed_by": null,
+									"timed_out": false
+								}
+							]
+						}
+					],
+					"earlier": []
+				}
+			]
 		}
 	],
 	"probes": [
@@ -2007,9 +2026,9 @@
 		{
 			"trial": "t7p",
 			"for_trial": 7,
-			"state": "running",
+			"state": "finished",
 			"start": "2026-11-15",
-			"end": null,
+			"end": "2026-11-15",
 			"scaffold": "v7",
 			"caps": "one outline task per leaf, 45 steps / 45 min, no fix round",
 			"leaves": [
@@ -2054,11 +2073,11 @@
 					"url": "https://prove2.me/theorems/aec6a23d-d2cd-4715-a939-1209afe40694"
 				}
 			],
-			"tasks": null,
-			"model_minutes": null,
-			"prompt_tokens": null,
-			"cached_tokens": null,
-			"output_tokens": null
+			"tasks": 5,
+			"model_minutes": 59.4,
+			"prompt_tokens": 2036913,
+			"cached_tokens": 1914598,
+			"output_tokens": 129051
 		}
 	],
 	"leaves": [
@@ -2618,16 +2637,17 @@
 				"calibration"
 			],
 			"trials": [
-				3
+				3,
+				6
 			],
 			"first_tried": "2026-11-09",
-			"runs": 1,
-			"proved_runs": 1,
+			"runs": 2,
+			"proved_runs": 2,
 			"outcome": "proved",
-			"model_minutes": 63.6,
-			"prompt_tokens": 2409181,
-			"cached_tokens": 2281743,
-			"output_tokens": 103710
+			"model_minutes": 71.9,
+			"prompt_tokens": 2910947,
+			"cached_tokens": 2739398,
+			"output_tokens": 128408
 		},
 		{
 			"id": "p2m-eb3303",
@@ -2746,6 +2766,29 @@
 			"output_tokens": 243110
 		},
 		{
+			"id": "p2m-dbd69f",
+			"theorem": "PerturbedWF.eq_2_3",
+			"title": "Eq. (2.3): $\\langle v,x-y\\rangle\\le\\|x-y\\|$ for $v\\in B^*$ and $x,y\\in\\mathcal C$",
+			"url": "https://prove2.me/theorems/dbd69f70-c8c7-4b16-b27d-a8ea3d7ac435",
+			"aliases": [
+				"N03"
+			],
+			"roles": [
+				"open"
+			],
+			"trials": [
+				6
+			],
+			"first_tried": "2026-11-15",
+			"runs": 1,
+			"proved_runs": 1,
+			"outcome": "accepted",
+			"model_minutes": 165.6,
+			"prompt_tokens": 15943702,
+			"cached_tokens": 15608912,
+			"output_tokens": 359752
+		},
+		{
 			"id": "p2m-b1d59e",
 			"theorem": "occupation_bind_sections_integrable_local",
 			"title": "occupation_bind_sections_integrable_local",
@@ -2792,26 +2835,26 @@
 		{
 			"role": "calibration",
 			"leaves": 12,
-			"runs": 13,
-			"proved": 8,
+			"runs": 14,
+			"proved": 9,
 			"accepted": 0,
 			"reused": 0,
-			"model_hours": 9.6,
-			"prompt_tokens": 19251367,
-			"cached_tokens": 18142256,
-			"output_tokens": 877088
+			"model_hours": 9.7,
+			"prompt_tokens": 19753133,
+			"cached_tokens": 18599911,
+			"output_tokens": 901786
 		},
 		{
 			"role": "open",
-			"leaves": 19,
-			"runs": 25,
-			"proved": 1,
-			"accepted": 1,
+			"leaves": 20,
+			"runs": 26,
+			"proved": 2,
+			"accepted": 2,
 			"reused": 2,
-			"model_hours": 31.4,
-			"prompt_tokens": 64002028,
-			"cached_tokens": 59753903,
-			"output_tokens": 2678190
+			"model_hours": 34.1,
+			"prompt_tokens": 79945730,
+			"cached_tokens": 75362815,
+			"output_tokens": 3037942
 		},
 		{
 			"role": "comparison",
@@ -4976,56 +5019,6 @@
 		},
 		{
 			"project": "prove2me",
-			"id": "t6-p2m-f181df-s1",
-			"kind": "outline",
-			"role": "outline",
-			"gateway_kind": "p2m-v7",
-			"state": "done",
-			"outcome": "proved",
-			"try": 1,
-			"parent": null,
-			"needs": [],
-			"retry_of": null,
-			"replaces": null,
-			"steps": 11,
-			"model_min": 2.9,
-			"tokens": 241136,
-			"started_at": "2026-11-15T10:37:08Z",
-			"finished_at": "2026-11-15T10:43:34Z",
-			"labels": {
-				"trial": "6",
-				"leaf": "p2m-f181df",
-				"alias": "N05",
-				"outline": "1"
-			}
-		},
-		{
-			"project": "prove2me",
-			"id": "t6-p2m-f181df-s2",
-			"kind": "outline",
-			"role": "outline",
-			"gateway_kind": "p2m-v7",
-			"state": "cancelled",
-			"outcome": null,
-			"try": 1,
-			"parent": null,
-			"needs": [],
-			"retry_of": null,
-			"replaces": "t6-p2m-f181df-s1",
-			"steps": null,
-			"model_min": null,
-			"tokens": null,
-			"started_at": null,
-			"finished_at": null,
-			"labels": {
-				"trial": "6",
-				"leaf": "p2m-f181df",
-				"alias": "N05",
-				"outline": "2"
-			}
-		},
-		{
-			"project": "prove2me",
 			"id": "t6p-C11",
 			"kind": "outline",
 			"role": "outline",
@@ -5172,6 +5165,131 @@
 				"trial": "6p",
 				"leaf": "p2m-f181df",
 				"alias": "N05",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t7p-p2m-51d621-s1",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": "p2m-v7",
+			"state": "done",
+			"outcome": "refused",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 35,
+			"model_min": 45.2,
+			"tokens": 1551608,
+			"started_at": "2026-11-15T19:12:36Z",
+			"finished_at": "2026-11-15T20:02:43Z",
+			"labels": {
+				"trial": "7p",
+				"leaf": "p2m-51d621",
+				"alias": "N06",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t7p-p2m-d00cfc-s1",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": "p2m-v7",
+			"state": "done",
+			"outcome": "degenerate_outline",
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": 18,
+			"model_min": 14.2,
+			"tokens": 614356,
+			"started_at": "2026-11-15T20:02:52Z",
+			"finished_at": "2026-11-15T20:47:44Z",
+			"labels": {
+				"trial": "7p",
+				"leaf": "p2m-d00cfc",
+				"alias": "N07",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t7p-p2m-115f6c-s1",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": "p2m-v7",
+			"state": "cancelled",
+			"outcome": null,
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": null,
+			"model_min": null,
+			"tokens": null,
+			"started_at": null,
+			"finished_at": "2026-11-15T20:09:34Z",
+			"labels": {
+				"trial": "7p",
+				"leaf": "p2m-115f6c",
+				"alias": "N08",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t7p-p2m-17cf43-s1",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": "p2m-v7",
+			"state": "cancelled",
+			"outcome": null,
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": null,
+			"model_min": null,
+			"tokens": null,
+			"started_at": null,
+			"finished_at": "2026-11-15T20:09:34Z",
+			"labels": {
+				"trial": "7p",
+				"leaf": "p2m-17cf43",
+				"alias": "N09",
+				"outline": "1"
+			}
+		},
+		{
+			"project": "prove2me",
+			"id": "t7p-p2m-aec6a2-s1",
+			"kind": "outline",
+			"role": "outline",
+			"gateway_kind": "p2m-v7",
+			"state": "cancelled",
+			"outcome": null,
+			"try": 1,
+			"parent": null,
+			"needs": [],
+			"retry_of": null,
+			"replaces": null,
+			"steps": null,
+			"model_min": null,
+			"tokens": null,
+			"started_at": null,
+			"finished_at": "2026-11-15T20:09:34Z",
+			"labels": {
+				"trial": "7p",
+				"leaf": "p2m-aec6a2",
+				"alias": "N10",
 				"outline": "1"
 			}
 		}
