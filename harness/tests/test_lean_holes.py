@@ -210,13 +210,19 @@ class Commands(unittest.TestCase):
                 "theorem uses_h (n : Nat) : True := h\n\n"
                 "theorem uses_root (h : Nat) : True := _root_.h\n\n"
                 "theorem uses_in_type : (h : True) = True.intro := Subsingleton.elim _ _\n\n"
+                "def keep_dep : (h : Nat) → h = h := fun x => rfl\n\n"
+                "def keep_dep_chain : {α : Type} → (h : α) -> h = h := fun _ => rfl\n\n"
+                "theorem keep_forall : ∀ (h : Nat), h = h := fun _ => rfl\n\n"
+                "theorem uses_after_dep : (n : Nat) → h = h := fun _ => rfl\n\n"
                 "theorem solution (n : Nat) : n = n := by\n  sorry\n")
         cs = H.commands(text)
         si = next(i for i, c in enumerate(cs) if c.name == "solution")
         ctx = H.context_text(text, si, cs)
-        for kept in ("def keep ", "def keep_fun", "theorem keep_intro", "theorem keep_have"):
+        for kept in ("def keep ", "def keep_fun", "theorem keep_intro", "theorem keep_have", "def keep_dep ",
+                     "def keep_dep_chain", "theorem keep_forall"):
             self.assertIn(kept, ctx)
-        for gone in ("theorem h ", "theorem uses_h", "theorem uses_root", "theorem uses_in_type"):
+        for gone in ("theorem h ", "theorem uses_h", "theorem uses_root", "theorem uses_in_type",
+                     "theorem uses_after_dep"):
             self.assertNotIn(gone, ctx)
 
     def test_scope_lines_and_context(self):

@@ -510,15 +510,57 @@ def _binders_part(head: str) -> str:
     return head
 
 
+_GROUP_NAMES = re.compile(r"\s*([^()\[\]{}⦃⦄:]*):(?!=)")
+
+
+def _close(s: str, i: int) -> int:
+    """The index of the bracket that closes the one at `i` (len(s) when it is not closed)."""
+    depth = 0
+    for j in range(i, len(s)):
+        if s[j] in _OPEN:
+            depth += 1
+        elif s[j] in _CLOSE:
+            depth -= 1
+            if depth == 0:
+                return j
+    return len(s)
+
+
+def _arrow_binders(typ: str) -> set[str]:
+    """The names of a type's dependent arrows: a group `(h : T)` (or `{}`, `[]`, `⦃⦄`) followed, after any more
+    such groups, by `→` or `->`. A group followed by anything else (`(h : True) = x`) is a type ascription."""
+    out: set[str] = set()
+    for i, ch in enumerate(typ):
+        if ch not in "([{⦃":
+            continue
+        j = _close(typ, i)
+        m = _GROUP_NAMES.match(typ, i + 1)
+        if j >= len(typ) or not m or m.end() > j:
+            continue
+        k = j + 1
+        while True:
+            while k < len(typ) and typ[k].isspace():
+                k += 1
+            if k < len(typ) and typ[k] in "([{⦃" and _GROUP_NAMES.match(typ, k + 1):
+                k = _close(typ, k) + 1
+                continue
+            break
+        if typ.startswith("→", k) or typ.startswith("->", k):
+            out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
+    return out
+
+
 def _locals(code: str) -> set[str]:
     """The names a declaration binds locally (best effort): its header's binder groups before the type
-    (`(h : T)`), the binders of `fun`, `λ`, `∀`, `∃`, the names of `intro`, `rintro`, `obtain`, `let`, `have`,
+    (`(h : T)`) and the type's dependent arrows (`(h : T) → …`), the binders of `fun`, `λ`, `∀`, `∃`, the names of `intro`, `rintro`, `obtain`, `let`, `have`,
     `set`, the patterns after `with` and in `| ctor a b =>` alternatives. A bare use of such a name is the local, not a
     declaration of the same name; a qualified one (`_root_.h`, `Foo.h`) is still the declaration."""
     head = re.split(r":=|(?<![\w'])where(?![\w'])|^\|", code, maxsplit=1, flags=re.M)[0]
     out: set[str] = set()
-    for m in _HEADER_BINDER.finditer(_binders_part(head)):
+    binders = _binders_part(head)
+    for m in _HEADER_BINDER.finditer(binders):
         out.update(t for t in m.group(1).split() if _LEAN_ID.fullmatch(t))
+    out.update(_arrow_binders(head[len(binders):]))
     for rx in (_BINDS_TO_ARROW, _BINDS_TO_EOL):
         for m in rx.finditer(code):
             out.update(_binder_names(m.group(1)))

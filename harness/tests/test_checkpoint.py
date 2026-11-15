@@ -117,6 +117,22 @@ class Checkpoints(unittest.TestCase):
         self.assertTrue(any("`latest` is not intact (an upload cut); `previous` stays" in l for l in self.logs),
                         self.logs)
 
+    def test_a_failed_download_of_latest_stops_the_save(self):
+        # a transient store error is not a cut upload: `latest` is neither skipped nor overwritten
+        self.save("round", 1)
+        real = self.st.get_file
+
+        def flaky(key, path):
+            raise K.StoreError("timed out")
+        self.st.get_file = flaky
+        with self.assertRaises(K.StoreError):
+            self.save("round", 2)
+        self.st.get_file = real
+        self.assertEqual(json.loads(self.st.get(self.pre + "latest.json"))["seq"], 1)
+        self.assertNotIn(self.pre + "previous.json", self.st.list(self.pre))
+        got = K.restore(self.st, machine(self.b), self.pre, log=self.logs.append)
+        self.assertEqual(got["seq"], 1)
+
     def test_which_copy_wins(self):
         self.save("round", 1)
         la = machine(self.a)
