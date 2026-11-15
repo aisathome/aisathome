@@ -23,7 +23,8 @@ same behaviour).
   before it. `safe_text` (one line the gateway's text check accepts), `task_headers` (`X-Aisathome-Task`).
 - `worker`: `Worker`, one task at a time: held tasks first (resumed with their lease, else claimed back by
   id), the lease renewed while a child process runs the task (an expired lease claimed back, a lost one stops
-  the child, as does a gateway unreachable until the lease would run out), the result or the crash reported
+  the child, as does a gateway unreachable until the lease would run out: checked every second, apart from
+  a heartbeat call that may hang), the result or the crash reported
   (retried while the gateway is unreachable, else held and reported later; for an unreported result the
   child, which must be idempotent, runs again), three crashes in a row pause it, SIGTERM or a watcher's
   notice stops the child, takes its checkpoint (`checkpoint-task`) and gives the task back with its try; a
@@ -32,7 +33,8 @@ same behaviour).
   project's callbacks; `GiveBack` gives a task back instead of failing it. Clock and process calls injectable.
 - `checkpoint`: the store interface and `DirStore`; a task's state as a `Layout` of named parts (excluded
   paths, optional parts, parts cleared by the project's remover) packed into one tar.zst with a manifest,
-  `save` (latest, and previous from a latest whose archive matches its manifest), `restore` (only when the
+  `save` (latest, and previous from a latest whose archive matches its manifest; a failed download of latest
+  stops the save, nothing is overwritten), `restore` (only when the
   store's copy is newer or the local one incomplete; sha256 checked, `previous` after a cut upload; an
   optional part the checkpoint lacks is removed here), `sync_evidence` and `fetch_evidence` (changed files only,
   an index, every file checked on the way back).
@@ -65,8 +67,8 @@ same behaviour).
   out too (and what used `keep`). The names a declaration binds (its header's binder groups before its type,
   `fun`, `∀`, `∃`, `intro`, `obtain`, `have`, `let`, patterns after `with` and in `|` alternatives) shadow a
   bare use of the same name; a qualified use (`_root_.h`, `Foo.h`) still counts, and so does `(h : T)` in the
-  type, a term with a type ascription. Best effort: a local bound anywhere in the
-  declaration shadows the name in all of it.
+  type, a term with a type ascription, unless a dependent arrow follows it (`(h : Nat) → h = h`). Best effort:
+  a local bound anywhere in the declaration shadows the name in all of it.
 
 ## [0.2.1] - unreleased
 

@@ -213,7 +213,7 @@ def sha256_file(path: Path) -> str:
 def save(st, lay: Layout, prefix: str, why: str, worker: str = "", meta: dict | None = None, log=print) -> dict:
     """Pack the task and upload it as the newest checkpoint (the newest one before becomes `previous` when its
     archive matches its manifest: it is downloaded and checked); the manifest. Raises StoreError (the caller
-    decides whether that stops anything)."""
+    decides whether that stops anything), also when `latest` cannot be downloaded: nothing is overwritten then."""
     if not lay.complete():
         raise StoreError(f"{lay.task}: nothing to checkpoint here (the local copy is incomplete)")
     t0 = time.monotonic()
@@ -229,8 +229,10 @@ def save(st, lay: Layout, prefix: str, why: str, worker: str = "", meta: dict | 
              "work": lay.work, "worker": worker}
         if old and prefix + "latest.tar.zst" in keys:
             # only an intact `latest` becomes `previous`: after an upload cut between archive and manifest,
-            # `previous` is the one checkpoint left to restore, and stays
-            if _fetch(st, prefix, "latest", Path(d) / "latest.tar.zst") is not None:
+            # `previous` is the one checkpoint left to restore, and stays. A failed download raises (the save
+            # stops): only an archive that does not match its manifest counts as cut
+            st.get_file(prefix + "latest.tar.zst", Path(d) / "latest.tar.zst")
+            if sha256_file(Path(d) / "latest.tar.zst") == old.get("sha256"):
                 st.copy(prefix + "latest.tar.zst", prefix + "previous.tar.zst")
                 st.copy(prefix + "latest.json", prefix + "previous.json")
             else:

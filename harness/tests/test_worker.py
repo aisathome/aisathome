@@ -277,7 +277,7 @@ class Lifecycle(Base):
 
     def test_an_unreachable_gateway_stops_the_child_before_its_lease_runs_out(self):
         self.q.add("t1", self.spec(sleep=60, running=str(self.root / "t1.running")))
-        w = self.worker(lease_s=3, heartbeat_s=0.1, stop_wait_s=1)
+        w = self.worker(lease_s=5, heartbeat_s=0.1, stop_wait_s=1)
 
         def down(*a, **k):
             raise ConnectionRefusedError("partition")
@@ -288,12 +288,41 @@ class Lifecycle(Base):
         self.q.heartbeat = self.q.fail = self.q.claim = down          # the gateway goes away
         self.assertTrue(wait_for(lambda: bool(w.held()) and w.held()[0]["phase"] == "interrupted", timeout=15),
                         w.logs)
-        self.assertLess(time.monotonic() - t0, 3, "the child ran on past its lease")
+        self.assertLess(time.monotonic() - t0, 4, "the child ran on past its lease")
         self.assertTrue(any("no lease renewal" in l for l in w.logs), w.logs)
         self.assertTrue(any("could not give it back" in l for l in w.logs), w.logs)
         w.stop()
         th.join(15)
         self.assertEqual(w.held()[0]["phase"], "interrupted")      # held: taken back when the gateway returns
+
+    def test_a_hanging_heartbeat_does_not_delay_the_stop_past_the_lease(self):
+        # the heartbeat call blocks (a gateway that accepts the connection and never answers): the deadline is
+        # checked apart from it, so the child is stopped and given back while the lease still holds
+        self.q.add("t1", self.spec(sleep=60, running=str(self.root / "t1.running")))
+        w = self.worker(lease_s=5, heartbeat_s=0.1, stop_wait_s=1)
+        hang, released = threading.Event(), threading.Event()
+        real = self.q.heartbeat
+
+        def heartbeat(tid, worker, lease):
+            if hang.is_set():
+                released.wait(30)
+            return real(tid, worker, lease)
+        self.q.heartbeat = heartbeat
+        th = threading.Thread(target=w.run_forever, kwargs={"once": True}, daemon=True)
+        th.start()
+        self.assertTrue(wait_for((self.root / "t1.running").exists))
+        t0 = time.monotonic()
+        hang.set()
+        stopped = wait_for(lambda: any("no lease renewal" in l for l in w.logs), timeout=10)
+        took = time.monotonic() - t0
+        w.stop()                                 # no second run of the given-back task in this test
+        released.set()
+        th.join(30)
+        self.assertFalse(th.is_alive())
+        self.assertTrue(stopped, w.logs)
+        self.assertLess(took, 4, "the child ran on past its lease")
+        self.assertEqual(self.q.tasks["t1"]["state"], "queued")     # given back, not done
+        self.assertEqual(w.held()[0]["phase"], "interrupted")
 
     def test_a_crash_fails_the_task_and_three_in_a_row_pause_the_worker(self):
         for i in range(4):
