@@ -72,10 +72,13 @@ export interface Submission {
 	/** The trial of the run that proved it; for a reuse, the trial whose outline probes found it. */
 	trial: number;
 	/** "proof": the model's own proof from a run; "reuse": the leaf is the same statement as a theorem already proved on
-	 * prove2me, which our index found, and the proof is one line that imports it (not counted as a leaf proved). */
+	 * prove2me, or a part of one ("relation"), which our index found, and the proof is one line that uses it (not counted as
+	 * a leaf proved). */
 	kind: 'proof' | 'reuse';
 	/** A reuse: the proved theorem it imports, its prove2me page and its author as that page shows it. */
-	reuses?: { theorem: string; url: string; author: string };
+	reuses?: { theorem: string; url: string; author: string; relation?: 'same' | 'part' };
+	/** A reuse: found by the trial's outline probes (while it was prepared) or during the trial. */
+	found?: 'probes' | 'trial';
 	theorem: string;
 	title: string;
 	url: string;
@@ -196,14 +199,8 @@ export function outcomeLabel(r: LeafRun): string {
 }
 
 
-const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-/** "2026-11-12" -> "12 November 2026"; with `year` false, "12 November". */
-export function day(iso: string, year = true) {
-	const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso);
-	return `${d.getUTCDate()} ${months[d.getUTCMonth()]}${year ? ` ${d.getUTCFullYear()}` : ''}`;
-}
-/** "2026-11-12T06:51:23Z" -> "06:51 UTC". */
-export const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`;
+import { day, hhmm } from './prove2me-current';
+export { day, hhmm };
 
 /** A trial's dates, short for a table: "7 Nov", "9–12 Nov", "30 Nov–2 Dec" (the year is in the trial's own list). */
 export function shortSpan(t: { start: string; end: string }) {
