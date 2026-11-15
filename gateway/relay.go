@@ -322,6 +322,7 @@ func (rl *relay) commit(rec *usageRecord) {
 	if rec.Outcome == "ok" {
 		g.speeds.add(n.id, rec.Usage.CompletionTokens, rec.Usage.DurationMs)
 	}
+	g.countLive(req, rec) // the named task's live count (tasks_live.go)
 	if rec.Outcome == outcomeBlocked || rec.SelfServed || (rec.Outcome == outcomePreempted && rl.sent.empty()) {
 		return // the user never got the answer (a preempted one is sent again), or it came from the account's own node
 	}

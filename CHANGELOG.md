@@ -9,6 +9,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Live progress of running science tasks.** `GET /v1/tasks` and a project's public queue show,
+  while a task runs, a `live` count of the model calls the gateway relayed for it (requests, prompt,
+  cached and written tokens, model seconds), from the calls whose request names the task in
+  `X-Aisathome-Task`; the worker's own numbers replace it when the task ends. Counts only; never
+  prompts, model text or nodes. (gateway)
 - **`GET /v1/tasks`: every public science task in one schema.** Without a key, the tasks of each
   project that publishes its queue: kind, role, state, outcome, try, the relations between tasks
   (`parent`, `needs`, `retry_of`, `replaces`, `closed_by`), the project's public labels, steps,

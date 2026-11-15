@@ -167,15 +167,40 @@ A task made before these fields has none of them, and the public views read its 
 `GET /v1/tasks`, without a key, lists the tasks of every project with `public_queue` in one schema:
 `project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,
 hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens, created_at,
-started_at, finished_at, updated_at, node_classes` (the classes, trusted or volunteer, of the nodes
-that served the requests that named the task). A field a task does not have is `null`. Query
-`project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500, default 100) and `after` (the
-answer's `next`); newest first.
+started_at, finished_at, updated_at, node_classes, live` (`node_classes`: the classes, trusted or
+volunteer, of the nodes that served the requests that named the task; `live`: below). A field a task
+does not have is `null`. Query `project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500,
+default 100) and `after` (the answer's `next`); newest first.
 
-A project's model request may name the task it belongs to in an `X-Aisathome-Task` header. The
-gateway uses it only to tell a node's operator, on the account page, which task the node is working
-on, and only when the name is one of the project's running tasks; without it, a project with one
-running task is taken to be working on that one.
+A project's model request may name the task it belongs to in an `X-Aisathome-Task` header, and the
+gateway uses that name only when it is one of the project's running tasks (any other name is
+ignored, and the request is served as usual). It tells a node's operator, on the account page, which
+task the node is working on (without the header, a project with one running task is taken to be
+working on that one), and, for a project with `public_queue`, it counts the task's progress live.
+
+**Live counts.** While a task runs, `GET /v1/tasks` and `GET /v1/projects/{id}/queue` show what the
+gateway itself relayed for it so far, from the model calls that named it and ended with a whole
+answer (streamed or not):
+
+```json
+"live": {"requests": 41, "prompt_tokens": 1520330, "cached_tokens": 1398112,
+         "completion_tokens": 18227, "model_s": 1310.4, "updated_at": "2026-11-15T14:02:11Z"}
+```
+
+| Field | What |
+|---|---|
+| `requests` | Model calls that ended ok (close to the worker's steps; a failed, cancelled or preempted call does not count). |
+| `prompt_tokens` | Prompt tokens of those calls, the cached ones included, as the node reported them (clamped like credit). |
+| `cached_tokens` | The part of `prompt_tokens` read from the node's cache. |
+| `completion_tokens` | Tokens written. |
+| `model_s` | Seconds the gateway measured from sending each call to the node to its end (prefill and any wait on the node included). |
+| `updated_at` | When the last counted call ended. |
+
+`live` is `null` (on the queue view: absent) until a call counted, and again once the task ended:
+then the result's numbers, which the worker reports, are the ones to show. A claim that starts a new
+try starts from zero; one that continues an interrupted try goes on counting. The count is kept with
+the task and saved with its next heartbeat, so a gateway restart loses at most the calls since then.
+Both views are built at most every 15 seconds.
 
 ### The task queue when the disk fails
 
