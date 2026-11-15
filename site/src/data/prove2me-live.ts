@@ -38,6 +38,8 @@ export interface QueueTask {
 	cached_tokens?: number;
 	completion_tokens?: number;
 	model_min?: number;
+	/** What closed the task's hole before it ran (GET /v1/tasks `closed_by`: a task id or reuse:<by>). */
+	closed_by?: string;
 }
 
 export interface QueueView {
@@ -88,6 +90,10 @@ export interface TaskRow {
 	computed: number | null;
 	cached: number | null;
 	output: number | null;
+	/** What closed the task's hole before it ran (a task id or reuse:<by>), when the task list says so. */
+	closed_by?: string | null;
+	/** Whether the task ever started (a node took it); absent: not known (the build's data), read from its steps. */
+	started?: boolean;
 }
 
 /** A leaf's tasks summed and per outline. */
@@ -142,6 +148,7 @@ export function fromQueue(t: QueueTask, known?: StaticTask): TaskRow {
 		state: taskState[t.state] ?? t.state, outcome: t.state === 'done' ? t.outcome ?? null : null,
 		steps: t.steps ?? s?.steps ?? null, minutes: t.model_min ?? s?.minutes ?? null,
 		total: null, computed: null, cached: null, output: null,
+		closed_by: t.closed_by ?? null, started: !!t.since || t.state === 'leased',
 	};
 	const p = t.prompt_tokens ?? 0, o = t.completion_tokens ?? 0;
 	if (t.cached_tokens !== undefined) Object.assign(row, { total: p + t.cached_tokens + o, computed: p + o, cached: t.cached_tokens, output: o });
@@ -186,29 +193,6 @@ export function leafDetail(rows: TaskRow[], outlines: Outline[] = []): LeafDetai
 		gens,
 		outlines,
 	};
-}
-
-/** Where a leaf stands, from its tasks: each outline, then its holes ("k of N holes proved") and what is open. */
-export function detailProgress(d: LeafDetail): string {
-	const many = d.gens.length > 1;
-	const outline: Record<string, string> = { running: 'writing the outline', queued: 'outline queued', failed: 'outline stopped by a fault', cancelled: 'outline cancelled' };
-	const parts = d.gens.map((g) => {
-		const name = many ? `outline ${g.gen}` : 'outline';
-		const sk = g.skeleton;
-		if (!sk) return '';
-		if (sk.state !== 'finished') return many ? `${outline[sk.state]?.replace('outline', name) ?? name}` : outline[sk.state] ?? '';
-		if (sk.outcome === 'proved') return `${name}: proved without holes`;
-		if (sk.outcome !== 'outline') return `${name}: ${resultLabel(sk).toLowerCase()}`;
-		const holes =
-			g.n !== null ? `${g.proved} of ${plural(g.n, 'hole')} proved` : g.holeTasks ? `${plural(g.holeTasks, 'hole task')}: ${g.proved} proved` : '';
-		const open = [g.running ? `${g.running} running` : '', g.queued ? `${g.queued} queued` : '', g.cancelled ? `${g.cancelled} cancelled` : '']
-			.filter(Boolean)
-			.join(', ');
-		const asm = g.asm ? { running: 'assembling', queued: 'assembly queued', failed: 'assembly stopped by a fault', cancelled: 'assembly cancelled' }[g.asm.state] ?? (g.asm.outcome === 'proved' ? 'assembled' : 'assembly failed') : '';
-		const body = [holes + (open ? `, ${open}` : ''), g.asm && g.asm.state !== 'cancelled' ? asm : ''].filter(Boolean).join('; ');
-		return many ? `${name}: ${body || 'done'}` : `outline done${body ? `; ${body}` : ''}`;
-	});
-	return parts.filter(Boolean).join('; ');
 }
 
 /** The leaf's state from its tasks: running, queued, cancelled (its newest outline's tasks were), else as its newest outline ended. */

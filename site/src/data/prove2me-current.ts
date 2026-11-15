@@ -1,10 +1,12 @@
 // "Working on now" without a deploy (owner, 2026-11-15; decision 0019: project content stays out of the gateway): the
 // page reads two public documents every minute and builds the list from them.
 //
-//  - prove2me's own data document, /data/prove2me/current.json (schema "prove2me-current/1"), which the project's
-//    tooling publishes on the website host when a trial starts, a submission gets its verdict, or the trial's text
-//    changes: the trial (number, scaffold, start, status, its description in Markdown-light, the budget), its leaves
-//    (leaf id, alias, role, theorem and its prove2me page) and its submissions;
+//  - prove2me's own data document, /data/prove2me/current.json (schema "prove2me-current/2", "/1" still read), which
+//    the project's tooling publishes on the website host when a trial starts, a submission gets its verdict, or the
+//    trial's text changes: the trial (number, scaffold, start, status, its description in Markdown-light, the budget),
+//    its leaves (leaf id, alias, role, theorem and its prove2me page; from /2 each outline's holes: in place or a lemma,
+//    and what closed one without a task or a verdict reached outside one) and its submissions (from /2 with the theorem
+//    a reuse imports);
 //  - the gateway's generic task list, GET /v1/tasks?project=prove2me (gateway tasks_public.go): every task's state,
 //    outcome, try, relations, labels (trial, leaf id, alias, outline, hole) and counts, and for a running task the
 //    gateway's own live counters when it has them (`live`: requests, prompt_tokens with the cache reads in them,
@@ -16,17 +18,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { QueueTask, QueueView } from './prove2me-live';
 import type { TaskTableRow } from './task-table';
+import type { HoleInfo, OutlineHoles } from './prove2me-outlines';
 
 export const CURRENT_URL = '/data/prove2me/current.json';
 export const TASKS_URL = '/v1/tasks?project=prove2me&limit=500';
-export const CURRENT_SCHEMA = 'prove2me-current/1';
+export const CURRENT_SCHEMA = 'prove2me-current/2';
+/** The schemas the page reads: /1 has no per-outline holes and no reuse details. */
+export const CURRENT_SCHEMAS = ['prove2me-current/1', CURRENT_SCHEMA];
 
 export interface CurrentDoc {
 	schema: string;
 	project: 'prove2me';
 	updated_at: string;
 	trial: { id: string; number: number; scaffold: string; start: string | null; status: 'preparing' | 'running' | 'finished'; description: string; budget: string };
-	leaves: { id: string; alias: string; role: 'calibration' | 'open' | 'comparison'; theorem: string; url: string }[];
+	leaves: { id: string; alias: string; role: 'calibration' | 'open' | 'comparison'; theorem: string; url: string; outlines?: OutlineHoles[] }[];
 	submissions: {
 		leaf: string;
 		alias: string;
@@ -37,6 +42,8 @@ export interface CurrentDoc {
 		submitted_at: string;
 		verdict: string;
 		verdict_at: string | null;
+		/** A reuse: the proved prove2me theorem the one-line proof uses. */
+		reuses?: { theorem: string; url: string; relation?: 'same' | 'part' };
 	}[];
 }
 
@@ -66,6 +73,7 @@ export interface PublicTask {
 	needs: string[];
 	retry_of: string | null;
 	replaces: string | null;
+	closed_by?: string | null;
 	labels: Record<string, string>;
 	steps: number | null;
 	model_min: number | null;
@@ -91,17 +99,32 @@ const opt = (v: unknown) => v === null || v === undefined || count(v);
 const optStr = (v: unknown) => v === null || v === undefined || isStr(v);
 export const theoremURL = /^https:\/\/prove2\.me\/theorems\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const leafID = /^p2m-[0-9a-f]{6}([0-9a-f]{2})?$/;
+const holeBy = ['prepass', 'index', 'ledger', 'counterexample', 'model', 'check'];
+const posInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0 && v < 1000;
+const isHole = (h: HoleInfo) =>
+	h && posInt(h.hole) && ['lemma', 'inplace'].includes(h.kind) && ['open', 'proved', 'false'].includes(h.state) &&
+	(h.by === undefined || holeBy.includes(h.by)) && (h.note === undefined || (isStr(h.note) && h.note.length <= 300));
+/** A leaf's outlines as the document states them; an outline with a hole that is not what it should be is left out. */
+const outlinesOf = (v: unknown): OutlineHoles[] | undefined =>
+	Array.isArray(v) ? v.filter((o) => o && posInt(o.outline) && Array.isArray(o.holes) && o.holes.every(isHole)) : undefined;
 
 /** The data document, or null when it is not one (the page then keeps the build's copy). */
 export function parseCurrent(d: unknown): CurrentDoc | null {
 	const c = d as CurrentDoc;
-	if (!c || c.schema !== CURRENT_SCHEMA || c.project !== 'prove2me' || !isTime(c.updated_at)) return null;
+	if (!c || !CURRENT_SCHEMAS.includes(c.schema) || c.project !== 'prove2me' || !isTime(c.updated_at)) return null;
 	const t = c.trial;
 	if (!t || !/^t[0-9]+$/.test(t.id ?? '') || t.number !== Number(t.id.slice(1)) || !isStr(t.scaffold) || !optStr(t.start)) return null;
 	if (!['preparing', 'running', 'finished'].includes(t.status) || !isStr(t.description) || !isStr(t.budget)) return null;
 	if (!Array.isArray(c.leaves) || !Array.isArray(c.submissions)) return null;
-	const leaves = c.leaves.filter((l) => l && leafID.test(l.id) && isStr(l.alias) && isStr(l.theorem) && ['calibration', 'open', 'comparison'].includes(l.role));
-	const subs = c.submissions.filter((s) => s && leafID.test(s.leaf) && isStr(s.alias) && ['proof', 'reuse'].includes(s.kind) && isTime(s.submitted_at) && isStr(s.verdict) && (s.verdict_at === null || isTime(s.verdict_at)));
+	const leaves = c.leaves
+		.filter((l) => l && leafID.test(l.id) && isStr(l.alias) && isStr(l.theorem) && ['calibration', 'open', 'comparison'].includes(l.role))
+		.map(({ outlines, ...l }) => {
+			const os = outlinesOf(outlines);
+			return os ? { ...l, outlines: os } : l;
+		});
+	const subs = c.submissions
+		.filter((s) => s && leafID.test(s.leaf) && isStr(s.alias) && ['proof', 'reuse'].includes(s.kind) && isTime(s.submitted_at) && isStr(s.verdict) && (s.verdict_at === null || isTime(s.verdict_at)))
+		.map(({ reuses, ...s }) => (reuses && isStr(reuses.theorem) && theoremURL.test(reuses.url ?? '') ? { ...s, reuses } : s));
 	return { ...c, leaves, submissions: subs };
 }
 
@@ -114,7 +137,7 @@ export function parseTasks(d: unknown): TasksView | null {
 	const tasks = v.tasks.filter(
 		(t) =>
 			t && isStr(t.id) && states.includes(t.state) && isTime(t.created_at) && isTime(t.updated_at) && t.labels && typeof t.labels === 'object' &&
-			Object.values(t.labels).every(isStr) && [t.role, t.outcome, t.parent, t.retry_of, t.replaces, t.started_at, t.finished_at].every(optStr) &&
+			Object.values(t.labels).every(isStr) && [t.role, t.outcome, t.parent, t.retry_of, t.replaces, t.closed_by, t.started_at, t.finished_at].every(optStr) &&
 			[t.try, t.steps, t.model_min, t.prompt_tokens, t.cached_tokens, t.completion_tokens].every(opt) &&
 			(t.live === undefined || t.live === null || (typeof t.live === 'object' && liveCounts.every((k) => opt(t.live![k])))),
 	);
@@ -163,6 +186,7 @@ export function asQueueTask(t: PublicTask, doc: CurrentDoc): QueueTask {
 		hole: int(lab.hole),
 		attempt: und(t.try),
 		outcome: und(t.outcome),
+		closed_by: und(t.closed_by),
 		...counts(t),
 	};
 }

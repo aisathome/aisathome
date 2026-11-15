@@ -5,7 +5,8 @@
 // public /v1/stats (project prove2me), which stays hidden until real numbers arrive.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { compact, counts, day, hhmm, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, shortSpan, outcomeLabel, p2m, plainTitle, qwenTokens, span, stateLabel, sumTokens, theoremURL, tokTitle } from '../../data/prove2me';
-import { detailProgress, detailProved, fromStatic, leafDetail, leafTokensText, taskTableHTML } from '../../data/prove2me-live';
+import { fromStatic, leafDetail, leafTokensText, taskTableHTML } from '../../data/prove2me-live';
+import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 import { taskTableHTML as allTasksHTML } from '../../data/task-table';
 import { mdLightHTML } from '../../data/prove2me-current';
 import { p2mTaskOptions } from '../../data/prove2me-tasks';
@@ -21,7 +22,10 @@ const pct = (x: number, n: number) => Math.round((100 * x) / n);
 // merges the same tasks into the queue's by id (the queue lacks the cache reads of tasks finished before 14 November).
 const curTasks = cur?.tasks ?? [];
 const details = Object.fromEntries((cur?.leaves ?? []).map((l) => [l.leaf, leafDetail(curTasks.filter((t) => t.leaf === l.leaf).map(fromStatic), l.outlines ?? [])]));
+// A leaf closed by reuse: the proved theorem its one-line proof imports (the leaf's line says so).
+const reuseOf: Record<string, string> = Object.fromEntries(p2m.submissions.filter((s) => s.kind === 'reuse' && s.reuses).map((s) => [s.theorem, s.reuses!.theorem]));
 const known = {
+	reuses: reuseOf,
 	trial: cur && cur.state !== 'preparing' ? `t${cur.trial}` : '',
 	order: cur?.leaves.map((l) => l.leaf) ?? [],
 	tasks: curTasks,
@@ -206,7 +210,9 @@ const leafCols = [
 		<ul data-now-leaves>
 			{cur && !preparing && cur.leaves.map((l) => {
 				const d = details[l.leaf];
-				const progress = d.rows.length ? (detailProved(d) ? 'proved' : detailProgress(d)) : leafProgress(l);
+				const plan = leafPlan(d, [], reuseOf[l.theorem]);
+				const progress = d.rows.length ? plan.summary : leafProgress(l);
+				const words = d.rows.length ? plan.summary : `${stateLabel[l.state] ?? l.state}${progress ? `: ${progress}` : ''}`;
 				return (
 					<li id={`leaf-${leafIds[l.theorem] ?? l.leaf}`} data-current-leaf={l.leaf} data-leaf-id={leafIds[l.theorem]} data-state={l.state}>
 						<span class="leaf">{leafIds[l.theorem] ?? l.leaf}</span>
@@ -221,11 +227,9 @@ const leafCols = [
 								</span>
 							)}
 						</span>
-						<span class:list={['state', `state-${l.state}`]} data-progress={progress}>
-							{stateLabel[l.state] ?? l.state}
-							{progress && `: ${progress}`}
-						</span>
-						<Fragment set:html={taskTableHTML(l.leaf, d)} />
+						<span class:list={['state', `state-${l.state}`]} data-progress={progress} data-leaf-summary>{words}</span>
+						<Fragment set:html={leafPlanHTML(l.leaf, plan)} />
+						<Fragment set:html={taskTableHTML(l.leaf, d, 'Every task')} />
 					</li>
 				);
 			})}
@@ -445,10 +449,17 @@ const leafCols = [
 				</div>
 				{tr.v5 && (
 					<div class="p2m-trial-tasks not-content" data-p2m-trial-tasks={tr.trial}>
-						<p class="caps">Each leaf’s tasks: every outline, hole, try and assembly, counted as in “Working on now”.</p>
-						{tr.leaves.filter((r) => r.tasks?.length).map((r) => (
-							<Fragment set:html={taskTableHTML(r.leaf, trialDetail(r), `${named(idOfTheorem(r.theorem), r.leaf)}: tasks`)} />
-						))}
+						<p class="caps">Each leaf’s outlines, newest first, with what became of every hole; under each, every task (outline, hole, try and assembly) with its counts, as in “Working on now”.</p>
+						{tr.leaves.filter((r) => r.tasks?.length).map((r) => {
+							const d = trialDetail(r);
+							return (
+								<div class="p2m-trial-leaf" data-trial-leaf={r.leaf}>
+									<p class="p2m-tleaf">{named(idOfTheorem(r.theorem), r.leaf)}</p>
+									<Fragment set:html={leafPlanHTML(r.leaf, leafPlan(d, [], reuseOf[r.theorem]), true)} />
+									<Fragment set:html={taskTableHTML(r.leaf, d, `${named(idOfTheorem(r.theorem), r.leaf)}: every task`)} />
+								</div>
+							);
+						})}
 					</div>
 				)}
 			</details>
@@ -484,12 +495,15 @@ const leafCols = [
 			trial 2 that the gateway’s personal-data filter cut off are not in the counts.
 		</li>
 		<li>
-			<strong>Working on now</strong> and trial 5’s task tables count every task of a leaf, each outline and each try included. Their
-			{' '}<strong>Qwen tokens</strong> are counted as above (everything read, cache re-reads included, and everything written);
-			{' '}<strong>computed</strong> tokens are the part the GPU worked through fresh: what it read without the cache, plus what it
-			wrote. Open a leaf’s tasks for each one’s result, steps, model minutes and tokens, and for each outline its holes
-			and what the quick pass of standard tactics closed. A running task’s steps and tokens show as the gateway counts them
-			where it can, else once the task ends.
+			<strong>Working on now</strong> and the trials from trial 5 show each leaf’s outlines, newest first. An outline is in progress,
+			refuted (one of its holes is false, or its shape was refused), proved (its holes put together passed our full check) or
+			abandoned for a new outline. Each hole is proved by its own task, false (the model disproved it), closed before any task
+			by the pre-pass of standard tactics, by our index of prove2me’s library (reuse) or by the ledger (proved before), or it is
+			running, queued, not tried or cancelled; the holes left in the outline’s file (“in place”) share one task. A leaf’s tokens
+			count every task, each outline and each try included: <strong>Qwen tokens</strong> as above (everything read, cache
+			re-reads included, and everything written), and <strong>computed</strong> tokens, the part the GPU worked through fresh
+			(what it read without the cache, plus what it wrote). Open “Every task” for each task’s result, steps, model minutes and
+			tokens. A running task’s steps and tokens show as the gateway counts them where it can, else once the task ends.
 		</li>
 		<li>
 			<strong>Small samples.</strong> {t.runs} runs in {trials.length} trials, each with a different scaffold, budget and set of leaves.
@@ -524,7 +538,8 @@ const leafCols = [
 </StarlightPage>
 
 <script>
-	import { detailProgress, leafTokensText, liveLeaves, stateLabel, taskTableHTML } from '../../data/prove2me-live';
+	import { leafTokensText, liveLeaves, taskTableHTML } from '../../data/prove2me-live';
+	import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 	import type { LiveLeaf, Outline, StaticTask } from '../../data/prove2me-live';
 	import { compareLeaves, leafFirstDir, type LeafKeys, type LeafSort, type LeafSortKey } from '../../data/prove2me-live';
 	import { attachTaskTable, type TaskTableRow } from '../../data/task-table';
@@ -545,6 +560,7 @@ const leafCols = [
 	// task list, on load and every minute. Both must answer with what they should; otherwise the build's copy stays.
 	const nowBox = document.querySelector<HTMLElement>('[data-p2m-now]');
 	type Known = {
+		reuses: Record<string, string>;
 		trial: string;
 		order: string[];
 		tasks: StaticTask[];
@@ -552,7 +568,7 @@ const leafCols = [
 		leaves: Record<string, { theorem: string; url: string; group: string; earlier: number[] }>;
 		theorems: Record<string, string>;
 	};
-	let known: Known = { trial: '', order: [], tasks: [], outlines: {}, leaves: {}, theorems: {} };
+	let known: Known = { reuses: {}, trial: '', order: [], tasks: [], outlines: {}, leaves: {}, theorems: {} };
 	try {
 		known = JSON.parse(document.querySelector('[data-p2m-known]')?.textContent || '{}') as Known;
 	} catch {}
@@ -624,12 +640,16 @@ const leafCols = [
 			meta.append(sub);
 		}
 		li.append(meta);
-		const progress = !live ? '' : live.proved ? 'proved' : detailProgress(live.detail);
-		const words = state === 'planned' ? 'Not started yet' : `${stateLabel[state] ?? state}${progress ? `: ${progress}` : ''}`;
+		// closed by reuse: the theorem the accepted proof imports (the document's, else the build's)
+		const reuseSub = doc.submissions.find((s) => s.leaf === l?.id && s.kind === 'reuse');
+		const reuse = reuseSub ? reuseSub.reuses?.theorem ?? known.reuses?.[theorem] ?? 'a theorem already proved on prove2me' : undefined;
+		const plan = live ? leafPlan(live.detail, l?.outlines ?? [], reuse) : null;
+		const words = state === 'planned' || !plan ? 'Not started yet' : plan.summary;
 		const st = el('span', `state state-${state}`, words);
-		st.dataset.progress = progress;
+		st.dataset.progress = plan?.summary ?? '';
+		st.dataset.leafSummary = '';
 		li.append(st);
-		if (live) li.insertAdjacentHTML('beforeend', taskTableHTML(alias, live.detail));
+		if (live && plan) li.insertAdjacentHTML('beforeend', leafPlanHTML(alias, plan) + taskTableHTML(alias, live.detail, 'Every task'));
 		return li;
 	};
 
@@ -897,8 +917,8 @@ const leafCols = [
 	:global(.p2m-now p) { margin: 0.5rem 0 0; }
 	:global(.p2m-now p[hidden]) { display: none; }
 	:global(.p2m-now .head) { margin: 0; font-weight: 600; color: var(--sl-color-white); }
-	:global(.p2m-now ul) { margin: 0.75rem 0 0; padding: 0; list-style: none; }
-	:global(.p2m-now li + li) { margin-top: 0.6rem; }
+	:global(.p2m-now [data-now-leaves]) { margin: 0.75rem 0 0; padding: 0; list-style: none; }
+	:global(.p2m-now [data-now-leaves] > li + li) { margin-top: 0.9rem; }
 	:global(.p2m-now li:target), :global(.p2m-now li.target) { outline: 2px solid var(--sl-color-accent); outline-offset: 0.3rem; border-radius: 0.2rem; }
 	:global(.p2m-now .leaf) { font: 700 0.9rem var(--font-mono, monospace); margin-right: 0.4rem; color: var(--sl-color-white); }
 	:global(.p2m-now .alias) { margin-right: 0.5rem; font-size: 0.8rem; color: var(--sl-color-gray-3); cursor: help; }
@@ -907,6 +927,26 @@ const leafCols = [
 	:global(.p2m-now .meta > span + span::before) { content: ' · '; }
 	:global(.p2m-now .state) { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
 	:global(.p2m-now .state-running) { color: var(--sl-color-accent-high); }
+	/* A leaf's outlines (prove2me-outlines.ts renders them as HTML): newest first, a heading line each, one row per hole. */
+	:global(.p2m-plan) { margin: 0.35rem 0 0; font-size: 0.85rem; }
+	:global(.p2m-plan .p2m-sum) { margin: 0 0 0.3rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	:global(.p2m-outline + .p2m-outline) { margin-top: 0.5rem; }
+	:global(.p2m-ohead) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.3rem; margin: 0; }
+	:global(.p2m-oname) { font-weight: 700; color: var(--sl-color-white); }
+	:global(.p2m-ostate::before) { content: '· '; color: var(--sl-color-gray-3); }
+	:global(.p2m-ostate) { color: var(--sl-color-gray-2); }
+	:global(.p2m-outline[data-outline-state='in_progress'] .p2m-ostate), :global(.p2m-outline[data-outline-state='writing'] .p2m-ostate), :global(.p2m-outline[data-outline-state='proved'] .p2m-ostate) { font-weight: 600; color: var(--sl-color-accent-high); }
+	:global(.p2m-ocost) { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-3); }
+	:global(.p2m-holes) { margin: 0.2rem 0 0; padding: 0 0 0 0.9rem; list-style: none; border-left: 2px solid var(--sl-color-gray-5); }
+	:global(.p2m-holes li) { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0 0.5rem; margin: 0; padding: 0.1rem 0; }
+	:global(.p2m-hname) { white-space: nowrap; color: var(--sl-color-gray-2); }
+	:global(.p2m-htext) { overflow-wrap: anywhere; color: var(--sl-color-gray-2); }
+	:global(.p2m-holes li[data-hole-state='running'] .p2m-htext), :global(.p2m-holes li[data-hole-state='proved'] .p2m-htext) { font-weight: 600; color: var(--sl-color-accent-high); }
+	:global(.p2m-holes li:is([data-hole-state='prepass'], [data-hole-state='index'], [data-hole-state='ledger']) .p2m-htext) { color: var(--sl-color-accent-high); }
+	:global(.p2m-holes li:is([data-hole-state='not_tried'], [data-hole-state='cancelled'], [data-hole-state='waiting'], [data-hole-state='queued']) .p2m-htext) { color: var(--sl-color-gray-3); }
+	:global(.p2m-holes li[data-hole-state='false'] .p2m-htext) { font-weight: 600; color: var(--sl-color-white); }
+	.p2m-trial-leaf { margin-top: 0.9rem; }
+	.p2m-tleaf { margin: 0; font: 700 0.85rem var(--font-mono, monospace); color: var(--sl-color-white); }
 	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks) { margin-top: 0.35rem; font-size: 0.85rem; }
 	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks > summary) { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
 	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks-wrap) { overflow-x: auto; margin-top: 0.4rem; }
