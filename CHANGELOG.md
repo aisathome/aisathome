@@ -9,6 +9,10 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Architecture overview and contributing guide.** `docs/architecture.md` (the components, how a
+  chat request and a science task flow, trust boundaries and what is public) and `CONTRIBUTING.md`
+  (dev setup, tests, pull requests, security reports); linked from the README and the site's docs
+  page. (docs)
 - **Live progress of running science tasks.** `GET /v1/tasks` and a project's public queue show,
   while a task runs, a `live` count of the model calls the gateway relayed for it (requests, prompt,
   cached and written tokens, model seconds), from the calls whose request names the task in
