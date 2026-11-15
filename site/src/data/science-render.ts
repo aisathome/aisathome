@@ -67,7 +67,7 @@ const status = (p: PR) =>
 		? `Merged ${shortDay(p.merged!)}`
 		: p.state === 'closed'
 			? closedByUs(p)
-				? 'Closed by us: paused at Tau Ceti’s request'
+				? 'Closed by us at Tau Ceti’s request'
 				: 'Closed, not merged'
 			: 'Open, in review';
 
@@ -171,7 +171,7 @@ function noPRStand(t: Pick<Task, 'task' | 'state'>, now: Now | null | undefined)
 				: ['queued', 'Queued again', runLabel(act.run)]
 		: t.state === 'failed'
 			? ['failed', 'Failed local checks', 'No pull request sent, not queued']
-			: ['checks-passed', 'Passed local checks', pause.paused ? 'Not sent: paused' : 'Waiting for internal review or to be sent'];
+			: ['checks-passed', 'Passed local checks', pause.paused ? 'Not sent: project finished' : 'Waiting for internal review or to be sent'];
 }
 
 function taskRow(t: Task, now: Now | null | undefined, k: SortKeys) {
@@ -313,7 +313,7 @@ passed every local check (build and lints) before anything was sent.</span>`
 	const tok = `${s.qwenTokens !== null ? `: ${compact(s.qwenTokens)} in all` : ''}${s.qwenOutputTokens !== null ? `, of which ${compact(s.qwenOutputTokens)} written` : ''}${
 		s.attemptsWithoutTokens > 0 ? ` (the tokens of ${plural(s.attemptsWithoutTokens, 'early attempt')} were not recorded)` : ''
 	}`;
-	const json = s.livePath;
+	const json = s.dataPath;
 	return `<h2 id="how-to-read-this">How to read this</h2>
 <ul>
 <li><strong>Tau Ceti’s review is the judge.</strong> A pull request counts as merged only when Tau Ceti merged it (its merge bot closes a
@@ -330,7 +330,7 @@ not reviewed yet are left out of that count.</li>
 <li><strong>These are our own measurements,</strong> from the records of each run, not estimates. The model runs on the AIs@home
 network, which today is mostly the maintainer’s own GPUs, some of them rented.</li>
 <li>${s.asOf ? `Pull request states as of <time datetime="${isoDay(s.asOf)}" data-science-asof>${dayLabel(s.asOf)}</time>. ` : ''}The data is
-rebuilt once a day and published as JSON: <a href="${json}" data-science-json><code>${json}</code></a>.</li>
+final and published as JSON: <a href="${json}" data-science-json><code>${json}</code></a>.</li>
 </ul>`;
 }
 

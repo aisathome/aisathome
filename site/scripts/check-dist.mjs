@@ -89,13 +89,15 @@ else {
 	if (home.join() !== listed.slice(0, 3).join()) errors.push(`index.html: the dev log section (${home}) is not the newest posts (${listed.slice(0, 3)})`);
 }
 
-// Science (/science/tauceti/): the data the build renders holds public fields only (the research
-// ledger it comes from has internal notes), and the page and the home page agree with it. It is
-// not served: a copy published here stayed at its export date while the page moved on.
+// Science (/science/tauceti/, a finished project): the data the build renders holds public fields
+// only (the research ledger it comes from has internal notes), the page and the home page agree with
+// it, and it is published as it is committed, at /science/tauceti.json (the gateway no longer has it).
 const sciFile = new URL('../src/data/science/tauceti.json', import.meta.url);
-if (existsSync(join(dist, 'science', 'tauceti.json'))) errors.push('science/tauceti.json: published; the data lives at /v1/projects/tauceti/science');
 if (!existsSync(sciFile)) errors.push('src/data/science/tauceti.json: missing');
-else {
+else if (!existsSync(join(dist, 'science', 'tauceti.json'))) errors.push('science/tauceti.json: not published');
+else if (JSON.stringify(JSON.parse(readFileSync(join(dist, 'science', 'tauceti.json'), 'utf8'))) !== JSON.stringify(JSON.parse(readFileSync(sciFile, 'utf8'))))
+	errors.push('science/tauceti.json: the published data differs from src/data/science/tauceti.json');
+if (existsSync(sciFile)) {
 	const sci = JSON.parse(readFileSync(sciFile, 'utf8'));
 	const allowed = {
 		top: ['project', 'project_url', 'repository', 'model', 'generated_at', 'states_as_of', 'methodology', 'type_labels', 'totals', 'project_progress', 'prs',

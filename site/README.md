@@ -39,16 +39,13 @@ the trial records, public fields only), which stays the history and the fallback
 (`/v1/projects/prove2me/queue`, on load and every minute; `src/data/prove2me-live.ts`), and the
 build's list stays when that fails.
 
-Science (`/science/tauceti/`, data at `/v1/projects/tauceti/science`): built from
-`src/data/science/tauceti.json`, exported from our run records by an export script in the
-research notes (public fields only) and committed here. That is the fallback: in the browser the
-page loads the gateway's `/v1/projects/tauceti/science` (the runner rebuilds and posts it once a
-day, plus "working on now" from its status) and renders it in place of the build's, with the same
-code (`src/data/science-insights.ts`, numbers from `science-stats.ts`; `science-model.ts` holds the shape, so the browser's bundle
-has no data). Its styles are global (`.sci-` prefix) because the rendered HTML is not part of the
-template.
+Science (`/science/tauceti/`, data at `/science/tauceti.json`): a finished project (2026-11-15).
+Built from `src/data/science/tauceti.json`, the final data (public fields only, frozen from the
+gateway's last daily export), with `src/data/science-insights.ts` (numbers from `science-stats.ts`;
+`science-model.ts` holds the shape); nothing is loaded live, and `src/pages/science/tauceti.json.ts`
+publishes the same file. Its styles are global (`.sci-` prefix) because the rendered HTML is not
+part of the template.
 `npm run check` fails if the JSON gains a field outside the public list. The home page's science
-section and the chart are left out while nothing is merged; in the browser the home page's merged
-count reads the same gateway data when it is newer than the build's. Who closed a pull request is
-not in the data: the ones we closed when Tau Ceti asked for a pause are listed in
+section and the chart are left out while nothing is merged. Who closed a pull request is not in the
+data: the ones we closed when Tau Ceti asked us to stop are listed in
 `science-render.ts` (`pause`), which also says that tasks that passed their checks are not sent.

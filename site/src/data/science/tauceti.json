@@ -3,9 +3,9 @@
  "project_url": "https://taucetiproject.org/",
  "repository": "https://github.com/TauCetiProject/TauCeti",
  "model": "Qwen3.8 27B",
- "generated_at": "2026-11-11T19:54:03Z",
- "states_as_of": "2026-11-11",
- "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network, and every task whose attempts have not led to one. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. Review rounds quote Tau Ceti's review verbatim. These are our own measurements; PR states as of 2026-11-11.",
+ "generated_at": "2026-11-13T19:13:49Z",
+ "states_as_of": "2026-11-13",
+ "methodology": "Every pull request that Qwen3.8 27B, an open-weight model, opened on Tau Ceti while running on the AIs@home network, and every task whose attempts have not led to one. Tau Ceti's own review is the judge: a PR is merged only when Tau Ceti merged it. Failed attempts and closed PRs are counted. An attempt is one run of the model on one task; a fix round is a revision pushed after review. A PR's tokens and GPU minutes cover every attempt at its task, failed ones and fix rounds included. GPU hours are the time the model was working, summed over every attempt. Qwen tokens are prompt (including tokens re-read from the cache) plus output tokens. Review rounds quote Tau Ceti's review verbatim. These are our own measurements; PR states as of 2026-11-13.",
  "type_labels": {
   "DOC": "Docstring cleanup",
   "GEN": "Generalisation",
@@ -1711,11 +1711,11 @@
   }
  ],
  "project_progress": {
-  "as_of": "2026-11-11T19:49:48Z",
+  "as_of": "2026-11-13T19:08:58Z",
   "window_days": 30,
-  "merged_prs": 19696,
-  "merged_pr_authors": 54,
-  "roadmaps_active": 188,
+  "merged_prs": 20602,
+  "merged_pr_authors": 55,
+  "roadmaps_active": 193,
   "roadmaps_completed": 30
  }
 }

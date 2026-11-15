@@ -1,5 +1,5 @@
 // The science data's shape and formatting (no data here, so the browser's bundle stays small):
-// normalize() turns the committed JSON or the gateway's live JSON into what the page renders.
+// normalize() turns the committed JSON (the final data of a finished project) into what the page renders.
 export type Size = 'easy' | 'medium' | 'hard';
 
 export type Change = { rubric: string; verdict: string; reason: string; url: string };
@@ -311,7 +311,7 @@ export function normalize(d: any) {
 		generatedAt: date(d?.generated_at),
 		progress: progress(d?.project_progress),
 		now,
-		livePath: '/v1/projects/tauceti/science',
+		dataPath: '/science/tauceti.json',
 		pagePath: '/science/tauceti/',
 	};
 }

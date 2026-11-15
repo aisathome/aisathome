@@ -1,10 +1,9 @@
 ---
 // Science: the model's pull requests to Tau Ceti (taucetiproject.org), with every attempt
-// counted. The build renders src/data/science/tauceti.json (the page works without JavaScript);
-// the browser then loads the gateway's daily data (GET /v1/projects/tauceti/science, rebuilt by
-// the runner from its records and Tau Ceti's public reviews) and renders it with the same code
-// (src/data/science-insights.ts) in its place, adding "Working on now". Styles are global
-// (prefixed .sci-) because the rendered HTML is not part of this template.
+// counted. A finished project (2026-11-15): the build renders src/data/science/tauceti.json, the
+// final data (also published as /science/tauceti.json), and nothing is loaded live. The script
+// below only sorts, filters and shows the charts' tips. Styles are global (prefixed .sci-) because
+// the rendered HTML is not part of this template.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { Aside } from '@astrojs/starlight/components';
 import { science as s } from '../../data/science';
@@ -26,14 +25,13 @@ const tauceti = {
 	}}
 	headings={[
 		{ depth: 2, slug: 'insights', text: 'Results by type' },
-		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
 		{ depth: 2, slug: 'every-pr', text: 'Pull requests' },
 		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
 	]}
 >
-	<Aside type="danger" title="Paused since 7 November 2026">
-		At the request of Tau Ceti’s maintainers, we have stopped sending pull requests written by {s.model} to Tau Ceti for now.
-		We closed the ones still open. The record below stays as it was.
+	<Aside type="note" title="A finished project">
+		Tau Ceti is a finished project for AIs@home. At the request of Tau Ceti’s maintainers, we stopped sending pull requests
+		written by {s.model} on 7 November 2026 and closed the ones still open. The record below is final.
 	</Aside>
 	<p>
 		{s.model}, an open-weight model on the AIs@home network, sent pull requests to <a href={s.projectURL}>Tau Ceti</a>, a library of
@@ -47,14 +45,11 @@ const tauceti = {
 </StarlightPage>
 
 <script>
-	// The gateway's data (the runner rebuilds it daily), rendered like the build's: it replaces
-	// what is shown only when it is newer (the build's data may be newer when the runner has
-	// stopped posting). "Working on now" (with the queue) and the "N h ago" times refresh every
-	// minute while the page is visible, also over the build's data. Any failure keeps what is
-	// shown (the build's page without it).
-	import { ago, normalize } from '../../data/science-model';
-	import { compareRows, defaultSort, firstDir, noPRStatus, nowSection, statusRank, type Sort, type SortKey, type SortKeys } from '../../data/science-render';
-	import { compareScore, renderScience, scoreFirstDir, type ScoreKey, type ScoreKeys, type ScoreSort } from '../../data/science-insights';
+	// The final data is the build's: nothing is loaded. Sorting, filters, the charts' tips and the
+	// "N h ago" times work over what the build rendered.
+	import { ago } from '../../data/science-model';
+	import { compareRows, defaultSort, firstDir, statusRank, type Sort, type SortKey, type SortKeys } from '../../data/science-render';
+	import { compareScore, scoreFirstDir, type ScoreKey, type ScoreKeys, type ScoreSort } from '../../data/science-insights';
 
 	const root = document.querySelector<HTMLElement>('[data-science-root]');
 
@@ -167,63 +162,10 @@ const tauceti = {
 			const d = new Date(el.dataset.ago ?? '');
 			if (!Number.isNaN(d.getTime())) el.textContent = ago(d, new Date());
 		});
-	// When the data shown was generated: the build's at first, then the newest the gateway gave.
-	const shownAt = () => Date.parse(root?.dataset.generated ?? '') || 0;
-	const showNow = (html: string) => {
-		if (!root) return;
-		const fresh = document.createRange().createContextualFragment(html);
-		const old = root.querySelector('[data-science-now]');
-		if (old) old.replaceWith(fresh);
-		else root.insertBefore(fresh, root.querySelector('#every-pr')); // where renderScience puts it; null appends
-		root.dataset.now = 'live';
-	};
-	const load = async () => {
-		if (!root || !window.fetch) return;
-		try {
-			const ctl = new AbortController();
-			const timer = setTimeout(() => ctl.abort(), 8000);
-			const res = await fetch('/v1/projects/tauceti/science', { signal: ctl.signal, headers: { accept: 'application/json' } });
-			clearTimeout(timer);
-			if (!res.ok) return;
-			const s = normalize(await res.json());
-			if (!s.generatedAt || (!s.prs.length && !s.tasks.length)) return;
-			const at = new Date();
-			if (+s.generatedAt > shownAt()) {
-				// newer daily data (or the first load of data newer than the build's): render it
-				// all; the open review rounds close
-				const open = root.querySelector<HTMLDetailsElement>('[data-science-list]')?.open;
-				root.innerHTML = renderScience(s, at);
-				const list = root.querySelector<HTMLDetailsElement>('[data-science-list]');
-				if (list && open) list.open = true;
-				root.dataset.source = 'live';
-				root.dataset.generated = s.generatedAt.toISOString();
-				root.dataset.now = 'live';
-			} else {
-				// the same or older data: refresh only "Working on now" and where the tasks without
-				// a PR stand, so what is shown (and its open review rounds) stays
-				showNow(nowSection(s.now, at));
-				for (const row of root.querySelectorAll<HTMLElement>('tr[data-task-id]')) {
-					// the row's own state: this data may be older than what is shown; only `now` is news
-					const cell = row.querySelector('.status');
-					const state = row.dataset.state === 'failed' ? 'failed' : 'checks-passed';
-					if (cell) cell.innerHTML = noPRStatus({ task: row.dataset.taskId ?? '', state }, s.now);
-				}
-			}
-		} catch {
-			// keep what is shown
-		} finally {
-			tick();
-			applyScoreSort();
-			applySort();
-			applyFilters();
-		}
-	};
 	tick();
 	applyScoreSort();
 	applySort();
 	applyFilters();
-	load();
-	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>
 
 <style is:global>
