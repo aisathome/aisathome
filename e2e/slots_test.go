@@ -210,7 +210,7 @@ func readFirstChunk(t *testing.T, r *rig, body string) *http.Response {
 
 // A cancelled request keeps its node's slot until the node's engine has let go of it: the
 // next request goes to another free node, or waits, but never queues behind the cancelled one
-// in the engine (TauCeti review test, 2026-10-15: 502s after the 300 s first-chunk timeout).
+// in the engine (a science review test, 2026-10-15: 502s after the 300 s first-chunk timeout).
 func TestCancelledSlotWaitsForTheEngine(t *testing.T) {
 	stream := `{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	const linger = 1500 * time.Millisecond

@@ -1,5 +1,6 @@
-// The science task coordinator (decision 0015, phase 1): a project's tools submit tasks to the
-// gateway, workers claim them with leases and report results, and the admins can read the queue.
+// The science task coordinator (decision 0015, phase 1; decision 0019): a project's tools submit
+// tasks to the gateway, workers claim them by kind with leases and report results, the admins can
+// read the queue, and the public reads the public fields of the projects that publish theirs.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e
@@ -32,34 +33,34 @@ func taskCall(t *testing.T, a *acctRig, method, path, key string, body any) (int
 	return resp.StatusCode, out
 }
 
-// Four workers claim at once: every task is leased exactly once; a fix round goes first;
-// a worker completes with a diff, the result is in the gateway, and only the project key or an
-// admin's session can read it.
+// Four workers claim at once: every task is leased exactly once; a task with a lower order goes
+// first; a worker completes with a result, the result is in the gateway, and only the project key or
+// an admin's session can read it.
 func TestTaskCoordinatorFlow(t *testing.T) {
 	a := newAcctRigWith(t, 100, nil, withProjects)
-	const path = "/v1/projects/tauceti/tasks"
+	const path = "/v1/projects/sciproj/tasks"
 	for i := 0; i < 20; i++ {
-		kind := "attempt"
+		order := 0
 		if i%5 == 4 {
-			kind = "fix_round"
+			order = -1
 		}
-		task := map[string]any{"id": fmt.Sprintf("T3-X-%d.a-A", i), "kind": kind, "created_by": "owner",
-			"spec": map[string]any{"attempt": fmt.Sprintf("T3-X-%d.a-A", i)}}
+		task := map[string]any{"id": fmt.Sprintf("T3-X-%d.a-A", i), "kind": "p2m-v7", "created_by": "owner", "order": order,
+			"spec": map[string]any{"task": fmt.Sprintf("T3-X-%d.a-A", i)}}
 		if code, out := taskCall(t, a, "POST", path, projectKey, task); code != 201 {
 			t.Fatalf("create %d: HTTP %d %v", i, code, out)
 		}
 	}
-	if code, _ := taskCall(t, a, "POST", "/v1/projects/unlimited/tasks", unlimitedKey, map[string]any{"id": "x", "kind": "attempt", "created_by": "o", "spec": map[string]any{}}); code != 201 {
+	if code, _ := taskCall(t, a, "POST", "/v1/projects/unlimited/tasks", unlimitedKey, map[string]any{"id": "x", "kind": "other", "created_by": "o", "spec": map[string]any{}}); code != 201 {
 		t.Fatalf("the other project's own queue: HTTP %d", code)
 	}
 	if code, _ := taskCall(t, a, "POST", path+"/claim", unlimitedKey, map[string]any{"worker": "w"}); code != 403 {
 		t.Fatalf("another project's key claimed: HTTP %d", code)
 	}
 
-	// The first claim takes the oldest fix round, though 4 attempts are older.
+	// The first claim takes the oldest task of the lowest order, though 4 tasks are older.
 	code, out := taskCall(t, a, "POST", path+"/claim", projectKey, map[string]any{"worker": "runner-9"})
 	if code != 200 || out["task"].(map[string]any)["id"] != "T3-X-4.a-A" {
-		t.Fatalf("first claim: HTTP %d %v, want the fix round T3-X-4.a-A", code, out)
+		t.Fatalf("first claim: HTTP %d %v, want T3-X-4.a-A (order -1)", code, out)
 	}
 	var mu sync.Mutex
 	claimed := map[string]int{"T3-X-4.a-A": 1}
@@ -101,23 +102,22 @@ func TestTaskCoordinatorFlow(t *testing.T) {
 		}
 	}
 
-	// A fix round: claim, heartbeat, complete with a result.
-	code, out = taskCall(t, a, "POST", path, projectKey, map[string]any{"id": "T3-Y.a-F1", "kind": "fix_round", "created_by": "owner",
-		"pr": 21144, "base_ref": "a57def6", "spec": map[string]any{"attempt": "T3-Y.a-F1", "findings": []any{"rename the namespace"}}})
+	// One more task: claim, heartbeat, complete with a result.
+	code, out = taskCall(t, a, "POST", path, projectKey, map[string]any{"id": "T3-Y.a-F1", "kind": "p2m-v7", "created_by": "owner",
+		"spec": map[string]any{"task": "T3-Y.a-F1", "findings": []any{"rename the namespace"}}})
 	if code != 201 {
-		t.Fatalf("create the fix round: HTTP %d %v", code, out)
+		t.Fatalf("create: HTTP %d %v", code, out)
 	}
 	code, out = taskCall(t, a, "POST", path+"/claim", projectKey, map[string]any{"worker": "runner-0"})
 	lease := out["lease"].(map[string]any)["id"].(string)
 	if code != 200 || out["task"].(map[string]any)["id"] != "T3-Y.a-F1" {
-		t.Fatalf("claim the fix round: HTTP %d %v", code, out)
+		t.Fatalf("claim: HTTP %d %v", code, out)
 	}
 	if code, out := taskCall(t, a, "POST", path+"/T3-Y.a-F1/heartbeat", projectKey, map[string]any{"worker": "runner-0", "lease": lease}); code != 200 {
 		t.Fatalf("heartbeat: HTTP %d %v", code, out)
 	}
-	result := map[string]any{"outcome": "candidate", "checks_passed": true, "diff": "--- a/TauCeti/Y.lean\n+++ b/TauCeti/Y.lean\n",
-		"pr_body": "Renames the namespace.", "commit_msg": "fix: rename", "steps": 31, "prompt_tokens": 900000,
-		"completion_tokens": 21000, "model_min": 22.5, "awake_min": 40, "raw_ref": "raw/2026-10-27/T3-Y.a-F1"}
+	result := map[string]any{"outcome": "proved", "checks_passed": true, "score": map[string]any{"note": "score-private-7c1"},
+		"steps": 31, "prompt_tokens": 900000, "completion_tokens": 21000, "model_min": 22.5, "awake_min": 40, "raw_ref": "raw/2026-10-27/T3-Y.a-F1"}
 	if code, out := taskCall(t, a, "POST", path+"/T3-Y.a-F1/complete", projectKey, map[string]any{"worker": "runner-0", "lease": lease, "result": result}); code != 200 || out["state"] != "done" {
 		t.Fatalf("complete: HTTP %d %v", code, out)
 	}
@@ -125,11 +125,11 @@ func TestTaskCoordinatorFlow(t *testing.T) {
 	admin, _ := a.signIn(t, 1) // gh:1 is in accounts.admins
 	user, _ := a.signIn(t, 2)
 	resp, page := a.get(t, path+"/T3-Y.a-F1", admin)
-	if resp.StatusCode != 200 || !strings.Contains(page, "+++ b/TauCeti/Y.lean") || strings.Contains(page, lease) {
+	if resp.StatusCode != 200 || !strings.Contains(page, "score-private-7c1") || strings.Contains(page, lease) {
 		t.Fatalf("admin reads the task: HTTP %d %s", resp.StatusCode, page)
 	}
 	resp, page = a.get(t, path+"?state=done", admin)
-	if resp.StatusCode != 200 || !strings.Contains(page, "T3-Y.a-F1") || strings.Contains(page, "+++ b") {
+	if resp.StatusCode != 200 || !strings.Contains(page, "T3-Y.a-F1") || strings.Contains(page, "score-private-7c1") {
 		t.Fatalf("admin list: HTTP %d %s", resp.StatusCode, page)
 	}
 	for name, s := range map[string]string{"signed out": "", "not an admin": user} {
@@ -144,22 +144,23 @@ func TestTaskCoordinatorFlow(t *testing.T) {
 	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 401 {
 		t.Fatalf("admin session cancels: %v %v", err, resp.StatusCode)
 	}
-	// The public science endpoint does not list tasks.
-	if resp, page := a.get(t, "/v1/projects/tauceti/science", ""); strings.Contains(page, "T3-Y") {
-		t.Fatalf("public science shows a task: HTTP %d", resp.StatusCode)
+	// A project without public_queue is in no public view.
+	for _, p := range []string{"/v1/projects/sciproj/queue", "/v1/tasks", "/v1/projects/sciproj/science"} {
+		if resp, page := a.get(t, p, ""); strings.Contains(page, "T3-Y") {
+			t.Fatalf("%s shows a task: HTTP %d", p, resp.StatusCode)
+		}
 	}
 }
 
 // Phases 2 and 3 (decision 0015): a runner gives its task back on a spot stop and takes it back
-// by id to resume from its checkpoint, while a second runner gets other work; the result, the
-// internal review's verdict, the owner's decision and the export marker are stored; the admins
-// see the queue on /account/ops, nobody else.
-func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
+// by id to resume from its checkpoint, while a second runner gets other work; the result, what
+// closed it and the export marker are stored; the admins see the queue on /account/ops, nobody else.
+func TestTaskCoordinatorLeasesExport(t *testing.T) {
 	a := newAcctRigWith(t, 100, nil, withProjects)
-	const path = "/v1/projects/tauceti/tasks"
+	const path = "/v1/projects/sciproj/tasks"
 	for _, task := range []map[string]any{
-		{"id": "T5-A.a-A", "kind": "attempt", "created_by": "owner", "spec": map[string]any{"attempt": "T5-A.a-A"}},
-		{"id": "T5-B.a-F1", "kind": "fix_round", "created_by": "owner", "pr": 22500, "spec": map[string]any{"attempt": "T5-B.a-F1"}},
+		{"id": "T5-A.a-A", "kind": "p2m-v7", "created_by": "owner", "spec": map[string]any{"task": "T5-A.a-A"}},
+		{"id": "T5-B.a-F1", "kind": "p2m-v7", "created_by": "owner", "order": -1, "role": "hole", "spec": map[string]any{"task": "T5-B.a-F1"}},
 	} {
 		if code, out := taskCall(t, a, "POST", path, projectKey, task); code != 201 {
 			t.Fatalf("create: HTTP %d %v", code, out)
@@ -179,7 +180,7 @@ func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
 	}
 	_, id, lease := claim("runner-a", "")
 	if id != "T5-B.a-F1" {
-		t.Fatalf("first claim %q, want the fix round", id)
+		t.Fatalf("first claim %q, want T5-B.a-F1 (order -1)", id)
 	}
 	// A spot stop: the runner gives the task back; the other runner does not get it (held for
 	// the runner with the checkpoint) but the next task; runner-a takes its task back by id.
@@ -196,20 +197,14 @@ func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
 	if code != 200 || id != "T5-B.a-F1" {
 		t.Fatalf("runner-a takes its task back: HTTP %d %q", code, id)
 	}
-	result := map[string]any{"outcome": "passes every local CI check", "checks_passed": true, "diff": "--- a/TauCeti/B.lean\n+++ b/TauCeti/B.lean\n",
-		"pr_body": "Renames.", "commit_msg": "fix: rename", "steps": 20, "prompt_tokens": 500000, "completion_tokens": 9000,
+	result := map[string]any{"outcome": "closed", "checks_passed": true, "steps": 20, "prompt_tokens": 500000, "completion_tokens": 9000,
 		"model_min": 12.5, "awake_min": 30, "raw_ref": "raw/2026-10-29/T5-B.a-F1", "score": map[string]any{"ledger_attempt": map[string]any{"attempt": "T5-B.a-F1"}}}
-	if code, out := taskCall(t, a, "POST", path+"/"+id+"/complete", projectKey, map[string]any{"worker": "runner-a", "lease": lease, "result": result}); code != 200 {
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/complete", unlimitedKey, map[string]any{"worker": "runner-a", "lease": lease, "result": result}); code != 403 {
+		t.Fatalf("complete with another project's key: HTTP %d %v", code, out)
+	}
+	if code, out := taskCall(t, a, "POST", path+"/"+id+"/complete", projectKey, map[string]any{"worker": "runner-a", "lease": lease, "result": result,
+		"closed_by": "reuse:formalpedia:Nat.sum_range"}); code != 200 {
 		t.Fatalf("complete: HTTP %d %v", code, out)
-	}
-	if code, out := taskCall(t, a, "POST", path+"/"+id+"/review", projectKey, map[string]any{"verdict": "red", "by": "owner-codex", "round": 1, "findings": 2, "summary": "2 findings"}); code != 200 {
-		t.Fatalf("review: HTTP %d %v", code, out)
-	}
-	if code, out := taskCall(t, a, "POST", path+"/"+id+"/review", unlimitedKey, map[string]any{"verdict": "green", "by": "x"}); code != 403 {
-		t.Fatalf("review with another project's key: HTTP %d %v", code, out)
-	}
-	if code, out := taskCall(t, a, "POST", path+"/"+id+"/decide", projectKey, map[string]any{"decision": "rejected", "by": "owner", "note": "fix round next"}); code != 200 {
-		t.Fatalf("decide: HTTP %d %v", code, out)
 	}
 	_, out := taskCall(t, a, "GET", path+"?exported=false", projectKey, nil)
 	ts := out["tasks"].([]any)
@@ -226,143 +221,17 @@ func TestTaskCoordinatorLeasesReviewExport(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("ops: HTTP %d", resp.StatusCode)
 	}
-	for _, want := range []string{`id="tasks"`, `data-task="T5-B.a-F1"`, "red (owner-codex)", "rejected", "exported",
-		`data-task="T5-A.a-A"`, "<code>runner-b</code>", "1 leased, 1 done"} {
+	for _, want := range []string{`id="tasks"`, `data-task="T5-B.a-F1"`, "<code>reuse:formalpedia:Nat.sum_range</code>", "exported",
+		`<span class="mut small">hole</span>`, `data-task="T5-A.a-A"`, "<code>runner-b</code>", "1 leased, 1 done"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("ops page lacks %q", want)
 		}
 	}
-	if strings.Contains(page, "+++ b/TauCeti/B.lean") || strings.Contains(page, lease) {
-		t.Error("the ops page shows a diff or a lease id")
+	if strings.Contains(page, "ledger_attempt") || strings.Contains(page, lease) {
+		t.Error("the ops page shows a score or a lease id")
 	}
 	if _, page := a.get(t, "/account/ops", user); strings.Contains(page, "T5-B") {
 		t.Error("a normal account sees the queue")
-	}
-}
-
-// The review loop through the real server: a passing candidate gets its review from the gateway,
-// behind fixes and before first attempts; two runners working the queue never hold one task; a spot
-// stop keeps the review's try; red schedules a fix round at class 3, the limit stops at the
-// operator, and the ops card shows it. Nothing here opens a PR: there is no way to.
-func TestTaskReviewLoopFlow(t *testing.T) {
-	a := newAcctRigWith(t, 100, nil, func(c *gateway.Config) {
-		withProjects(c)
-		c.Projects[0].ReviewLoop, c.Projects[0].MaxReviewRounds = true, 1
-	})
-	const path = "/v1/projects/tauceti/tasks"
-	create := func(task map[string]any) {
-		t.Helper()
-		task["created_by"] = "owner"
-		if task["spec"] == nil {
-			task["spec"] = map[string]any{"attempt": task["id"]}
-		}
-		if code, out := taskCall(t, a, "POST", path, projectKey, task); code != 201 {
-			t.Fatalf("create %v: HTTP %d %v", task["id"], code, out)
-		}
-	}
-	claim := func(worker, task string) (int, string, string) {
-		t.Helper()
-		body := map[string]any{"worker": worker}
-		if task != "" {
-			body["task"] = task
-		}
-		code, out := taskCall(t, a, "POST", path+"/claim", projectKey, body)
-		if code != 200 {
-			return code, "", ""
-		}
-		return code, out["task"].(map[string]any)["id"].(string), out["lease"].(map[string]any)["id"].(string)
-	}
-	complete := func(worker, id, lease string, result map[string]any) {
-		t.Helper()
-		if code, out := taskCall(t, a, "POST", path+"/"+id+"/complete", projectKey, map[string]any{"worker": worker, "lease": lease, "result": result}); code != 200 {
-			t.Fatalf("complete %s: HTTP %d %v", id, code, out)
-		}
-	}
-	get := func(id string) (map[string]any, map[string]any) {
-		t.Helper()
-		_, out := taskCall(t, a, "GET", path+"/"+id, projectKey, nil)
-		task, _ := out["task"].(map[string]any)
-		ch, _ := out["chain"].(map[string]any)
-		return task, ch
-	}
-	passed := map[string]any{"outcome": "passes every local CI check", "checks_passed": true, "diff": "--- a/X.lean\n+++ b/X.lean\n", "model_min": 20}
-	create(map[string]any{"id": "T6-C.a-A", "kind": "attempt"})
-	_, id, lease := claim("runner-a", "")
-	complete("runner-a", id, lease, passed)
-
-	create(map[string]any{"id": "T6-D.a-A", "kind": "attempt"})
-	create(map[string]any{"id": "T6-E.a-P1", "kind": "fix_round", "findings_source": "prereview-qwen"})
-	create(map[string]any{"id": "T6-F.a-P1", "kind": "fix_round", "findings_source": "prereview"})
-	create(map[string]any{"id": "T6-G.a-F1", "kind": "fix_round", "findings_source": "review", "pr": 22600})
-
-	// Two runners at once: each task goes to one of them.
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	claimed, leases := map[string]string{}, map[string]string{}
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(w string) {
-			defer wg.Done()
-			_, got, l := claim(w, "")
-			if got == "" {
-				return
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			if prev, dup := claimed[got]; dup {
-				t.Errorf("%s claimed by %s and %s", got, prev, w)
-			}
-			claimed[got], leases[got] = w, l
-		}([]string{"runner-a", "runner-b"}[i%2])
-	}
-	wg.Wait()
-	const rv = "T6-C.a-A.review"
-	if len(claimed) != 5 || claimed[rv] == "" {
-		t.Fatalf("claimed %v", claimed)
-	}
-	// A spot stop: the review is given back and taken back on the same try.
-	w := claimed[rv]
-	if code, out := taskCall(t, a, "POST", path+"/"+rv+"/fail", projectKey, map[string]any{"worker": w, "lease": leases[rv], "requeue": true, "reason": "runner stop: spot"}); code != 200 || out["tries"] != float64(1) {
-		t.Fatalf("give back: HTTP %d %v", code, out)
-	}
-	code, _, lease := claim(w, rv)
-	if code != 200 {
-		t.Fatalf("take back: HTTP %d", code)
-	}
-	if tk, _ := get(rv); tk["tries"] != float64(1) || tk["interruptions"] != float64(1) || tk["class"] != float64(4) || tk["created_by"] != "gateway" {
-		t.Fatalf("after the take-back: %v", tk)
-	}
-	red := map[string]any{"verdict": "red", "by": "qwen-judge", "judge": "qwen", "findings": 1, "summary": "naming"}
-	fix := func(id string) map[string]any {
-		return map[string]any{"id": id, "kind": "fix_round", "findings_source": "prereview-qwen", "created_by": "runner", "spec": map[string]any{"attempt": id}}
-	}
-	complete(w, rv, lease, map[string]any{"outcome": "qwen review: findings", "model_min": 22.5, "completion_tokens": 4000, "review": red, "fix": fix("T6-C.a-P1")})
-	parent, _ := get("T6-C.a-A")
-	if parent["stage"] != "fix-scheduled" || parent["qwen_review"].(map[string]any)["verdict"] != "red" || parent["review"] != nil {
-		t.Fatalf("parent: %v", parent)
-	}
-	round, ch := get("T6-C.a-P1")
-	if round["class"] != float64(3) || round["created_by"] != "gateway" || ch["auto_rounds"] != float64(1) {
-		t.Fatalf("the round: %v, chain %v", round, ch)
-	}
-	// The round passes, and red again is the limit (1 here): the operator's.
-	_, _, lease = claim("runner-b", "T6-C.a-P1")
-	complete("runner-b", "T6-C.a-P1", lease, passed)
-	_, _, lease = claim("runner-b", "T6-C.a-P1.review")
-	complete("runner-b", "T6-C.a-P1.review", lease, map[string]any{"outcome": "qwen review: findings", "review": red, "fix": fix("T6-C.a-P2")})
-	if tk, _ := get("T6-C.a-P2"); tk != nil {
-		t.Fatalf("a round past the limit: %v", tk)
-	}
-	cand, ch := get("T6-C.a-P1")
-	if cand["stage"] != "needs-operator" || ch["reviews"] != float64(2) || ch["auto_rounds"] != float64(1) {
-		t.Fatalf("at the limit: %v, chain %v", cand, ch)
-	}
-	admin, _ := a.signIn(t, 1)
-	_, page := a.get(t, "/account/ops", admin)
-	for _, want := range []string{"qwen red (qwen-judge)", `data-task="T6-C.a-P1.review"`, "needs-operator: 2 reviews, 1 of 1 rounds", "limit of 1"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("ops page lacks %q", want)
-		}
 	}
 }
 
@@ -377,10 +246,10 @@ func TestTaskInterruptionsKeepTries(t *testing.T) {
 		withProjects(c)
 		c.TasksNow = clk.Now
 	})
-	const path = "/v1/projects/tauceti/tasks"
+	const path = "/v1/projects/sciproj/tasks"
 	for _, id := range []string{"T5-NS-2.a-A", "T5-NS-3.a-A"} {
-		if code, out := taskCall(t, a, "POST", path, projectKey, map[string]any{"id": id, "kind": "attempt", "created_by": "migration",
-			"max_tries": 3, "spec": map[string]any{"attempt": id}}); code != 201 {
+		if code, out := taskCall(t, a, "POST", path, projectKey, map[string]any{"id": id, "kind": "p2m-v7", "created_by": "migration",
+			"max_tries": 3, "spec": map[string]any{"task": id}}); code != 201 {
 			t.Fatalf("create %s: HTTP %d %v", id, code, out)
 		}
 	}
@@ -493,28 +362,30 @@ func TestTaskInterruptionsKeepTries(t *testing.T) {
 	}
 }
 
-// loopGateway is a gateway with the review loop on and a state dir, which a test can restart.
-type loopGateway struct {
+// queueGateway is a gateway with projects and a state dir, which a test can restart.
+type queueGateway struct {
 	cfg gateway.Config
 	g   *gateway.Gateway
 	url string
 	srv *httptest.Server
 }
 
-func newLoopGateway(t *testing.T, rounds int) *loopGateway {
+func newQueueGateway(t *testing.T, cfg func(c *gateway.Config)) *queueGateway {
 	t.Helper()
-	l := &loopGateway{}
+	l := &queueGateway{}
 	r := newRigCfg(t, func(c *gateway.Config) {
 		c.StateDir = t.TempDir()
 		withProjects(c)
-		c.Projects[0].ReviewLoop, c.Projects[0].MaxReviewRounds = true, rounds
+		if cfg != nil {
+			cfg(c)
+		}
 		l.cfg = *c
 	}, mockEngine(t, false))
 	l.g, l.srv, l.url = r.g, r.gw, r.gw.URL
 	return l
 }
 
-func (l *loopGateway) restart(t *testing.T) {
+func (l *queueGateway) restart(t *testing.T) {
 	t.Helper()
 	l.srv.Close()
 	if err := l.g.Close(); err != nil {
@@ -529,11 +400,18 @@ func (l *loopGateway) restart(t *testing.T) {
 	t.Cleanup(func() { l.srv.Close(); l.g.Close() })
 }
 
-func (l *loopGateway) call(t *testing.T, method, path string, body any) (int, map[string]any) {
+// send calls the gateway with key (none: "").
+func (l *queueGateway) send(t *testing.T, method, path, key string, body any) (int, map[string]any) {
 	t.Helper()
-	raw, _ := json.Marshal(body)
-	req, _ := http.NewRequest(method, l.url+"/v1/projects/tauceti/tasks"+path, bytes.NewReader(raw))
-	req.Header.Set("Authorization", "Bearer "+projectKey)
+	var rd io.Reader
+	if body != nil {
+		raw, _ := json.Marshal(body)
+		rd = bytes.NewReader(raw)
+	}
+	req, _ := http.NewRequest(method, l.url+path, rd)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -545,14 +423,20 @@ func (l *loopGateway) call(t *testing.T, method, path string, body any) (int, ma
 	return resp.StatusCode, out
 }
 
-func (l *loopGateway) create(t *testing.T, id, kind string) {
+// call calls the sciproj queue with its key.
+func (l *queueGateway) call(t *testing.T, method, path string, body any) (int, map[string]any) {
 	t.Helper()
-	if code, out := l.call(t, "POST", "", map[string]any{"id": id, "kind": kind, "created_by": "owner", "spec": map[string]any{"attempt": id}}); code != 201 {
+	return l.send(t, method, "/v1/projects/sciproj/tasks"+path, projectKey, body)
+}
+
+func (l *queueGateway) create(t *testing.T, id, kind string) {
+	t.Helper()
+	if code, out := l.call(t, "POST", "", map[string]any{"id": id, "kind": kind, "created_by": "owner", "spec": map[string]any{"task": id}}); code != 201 {
 		t.Fatalf("create %s: HTTP %d %v", id, code, out)
 	}
 }
 
-func (l *loopGateway) claim(t *testing.T, id string) string {
+func (l *queueGateway) claim(t *testing.T, id string) string {
 	t.Helper()
 	code, out := l.call(t, "POST", "/claim", map[string]any{"worker": "runner-a", "task": id})
 	if code != 200 {
@@ -561,310 +445,47 @@ func (l *loopGateway) claim(t *testing.T, id string) string {
 	return out["lease"].(map[string]any)["id"].(string)
 }
 
-func (l *loopGateway) complete(t *testing.T, id, lease string, result map[string]any) {
-	t.Helper()
-	if code, out := l.call(t, "POST", "/"+id+"/complete", map[string]any{"worker": "runner-a", "lease": lease, "result": result}); code != 200 {
-		t.Fatalf("complete %s: HTTP %d %v", id, code, out)
-	}
-}
-
-func (l *loopGateway) get(t *testing.T, id string) (map[string]any, map[string]any) {
+func (l *queueGateway) get(t *testing.T, id string) map[string]any {
 	t.Helper()
 	code, out := l.call(t, "GET", "/"+id, nil)
 	if code != 200 {
-		return nil, nil
+		return nil
 	}
-	ch, _ := out["chain"].(map[string]any)
-	return out["task"].(map[string]any), ch
+	return out["task"].(map[string]any)
 }
 
-var (
-	loopPassed = map[string]any{"outcome": "passes every local CI check", "checks_passed": true, "diff": "--- a/X.lean\n+++ b/X.lean\n", "model_min": 20}
-	loopRed    = map[string]any{"verdict": "red", "by": "qwen-judge", "judge": "qwen", "findings": 1, "summary": "naming"}
-)
-
-func loopFix(id string, spec map[string]any) map[string]any {
-	return map[string]any{"id": id, "kind": "fix_round", "findings_source": "prereview-qwen", "created_by": "runner", "spec": spec}
-}
-
-// A gateway that stopped between saving a finished review and scheduling its round: the file it left
-// has the review done and the round owed. The restart makes the round once, and the worker's retry
-// of the report, which never got an answer, changes nothing.
-func TestTaskLoopCrashBetweenSaveAndRound(t *testing.T) {
-	l := newLoopGateway(t, 3)
-	const cand, rv, round = "T7-C.a-A", "T7-C.a-A.review", "T7-C.a-P1"
-	l.create(t, cand, "attempt")
-	l.complete(t, cand, l.claim(t, cand), loopPassed)
-	lease := l.claim(t, rv)
-	fix := loopFix(round, map[string]any{"attempt": round})
-	l.srv.Close()
-	if err := l.g.Close(); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(l.cfg.StateDir, "tasks-tauceti", rv+".json")
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var task map[string]any
-	if err := json.Unmarshal(raw, &task); err != nil {
-		t.Fatal(err)
-	}
-	task["state"] = "done"
-	task["result"] = map[string]any{"outcome": "qwen review: findings", "model_min": 22.5, "steps": 0, "prompt_tokens": 0, "completion_tokens": 0, "awake_min": 0,
-		"finished_at": time.Now().UTC()}
-	task["review"] = map[string]any{"verdict": "red", "by": "qwen-judge", "judge": "qwen", "at": time.Now().UTC()}
-	task["loop_pending"] = map[string]any{"step": "done", "fix": fix}
-	raw, _ = json.Marshal(task)
-	if err := os.WriteFile(file, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	g, err := gateway.New(l.cfg, quiet())
-	if err != nil {
-		t.Fatal(err)
-	}
-	l.g, l.srv = g, httptest.NewServer(g.Handler())
-	l.url = l.srv.URL
-	t.Cleanup(func() { l.srv.Close(); l.g.Close() })
-
-	check := func(when string) {
-		t.Helper()
-		n, ch := l.get(t, round)
-		if n == nil || n["created_by"] != "gateway" || n["round_kind"] != "qwen-review" || ch["auto_rounds"] != float64(1) || ch["reviews"] != float64(1) {
-			t.Fatalf("%s: round %v, chain %v", when, n, ch)
-		}
-		if p, _ := l.get(t, cand); p["stage"] != "fix-scheduled" || p["qwen_review"] == nil {
-			t.Fatalf("%s: candidate %v", when, p)
-		}
-		if _, out := l.call(t, "GET", "?state=queued", nil); len(out["tasks"].([]any)) != 1 {
-			t.Fatalf("%s: queue %v", when, out["tasks"])
-		}
-	}
-	check("after the restart")
-	if code, out := l.call(t, "POST", "/"+rv+"/complete", map[string]any{"worker": "runner-a", "lease": lease,
-		"result": map[string]any{"outcome": "qwen review: findings", "review": loopRed, "fix": fix}}); code != 200 {
-		t.Fatalf("the retry: HTTP %d %v", code, out)
-	}
-	check("after the retry")
-	l.restart(t)
-	check("after another restart")
-}
-
-// The pruning leaves a candidate whose review is still queued, however many tasks finish after it.
-func TestTaskPruneKeepsTheReviewedCandidate(t *testing.T) {
-	l := newLoopGateway(t, 3)
-	const cand, rv = "T7-P.a-A", "T7-P.a-A.review"
-	l.create(t, cand, "attempt")
-	l.complete(t, cand, l.claim(t, cand), loopPassed)
-	exported := func(id string) {
-		t.Helper()
-		tk, _ := l.get(t, id)
-		if code, out := l.call(t, "POST", "/"+id+"/exported", map[string]any{"seen": tk["updated_at"]}); code != 200 {
-			t.Fatalf("exported %s: HTTP %d %v", id, code, out)
-		}
-	}
-	exported(cand)
-	for i := 0; i < 205; i++ {
-		id := fmt.Sprintf("O-%d", i)
-		l.create(t, id, "other")
-		if code, _ := l.call(t, "POST", "/"+id+"/cancel", map[string]any{}); code != 200 {
-			t.Fatalf("cancel: HTTP %d", code)
-		}
-		exported(id)
-	}
-	if tk, _ := l.get(t, "O-0"); tk != nil {
-		t.Fatalf("nothing was pruned: %v", tk)
-	}
-	l.complete(t, rv, l.claim(t, rv), map[string]any{"outcome": "qwen review: green", "review": map[string]any{"verdict": "green", "by": "qwen-judge", "judge": "qwen"}})
-	if p, ch := l.get(t, cand); p == nil || p["stage"] != "ready-for-operator" || ch["status"] != "ready-for-operator" {
-		t.Fatalf("candidate %v, chain %v", p, ch)
-	}
-}
-
-// A round past the limit that a create cannot carry: it waits in the gateway, the operator continues
-// it with a note, and it counts as the operator's, once.
-func TestTaskContinueBigWaitingRound(t *testing.T) {
-	l := newLoopGateway(t, 1)
-	const cand, round, next = "T7-W.a-A", "T7-W.a-P1", "T7-W.a-P2"
-	l.create(t, cand, "attempt")
-	l.complete(t, cand, l.claim(t, cand), loopPassed)
-	l.complete(t, cand+".review", l.claim(t, cand+".review"), map[string]any{"outcome": "findings", "review": loopRed, "fix": loopFix(round, map[string]any{"attempt": round})})
-	l.complete(t, round, l.claim(t, round), loopPassed)
-	big := map[string]any{"attempt": next, "files": map[string]any{"tasks/tree_patches/x.diff": strings.Repeat("x", 300<<10)},
-		"ledger": map[string]any{"subtask": map[string]any{"fix_rounds": map[string]any{"P2": map[string]any{"findings": "verbatim"}}}}}
-	const rv = round + ".review"
-	l.complete(t, rv, l.claim(t, rv), map[string]any{"outcome": "findings", "review": loopRed, "fix": loopFix(next, big)})
-	if p, ch := l.get(t, round); p["stage"] != "needs-operator" || ch["auto_rounds"] != float64(1) {
-		t.Fatalf("at the limit: %v, chain %v", p, ch)
-	}
-	waiting, _ := l.get(t, rv)
-	create := waiting["next_fix"].(map[string]any)
-	create["created_by"] = "owner"
-	if code, _ := l.call(t, "POST", "", create); code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("a create of the recipe: HTTP %d", code)
-	}
-	body := map[string]any{"created_by": "owner", "note": "`A.lean` imports `B`."}
-	if code, out := l.call(t, "POST", "/"+rv+"/continue", body); code != 201 || out["created"] != true {
-		t.Fatalf("continue: HTTP %d %v", code, out)
-	}
-	if code, out := l.call(t, "POST", "/"+rv+"/continue", body); code != 200 || out["created"] != false {
-		t.Fatalf("again: HTTP %d %v", code, out)
-	}
-	l.restart(t)
-	n, ch := l.get(t, next)
-	if n == nil || n["created_by"] != "owner" || n["class"] != float64(3) || ch["auto_rounds"] != float64(1) || ch["operator_rounds"] != float64(1) || ch["status"] != "operator-round" {
-		t.Fatalf("the round: %v, chain %v", n, ch)
-	}
-	fx := n["spec"].(map[string]any)["ledger"].(map[string]any)["subtask"].(map[string]any)["fix_rounds"].(map[string]any)["P2"].(map[string]any)
-	if fx["operator_note"] != "`A.lean` imports `B`." || fx["findings"] != "verbatim" {
-		t.Fatalf("the fix-round entry: %v", fx)
-	}
-	code, out := l.call(t, "POST", "/claim", map[string]any{"worker": "runner-a"})
-	if got := out["task"].(map[string]any); code != 200 || got["id"] != next || len(got["spec"].(map[string]any)["files"].(map[string]any)["tasks/tree_patches/x.diff"].(string)) != 300<<10 {
-		t.Fatalf("claim: HTTP %d", code)
-	}
-}
-
-// A task id without a hyphen: its review stays in its chain across a restart, so the counts stay one.
-func TestTaskChainOfAPlainIDSurvivesRestart(t *testing.T) {
-	l := newLoopGateway(t, 3)
-	l.create(t, "plain", "attempt")
-	l.complete(t, "plain", l.claim(t, "plain"), loopPassed)
-	l.restart(t)
-	if rv, _ := l.get(t, "plain.review"); rv["chain"] != "plain" {
-		t.Fatalf("the review: %v", rv)
-	}
-	l.complete(t, "plain.review", l.claim(t, "plain.review"), map[string]any{"outcome": "findings", "model_min": 5, "review": loopRed,
-		"fix": loopFix("plain-P1", map[string]any{"attempt": "plain-P1"})})
-	rv, ch := l.get(t, "plain.review")
-	if ch == nil || ch["id"] != "plain" || ch["reviews"] != float64(1) || ch["auto_rounds"] != float64(1) || rv["chain"] != "plain" {
-		t.Fatalf("chain %v, review %v", ch, rv)
-	}
-	if n, _ := l.get(t, "plain-P1"); n == nil {
-		t.Fatal("no round: the chain split")
-	}
-	ents, _ := os.ReadDir(filepath.Join(l.cfg.StateDir, "task-chains-tauceti"))
-	if len(ents) != 1 {
-		t.Fatalf("%d chain files", len(ents))
-	}
-}
-
-// A real read-only directory, through the HTTP API and a restart: with its chain unwritable a red
-// verdict is saved and answered, but no round exists and no work goes out; with the task directory
-// unwritable too, a create is refused. When the directories are writable again the round comes by
-// itself, counted once, and the limit of 1 holds.
+// A real read-only task directory, through the HTTP API and a restart: a create and a task's end are
+// refused (503) and change nothing; when the directory is writable again the same calls work.
 func TestTaskQueueOnAReadOnlyDisk(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory modes")
 	}
-	l := newLoopGateway(t, 1)
-	const cand, rv, round, next = "T7-R.a-A", "T7-R.a-A.review", "T7-R.a-P1", "T7-R.a-P2"
-	l.create(t, cand, "attempt")
-	l.complete(t, cand, l.claim(t, cand), loopPassed)
-	lease := l.claim(t, rv)
-	mode := func(dir string, m os.FileMode) {
-		t.Helper()
-		if err := os.Chmod(filepath.Join(l.cfg.StateDir, dir), m); err != nil {
-			t.Fatal(err)
-		}
+	l := newQueueGateway(t, nil)
+	l.create(t, "T7-R.a-A", "p2m-v7")
+	lease := l.claim(t, "T7-R.a-A")
+	tasks := filepath.Join(l.cfg.StateDir, "tasks-sciproj")
+	t.Cleanup(func() { os.Chmod(tasks, 0o700) })
+	if err := os.Chmod(tasks, 0o500); err != nil {
+		t.Fatal(err)
 	}
-	const chains, tasks = "task-chains-tauceti", "tasks-tauceti"
-	t.Cleanup(func() {
-		os.Chmod(filepath.Join(l.cfg.StateDir, chains), 0o700)
-		os.Chmod(filepath.Join(l.cfg.StateDir, tasks), 0o700)
-	})
-	held := func(when string) {
-		t.Helper()
-		if n, _ := l.get(t, round); n != nil {
-			t.Fatalf("%s: a round without its count: %v", when, n)
-		}
-		if code, _ := l.call(t, "POST", "/claim", map[string]any{"worker": "runner-b"}); code != 503 {
-			t.Fatalf("%s: claim: HTTP %d", when, code)
-		}
+	done := map[string]any{"worker": "runner-a", "lease": lease, "result": map[string]any{"outcome": "proved", "model_min": 5}}
+	if code, out := l.call(t, "POST", "/T7-R.a-A/complete", done); code != 503 {
+		t.Fatalf("complete on a read-only queue: HTTP %d %v", code, out)
 	}
-	mode(chains, 0o500)
-	l.complete(t, rv, lease, map[string]any{"outcome": "qwen review: findings", "review": loopRed,
-		"fix": loopFix(round, map[string]any{"attempt": round})})
-	held("after the verdict")
-	mode(tasks, 0o500)
-	if code, out := l.call(t, "POST", "", map[string]any{"id": "T8.a-A", "kind": "attempt", "created_by": "owner", "spec": map[string]any{}}); code != 503 {
+	if code, out := l.call(t, "POST", "", map[string]any{"id": "T8.a-A", "kind": "p2m-v7", "created_by": "owner", "spec": map[string]any{}}); code != 503 {
 		t.Fatalf("create on a read-only queue: HTTP %d %v", code, out)
 	}
-	mode(tasks, 0o700)
 	l.restart(t)
-	held("after a restart")
-
-	mode(chains, 0o700)
-	n, ch := l.get(t, round)
-	if n == nil || ch["auto_rounds"] != float64(1) || ch["reviews"] != float64(1) {
-		t.Fatalf("after the disk came back: round %v, chain %v", n, ch)
+	if got := l.get(t, "T7-R.a-A"); got == nil || got["state"] != "leased" {
+		t.Fatalf("after a restart: %v", got)
 	}
-	l.restart(t)
-	if _, ch := l.get(t, round); ch["auto_rounds"] != float64(1) {
-		t.Fatalf("after another restart: chain %v", ch)
+	if err := os.Chmod(tasks, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	l.complete(t, round, l.claim(t, round), map[string]any{"outcome": "fails", "checks_passed": false, "model_min": 5,
-		"fix": loopFix(next, map[string]any{"attempt": next})})
-	if n, _ := l.get(t, next); n != nil {
-		t.Fatalf("a second round past the limit of 1: %v", n)
+	if code, out := l.call(t, "POST", "/T7-R.a-A/complete", done); code != 200 {
+		t.Fatalf("complete, disk back: HTTP %d %v", code, out)
 	}
-}
-
-// Decision 0017, as a deploy does it: the project's config turns reviews off and the gateway
-// restarts with candidates waiting. Nothing stays in-review, no review can be claimed, and the
-// automatic rounds go on from the same count, up to the chain's limit.
-func TestTaskReviewsOffAcrossARestart(t *testing.T) {
-	l := newLoopGateway(t, 3)
-	const queued, running, failed = "T7-X.a-A", "T7-Y.a-A", "T7-Z.a-A"
-	retried := func(id string) map[string]any {
-		return map[string]any{"outcome": "fails: lake_build", "checks_passed": false,
-			"fix": map[string]any{"id": id, "kind": "attempt", "title": "Retry " + id, "created_by": "runner", "spec": map[string]any{"attempt": id}}}
-	}
-	l.create(t, queued, "attempt")
-	l.complete(t, queued, l.claim(t, queued), loopPassed)
-	l.create(t, running, "attempt")
-	l.complete(t, running, l.claim(t, running), loopPassed)
-	l.claim(t, running+".review")
-	l.create(t, failed, "attempt")
-	l.complete(t, failed, l.claim(t, failed), retried("T7-Z.a-P1"))
-	if p, ch := l.get(t, queued); p["stage"] != "in-review" || ch["status"] != "in-review" {
-		t.Fatalf("before: %v, chain %v", p, ch)
-	}
-
-	l.cfg.Projects[0].ReviewLoop, l.cfg.Projects[0].AutoRounds = false, true
-	l.restart(t)
-
-	for _, id := range []string{queued, running} {
-		if p, ch := l.get(t, id); p["stage"] != "ready-for-operator" || ch["status"] != "ready-for-operator" {
-			t.Errorf("%s: %v, chain %v", id, p, ch)
-		}
-		if rv, _ := l.get(t, id+".review"); rv["state"] != "cancelled" {
-			t.Errorf("%s's review: %v", id, rv)
-		}
-	}
-	if code, out := l.call(t, "POST", "/claim", map[string]any{"worker": "w2", "kinds": []string{"review"}}); code != 204 {
-		t.Fatalf("a review to claim: HTTP %d %v", code, out)
-	}
-	// The round that was queued runs on; it and the next count with the one before the restart.
-	l.complete(t, "T7-Z.a-P1", l.claim(t, "T7-Z.a-P1"), retried("T7-Z.a-P2"))
-	l.complete(t, "T7-Z.a-P2", l.claim(t, "T7-Z.a-P2"), retried("T7-Z.a-P3"))
-	l.complete(t, "T7-Z.a-P3", l.claim(t, "T7-Z.a-P3"), retried("T7-Z.a-P4"))
-	if p, ch := l.get(t, "T7-Z.a-P3"); p["stage"] != "needs-operator" || ch["auto_rounds"] != float64(3) {
-		t.Fatalf("at the limit: %v, chain %v", p, ch)
-	}
-	if p, _ := l.get(t, "T7-Z.a-P4"); p != nil {
-		t.Fatalf("a fourth round: %v", p)
-	}
-	// A candidate after the change: no review at all.
-	const fresh = "T7-V.a-A"
-	l.create(t, fresh, "attempt")
-	l.complete(t, fresh, l.claim(t, fresh), loopPassed)
-	if p, ch := l.get(t, fresh); p["stage"] != "ready-for-operator" || ch["reviews"] != float64(0) {
-		t.Fatalf("a new candidate: %v, chain %v", p, ch)
-	}
-	if rv, _ := l.get(t, fresh+".review"); rv != nil {
-		t.Fatalf("a new candidate's review: %v", rv)
-	}
+	l.create(t, "T8.a-A", "p2m-v7")
 }
 
 // Stateless runners keep their checkpoints in shared storage, so a task one gives back need not
@@ -873,15 +494,8 @@ func TestTaskReviewsOffAcrossARestart(t *testing.T) {
 // the 10 minutes (older workers), and out-of-range values or the field on another call are refused.
 func TestTaskHoldSecondsThroughTheServer(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 11, 14, 20, 0, 0, 0, time.UTC)}
-	l := &loopGateway{}
-	r := newRigCfg(t, func(c *gateway.Config) {
-		c.StateDir = t.TempDir()
-		withProjects(c)
-		c.TasksNow = clk.Now
-		l.cfg = *c
-	}, mockEngine(t, false))
-	l.g, l.srv, l.url = r.g, r.gw, r.gw.URL
-	l.create(t, "T7-H.a-A", "attempt")
+	l := newQueueGateway(t, func(c *gateway.Config) { c.TasksNow = clk.Now })
+	l.create(t, "T7-H.a-A", "p2m-v7")
 	claim := func(worker string, hold any) (int, map[string]any, string) {
 		t.Helper()
 		body := map[string]any{"worker": worker, "task": "T7-H.a-A"}

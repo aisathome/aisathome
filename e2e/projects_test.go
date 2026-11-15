@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	projectKey   = "ak-tauceti-test-key-0123456789abcdefghijklmnopq"
+	projectKey   = "ak-sciproj-test-key-0123456789abcdefghijklmnopq"
 	unlimitedKey = "ak-other-project-test-key-0123456789abcdefghij"
 )
 
@@ -31,7 +31,7 @@ func sha(s string) string {
 
 func withProjects(c *gateway.Config) {
 	c.Projects = []gateway.Project{
-		{ID: "tauceti", KeySHA256: []string{sha(projectKey)}, DailyTokens: 60, MaxNodeShare: 0.7, AgentOK: true},
+		{ID: "sciproj", KeySHA256: []string{sha(projectKey)}, DailyTokens: 60, MaxNodeShare: 0.7, AgentOK: true, Kinds: []string{"p2m-v7"}},
 		{ID: "unlimited", KeySHA256: []string{sha(unlimitedKey)}},
 	}
 }
@@ -119,8 +119,8 @@ func TestProjectKeyHasItsOwnQuota(t *testing.T) {
 	}
 	st := statsJSON(t, a.rig, "/v1/stats")
 	today := st["today"].(map[string]any)
-	if p := today["projects"].(map[string]any)["tauceti"].(map[string]any); p["requests"] != float64(served) {
-		t.Fatalf("stats today, tauceti: %v", p)
+	if p := today["projects"].(map[string]any)["sciproj"].(map[string]any); p["requests"] != float64(served) {
+		t.Fatalf("stats today, sciproj: %v", p)
 	}
 	if c := today["classes"].(map[string]any)["science"].(map[string]any); c["requests"] != float64(served+12) {
 		t.Fatalf("stats today, science: %v", c)
@@ -177,7 +177,7 @@ func TestScienceWaitsBehindPeople(t *testing.T) {
 		t.Fatalf("served in the order %s", got)
 	}
 	for _, u := range r.usage(t) {
-		if want := map[string]string{"owui/u1": "chat", "alice": "agent", "project:tauceti": "science"}[u["user"].(string)]; u["class"] != want {
+		if want := map[string]string{"owui/u1": "chat", "alice": "agent", "project:sciproj": "science"}[u["user"].(string)]; u["class"] != want {
 			t.Fatalf("record of %v has class %v, want %s", u["user"], u["class"], want)
 		}
 	}
@@ -202,7 +202,7 @@ func TestHistoryEndpoint(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Cache-Control"), "public") {
 		t.Fatalf("history: %d %v", resp.StatusCode, resp.Header)
 	}
-	for _, s := range []string{"alice", "node-0", "op1", "tauceti", "user-key", "project:"} {
+	for _, s := range []string{"alice", "node-0", "op1", "sciproj", "user-key", "project:"} {
 		if strings.Contains(string(raw), s) {
 			t.Fatalf("history names %q: %s", s, raw)
 		}

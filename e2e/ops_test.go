@@ -48,14 +48,14 @@ func TestOpsPageShowsAFakeRunnersStatus(t *testing.T) {
 		"cost_today":    map[string]any{"usd": 3.21, "note": "estimate from configured rates"},
 	}
 	body, _ := json.Marshal(status)
-	// Another project's key cannot post for tauceti; tauceti's can.
-	if resp := a.do(t, "POST", "/v1/projects/tauceti/status", unlimitedKey, string(body)); resp.StatusCode != 403 {
+	// Another project's key cannot post for sciproj; sciproj's can.
+	if resp := a.do(t, "POST", "/v1/projects/sciproj/status", unlimitedKey, string(body)); resp.StatusCode != 403 {
 		t.Fatalf("other project's key: HTTP %d", resp.StatusCode)
 	}
-	if resp := a.do(t, "POST", "/v1/projects/tauceti/status", "user-key", string(body)); resp.StatusCode != 401 {
+	if resp := a.do(t, "POST", "/v1/projects/sciproj/status", "user-key", string(body)); resp.StatusCode != 401 {
 		t.Fatalf("a user's key: HTTP %d", resp.StatusCode)
 	}
-	if resp := a.do(t, "POST", "/v1/projects/tauceti/status", projectKey, string(body)); resp.StatusCode != 200 {
+	if resp := a.do(t, "POST", "/v1/projects/sciproj/status", projectKey, string(body)); resp.StatusCode != 200 {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("project key: HTTP %d %s", resp.StatusCode, b)
 	}
@@ -98,7 +98,7 @@ func TestOpsPageShowsAFakeRunnersStatus(t *testing.T) {
 		t.Error("the warnings are not at the top")
 	}
 	// The warnings, for the runner's summary.
-	resp = a.do(t, "GET", "/v1/projects/tauceti/status", projectKey, "")
+	resp = a.do(t, "GET", "/v1/projects/sciproj/status", projectKey, "")
 	var got struct {
 		Warnings []struct{ Rule string } `json:"warnings"`
 	}

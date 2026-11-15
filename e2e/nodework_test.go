@@ -22,7 +22,8 @@ import (
 const p2mKey = "ak-prove2me-test-key-0123456789abcdefghijklmnop"
 
 func withPublicP2M(c *gateway.Config) {
-	c.Projects = []gateway.Project{{ID: "prove2me", KeySHA256: []string{sha(p2mKey)}, AgentOK: true, PublicQueue: true}}
+	c.Projects = []gateway.Project{{ID: "prove2me", KeySHA256: []string{sha(p2mKey)}, AgentOK: true, PublicQueue: true,
+		Page: "/science/prove2me/", PageAnchor: "leaf"}}
 }
 
 // p2mCall calls the prove2me queue with the project key.
@@ -37,7 +38,7 @@ func p2mCall(t *testing.T, r *rig, path string, body any) (int, map[string]any) 
 }
 
 func p2mTask(id, leaf, theorem string) map[string]any {
-	return map[string]any{"id": id, "kind": "attempt", "title": "prove2me t5 " + leaf + " (open)", "created_by": "owner",
+	return map[string]any{"id": id, "kind": "other", "title": "prove2me t5 " + leaf + " (open)", "created_by": "owner",
 		"spec": map[string]any{"trial": "t5", "leaf": leaf, "group": "open", "theorem": theorem, "selection": "2026-11-13",
 			"v5": map[string]any{"role": "skeleton", "gen": 1, "task": id}}}
 }

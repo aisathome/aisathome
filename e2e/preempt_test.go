@@ -81,7 +81,7 @@ type answer struct {
 }
 
 // send makes a request as one of the classes: "chat" through the front end, "agent" with an
-// account-less user key, "science" with the tauceti project key.
+// account-less user key, "science" with the sciproj project key.
 func send(t *testing.T, r *rig, class, body string) answer {
 	t.Helper()
 	base, key := r.gw.URL, map[string]string{"agent": "user-key", "science": projectKey}[class]
@@ -193,11 +193,11 @@ func TestPeoplePreemptStreamingScience(t *testing.T) {
 			waitUsage(t, r, 2)
 			var rec map[string]any
 			for _, u := range r.usage(t) {
-				if u["user"] == "project:tauceti" {
+				if u["user"] == "project:sciproj" {
 					rec = u
 				}
 			}
-			if rec["outcome"] != "preempted" || rec["class"] != "science" || rec["project"] != "tauceti" {
+			if rec["outcome"] != "preempted" || rec["class"] != "science" || rec["project"] != "sciproj" {
 				t.Fatalf("usage record of the science request: %v", rec)
 			}
 			if c, _ := rec["credit"].(float64); c <= 0 {
@@ -205,8 +205,8 @@ func TestPeoplePreemptStreamingScience(t *testing.T) {
 			}
 			st := statsJSON(t, r, "/v1/stats")
 			today := st["today"].(map[string]any)
-			if p := today["projects"].(map[string]any)["tauceti"].(map[string]any); p["preempted"] != 1.0 {
-				t.Fatalf("stats today, tauceti: %v", p)
+			if p := today["projects"].(map[string]any)["sciproj"].(map[string]any); p["preempted"] != 1.0 {
+				t.Fatalf("stats today, sciproj: %v", p)
 			}
 			if c := today["classes"].(map[string]any)["science"].(map[string]any); c["preempted"] != 1.0 {
 				t.Fatalf("stats today, science: %v", c)
@@ -214,8 +214,8 @@ func TestPeoplePreemptStreamingScience(t *testing.T) {
 			if c := today["classes"].(map[string]any)[class].(map[string]any); c["preempted"] != nil {
 				t.Fatalf("stats today, %s: %v", class, c)
 			}
-			if p := st["total"].(map[string]any)["projects"].(map[string]any)["tauceti"].(map[string]any); p["preempted"] != 1.0 {
-				t.Fatalf("stats total, tauceti: %v", p)
+			if p := st["total"].(map[string]any)["projects"].(map[string]any)["sciproj"].(map[string]any); p["preempted"] != 1.0 {
+				t.Fatalf("stats total, sciproj: %v", p)
 			}
 		})
 	}
@@ -239,7 +239,7 @@ func TestPreemptedScienceWithoutOutputIsRetried(t *testing.T) {
 		t.Fatalf("science after its retry: %d %.200s", s.status, s.body)
 	}
 	waitUsage(t, r, 3)
-	if got := strings.Join(outcomes(t, r, "project:tauceti"), ","); got != "preempted,ok" {
+	if got := strings.Join(outcomes(t, r, "project:sciproj"), ","); got != "preempted,ok" {
 		t.Fatalf("science attempts: %s", got)
 	}
 }
@@ -259,7 +259,7 @@ func TestPreemptedTwiceIsRetriedTwice(t *testing.T) {
 		t.Fatalf("science after two preemptions: %d %.200s", s.status, s.body)
 	}
 	waitUsage(t, r, 5)
-	if got := strings.Join(outcomes(t, r, "project:tauceti"), ","); got != "preempted,preempted,ok" {
+	if got := strings.Join(outcomes(t, r, "project:sciproj"), ","); got != "preempted,preempted,ok" {
 		t.Fatalf("science attempts: %s", got)
 	}
 }
