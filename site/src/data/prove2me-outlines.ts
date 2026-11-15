@@ -222,9 +222,22 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	});
 	const anyInplace = (inplaceCount ?? 0) > 0 || rest.length > 0 || (inplace?.length ?? 0) > 0;
 	if (anyInplace) {
+		// The in-place task never says "proved": it ends `rest_done` with the outline's file filled in, and the
+		// assembly's full check decides. So its holes are proved when the assembly is, and wait for it until then.
+		const last = [...rest].sort(byTry).at(-1);
+		const done = last?.state === 'finished' && last.outcome === 'rest_done';
+		const byAsm: Draft['fixed'] = !done
+			? undefined
+			: asm?.state === 'finished'
+				? asm.outcome === 'proved'
+					? { state: 'proved', text: 'proved (checked in the assembly)' }
+					: { state: 'not_proved', text: 'filled in, but the assembly did not check' }
+				: { state: 'waiting', text: 'filled in; the assembly checks it' };
+		// a verdict the data document holds for a hole in place (e.g. false, found outside a task) comes first
+		const fixedFor = (h: number | null) => (h !== null && docBy.has(h) ? docHole(docBy.get(h)!) : null) ?? byAsm;
 		// one row per hole in place, as many as two; more share one row (they are one task)
-		if (inplace?.length && inplace.length <= 2) for (const h of inplace) drafts.push({ hole: h, kind: 'inplace', ts: rest });
-		else drafts.push({ hole: null, kind: 'inplace', ts: rest });
+		if (inplace?.length && inplace.length <= 2) for (const h of inplace) drafts.push({ hole: h, kind: 'inplace', ts: rest, fixed: fixedFor(h) });
+		else drafts.push({ hole: null, kind: 'inplace', ts: rest, fixed: byAsm });
 	}
 	const own = (d: Draft) => d.fixed ?? (d.ts.length ? triesText(d.ts, '') : null);
 	const states = drafts.map(own);
