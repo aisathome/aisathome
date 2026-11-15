@@ -137,6 +137,8 @@ func TestEngineSpeculation(t *testing.T) {
 	oldGPU := engineGPU
 	engineGPU = func(device string) (setup.GPU, error) { asked = append(asked, device); return card, cardErr }
 	t.Cleanup(func() { engineGPU = oldGPU })
+	t.Setenv("CUDA_VISIBLE_DEVICES", "") // the machine's own value must not leak in
+	os.Unsetenv("CUDA_VISIBLE_DEVICES")
 
 	dir := t.TempDir()
 	model, exe := filepath.Join(dir, "model.gguf"), filepath.Join(dir, "llama-server")
@@ -227,6 +229,38 @@ func TestEngineSpeculation(t *testing.T) {
 	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), "cannot read the GPU's free memory") {
 		t.Errorf("no nvidia-smi: %v", err)
 	}
+	// The card the engine will use (Codex review 2026-11-15: the check took the largest card
+	// whatever CUDA_VISIBLE_DEVICES said): cuda_device, else the first visible device, else the
+	// largest (no device named). An empty list leaves the engine no GPU.
+	card.FreeMiB, cardErr = 24126, nil
+	for _, c := range []struct {
+		env    string // "-": unset
+		device string
+		want   []string
+	}{
+		{"-", "", []string{""}},
+		{" GPU-b , GPU-a", "", []string{"GPU-b"}},
+		{"1,0", "", []string{"1"}},
+		{"GPU-b", "GPU-3090", []string{"GPU-3090"}},
+	} {
+		os.Unsetenv("CUDA_VISIBLE_DEVICES")
+		if c.env != "-" {
+			os.Setenv("CUDA_VISIBLE_DEVICES", c.env)
+		}
+		asked = nil
+		cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp", CUDADevice: c.device}}
+		if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err != nil || !slices.Equal(asked, c.want) {
+			t.Errorf("CUDA_VISIBLE_DEVICES %q, cuda_device %q: asked %q, want %q (%v)", c.env, c.device, asked, c.want, err)
+		}
+	}
+	os.Setenv("CUDA_VISIBLE_DEVICES", "")
+	asked = nil
+	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "mtp"}}
+	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), "CUDA_VISIBLE_DEVICES") || len(asked) != 0 {
+		t.Errorf("no visible GPU: %v (asked %q)", err, asked)
+	}
+	os.Unsetenv("CUDA_VISIBLE_DEVICES")
+
 	// Off never asks for the card.
 	asked = nil
 	cfg = node.Config{Engine: &node.EngineConfig{Tier: "big", Model: model, Speculation: "off"}}
@@ -253,6 +287,23 @@ func TestPickGPU(t *testing.T) {
 	}
 	if _, err := pickGPU(nil, ""); err == nil {
 		t.Error("no GPU: no error")
+	}
+}
+
+// CUDA_VISIBLE_DEVICES: its first entry is the engine's card; an empty list, or a first entry
+// CUDA rejects (-1), leaves no GPU. A UUID may be shortened to a unique prefix, as CUDA allows.
+func TestVisibleDevice(t *testing.T) {
+	for env, want := range map[string]string{"0,1": "0", " GPU-b , GPU-a": "GPU-b", "2": "2", "": "", " ": "", "-1": "", "-1,0": ""} {
+		if got := visibleDevice(env); got != want {
+			t.Errorf("%q: %q, want %q", env, got, want)
+		}
+	}
+	gpus := []setup.GPU{{Index: 0, UUID: "GPU-8932f937-d72c"}, {Index: 1, UUID: "GPU-89ab0000-0000"}}
+	if g, err := pickGPU(gpus, "GPU-8932"); err != nil || g.Index != 0 {
+		t.Errorf("unique prefix: %v %v", g, err)
+	}
+	if _, err := pickGPU(gpus, "GPU-89"); err == nil {
+		t.Error("ambiguous prefix: no error")
 	}
 }
 
