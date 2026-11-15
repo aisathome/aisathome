@@ -72,7 +72,7 @@ const tryWords: Record<string, string> = {
 	assembly_failed: 'did not check',
 	no_manifest: 'no outline record',
 };
-const tryWord = (o: string | null) => (o ? tryWords[o] ?? o.replace(/[_-]/g, ' ') : 'ended');
+export const tryWord = (o: string | null) => (o ? tryWords[o] ?? o.replace(/[_-]/g, ' ') : 'ended');
 // An outline task that ended without an outline: refuted (the outline's own shape) or no outline at all.
 const refusedOutline: Record<string, string> = { degenerate_outline: 'degenerate (a hole is the leaf’s own claim)', inline_proof: 'an inline proof too long' };
 
