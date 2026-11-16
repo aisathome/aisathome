@@ -422,7 +422,7 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 		rt.exclude[n] = true
 		var gd *guard // answers from strangers' nodes are checked (guard.go)
 		if !n.trusted && n.operator != rt.self {
-			gd = newGuard(job.reqText)
+			gd = newGuard(job.reqText, g.knownSrc)
 		}
 		started, err := g.run(w, r, req, n, model, gd)
 		if errors.Is(err, errPreempted) && !started {

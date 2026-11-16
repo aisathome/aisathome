@@ -2,9 +2,10 @@
 // change what its node answers; an agent such as opencode may run a tool call without a
 // person reading it. So tool calls from untrusted nodes are held back until complete and
 // checked before the client sees them: download-and-execute, credential files, encoded
-// commands, uploads of files, and web addresses that appear nowhere in the request. A
-// flagged tool call is never released, and the node is held (gets no requests) until the operator looks.
-// Plain text with unknown addresses is only flagged (logged), not blocked.
+// commands, uploads of files, and web addresses that appear nowhere in the request and are not
+// well-known sources (knownAddrs). A flagged tool call is never released, and the node is held
+// (gets no requests) until the operator looks. Plain text with unknown addresses is only flagged
+// (logged), not blocked.
 //
 // These are tripwires for crude attacks, not a proof that an answer is honest: a careful
 // attacker writes a harmful command that matches no pattern. Answer checking comes later.
@@ -14,6 +15,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"regexp"
 	"strings"
@@ -86,23 +88,167 @@ var (
 )
 
 // unknownHost returns the first web address host in s that appears nowhere in the request
-// (nor a parent domain of it), ignoring local and private addresses.
-func unknownHost(s, req string) string {
-	var hosts []string
-	for _, m := range urlHostRe.FindAllStringSubmatch(s, -1) {
-		hosts = append(hosts, m[1])
+// (nor a parent domain of it) and is not a known source, ignoring local and private addresses.
+// The work is linear in s: each host is looked up in the request once, and a known-source
+// check reads at most maxAddrTail bytes after its host.
+func unknownHost(s, req string, known knownAddrs) string {
+	type addr struct{ host, end int } // the host is s[host:end]
+	var addrs []addr
+	for _, re := range []*regexp.Regexp{urlHostRe, bareHostRe} {
+		for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+			addrs = append(addrs, addr{m[2], m[3]})
+		}
 	}
-	for _, m := range bareHostRe.FindAllStringSubmatch(s, -1) {
-		hosts = append(hosts, m[1])
-	}
-	for _, h := range hosts {
-		h = strings.ToLower(strings.Trim(strings.TrimRight(h, ".,;"), "[]"))
-		if h == "" || localHost(h) || hostInRequest(h, req) {
+	excused := map[string]bool{} // host → local or named in the request
+	for _, a := range addrs {
+		h := strings.ToLower(strings.Trim(strings.TrimRight(s[a.host:a.end], ".,;"), "[]"))
+		if h == "" {
+			continue
+		}
+		ok, seen := excused[h]
+		if !seen {
+			ok = localHost(h) || hostInRequest(h, req)
+			excused[h] = ok
+		}
+		if ok {
+			continue
+		}
+		if tail, whole := addrTail(s, a.end); known.has(h, tail, whole) {
 			continue
 		}
 		return h
 	}
 	return ""
+}
+
+// maxAddrTail bounds what a known-source check reads after a host: the rest of its word, up to
+// the next white space. A longer word is never a known source.
+const maxAddrTail = 1024
+
+// addrTail is the rest of the word after a host that ends at end: up to white space or the end
+// of s, at most maxAddrTail bytes; ok is false if the word is longer.
+func addrTail(s string, end int) (tail string, ok bool) {
+	t := s[end:min(len(s), end+maxAddrTail+1)]
+	if i := strings.IndexAny(t, " \t\r\n\v\f"); i >= 0 {
+		return t[:i], true
+	}
+	return t, len(t) <= maxAddrTail
+}
+
+// defaultKnownAddrs are the sources Lean work fetches by itself, so an agent repeats them in
+// its tool calls: Lake's git dependencies (Mathlib and its dependencies, Lean's own
+// repositories), Mathlib's build cache, its documentation and Lean's package registry. A
+// long agent conversation loses what the request once showed: its client compacts the history
+// into a summary, and an address read from a file hours before is gone from the request (a
+// prove2me task presumably repeated Mathlib's git address from its own lakefile after two
+// compactions, and the guard held a node). Config.GuardKnownAddresses replaces the list.
+var defaultKnownAddrs = []string{
+	"github.com/leanprover-community",
+	"github.com/leanprover",
+	"leanprover-community.github.io",
+	"lean-lang.org",
+	"cache.mathlib.org",
+	"lakecache.blob.core.windows.net",
+}
+
+// knownAddr is a known source: a host with its subdomains (path ""), or one host and the
+// paths under path ("/leanprover-community": that account on a host shared by everyone).
+type knownAddr struct{ host, path string }
+
+type knownAddrs []knownAddr
+
+var (
+	knownHostRe = regexp.MustCompile(`^[a-z0-9-]+(?:\.[a-z0-9-]+)+$`)
+	knownSegRe  = regexp.MustCompile(`^[a-z0-9_.~-]+$`)
+)
+
+// maxKnownAddrs bounds the list: it names a few sources, not the web.
+const maxKnownAddrs = 64
+
+// parseKnownAddrs reads entries "host" or "host/path/...", lower case, without a scheme.
+func parseKnownAddrs(list []string) (knownAddrs, error) {
+	if len(list) > maxKnownAddrs {
+		return nil, fmt.Errorf("guard_known_addresses: at most %d entries", maxKnownAddrs)
+	}
+	var out knownAddrs
+	for _, e := range list {
+		host, path, _ := strings.Cut(e, "/")
+		if !knownHostRe.MatchString(host) {
+			return nil, fmt.Errorf("guard_known_addresses: %q: give a host name in lower case, then optionally /path, without a scheme", e)
+		}
+		k := knownAddr{host: host}
+		if path != "" {
+			for _, seg := range strings.Split(strings.TrimRight(path, "/"), "/") {
+				if !knownSegRe.MatchString(seg) || seg == "." || seg == ".." {
+					return nil, fmt.Errorf("guard_known_addresses: %q: path segments of lower-case letters, digits and _ . ~ -", e)
+				}
+				k.path += "/" + seg
+			}
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
+// has: host, with the rest of its word (port, path, query, closing quotes), is a known source.
+// The shell joins quoted and escaped pieces, expansions and continued lines into one word, so
+// a word that does that after a known host (lean-lang.org"".evil.example, lean-lang.org\.x,
+// x$y.lean-lang.org) names another host: the host must be a plain name and the rest of the
+// word free of quotes (but closing ones), backslashes, $, ` and braces. A path entry needs the
+// host itself and a plain path below it: no "." or ".." segment and no percent-escape, which a
+// client could resolve to another account's path.
+func (k knownAddrs) has(host string, tail string, whole bool) bool {
+	if len(k) == 0 || !whole || !knownHostRe.MatchString(host) {
+		return false
+	}
+	tail = strings.TrimRight(tail, wordClosers)
+	if strings.ContainsAny(tail, wordSplices) {
+		return false
+	}
+	path, plain := addrPath(tail)
+	for _, a := range k {
+		if a.path == "" {
+			if host == a.host || strings.HasSuffix(host, "."+a.host) {
+				return true
+			}
+			continue
+		}
+		if host == a.host && plain && (path == a.path || strings.HasPrefix(path, a.path+"/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordClosers may end the word of an address: closing quotes and brackets, and punctuation of
+// the text around it. wordSplices, anywhere before them, join more text into the host or path.
+const (
+	wordClosers = "'\")].,;:!"
+	wordSplices = "'\"\\$`{}"
+)
+
+// addrPath is the path of an address from what follows its host: after an optional port, up to
+// a query or fragment, lower case. plain is false if the path could resolve elsewhere.
+func addrPath(rest string) (path string, plain bool) {
+	if strings.HasPrefix(rest, ":") {
+		rest = strings.TrimLeft(rest[1:], "0123456789")
+	}
+	if !strings.HasPrefix(rest, "/") {
+		return "", rest == "" || strings.IndexByte("?#", rest[0]) >= 0
+	}
+	if i := strings.IndexAny(rest, "?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	path = strings.ToLower(rest)
+	if strings.ContainsAny(path, "%\\") {
+		return "", false
+	}
+	for _, seg := range strings.Split(path, "/") {
+		if seg == "." || seg == ".." {
+			return "", false
+		}
+	}
+	return path, true
 }
 
 func localHost(h string) bool {
@@ -164,9 +310,11 @@ func streamHit(rule string) guardHit {
 var (
 	// flatLines makes a text one line, joining shell line continuations first: rules that stop
 	// at a line end then see all of a command, and all of a script as the JSON text used to show it.
-	flatLines = strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "\r\n", " ", "\n", " ", "\r", " ")
+	// A continuation goes without a trace, as in the shell: "lean-lang.org\<new line>.evil.example"
+	// is one host.
+	flatLines = strings.NewReplacer("\\\r\n", "", "\\\n", "", "\r\n", " ", "\n", " ", "\r", " ")
 	// flatEscapes does the same for arguments that are not valid JSON.
-	flatEscapes = strings.NewReplacer(`\\\n`, " ", `\\n`, " ", `\r`, " ", `\n`, " ", `\t`, " ", `\"`, `"`)
+	flatEscapes = strings.NewReplacer(`\\\r\n`, "", `\\\n`, "", `\\n`, " ", `\r`, " ", `\n`, " ", `\t`, " ", `\"`, `"`)
 )
 
 // callText is the text the rules read: every key, string and number of the arguments, decoded,
@@ -201,7 +349,7 @@ func callText(name, args string) string {
 // checkToolCall returns what a tool call breaks; hit.rule is "" if nothing. The rules read a
 // write or edit tool's file text as well as shell commands: a script written now can run in the
 // next call, and in 1,032 recorded write and edit calls no rule fired on such text.
-func checkToolCall(name, args, req string) guardHit {
+func checkToolCall(name, args, req string, known knownAddrs) guardHit {
 	text := callText(name, args)
 	for _, r := range guardRules {
 		for _, m := range r.re.FindAllStringIndex(text, -1) {
@@ -217,7 +365,7 @@ func checkToolCall(name, args, req string) guardHit {
 			return guardHit{r.rule, r.why}
 		}
 	}
-	if unknownHost(text, req) != "" {
+	if unknownHost(text, req, known) != "" {
 		return guardHit{ruleUnknownURL, whyUnknownURL}
 	}
 	return guardHit{}
@@ -317,7 +465,8 @@ const (
 
 // guard follows one streamed answer of an untrusted node.
 type guard struct {
-	req   string // requestText of the request
+	req   string     // requestText of the request
+	known knownAddrs // sources known without the request (defaultKnownAddrs)
 	calls []*heldCall
 	held  int      // bytes of arguments held
 	early [][]byte // chunks before any content (the role): held, so that an answer made only of
@@ -337,7 +486,7 @@ type heldCall struct {
 	args          strings.Builder
 }
 
-func newGuard(req string) *guard { return &guard{req: req} }
+func newGuard(req string, known knownAddrs) *guard { return &guard{req: req, known: known} }
 
 // filter takes one streamed chunk and returns what may go to the client now. Tool-call
 // deltas are taken out and held; a chunk with finish_reason is held while tool calls are
@@ -483,7 +632,7 @@ func (gd *guard) hold(tcs []any) {
 // check returns what the held tool calls break; hit.rule is "" if nothing.
 func (gd *guard) check() guardHit {
 	for _, k := range gd.calls {
-		if h := checkToolCall(k.name, k.args.String(), gd.req); h.rule != "" {
+		if h := checkToolCall(k.name, k.args.String(), gd.req, gd.known); h.rule != "" {
 			return h
 		}
 	}
@@ -492,7 +641,7 @@ func (gd *guard) check() guardHit {
 
 // textFlag returns ruleTextURL if the answer text names a web address absent from the request.
 func (gd *guard) textFlag() string {
-	if unknownHost(gd.text.String(), gd.req) != "" {
+	if unknownHost(gd.text.String(), gd.req, gd.known) != "" {
 		return ruleTextURL
 	}
 	return ""
@@ -556,7 +705,7 @@ func oddKey(v any) bool {
 
 // checkAssembled returns what a tool call in an assembled (non-streaming) answer breaks; hit.rule
 // is "" if nothing. The client gets exactly these calls, however the stream was cut into pieces.
-func checkAssembled(ans map[string]any, req string) guardHit {
+func checkAssembled(ans map[string]any, req string, known knownAddrs) guardHit {
 	choices, _ := ans["choices"].([]any)
 	for _, ch := range choices {
 		cm, _ := ch.(map[string]any)
@@ -566,7 +715,7 @@ func checkAssembled(ans map[string]any, req string) guardHit {
 			fn, _ := c.(map[string]any)["function"].(map[string]any)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
-			if h := checkToolCall(name, args, req); h.rule != "" {
+			if h := checkToolCall(name, args, req, known); h.rule != "" {
 				return h
 			}
 		}

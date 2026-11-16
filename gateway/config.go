@@ -71,6 +71,12 @@ type Config struct {
 	TokenizerSHA256 string `json:"tokenizer_sha256"`
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
+	// GuardKnownAddresses are web addresses the guards (guard.go) count as known in tool calls
+	// from untrusted nodes even when the request does not name them: "host" (and its subdomains)
+	// or "host/path" (that host, the path and below), lower case, no scheme. Absent or null: the
+	// built-in list of Lean and Mathlib sources (defaultKnownAddrs); [] turns it off; a list
+	// replaces it.
+	GuardKnownAddresses []string `json:"guard_known_addresses"`
 	// Projects are operator-run workloads (science, decision 0011) with their own keys, quota
 	// and the lowest priority (project.go).
 	Projects []Project `json:"projects,omitempty"`

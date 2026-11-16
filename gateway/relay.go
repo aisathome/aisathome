@@ -506,7 +506,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	if !rl.req.clientStream {
 		ans = assemble(rl.reqID, rl.model, rl.collected, u, rl.req.logprobs)
 		if rl.gd != nil { // what the client gets, not the pieces the guard saw
-			if hit := checkAssembled(ans, rl.gd.req); hit.rule != "" {
+			if hit := checkAssembled(ans, rl.gd.req, rl.gd.known); hit.rule != "" {
 				return rl.block(hit)
 			}
 		}

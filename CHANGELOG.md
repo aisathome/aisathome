@@ -73,6 +73,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A node is no longer held for repeating a Lean or Mathlib address.** The guard on untrusted
+  nodes holds a node whose agent tool call names a web address the request does not contain.
+  Agent clients compact long conversations into a summary, so an address the agent read from its
+  own workspace (Mathlib's git address in a lakefile) disappears from the request, and a node was
+  held for hours, presumably over it. Lean's and Mathlib's sources now count as known
+  (`guard_known_addresses`, configurable); everything else is checked as before. (gateway)
 - **Phones and tablets have a menu on every page.** Below 50rem the home page had no menu at
   all and the docs' menu held only the docs; between 50 and 72rem the main links were missing.
   (site)

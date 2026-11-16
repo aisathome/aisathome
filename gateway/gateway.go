@@ -60,6 +60,7 @@ type Gateway struct {
 	lim      *limiter
 	shares   []shareEntry    // recent placements, for the share cap; guarded by mu
 	held     sync.Map        // node id → NodeHold: held by a guard, without an accounts file
+	knownSrc knownAddrs      // sources the guards know without the request (guard.go)
 	unrec    unrecordedHolds // guard holds the accounts file has not recorded yet
 	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
 	counting chan struct{}   // prompts being counted before routing (countPrompt)
@@ -114,13 +115,20 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if cfg.PreemptAfterSec == 0 {
 		cfg.PreemptAfterSec = 1
 	}
+	if cfg.GuardKnownAddresses == nil {
+		cfg.GuardKnownAddresses = defaultKnownAddrs
+	}
+	known, err := parseKnownAddrs(cfg.GuardKnownAddresses)
+	if err != nil {
+		return nil, err
+	}
 	uw, err := newUsageWriter(cfg.UsageLog)
 	if err != nil {
 		return nil, err
 	}
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), use: uw, lim: newLimiter(), start: time.Now(),
-		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(),
+		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
 	if cfg.TasksNow != nil {
