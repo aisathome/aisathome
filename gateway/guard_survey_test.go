@@ -159,6 +159,7 @@ func TestGuardSurvey(t *testing.T) {
 	if dir == "" {
 		t.Skip("GUARD_SURVEY_DIR is not set")
 	}
+	known := defaultKnown(t) // the gateway's default sources, as in production
 	type hit struct {
 		Run, Rule, Tool, View, Fragment string
 		Pattern                         int
@@ -177,7 +178,7 @@ func TestGuardSurvey(t *testing.T) {
 				break
 			}
 		}
-		if h := unknownHost(text, req); h != "" {
+		if h := unknownHost(text, req, known); h != "" {
 			counts[fmt.Sprintf("%-22s            %-16s %s", ruleUnknownURL, view, tool)]++
 			hits = append(hits, hit{run, ruleUnknownURL, tool, view, h, -1})
 		}
@@ -191,7 +192,7 @@ func TestGuardSurvey(t *testing.T) {
 		views := surveyViews(c.tool, c.args)
 		match(c.run, c.tool, "raw", views["raw"], c.req)
 		match(c.run, c.tool, "decoded", views["decoded"], c.req)
-		if r := checkToolCall(c.tool, c.args, c.req).rule; r != "" {
+		if r := checkToolCall(c.tool, c.args, c.req, known).rule; r != "" {
 			stopped[r+" ("+c.tool+")"]++
 		}
 	}, func(run, text string) {
