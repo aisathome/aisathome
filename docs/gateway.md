@@ -8,7 +8,7 @@ Config fields beyond the example (`examples/gateway.json`):
 
 | Field | What |
 |---|---|
-| `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown). Without it a restart gives every key a fresh day and forgets credit. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
+| `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown; the task queues; the science database `science.db`, below). Without it a restart gives every key a fresh day and forgets credit, and the science records live in memory. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
 | `tokenizer_file`, `tokenizer_sha256` | The model's `tokenizer.json`, so the gateway counts tokens for credit itself (see [credit.md](credit.md)); the gateway refuses to start if the file does not match the SHA-256. |
 | `node_protocol_min`, `node_protocol_max` | The node protocol versions the gateway accepts (`protocol/PROTOCOL.md`, "Protocol versions"). Default: the gateway's own version and the one before it, so nodes of the current and the previous release connect. A node outside the range is refused with close code 4001 and a reason its volunteer sees, logged as `msg="node refused: unsupported protocol version"`. Every connect logs `protocol=<version>`; the account page shows it next to the node's software version. Max cannot exceed the gateway's own version; raise min only on a published retirement date. |
 | `guard_known_addresses` | Web addresses the guards count as known in tool calls from untrusted nodes even when the request does not name them (see "Guards" below): `"host"` (with its subdomains) or `"host/path"` (that host, the path and below, segment by segment), lower case, no scheme. Absent: the built-in list of Lean and Mathlib sources (`github.com/leanprover-community`, `github.com/leanprover`, `leanprover-community.github.io`, `lean-lang.org`, `cache.mathlib.org`, `lakecache.blob.core.windows.net`); `[]` turns it off; a list replaces it. Read at start. |
@@ -106,7 +106,8 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
   "kinds": ["p2m-v7"],
   "public_queue": true,
   "page": "/science/prove2me/",
-  "page_anchor": "leaf"
+  "page_anchor": "leaf",
+  "public_links": ["https://prove2.me/theorems/"]
 }]
 ```
 
@@ -124,6 +125,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `public_queue` | Publishes the public fields of the project's tasks without a key, at `GET /v1/projects/<id>/queue` and in `GET /v1/tasks` (below). Never the spec, the title, the worker, the lease, the error text or the raw evidence. Built at most every 15 s. The website's prove2me page reads it. Off: 404, and none of its tasks in `/v1/tasks`. |
 | `page`, `page_anchor` | The project's page on the website (a path such as `/science/prove2me/`), and a label name whose value places a task on it (`leaf`: `#leaf-<value>`). The account page links a node's science work there. Both optional. |
 | `task_compact_days` | Days after a finished task's end until it is compacted (below), 1-3650; default 30. |
+| `public_links` | The https prefixes (each ending in `/`, at most 8) that the project's campaign items and external results may link to (below). None: they carry no links. |
 
 Before decision 0019 the gateway also ran TauCeti's review loop (`auto_rounds`, `review_loop`,
 `max_review_rounds`, and the `review`, `decide` and `continue` calls) and kept TauCeti's public
@@ -179,11 +181,28 @@ gate nothing.
 
 `GET /v1/tasks`, without a key, lists the tasks of every project with `public_queue` in one schema:
 `project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,
-hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens, created_at,
-started_at, finished_at, updated_at, node_classes, live` (`node_classes`: the classes, trusted or
-volunteer, of the nodes that served the requests that named the task; `live`: below). A field a task
-does not have is `null`. Query `project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500,
-default 100) and `after` (the answer's `next`); newest first.
+hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens,
+uncached_prompt_tokens, tokens_computed, tokens_with_cache, created_at, started_at, finished_at,
+updated_at, node_classes, live` (`node_classes`: the classes, trusted or volunteer, of the nodes that
+served the requests that named the task; `live`: below). A field a task does not have is `null`.
+Query `project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500, default 100) and `after`
+(the answer's `next`); newest first.
+
+**Token counts.** A finished task's counts are its worker's. Read the explicit ones:
+
+| Field | What |
+|---|---|
+| `uncached_prompt_tokens` | Prompt tokens the model computed (cache re-reads left out). |
+| `cached_tokens` | Prompt tokens re-read from a node's cache. |
+| `completion_tokens` | Tokens written. |
+| `tokens_computed` | `uncached_prompt_tokens + completion_tokens`: the work the GPUs did. |
+| `tokens_with_cache` | `tokens_computed + cached_tokens`: every token the model read or wrote. |
+
+The explicit fields are `null` when the worker did not report `cached_tokens` (prove2me's tasks before
+2026-11-14): then nobody knows what its `prompt_tokens` held. `prompt_tokens` and `tokens`
+(`prompt_tokens + completion_tokens`) keep their old meaning for existing readers: for a task that
+reported `cached_tokens` they leave the cache out (so `tokens` equals `tokens_computed`), for one
+that did not they are an incomplete count. New readers should not use them.
 
 A project's model request may name the task it belongs to in an `X-Aisathome-Task` header, and the
 gateway uses that name only when it is one of the project's running tasks (any other name is
@@ -197,7 +216,8 @@ answer (streamed or not):
 
 ```json
 "live": {"requests": 41, "prompt_tokens": 1520330, "cached_tokens": 1398112,
-         "completion_tokens": 18227, "model_s": 1310.4, "updated_at": "2026-11-15T14:02:11Z"}
+         "completion_tokens": 18227, "uncached_prompt_tokens": 122218, "tokens_computed": 140445,
+         "tokens_with_cache": 1538557, "model_s": 1310.4, "updated_at": "2026-11-15T14:02:11Z"}
 ```
 
 | Field | What |
@@ -206,6 +226,7 @@ answer (streamed or not):
 | `prompt_tokens` | Prompt tokens of those calls, the cached ones included, as the node reported them (clamped like credit). |
 | `cached_tokens` | The part of `prompt_tokens` read from the node's cache. |
 | `completion_tokens` | Tokens written. |
+| `uncached_prompt_tokens`, `tokens_computed`, `tokens_with_cache` | As in a finished task's counts (above): `prompt_tokens - cached_tokens`, that plus `completion_tokens`, and `prompt_tokens + completion_tokens`. Unlike a result's, `live.prompt_tokens` includes the cached ones. |
 | `model_s` | Seconds the gateway measured from sending each call to the node to its end (prefill and any wait on the node included). |
 | `updated_at` | When the last counted call ended. |
 
@@ -230,6 +251,67 @@ no restart is needed, and a restart does no harm. While it lasts, a worker's lea
 so a fault longer than the lease (10 minutes by default) sends those tasks back to the queue when
 the disk returns; the worker takes them back without losing a try.
 
+### Campaigns and external results
+
+A project's public record of what it ran and what came of it outside the network (decision 0021),
+kept in the science database. What they mean for a project stays in its labels and its own code.
+
+- A **campaign** is a named round of work (prove2me's trials): `id` (1-64 letters, digits, `.`, `_`,
+  `-`), `title`, `status` (`preparing`, `running`, `finished`), `started_at`, `ended_at`, `labels`
+  (as a task's), `text` (at most 4 KiB, line breaks allowed: for instance the owner's closing
+  words) and `items`, the things it works on (at most 200): `{id, title, url, role, labels}`.
+- An **external result** is what an outside service said about a piece of the work (prove2me's
+  verdict on a submitted proof): `source` (`prove2me`), `external_id` (the service's own id),
+  `campaign`, `item`, `task` (the gateway task that produced it; all three optional), `url`, `state`
+  (`pending`, `accepted`, `rejected`, `error`), `verdict` (the service's text, at most 1000 bytes),
+  `labels`, `submitted_at` and `verdict_at`.
+
+Writes take the project's own key (401 without one, 403 with another project's):
+
+```
+PUT    /v1/projects/{id}/campaigns/{campaign}   create or replace the whole campaign: 201, or 200
+PATCH  /v1/projects/{id}/campaigns/{campaign}   change the fields given; finish: {"status": "finished"}
+DELETE /v1/projects/{id}/campaigns/{campaign}   remove it (409 while results refer to it)
+POST   /v1/projects/{id}/results                create or update, by (source, external_id): 201, or 200
+DELETE /v1/projects/{id}/results/{result}       remove it
+```
+
+Both writes are idempotent: the same body again answers 200 with `"created": false` and changes
+nothing (not even `updated_at`). The rules for times: a campaign that becomes `running` gets
+`started_at` now unless it has one, one that becomes `finished` gets `ended_at` now unless it has one,
+and one that is not finished has no `ended_at` (reopening clears it). A result that is not `pending`
+gets `verdict_at` now unless it has one. A result with a verdict never goes back to `pending`: a late
+retry of the submission changes nothing. A result's `campaign` must exist first. A project keeps at
+most 1000 campaigns and 50,000 results (409 beyond).
+
+Reads take no key for a project with `public_queue` (cached 15 s); another project's need its key:
+
+```
+GET /v1/projects/{id}/campaigns                  newest first (started_at, else created_at); limit (1-200, default 50), after
+GET /v1/projects/{id}/campaigns/{campaign}       one
+GET /v1/projects/{id}/results                    newest submitted first; campaign, item, source, state (comma-separated), limit (1-500, default 100), after
+```
+
+A campaign comes with its items in order and `results`, its results per state. The results list
+comes with `counts` per state for the same filter without `state`, and `next` for the page after.
+
+Everything they show is public, so everything is checked when written: ids and labels as a task's;
+`title`, `text` and `verdict` refuse control characters, key-shaped strings and e-mail addresses;
+a `url` must be https, without query or fragment, under one of the project's `public_links`. A
+result's `external_id` is in the writer's answer only, never in a read (a service's ids may let
+others ask it about the submission, or who made it); its public `id` is `r-` and 16 hex characters
+of a hash of `source` and `external_id`. Never in them: prompts, workers, node ids, operators,
+accounts or keys.
+
+**The science database.** `state_dir/science.db`, SQLite (WAL), with the schema's version in its
+`user_version`; the gateway brings it up to date at start. A database that is damaged, or from a
+newer gateway, stops the start with a message saying so, rather than losing records. Backups: the
+data volume's snapshots hold it like any file (SQLite recovers its write-ahead log as after a
+crash), and once a UTC day the gateway writes a clean copy beside it, `science-YYYY-MM-DD.db`
+(`VACUUM INTO`), keeping the two newest, so every snapshot also holds a consistent copy that opens
+on its own. To restore one: stop the gateway, replace `science.db` with the copy, delete
+`science.db-wal` and `science.db-shm`, start it. Tasks are not in it: they stay one JSON file each.
+
 ## Public statistics
 
 Without authentication, for the website (aggregates only: never users, keys, nodes or
@@ -238,7 +320,9 @@ operators):
 - `GET /v1/stats`: nodes online, slots, busy, paused and held now (a held node counts only in `held`); today's (UTC) requests and tokens,
   in all, per class (`today.classes`) and per project (`today.projects`, with `node_seconds`),
   each with `preempted` (of its requests, those stopped for a person's) when not zero; totals
-  since the usage log began (`total`, with `total.projects`).
+  since the usage log began (`total`, with `total.projects`). Here `prompt_tokens` includes the
+  tokens re-read from the nodes' caches; each class and project also has `cached_tokens` and
+  `uncached_prompt_tokens` (the part the model computed).
 - `GET /v1/stats/history`: one entry per UTC day (oldest first, at most 400 days, today
   included so far): `requests`, `completed`, `prompt_tokens`, `completion_tokens`, `classes`
   (per class: `requests` and tokens), and `nodes_peak` / `nodes_avg` (nodes online, sampled

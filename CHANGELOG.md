@@ -9,6 +9,19 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Campaigns and external results.** A project keeps its public record in the gateway: campaigns
+  (a named round of work with a status, dates, labels, a short text and its items) and external
+  results (what an outside service said about a piece of the work: a state, the verdict, times, and
+  the campaign, item and task it belongs to). Written with the project's key (`PUT`/`PATCH`
+  `/v1/projects/{id}/campaigns/{campaign}`, `POST /v1/projects/{id}/results`, idempotent), read
+  without one for a project with `public_queue`. Public fields only; links only under the project's
+  new `public_links`; a service's own result ids are never shown. Stored in an embedded SQLite
+  database, `state_dir/science.db`, with a clean copy written beside it once a day. See "Campaigns
+  and external results" in `docs/gateway.md`. (gateway)
+- **Explicit token counts.** `GET /v1/tasks` (and `live` on the public views) adds
+  `uncached_prompt_tokens`, `tokens_computed` and `tokens_with_cache`; `/v1/stats` adds
+  `cached_tokens` and `uncached_prompt_tokens` per class and project. The old fields keep their
+  meaning. (gateway)
 - **`aisathome-node pilot`: the node as a BOINC task.** BOINC's wrapper runs it (`boinc/job.xml`);
   it starts llama-server itself, serves the gateway over the node connection with the credential
   the work unit carries, and ends after 4 hours, after 30 minutes without a request, or within 8 s
@@ -84,6 +97,9 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A gateway that fails to start leaves nothing running.** It used to start its mail worker and
+  task sweeper before steps that can fail (the keys, the state directory); now every such step comes
+  first, what they opened is closed on failure, and background work starts last. (gateway)
 - **A node is no longer held for repeating a Lean or Mathlib address.** The guard on untrusted
   nodes holds a node whose agent tool call names a web address the request does not contain.
   Agent clients compact long conversations into a summary, so an address the agent read from its

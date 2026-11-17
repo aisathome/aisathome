@@ -86,6 +86,9 @@ type Project struct {
 	// TaskCompactDays: a finished task is compacted this many days after its end (tasks.go,
 	// Retention): 1 to maxCompactDays; 0 = defaultCompactDays. Tasks are kept either way.
 	TaskCompactDays int `json:"task_compact_days,omitempty"`
+	// PublicLinks: the https prefixes ("https://example.org/items/", ending in /) the project's
+	// campaign items and external results may link to (campaigns.go); none: they carry no links.
+	PublicLinks []string `json:"public_links,omitempty"`
 }
 
 // projectPageRe: a project's page, a site path.
@@ -150,6 +153,10 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 			}
 		}
 		p.Kinds = slices.Clone(p.Kinds)
+		if err := checkPublicLinks(p.PublicLinks); err != nil {
+			return nil, fmt.Errorf("project %q: %w", p.ID, err)
+		}
+		p.PublicLinks = slices.Clone(p.PublicLinks)
 		if p.Page != "" && (!projectPageRe.MatchString(p.Page) || strings.Contains(p.Page, "//")) {
 			return nil, fmt.Errorf("project %q: page must be a site path such as /science/%s/", p.ID, p.ID)
 		}

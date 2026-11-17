@@ -41,7 +41,7 @@ flowchart LR
 
 | Piece | Path | What it is |
 |---|---|---|
-| Gateway | `gateway/` | `aisathome-gateway`, one Go binary. The OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`), routing with queueing, priorities, preemption and failover, accounts and sign-in, API keys and node tokens, the guards on volunteers' answers, metering and credit, the science task queue, and the public statistics. Deployed continuously from `main`. |
+| Gateway | `gateway/` | `aisathome-gateway`, one Go binary. The OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`), routing with queueing, priorities, preemption and failover, accounts and sign-in, API keys and node tokens, the guards on volunteers' answers, metering and credit, the science task queue, projects' campaigns and external results (in an embedded SQLite database), and the public statistics. Deployed continuously from `main`. |
 | Node | `node/` | `aisathome-node`, a small Go agent next to a local `llama-server`. It dials **out** to the gateway (no open ports, works behind NAT), passes requests to the engine and streams the answer back. It has a local status page on `127.0.0.1:7381` and `aisathome-node status`. Released as `v*` tags. |
 | Protocol | `protocol/` | The gateway-node WebSocket protocol and its Go types. Versioned with a small integer; a gateway accepts the current and the previous version, so nodes of the last two releases keep working. |
 | Harness | `harness/` | `aisathome_harness`, a Python package (standard library only) that runs an open model behind any OpenAI-compatible endpoint as an agent on a science project's tasks, checks the result mechanically and keeps the evidence. It includes the client for the gateway's task queue. Released as `harness-v*` tags. |
