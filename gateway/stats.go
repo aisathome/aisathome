@@ -76,7 +76,7 @@ func (c *useCount) add(prompt, completion int, ms int64, seconds bool) {
 // count adds record r to c, in /v1/stats.
 func (c *useCount) count(r usageRecord, prompt, completion int, seconds bool) {
 	c.add(prompt, completion, r.Usage.DurationMs, seconds)
-	c.Cached += int64(min(max(r.Usage.CachedTokens, 0), max(prompt, 0)))
+	c.Cached += int64(recordCached(r, prompt))
 	if r.Outcome == outcomePreempted {
 		c.Preempted++
 	}
@@ -101,6 +101,16 @@ func recordTokens(r usageRecord) (prompt, completion int) {
 		return r.Tokens.Prompt, r.Tokens.Completion
 	}
 	return r.Usage.PromptTokens, r.Usage.CompletionTokens
+}
+
+// recordCached is the part of a record's prompt tokens (recordTokens) read from a cache, counted
+// on the same basis: the gateway's own decision where it counted the tokens, else the node's.
+func recordCached(r usageRecord, prompt int) int {
+	cached := r.Usage.CachedTokens
+	if r.Tokens != nil {
+		cached = r.Tokens.Cached
+	}
+	return min(max(cached, 0), max(prompt, 0))
 }
 
 func (s *dayStats) add(r usageRecord) {

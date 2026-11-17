@@ -183,6 +183,12 @@ func TestCampaignValidation(t *testing.T) {
 		"item query":       item("url", itemLink+"x?token=abc"),
 		"item fragment":    item("url", itemLink+"x#y"),
 		"item userinfo":    item("url", "https://u:p@items.example/theorems/x"),
+		"item dot-dot":     item("url", itemLink+"../submissions/private"),
+		"item dot":         item("url", itemLink+"./x"),
+		"item escaped dot": item("url", itemLink+"%2e%2e/submissions/private"),
+		"item backslash":   item("url", itemLink+"..\\submissions"),
+		"item space":       item("url", itemLink+".. "),
+		"item inner space": item("url", itemLink+"a b"),
 		"item label":       item("labels", map[string]string{"alias": strings.Repeat("x", maxTaskLabelValue+1)}),
 		"item title":       item("title", "mail someone@example.org"),
 	} {
@@ -395,7 +401,7 @@ func TestCampaignAndResultPages(t *testing.T) {
 
 // public_links in the config: https prefixes ending in "/".
 func TestProjectPublicLinks(t *testing.T) {
-	for _, l := range []string{"http://x.example/", "https://x.example/items", "https://u@x.example/", "https://x.example/?a=1", "https:///"} {
+	for _, l := range []string{"http://x.example/", "https://x.example/items", "https://u@x.example/", "https://x.example/?a=1", "https:///", "https://x.example/a/../b/", "https://x.example/%2e/"} {
 		if _, err := newProjectTable([]Project{{ID: "p", KeySHA256: []string{keyHash("k-1234567890")}, PublicLinks: []string{l}}}); err == nil {
 			t.Errorf("%q accepted", l)
 		}
