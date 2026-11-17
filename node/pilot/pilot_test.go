@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -425,6 +426,34 @@ func TestSigtermStopsInTime(t *testing.T) {
 	}
 }
 
+// A SIGTERM during the drain at the time limit still stops the pilot within the stop budget,
+// not after the drain.
+func TestSigtermDuringDrain(t *testing.T) {
+	r := newRig(t)
+	r.eng.chunks, r.eng.chunkDelay = 100000, 50*time.Millisecond
+	r.o.MaxServe, r.o.DrainWait, r.o.StopBudget = 1500*time.Millisecond, time.Minute, 4*time.Second
+	ctx, sigterm := context.WithCancel(context.Background())
+	ch := r.run(ctx)
+	connected(t, r.gw)
+	r.gw.request(t, "endless")
+	deadline := time.Now().Add(10 * time.Second)
+	for !r.gw.sawPause() {
+		if time.Now().After(deadline) {
+			t.Fatal("the pilot never paused at its time limit")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	start := time.Now()
+	sigterm()
+	res := wait(t, ch, 10*time.Second)
+	if took := time.Since(start); took > r.o.StopBudget {
+		t.Errorf("stop took %s, more than the %s budget", took, r.o.StopBudget)
+	}
+	if res.Reason != ReasonSigterm || r.gw.closeReason() != "pilot: sigterm" {
+		t.Errorf("result %+v, close reason %q; want sigterm", res, r.gw.closeReason())
+	}
+}
+
 // When the wrapper dies without a SIGTERM (it was killed), the pilot notices that its parent
 // changed and stops as for SIGTERM.
 func TestParentGone(t *testing.T) {
@@ -568,8 +597,8 @@ func TestStartErrors(t *testing.T) {
 
 // The bundle is unpacked once and reused; an archive without llama-server is refused.
 func TestUnpack(t *testing.T) {
-	if _, err := exec.LookPath("xz"); err != nil {
-		t.Skip("no xz")
+	if _, err := exec.LookPath("xz"); err != nil || runtime.GOOS == "windows" {
+		t.Skip("needs xz, and the bundle is Linux's")
 	}
 	src, dir := t.TempDir(), t.TempDir()
 	b := filepath.Join(src, "aisathome-node-bundle-linux-amd64")
