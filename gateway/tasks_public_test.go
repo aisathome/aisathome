@@ -236,6 +236,10 @@ func TestExplicitTokenFields(t *testing.T) {
 		Usage: protocol.Usage{PromptTokens: 1000, CachedTokens: 900, CompletionTokens: 50}})
 	r.g.stats.add(usageRecord{Time: time.Now(), Outcome: "ok", Project: "prove2me", Class: ClassScience,
 		Usage: protocol.Usage{PromptTokens: 100, CachedTokens: 500, CompletionTokens: 5}}) // cached beyond the prompt: clamped
+	// the gateway counted this one itself: its own counts, cached ones included, not the node's
+	r.g.stats.add(usageRecord{Time: time.Now(), Outcome: "ok", Project: "prove2me", Class: ClassScience,
+		Usage:  protocol.Usage{PromptTokens: 9999, CachedTokens: 9999, CompletionTokens: 1},
+		Tokens: &creditTokens{Prompt: 400, Cached: 300, Completion: 10}})
 	w := httptest.NewRecorder()
 	r.g.handleStats(w, httptest.NewRequest("GET", "/v1/stats", nil))
 	var st struct {
@@ -247,7 +251,7 @@ func TestExplicitTokenFields(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &st)
 	for name, p := range map[string]map[string]any{"today": st.Today.Projects["prove2me"], "total": st.Total.Projects["prove2me"],
 		"class": st.Today.Classes[ClassScience]} {
-		if p["prompt_tokens"] != 1100.0 || p["cached_tokens"] != 1000.0 || p["uncached_prompt_tokens"] != 100.0 || p["completion_tokens"] != 55.0 {
+		if p["prompt_tokens"] != 1500.0 || p["cached_tokens"] != 1300.0 || p["uncached_prompt_tokens"] != 200.0 || p["completion_tokens"] != 65.0 {
 			t.Errorf("%s: %v", name, p)
 		}
 	}

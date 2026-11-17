@@ -54,6 +54,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -214,8 +215,11 @@ func checkPublicLink(field, s string, prefixes []string) error {
 		return nil
 	}
 	u, err := url.Parse(s)
+	// No dot segments, no escapes ('%', '\\') and no spaces (a browser trims them): the link a browser
+	// resolves is the one checked.
 	ok := err == nil && len(s) <= maxPublicURL && u.Scheme == "https" && u.User == nil && u.RawQuery == "" &&
-		u.Fragment == "" && !strings.Contains(s, "#") && !strings.Contains(s, "?") && utf8Printable(s) &&
+		u.Fragment == "" && !strings.ContainsAny(s, "#?%\\") && !strings.ContainsFunc(s, unicode.IsSpace) &&
+		utf8Printable(s) && !dotSegment(u.Path) &&
 		!publicSecret.MatchString(s) && !publicEmail.MatchString(s)
 	if ok {
 		ok = slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(s, p) })
@@ -229,6 +233,11 @@ func checkPublicLink(field, s string, prefixes []string) error {
 	return nil
 }
 
+// dotSegment: a path with a "." or ".." segment.
+func dotSegment(p string) bool {
+	return slices.ContainsFunc(strings.Split(p, "/"), func(seg string) bool { return seg == "." || seg == ".." })
+}
+
 // checkPublicLinks checks a project's public_links: https prefixes ending in "/".
 func checkPublicLinks(links []string) error {
 	if len(links) > maxProjectLinks {
@@ -237,7 +246,7 @@ func checkPublicLinks(links []string) error {
 	for _, l := range links {
 		u, err := url.Parse(l)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-			strings.ContainsAny(l, "?#") || !strings.HasSuffix(l, "/") || len(l) > 200 {
+			strings.ContainsAny(l, "?#%\\") || strings.ContainsFunc(l, unicode.IsSpace) || dotSegment(u.Path) || !strings.HasSuffix(l, "/") || len(l) > 200 {
 			return fmt.Errorf("public_links: %q: an https prefix ending in /, such as https://example.org/items/", l)
 		}
 	}
