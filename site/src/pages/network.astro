@@ -38,6 +38,12 @@ import LiveStats from '../components/LiveStats.astro';
 		</figure>
 		<figure class="chart" data-chart="tokens" hidden>
 			<figcaption>Tokens a day (prompt and answer)</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch" style="background: var(--h-chat)"></span>Chat</li>
+				<li><span class="swatch" style="background: var(--h-agent)"></span>API and agents</li>
+				<li><span class="swatch" style="background: var(--h-science)"></span>Science</li>
+				<li data-legend-earlier hidden><span class="swatch" style="background: var(--h-other)"></span>Before classes were counted</li>
+			</ul>
 			<svg role="img"></svg>
 		</figure>
 		<figure class="chart" data-chart="nodes" hidden>
@@ -213,9 +219,16 @@ import LiveStats from '../components/LiveStats.astro';
 					const tip = `${x.date}: ${full.format(x.requests)} requests` + (x.classes ? ` (chat ${full.format(parts.chat)}, API and agents ${full.format(parts.agent)}, science ${full.format(parts.science)})` : '');
 					return { date: x.date, parts, tip };
 				});
+				const clsTok = (x, k) => {
+					const c = x.classes?.[k];
+					return ok(c?.prompt_tokens) && ok(c?.completion_tokens) ? c.prompt_tokens + c.completion_tokens : 0;
+				};
 				const tok = days.map((x) => {
 					const n = x.prompt_tokens + x.completion_tokens;
-					return { date: x.date, parts: { all: n }, tip: `${x.date}: ${full.format(n)} tokens` };
+					const parts = { chat: clsTok(x, 'chat'), agent: clsTok(x, 'agent'), science: clsTok(x, 'science') };
+					parts.other = Math.max(n - parts.chat - parts.agent - parts.science, 0);
+					const tip = `${x.date}: ${full.format(n)} tokens` + (x.classes ? ` (chat ${full.format(parts.chat)}, API and agents ${full.format(parts.agent)}, science ${full.format(parts.science)})` : '');
+					return { date: x.date, parts, tip };
 				});
 				const nodes = days.filter((x) => ok(x.nodes_peak) && ok(x.nodes_avg)).map((x) => ({
 					date: x.date, parts: { peak: x.nodes_peak, avg: x.nodes_avg },
@@ -223,18 +236,21 @@ import LiveStats from '../components/LiveStats.astro';
 				}));
 				const range = (xs) => `${xs.length} days, ${xs[0].date} to ${xs[xs.length - 1].date}`;
 				const hasReq = req.length >= 2 && req.some((x) => x.parts.chat + x.parts.agent + x.parts.science + x.parts.other > 0);
-				const hasTok = tok.length >= 2 && tok.some((x) => x.parts.all > 0);
+				const hasTok = tok.length >= 2 && tok.some((x) => x.parts.chat + x.parts.agent + x.parts.science + x.parts.other > 0);
 				const hasNodes = nodes.length >= 2;
 				if (!hasReq && !hasTok && !hasNodes) return hide();
 				box.hidden = false; // shown before drawing: the charts are drawn at their width
 				show('requests', hasReq);
 				show('tokens', hasTok);
 				show('nodes', hasNodes);
-				if (hasReq) {
-					bars(box.querySelector('[data-chart="requests"]'), req, ['other', 'chat', 'agent', 'science'], `Requests a day, ${range(req)}`);
-					box.querySelector('[data-legend-earlier]').hidden = !req.some((x) => x.parts.other > 0);
-				}
-				if (hasTok) bars(box.querySelector('[data-chart="tokens"]'), tok, ['all'], `Tokens a day, ${range(tok)}`);
+				// Requests and tokens stack the same classes, in the same order and colours.
+				const split = (name, rows, label) => {
+					const fig = box.querySelector(`[data-chart="${name}"]`);
+					bars(fig, rows, ['other', 'chat', 'agent', 'science'], label);
+					fig.querySelector('[data-legend-earlier]').hidden = !rows.some((x) => x.parts.other > 0);
+				};
+				if (hasReq) split('requests', req, `Requests a day, ${range(req)}`);
+				if (hasTok) split('tokens', tok, `Tokens a day, ${range(tok)}`);
 				if (hasNodes) lines(box.querySelector('[data-chart="nodes"]'), nodes, ['peak', 'avg'], `Nodes online, peak and average, ${range(nodes)}`);
 				box.querySelector('[data-history-range]').textContent = `, the last ${range(days)}`;
 				const cell = (v) => (ok(v) ? full.format(v) : '');
@@ -360,7 +376,6 @@ import LiveStats from '../components/LiveStats.astro';
 	.chart :global(.s-agent) { fill: var(--h-agent); }
 	.chart :global(.s-science) { fill: var(--h-science); }
 	.chart :global(.s-other) { fill: var(--h-other); }
-	.chart :global(.s-all) { fill: var(--h-chat); }
 	.chart :global(.line) { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 	.chart :global(.line.s-peak) { stroke: var(--h-peak); }
 	.chart :global(.line.s-avg) { stroke: var(--h-avg); }
