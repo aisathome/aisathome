@@ -1,0 +1,12 @@
+<job_desc>
+    <task>
+        <application>aisathome-node</application>
+        <command_line>pilot --model boinc_resolve(model.gguf) --credential-file boinc_resolve(credential) --summary boinc_resolve(summary.json) --engine-archive boinc_resolve(engine.tar.xz) --engine-dir $PROJECT_DIR/engine --checkpoint pilot_checkpoint --fraction-done pilot_fraction</command_line>
+        <setenv>CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM</setenv>
+        <append_cmdline_args/>
+        <checkpoint_filename>pilot_checkpoint</checkpoint_filename>
+        <fraction_done_filename>pilot_fraction</fraction_done_filename>
+        <multi_process/>
+        <time_limit>16200</time_limit>
+    </task>
+</job_desc>
