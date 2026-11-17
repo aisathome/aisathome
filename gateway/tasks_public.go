@@ -8,10 +8,17 @@
 //	parent, needs, retry_of, replaces, closed_by,   the relations (tasks.go)
 //	labels, hole_id,                                the project's own public names
 //	steps, model_min, tokens (prompt + completion), prompt_tokens, cached_tokens, completion_tokens,
+//	uncached_prompt_tokens, tokens_computed, tokens_with_cache      explicit counts (below)
 //	created_at, started_at, finished_at, updated_at,
 //	node_classes                                    trusted or volunteer: the nodes that served it
 //	live                                            while it runs: the gateway's own count of its
 //	                                                model calls so far (tasks_live.go), else null
+//
+// Token counts: the result's prompt_tokens and tokens are what they always were (the worker's prompt
+// count, which leaves cache re-reads out when it reports cached_tokens, and an incomplete count of
+// unknown meaning when it does not). Read the explicit ones instead: uncached_prompt_tokens (prompt
+// tokens the model computed), tokens_computed (those plus completion_tokens) and tokens_with_cache
+// (plus cached_tokens), all null unless the result reported cached_tokens. `live` has the same three.
 //
 // A field the task does not have is null (labels {}, needs and node_classes []): a task made before
 // the typed fields has no relations, and its role and labels come from its spec as on the public
@@ -68,12 +75,19 @@ type publicTaskV1 struct {
 	PromptTokens     *int64            `json:"prompt_tokens"`
 	CachedTokens     *int64            `json:"cached_tokens"`
 	CompletionTokens *int64            `json:"completion_tokens"`
-	CreatedAt        time.Time         `json:"created_at"`
-	StartedAt        *time.Time        `json:"started_at"`
-	FinishedAt       *time.Time        `json:"finished_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	NodeClasses      []string          `json:"node_classes"`
-	Live             *publicLive       `json:"live"`
+	// The explicit counts (audit 2026-11-17, tokens): known only for a result that reported
+	// cached_tokens, else null. UncachedPromptTokens: prompt tokens the model computed;
+	// TokensComputed: those plus completion_tokens (what the GPU did); TokensWithCache: also the
+	// prompt tokens re-read from the cache.
+	UncachedPromptTokens *int64      `json:"uncached_prompt_tokens"`
+	TokensComputed       *int64      `json:"tokens_computed"`
+	TokensWithCache      *int64      `json:"tokens_with_cache"`
+	CreatedAt            time.Time   `json:"created_at"`
+	StartedAt            *time.Time  `json:"started_at"`
+	FinishedAt           *time.Time  `json:"finished_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+	NodeClasses          []string    `json:"node_classes"`
+	Live                 *publicLive `json:"live"`
 }
 
 func strOrNil(s string) *string {
@@ -154,9 +168,10 @@ func (t *Task) publicV1() publicTaskV1 {
 		prompt, compl := max(r.PromptTokens, 0), max(r.CompletionTokens, 0)
 		tok := prompt + compl
 		p.Steps, p.ModelMin, p.PromptTokens, p.CompletionTokens, p.Tokens = &steps, &mm, &prompt, &compl, &tok
-		if r.CachedTokens != nil {
+		if r.CachedTokens != nil { // the result's prompt_tokens leave the cached ones out
 			c := max(*r.CachedTokens, 0)
-			p.CachedTokens = &c
+			computed, withCache := prompt+compl, prompt+c+compl
+			p.CachedTokens, p.UncachedPromptTokens, p.TokensComputed, p.TokensWithCache = &c, &prompt, &computed, &withCache
 		}
 		fin := r.FinishedAt
 		p.FinishedAt = &fin

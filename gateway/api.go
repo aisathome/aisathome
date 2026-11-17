@@ -63,6 +63,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{id}/status", g.handleStatusGet)
 	mux.HandleFunc("GET /v1/projects/{id}/queue", g.handlePublicQueue)
 	g.taskRoutes(mux)
+	g.campaignRoutes(mux)
 	mux.HandleFunc("GET /stats/{$}", handleExportIndex)
 	mux.HandleFunc("GET /stats/{file}", g.handleExport)
 	if g.accounts != nil {

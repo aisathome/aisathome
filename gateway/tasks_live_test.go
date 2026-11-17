@@ -72,7 +72,8 @@ func TestTaskLiveCount(t *testing.T) {
 	}
 	live, _ := by["t6-a"]["live"].(map[string]any)
 	if live == nil || live["requests"] != 2.0 || live["prompt_tokens"] != 2500.0 || live["cached_tokens"] != 2300.0 ||
-		live["completion_tokens"] != 100.0 || live["model_s"] != 3.0 || live["updated_at"] != "2026-11-15T12:01:00Z" || len(live) != 6 {
+		live["completion_tokens"] != 100.0 || live["model_s"] != 3.0 || live["updated_at"] != "2026-11-15T12:01:00Z" ||
+		live["uncached_prompt_tokens"] != 200.0 || live["tokens_computed"] != 300.0 || live["tokens_with_cache"] != 2600.0 || len(live) != 9 {
 		t.Fatalf("running task's live: %s", body)
 	}
 	if l, ok := by["t6-q"]["live"]; !ok || l != nil {
@@ -80,7 +81,7 @@ func TestTaskLiveCount(t *testing.T) {
 	}
 	// The project's queue: the same fields.
 	_, qbody, _ := r.publicQueue()
-	if !strings.Contains(qbody, `"live":{"requests":2,"prompt_tokens":2500,"cached_tokens":2300,"completion_tokens":100,"model_s":3,"updated_at":"2026-11-15T12:01:00Z"}`) ||
+	if !strings.Contains(qbody, `"live":{"requests":2,"prompt_tokens":2500,"cached_tokens":2300,"completion_tokens":100,"uncached_prompt_tokens":200,"tokens_computed":300,"tokens_with_cache":2600,"model_s":3,"updated_at":"2026-11-15T12:01:00Z"}`) ||
 		strings.Count(qbody, `"live"`) != 1 {
 		t.Fatalf("public queue: %s", qbody)
 	}

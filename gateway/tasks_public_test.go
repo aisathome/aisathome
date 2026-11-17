@@ -4,11 +4,14 @@ package gateway
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // v1Rig: prove2me (public, kinds p2m-v7), lab (not public).
@@ -85,8 +88,9 @@ func TestPublicTasksSchema(t *testing.T) {
 		t.Fatalf("page %+v", page)
 	}
 	fields := []string{"project", "id", "kind", "role", "state", "outcome", "try", "parent", "needs", "retry_of", "replaces", "closed_by",
-		"labels", "hole_id", "steps", "model_min", "tokens", "prompt_tokens", "cached_tokens", "completion_tokens", "created_at",
-		"started_at", "finished_at", "updated_at", "node_classes", "live"}
+		"labels", "hole_id", "steps", "model_min", "tokens", "prompt_tokens", "cached_tokens", "completion_tokens",
+		"uncached_prompt_tokens", "tokens_computed", "tokens_with_cache", "created_at", "started_at", "finished_at", "updated_at",
+		"node_classes", "live"}
 	var ids []string
 	for _, tk := range page.Tasks {
 		ids = append(ids, tk["id"].(string))
@@ -109,6 +113,7 @@ func TestPublicTasksSchema(t *testing.T) {
 		done["try"] != 1.0 || done["parent"] != "t6-p2m-a146ce-s2" || done["replaces"] != "t6-p2m-a146ce-s1" || done["retry_of"] != nil ||
 		done["closed_by"] != "reuse:formalpedia:Foo.bar" || done["hole_id"] != "h-3f9c0a1b2c3d" || done["steps"] != 3.0 || done["model_min"] != 1.5 ||
 		done["tokens"] != 1050.0 || done["prompt_tokens"] != 1000.0 || done["cached_tokens"] != 800.0 || done["completion_tokens"] != 50.0 ||
+		done["uncached_prompt_tokens"] != 1000.0 || done["tokens_computed"] != 1050.0 || done["tokens_with_cache"] != 1850.0 ||
 		done["started_at"] == nil || done["finished_at"] == nil {
 		t.Errorf("done task: %v", done)
 	}
@@ -195,5 +200,55 @@ func TestPublicTasksCached(t *testing.T) {
 	w, _ := r.call("GET", "/v1/tasks", "", nil)
 	if w.Header().Get("Cache-Control") != "public, max-age=15" || w.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("headers %v", w.Header())
+	}
+}
+
+// The explicit token counts (audit 2026-11-17): in a result that reported cached_tokens they say
+// what was computed and what was re-read; in one that did not they are null, while the old fields
+// keep their values; in /v1/stats a project's prompt tokens split into cached and uncached.
+func TestExplicitTokenFields(t *testing.T) {
+	r := v1Rig(t)
+	for _, id := range []string{"t8-a", "t4-b"} {
+		r.p2m("", map[string]any{"id": id, "kind": "p2m-v7", "created_by": "owner", "spec": map[string]any{}})
+		lease := r.p2m("/claim", map[string]any{"worker": "w1", "task": id})["lease"].(map[string]any)["id"]
+		res := map[string]any{"outcome": "proved", "prompt_tokens": 144589, "completion_tokens": 167737}
+		if id == "t8-a" {
+			res["cached_tokens"] = 8666050
+		}
+		r.p2m("/"+id+"/complete", map[string]any{"worker": "w1", "lease": lease, "result": res})
+	}
+	_, body, page := r.v1("")
+	by := map[string]map[string]any{}
+	for _, tk := range page.Tasks {
+		by[tk["id"].(string)] = tk
+	}
+	a, b := by["t8-a"], by["t4-b"]
+	if a["uncached_prompt_tokens"] != 144589.0 || a["tokens_computed"] != 312326.0 || a["tokens_with_cache"] != 8978376.0 ||
+		a["tokens"] != 312326.0 || a["cached_tokens"] != 8666050.0 {
+		t.Errorf("with cached_tokens: %s", body)
+	}
+	if b["uncached_prompt_tokens"] != nil || b["tokens_computed"] != nil || b["tokens_with_cache"] != nil || b["cached_tokens"] != nil ||
+		b["tokens"] != 312326.0 || b["prompt_tokens"] != 144589.0 {
+		t.Errorf("without cached_tokens: %s", body)
+	}
+
+	r.g.stats.add(usageRecord{Time: time.Now(), Outcome: "ok", Project: "prove2me", Class: ClassScience,
+		Usage: protocol.Usage{PromptTokens: 1000, CachedTokens: 900, CompletionTokens: 50}})
+	r.g.stats.add(usageRecord{Time: time.Now(), Outcome: "ok", Project: "prove2me", Class: ClassScience,
+		Usage: protocol.Usage{PromptTokens: 100, CachedTokens: 500, CompletionTokens: 5}}) // cached beyond the prompt: clamped
+	w := httptest.NewRecorder()
+	r.g.handleStats(w, httptest.NewRequest("GET", "/v1/stats", nil))
+	var st struct {
+		Today, Total struct {
+			Projects map[string]map[string]any `json:"projects"`
+			Classes  map[string]map[string]any `json:"classes"`
+		}
+	}
+	json.Unmarshal(w.Body.Bytes(), &st)
+	for name, p := range map[string]map[string]any{"today": st.Today.Projects["prove2me"], "total": st.Total.Projects["prove2me"],
+		"class": st.Today.Classes[ClassScience]} {
+		if p["prompt_tokens"] != 1100.0 || p["cached_tokens"] != 1000.0 || p["uncached_prompt_tokens"] != 100.0 || p["completion_tokens"] != 55.0 {
+			t.Errorf("%s: %v", name, p)
+		}
 	}
 }

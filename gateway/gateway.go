@@ -39,6 +39,7 @@ type Gateway struct {
 	ptasks   publicTaskList   // the built list of GET /v1/tasks (tasks_public.go)
 	speeds   nodeSpeeds       // nodes' recent answer speeds, for their operators (nodework.go)
 	tasks    *taskStore       // projects' task queues (tasks.go, decision 0015)
+	sci      *scienceDB       // campaigns and external results (science_db.go, campaigns.go)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
 	bodies   atomic.Int64     // bytes reserved for request bodies, across all requests
@@ -122,12 +123,11 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	uw, err := newUsageWriter(cfg.UsageLog)
-	if err != nil {
-		return nil, err
-	}
+	// Startup order (refactor review 2026-11-17, finding 4): every step that can fail comes first,
+	// and what it opens is closed again when a later one fails; background work starts last, once
+	// nothing can fail any more, so a gateway that does not start leaves no goroutine or file behind.
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), use: uw, lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
@@ -135,23 +135,75 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if cfg.TasksNow != nil {
 		g.tasks.now = cfg.TasksNow
 	}
+	if err := g.setup(cfg); err != nil {
+		g.closeFiles()
+		return nil, err
+	}
+	g.startBackground()
+	return g, nil
+}
+
+// setup does New's steps that can fail, in order: nothing in it starts background work.
+func (g *Gateway) setup(cfg Config) (err error) {
+	log := g.log
 	if cfg.TokenizerFile != "" {
 		if g.tok, err = LoadTokenizer(cfg.TokenizerFile, cfg.TokenizerSHA256); err != nil {
-			return nil, err
+			return err
 		}
 		log.Info("counting tokens with the gateway's tokenizer", "sha256", g.tok.SHA256)
 	}
 	if cfg.Accounts != nil {
 		g.acfg = *cfg.Accounts
 		if err := g.acfg.defaults(); err != nil {
-			return nil, err
+			return err
 		}
 		if g.accounts, err = OpenAccountStore(g.acfg.File); err != nil {
-			return nil, err
+			return err
 		}
 		g.gkeys = newJWKSCache(g.acfg.GoogleCertsURL, g.getJSON)
 		if g.acfg.Email != nil {
 			g.email = newEmailSignIn(*g.acfg.Email, g.acfg.PublicURL, log)
+		}
+	}
+	g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg)}})
+	if err := g.loadKeys(cfg); err != nil {
+		return err
+	}
+	if cfg.StateDir != "" {
+		if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+			return fmt.Errorf("state dir: %w", err)
+		}
+	}
+	if g.use, err = newUsageWriter(cfg.UsageLog); err != nil {
+		return err
+	}
+	if g.sci, err = openScienceDB(cfg.StateDir); err != nil {
+		return err
+	}
+	if cfg.StateDir != "" {
+		g.budget.path = filepath.Join(cfg.StateDir, BudgetsFile)
+		g.budget.load(time.Now(), log)
+		g.credit.path = filepath.Join(cfg.StateDir, "credit.json")
+		g.credit.load(log)
+		g.hist.path = filepath.Join(cfg.StateDir, "history.json")
+		g.hist.load(log)
+	}
+	// The usage log rebuilds today's and all-time statistics, and the history's request and
+	// token counts of the days it still covers.
+	fromLog := newHistory()
+	replayUsage(cfg.UsageLog, func(r usageRecord) {
+		g.stats.add(r)
+		fromLog.add(r)
+	})
+	g.hist.merge(fromLog)
+	return nil
+}
+
+// startBackground starts New's periodic work; Close stops it.
+func (g *Gateway) startBackground() {
+	log := g.log
+	if g.accounts != nil {
+		if g.email != nil {
 			g.bg.Add(1)
 			go g.mailWorker()
 			g.every(time.Minute, g.email.prune)
@@ -164,22 +216,9 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 			g.sweepNodes() // banned accounts, revoked node tokens, held or cleared nodes
 		})
 	}
-	g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg)}})
-	if err := g.loadKeys(cfg); err != nil {
-		return nil, err
-	}
 	g.every(keysFileCheck, g.checkKeysFile)
 	g.every(taskSweepEvery, g.tasks.sweepAll) // expired leases go back to the queue without a call
-	if cfg.StateDir != "" {
-		if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
-			return nil, fmt.Errorf("state dir: %w", err)
-		}
-		g.budget.path = filepath.Join(cfg.StateDir, BudgetsFile)
-		g.budget.load(time.Now(), log)
-		g.credit.path = filepath.Join(cfg.StateDir, "credit.json")
-		g.credit.load(log)
-		g.hist.path = filepath.Join(cfg.StateDir, "history.json")
-		g.hist.load(log)
+	if g.cfg.StateDir != "" {
 		g.every(saveEvery, func() {
 			if err := g.budget.save(); err != nil {
 				log.Warn("saving budgets failed", "err", err)
@@ -191,21 +230,25 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 				log.Warn("saving history failed", "err", err)
 			}
 		})
+		g.every(scienceBackupCheck, g.backupScience)
 	}
-	// The usage log rebuilds today's and all-time statistics, and the history's request and
-	// token counts of the days it still covers.
-	fromLog := newHistory()
-	replayUsage(cfg.UsageLog, func(r usageRecord) {
-		g.stats.add(r)
-		fromLog.add(r)
-	})
-	g.hist.merge(fromLog)
-	sample := cfg.HistorySample
+	sample := g.cfg.HistorySample
 	if sample == 0 {
 		sample = time.Minute
 	}
 	g.every(sample, func() { g.hist.sample(g.nodesOnline(), time.Now()) })
-	return g, nil
+}
+
+// closeFiles closes what New opened: the usage log and the science database.
+func (g *Gateway) closeFiles() error {
+	var errs []error
+	if g.use != nil {
+		errs = append(errs, g.use.close())
+	}
+	if g.sci != nil {
+		errs = append(errs, g.sci.close())
+	}
+	return errors.Join(errs...)
 }
 
 // saveEvery bounds how much budget use a crash can lose, without a write per request.
@@ -234,5 +277,5 @@ func (g *Gateway) every(d time.Duration, f func()) {
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
 	g.bg.Wait()
-	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save())
+	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.closeFiles())
 }

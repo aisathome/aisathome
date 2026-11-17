@@ -39,6 +39,29 @@ type useCount struct {
 	// Preempted counts the requests stopped for a person's (preempt.go), of Requests; /v1/stats
 	// only, not the daily history.
 	Preempted int `json:"preempted,omitempty"`
+	// Cached: the part of Prompt the nodes read from their cache; /v1/stats only (statsCount).
+	Cached int64 `json:"-"`
+}
+
+// statsCount is a class's or a project's use in /v1/stats, with the explicit prompt counts (audit
+// 2026-11-17, tokens): prompt_tokens includes the cached ones.
+type statsCount struct {
+	useCount
+	CachedTokens         int64 `json:"cached_tokens"`
+	UncachedPromptTokens int64 `json:"uncached_prompt_tokens"`
+}
+
+// copyStats copies a count map for /v1/stats (nil stays nil).
+func copyStats(m map[string]*useCount) map[string]statsCount {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]statsCount, len(m))
+	for k, c := range m {
+		cached := min(max(c.Cached, 0), c.Prompt)
+		out[k] = statsCount{useCount: *c, CachedTokens: cached, UncachedPromptTokens: c.Prompt - cached}
+	}
+	return out
 }
 
 func (c *useCount) add(prompt, completion int, ms int64, seconds bool) {
@@ -53,6 +76,7 @@ func (c *useCount) add(prompt, completion int, ms int64, seconds bool) {
 // count adds record r to c, in /v1/stats.
 func (c *useCount) count(r usageRecord, prompt, completion int, seconds bool) {
 	c.add(prompt, completion, r.Usage.DurationMs, seconds)
+	c.Cached += int64(min(max(r.Usage.CachedTokens, 0), max(prompt, 0)))
 	if r.Outcome == outcomePreempted {
 		c.Preempted++
 	}
@@ -189,10 +213,10 @@ func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
 	if g.stats.day == now.Format(time.DateOnly) {
 		today["requests"], today["completed"] = g.stats.requests, g.stats.ok
 		today["prompt_tokens"], today["completion_tokens"] = g.stats.promptTok, g.stats.completionTok
-		if c := copyCounts(g.stats.classes); c != nil {
+		if c := copyStats(g.stats.classes); c != nil {
 			today["classes"] = c
 		}
-		if p := copyCounts(g.stats.projects); p != nil {
+		if p := copyStats(g.stats.projects); p != nil {
 			today["projects"] = p
 		}
 	}
@@ -202,7 +226,7 @@ func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
 	if !g.stats.since.IsZero() {
 		total["since"] = g.stats.since.Format(time.DateOnly)
 	}
-	if p := copyCounts(g.stats.allProjects); p != nil {
+	if p := copyStats(g.stats.allProjects); p != nil {
 		total["projects"] = p
 	}
 	g.stats.mu.Unlock()

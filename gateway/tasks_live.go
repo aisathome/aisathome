@@ -38,14 +38,19 @@ type taskLive struct {
 	UpdatedAt        time.Time `json:"updated_at"` // the last counted call's end
 }
 
-// publicLive is a running task's live count in the public views.
+// publicLive is a running task's live count in the public views. PromptTokens includes the cached
+// ones (unlike a result's); the explicit counts have the same meaning as in a task's result
+// (tasks_public.go).
 type publicLive struct {
-	Requests         int64     `json:"requests"`
-	PromptTokens     int64     `json:"prompt_tokens"`
-	CachedTokens     int64     `json:"cached_tokens"`
-	CompletionTokens int64     `json:"completion_tokens"`
-	ModelS           float64   `json:"model_s"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	Requests             int64     `json:"requests"`
+	PromptTokens         int64     `json:"prompt_tokens"`
+	CachedTokens         int64     `json:"cached_tokens"`
+	CompletionTokens     int64     `json:"completion_tokens"`
+	UncachedPromptTokens int64     `json:"uncached_prompt_tokens"`
+	TokensComputed       int64     `json:"tokens_computed"`
+	TokensWithCache      int64     `json:"tokens_with_cache"`
+	ModelS               float64   `json:"model_s"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // publicLive is the task's live count for the public views: nil unless it runs and a call counted.
@@ -54,9 +59,11 @@ func (t *Task) publicLive() *publicLive {
 	if t.State != TaskLeased || l == nil || l.Requests <= 0 {
 		return nil
 	}
-	return &publicLive{Requests: l.Requests, PromptTokens: max(l.PromptTokens, 0), CachedTokens: max(l.CachedTokens, 0),
-		CompletionTokens: max(l.CompletionTokens, 0), ModelS: float64(max(l.ModelMs, 0)) / 1000,
-		UpdatedAt: l.UpdatedAt}
+	prompt, compl := max(l.PromptTokens, 0), max(l.CompletionTokens, 0)
+	cached := min(max(l.CachedTokens, 0), prompt)
+	return &publicLive{Requests: l.Requests, PromptTokens: prompt, CachedTokens: cached, CompletionTokens: compl,
+		UncachedPromptTokens: prompt - cached, TokensComputed: prompt - cached + compl, TokensWithCache: prompt + compl,
+		ModelS: float64(max(l.ModelMs, 0)) / 1000, UpdatedAt: l.UpdatedAt}
 }
 
 // noteLive adds one model call of a project's running task to its live count (u: the call's metered

@@ -113,11 +113,23 @@ func newUsageWriter(path string) (*usageWriter, error) {
 }
 
 func (u *usageWriter) record(r usageRecord) {
-	if u.f == nil {
-		return
-	}
 	b, _ := json.Marshal(r)
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.f == nil {
+		return
+	}
 	u.f.Write(append(b, '\n'))
+}
+
+// close closes the log; later records are dropped.
+func (u *usageWriter) close() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.f == nil {
+		return nil
+	}
+	err := u.f.Close()
+	u.f = nil
+	return err
 }
