@@ -123,6 +123,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `kinds` | The task kinds the project may create besides `other`: one per scaffold generation (`p2m-v7`), 1-32 lower-case letters, digits, `_` or `-`. Its workers claim by kind, so a worker never takes a task of a generation it does not run. None: `other` only. |
 | `public_queue` | Publishes the public fields of the project's tasks without a key, at `GET /v1/projects/<id>/queue` and in `GET /v1/tasks` (below). Never the spec, the title, the worker, the lease, the error text or the raw evidence. Built at most every 15 s. The website's prove2me page reads it. Off: 404, and none of its tasks in `/v1/tasks`. |
 | `page`, `page_anchor` | The project's page on the website (a path such as `/science/prove2me/`), and a label name whose value places a task on it (`leaf`: `#leaf-<value>`). The account page links a node's science work there. Both optional. |
+| `task_compact_days` | Days after a finished task's end until it is compacted (below), 1-3650; default 30. |
 
 Before decision 0019 the gateway also ran TauCeti's review loop (`auto_rounds`, `review_loop`,
 `max_review_rounds`, and the `review`, `decide` and `continue` calls) and kept TauCeti's public
@@ -164,6 +165,17 @@ shares, all of them public:
 `closed_by` comes with `complete` or `cancel` when a task ended without work because something else
 closed it: another task's id, or `reuse:<by>`. A claim names the `kinds` its worker runs (none: any).
 A task made before these fields has none of them, and the public views read its spec as before.
+
+**Retention.** The gateway keeps every task: a finished task (done, failed, cancelled) is never
+dropped, and only open tasks (queued and leased, at most 500 per project) can make `create` refuse.
+A finished task is compacted `task_compact_days` after its end: its spec, events, lease, error text
+and live counts go; its public fields, result, `updated_at` and `exported_at` stay, so the public
+views show it as before. It keeps `spec_sha256` (the spec's SHA-256), its title and creator, so a
+repeated `create` of it still answers 200 (other content: 409). A task made before the typed fields
+keeps the part of its spec the public views read. While the finished tasks not yet compacted hold
+more than 64 MiB, the oldest are compacted early. A compacted task is about 1 KB plus its result's
+`score`. `POST .../tasks/{task}/exported` and `?exported=` remain for a project's own snapshots and
+gate nothing.
 
 `GET /v1/tasks`, without a key, lists the tasks of every project with `public_queue` in one schema:
 `project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,

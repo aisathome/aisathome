@@ -307,25 +307,3 @@ func TestListDuringAFaultStaysCheap(t *testing.T) {
 		t.Fatalf("%d tries for one list", tries)
 	}
 }
-
-// A file that cannot be removed keeps its task; a later prune removes it.
-func TestDropKeepsATaskItCannotRemove(t *testing.T) {
-	dir := t.TempDir()
-	r := newTaskRig(t, dir)
-	r.create("T-A", "p2m-v7")
-	back := readOnly(t, filepath.Join(dir, "tasks-lab"))
-	s := r.g.tasks
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p := s.byPr["lab"]
-	if s.drop(p.byID["T-A"]) || p.byID["T-A"] == nil {
-		t.Fatal("the task went while its file stayed")
-	}
-	back()
-	if !s.drop(p.byID["T-A"]) || p.byID["T-A"] != nil {
-		t.Fatal("the task stayed")
-	}
-	if _, err := os.Stat(taskFile(dir, "T-A")); !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-}

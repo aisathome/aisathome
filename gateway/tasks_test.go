@@ -460,9 +460,9 @@ func TestTaskPersistence(t *testing.T) {
 	}
 }
 
-// The queue is bounded: open tasks per project, and finished tasks kept. Only exported
-// finished tasks are dropped (owner 2026-10-27, decision 6): while too many wait for the
-// export, create refuses new tasks.
+// The queue is bounded in its open tasks only. Finished tasks are kept for good, exported or not
+// (owner 2026-11-17, replacing the export gate of 2026-10-27): more than the old cap of 200
+// unexported finished tasks never refuses a create, and an export drops nothing.
 func TestTaskBounds(t *testing.T) {
 	r := newTaskRig(t, "")
 	for i := 0; i < maxOpenTasks; i++ {
@@ -471,34 +471,29 @@ func TestTaskBounds(t *testing.T) {
 	if w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-over", "p2m-v7")); w.Code != http.StatusTooManyRequests {
 		t.Fatalf("task %d: HTTP %d", maxOpenTasks+1, w.Code)
 	}
-	for i := 0; i < maxKeptTasks+10; i++ {
+	const fin = 260 // past the old cap of 200 finished tasks waiting for the export
+	for i := 0; i < fin; i++ {
 		r.now = r.now.Add(time.Second)
 		r.call("POST", fmt.Sprintf("%s/T-%d/cancel", tasksPath, i), testProjectKey, map[string]any{})
 	}
-	// Nothing exported: all 210 finished tasks are kept, and create waits for the export.
 	_, out := r.call("GET", tasksPath+"?state=cancelled", testProjectKey, nil)
-	if n := len(out["tasks"].([]any)); n != maxKeptTasks+10 {
-		t.Fatalf("%d cancelled tasks kept, want all %d (none exported)", n, maxKeptTasks+10)
+	if n := len(out["tasks"].([]any)); n != fin {
+		t.Fatalf("%d cancelled tasks kept, want all %d", n, fin)
 	}
-	if w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-new", "p2m-v7")); w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "export") {
-		t.Fatalf("create with %d finished tasks waiting for export: HTTP %d %s", maxKeptTasks+10, w.Code, w.Body)
+	if w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-new", "p2m-v7")); w.Code != http.StatusCreated {
+		t.Fatalf("create with %d finished tasks not exported: HTTP %d %s", fin, w.Code, w.Body)
 	}
-	// Export the oldest 30: the 10 oldest are dropped (210 finished, 200 kept), the newer stay.
 	r.export(t, 30)
 	_, out = r.call("GET", tasksPath+"?state=cancelled", testProjectKey, nil)
-	if n := len(out["tasks"].([]any)); n != maxKeptTasks {
-		t.Fatalf("after the export %d cancelled tasks kept, want %d", n, maxKeptTasks)
+	if n := len(out["tasks"].([]any)); n != fin || r.g.tasks.get("lab", "T-0") == nil {
+		t.Fatalf("after the export %d cancelled tasks kept, want all %d", n, fin)
 	}
-	if r.g.tasks.get("lab", "T-9") != nil || r.g.tasks.get("lab", "T-10") == nil || r.g.tasks.get("lab", fmt.Sprintf("T-%d", maxKeptTasks+9)) == nil {
-		t.Fatal("pruning dropped the wrong tasks: the oldest exported go first")
-	}
-	// 190 wait for export now: create works again.
-	if w, _ := r.call("POST", tasksPath, testProjectKey, newTask("T-new", "p2m-v7")); w.Code != http.StatusCreated {
-		t.Fatalf("create after the export: HTTP %d %s", w.Code, w.Body)
+	if _, out = r.call("GET", tasksPath+"?exported=false", testProjectKey, nil); len(out["tasks"].([]any)) != fin-30 {
+		t.Fatalf("exported=false: %d tasks, want %d", len(out["tasks"].([]any)), fin-30)
 	}
 }
 
-// export marks the oldest n finished, unexported tasks as exported, as the owner's export does.
+// export marks the oldest n finished, unexported tasks as exported, as a project's export does.
 func (r *taskRig) export(t *testing.T, n int) {
 	t.Helper()
 	_, out := r.call("GET", tasksPath+"?exported=false", testProjectKey, nil)

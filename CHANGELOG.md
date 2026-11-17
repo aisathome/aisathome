@@ -62,6 +62,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **The gateway keeps every science task.** Finished tasks are no longer dropped after an export,
+  and creating tasks is no longer refused (429) while 200 finished tasks wait for one; only open
+  tasks (500 per project) are capped. A finished task is compacted 30 days after its end (a
+  project's `task_compact_days`): its spec, events and lease go, its public fields and result stay,
+  and a repeated create of it is still recognised. `exported` stays as an optional mark. (gateway)
 - **Tau Ceti is a finished project.** Its science page keeps the record of the pull requests as it
   stands, labelled finished, without a live part; its data is a static file
   (`/science/tauceti.json`, where the old gateway address now points). The gateway's Tau Ceti

@@ -27,7 +27,7 @@
 //	POST /v1/projects/{id}/tasks/{task}/fail        give the task up: failed, or with requeue given back
 //	POST /v1/projects/{id}/tasks/{task}/cancel      queued or leased -> cancelled (closed_by: what made it unnecessary)
 //	POST /v1/projects/{id}/tasks/{task}/max_tries   change an open task's max_tries (1-10, ≥ tries)
-//	POST /v1/projects/{id}/tasks/{task}/exported    a finished task is in the owner's ledger
+//	POST /v1/projects/{id}/tasks/{task}/exported    a finished task is in the project's snapshot (optional)
 //
 // And without a key, the public fields of the projects that publish their queue (queue_public.go,
 // tasks_public.go): GET /v1/projects/{id}/queue and GET /v1/tasks.
@@ -51,14 +51,20 @@
 // claim it. A claim may name one task (`task`): a worker takes back the task whose lease it lost, to
 // resume from its own checkpoint.
 //
-// Retention (owner 2026-10-27, decision 6): a finished task is dropped only after the owner's
-// export to the ledger has marked it (`exported`). While too many finished tasks wait for export,
-// create refuses new tasks.
+// Retention (owner 2026-11-17, replacing the export gate of 2026-10-27): the gateway keeps every
+// task. A finished task is never dropped and never makes create refuse a new one; `exported` is an
+// optional mark for a project's own snapshots and gates nothing. A task that ended at least the
+// project's task_compact_days ago (default 30) is compacted: its spec, events, lease, error and live
+// counts go, and what the public views show (tasks_public.go, queue_public.go) and the result stay.
+// A compacted task keeps the spec's SHA-256 (spec_sha256), its title and creator, so a repeated
+// create of it is still recognised; a task made before the typed fields keeps the part of its spec
+// the public views read (legacySpecRef). Finished tasks not yet compacted that hold more than
+// maxFullBytes are compacted early, oldest first, so memory stays bounded either way.
 //
 // Private: the spec, the title, prompts, workers, leases, errors and events stay with the project
 // key and the admins. Each task is one file under state_dir/tasks-<project>/, written atomically
-// on every change, so the queue survives a restart; the number of tasks and the bytes kept are
-// bounded per project.
+// on every change, so the queue survives a restart; the open tasks and the bytes of finished tasks
+// not yet compacted are bounded per project.
 //
 // A failed write (a full disk, a read-only directory) is treated as a crash of that project's
 // queue, and recovers the same way (owner 2026-10-31). What is on disk is the truth: a call whose
@@ -87,10 +93,14 @@ const (
 
 	// maxOpenTasks bounds queued plus leased tasks per project; create refuses beyond it.
 	maxOpenTasks = 500
-	// maxKeptTasks and maxKeptBytes bound finished tasks (done, failed, cancelled) per project:
-	// beyond either, the oldest exported ones are dropped.
-	maxKeptTasks = 200
-	maxKeptBytes = 64 << 20
+	// Compaction of finished tasks (see Retention above): after the project's task_compact_days
+	// (default defaultCompactDays, at most maxCompactDays); earlier, oldest first, while the
+	// finished tasks not yet compacted hold more than maxFullBytes. At most maxCompactPerPass tasks
+	// a pass, so one call never waits for a long rewrite; the next sweep goes on.
+	defaultCompactDays = 30
+	maxCompactDays     = 3650
+	maxFullBytes       = 64 << 20
+	maxCompactPerPass  = 200
 
 	defaultLeaseSec = 600
 	minLeaseSec     = 30
@@ -204,8 +214,12 @@ type Task struct {
 	PreferUntil  *time.Time `json:"prefer_until,omitempty"`
 	// ExportedAt: the owner's export took the task as it was at that UpdatedAt; nil = not (again).
 	ExportedAt *time.Time `json:"exported_at,omitempty"`
+	// CompactedAt: when the task was compacted (see Retention above); SpecSHA256: the SHA-256 (hex)
+	// of its spec as created, for a repeated create.
+	CompactedAt *time.Time `json:"compacted_at,omitempty"`
+	SpecSHA256  string     `json:"spec_sha256,omitempty"`
 
-	size int // bytes on disk, for maxKeptBytes
+	size int // bytes on disk, for maxFullBytes
 }
 
 type taskLease struct {

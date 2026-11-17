@@ -131,6 +131,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
+	g.tasks.compactAge = g.taskCompactAge
 	if cfg.TasksNow != nil {
 		g.tasks.now = cfg.TasksNow
 	}

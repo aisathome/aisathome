@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Workload classes, in the order of priority (higher first).
@@ -82,6 +83,9 @@ type Project struct {
 	// task on that page ("#leaf-<value>"). Both optional.
 	Page       string `json:"page,omitempty"`
 	PageAnchor string `json:"page_anchor,omitempty"`
+	// TaskCompactDays: a finished task is compacted this many days after its end (tasks.go,
+	// Retention): 1 to maxCompactDays; 0 = defaultCompactDays. Tasks are kept either way.
+	TaskCompactDays int `json:"task_compact_days,omitempty"`
 }
 
 // projectPageRe: a project's page, a site path.
@@ -104,6 +108,16 @@ func (g *Gateway) projectKinds(project string) []string {
 	return nil
 }
 
+// taskCompactAge is how long after its end a project's finished task is compacted (tasks.go,
+// Retention): its task_compact_days, else defaultCompactDays.
+func (g *Gateway) taskCompactAge(project string) time.Duration {
+	days := defaultCompactDays
+	if t := g.projects.Load(); t != nil && t.byID[project] != nil && t.byID[project].TaskCompactDays > 0 {
+		days = t.byID[project].TaskCompactDays
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
 // newProjectTable checks the projects of a config.
 func newProjectTable(ps []Project) (*projectTable, error) {
 	t := &projectTable{byHash: map[string]*Project{}, byID: map[string]*Project{}}
@@ -123,6 +137,9 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 		}
 		if p.MinTrust != "" && p.MinTrust != "trusted" && p.MinTrust != "any" {
 			return nil, fmt.Errorf("project %q: min_trust must be trusted or any", p.ID)
+		}
+		if p.TaskCompactDays < 0 || p.TaskCompactDays > maxCompactDays {
+			return nil, fmt.Errorf("project %q: task_compact_days must be from 1 to %d (0: %d)", p.ID, maxCompactDays, defaultCompactDays)
 		}
 		if len(p.Kinds) > maxProjectKinds {
 			return nil, fmt.Errorf("project %q: at most %d kinds", p.ID, maxProjectKinds)
