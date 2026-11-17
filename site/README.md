@@ -11,6 +11,9 @@ docker run --rm -e ASTRO_TELEMETRY_DISABLED=1 -v "$PWD":/w -w /w -u "$(id -u):$(
   -e HOME=/tmp node:22-bookworm-slim sh -c 'npm ci && npm run build'
 ```
 
+Unit tests of the pure TypeScript in `src/data` are `tests/*.test.ts` (`npm test`: `node:test`, the
+modules loaded through Vite as the build loads them); CI runs them before the build.
+
 Versions are pinned exactly and the lockfile is committed; upgrade deliberately. Pages that
 are not final carry a `banner` in their frontmatter.
 

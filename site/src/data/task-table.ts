@@ -151,6 +151,21 @@ export function taskTableHTML(rows: TaskTableRow[], o: TaskTableOptions): string
 </table></div>`;
 }
 
+/** The build's rows with the live rows merged in: the build's keep their places, a live row takes the place of the
+ * build's row with its id, and a task only the live rows have comes after them; one row per id (the first). */
+export function mergeRows(rows: TaskTableRow[], live: TaskTableRow[]): TaskTableRow[] {
+	const byLive = new Map<string, TaskTableRow>();
+	for (const r of live) if (!byLive.has(r.id)) byLive.set(r.id, r);
+	const out: TaskTableRow[] = [];
+	const ids = new Set<string>();
+	for (const r of [...rows.map((r) => byLive.get(r.id) ?? r), ...byLive.values()]) {
+		if (ids.has(r.id)) continue;
+		ids.add(r.id);
+		out.push(r);
+	}
+	return out;
+}
+
 /** In the browser: wire a block made by taskTableHTML (filters, the switch, the count) and return how to add live rows. */
 export function attachTaskTable(box: HTMLElement, o: TaskTableOptions, rows: TaskTableRow[]) {
 	let all = rows;
@@ -231,12 +246,8 @@ export function attachTaskTable(box: HTMLElement, o: TaskTableOptions, rows: Tas
 		setLive(live: TaskTableRow[]) {
 			const b = body();
 			if (!b) return;
-			// the build's rows keep their places (a live row takes its build row's), new tasks after them
-			const liveIds = new Set(live.map((r) => r.id));
-			const byLive = new Map(live.map((r) => [r.id, r]));
-			const known = new Set(rows.map((r) => r.id));
-			all = [...rows.map((r) => byLive.get(r.id) ?? r), ...live.filter((r) => !known.has(r.id))];
-			b.innerHTML = bodyHTML(all, o, liveIds);
+			all = mergeRows(rows, live);
+			b.innerHTML = bodyHTML(all, o, new Set(live.map((r) => r.id)));
 			fillSelects();
 			apply();
 		},

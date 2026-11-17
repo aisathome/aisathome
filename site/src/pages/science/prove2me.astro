@@ -66,9 +66,10 @@ const roles = p2m.by_role.filter((r) => r.leaves > 0);
 const outcomesShown = leafOutcomes.filter((o) => p2m.leaves.some((l) => l.outcome === o));
 const leafTok = (l: (typeof p2m.leaves)[number]) =>
 	l.prompt_tokens === null ? null : { prompt_tokens: l.prompt_tokens, cached_tokens: l.cached_tokens ?? 0, output_tokens: l.output_tokens ?? 0 };
-// Every task: the generic task table with prove2me's options; the browser adds the current trial's and the outline
-// probes' tasks from the gateway. Each leaf's theorem and page for its group cell (the trials', the running trial's and
-// the probe rounds' leaves), and a written outline's hole count by task id for the live rows.
+// Every task: the generic task table with prove2me's options; the browser adds every task of trial 6 on (and of the
+// outline probes) from the gateway, every trial it has (decision 0021). Each leaf's theorem and page for its group cell
+// (the trials', the running trial's and the probe rounds' leaves; the browser adds the data document's), and a written
+// outline's hole count by task id for the live rows.
 const leafIds: Record<string, string> = Object.fromEntries([
 	...(cur?.leaves ?? []).filter((l) => safe(l.url)).map((l) => [l.theorem, `p2m-${l.url.slice(-36).replace(/-/g, '').slice(0, 6)}`]),
 	...probeLeaves.map((l) => [l.theorem, l.id]),
@@ -81,7 +82,6 @@ const taskLeaves: Record<string, { theorem: string; url: string }> = Object.from
 ]);
 const taskHoles: Record<string, string> = Object.fromEntries(p2m.tasks.filter((r) => r.labels.holes).map((r) => [r.id, r.labels.holes]));
 const tasksHTML = allTasksHTML(p2m.tasks, p2mTaskOptions(taskLeaves));
-const taskKnown = { rows: p2m.tasks, leafIds, leaves: taskLeaves, holes: taskHoles };
 // The finished outline probe rounds: not runs, but their model time and tokens count in the totals, named as probes.
 const probesDone = (p2m.probes ?? []).filter((r) => r.state === 'finished' && r.prompt_tokens !== null) as (ProbeRound & Tok)[];
 const probeTok = sumTokens(probesDone);
@@ -89,6 +89,9 @@ const probeHours = probesDone.reduce((a, r) => a + (r.model_minutes ?? 0), 0) / 
 const allTok = sumTokens([t, probeTok]);
 const allHours = t.model_hours + probeHours;
 const probeLeafCount = new Set(probesDone.flatMap((r) => r.leaves.map((l) => l.id))).size;
+// The trials table's rows (their labels): a trial or probe round of the gateway's that is not among them gets a live row.
+const builtTrials = [...p2m.trials.map((tr) => String(tr.trial)), ...probesDone.map((p) => p.trial.slice(1))];
+const taskKnown = { rows: p2m.tasks, leafIds, leaves: taskLeaves, holes: taskHoles, trials: builtTrials };
 // The trials table in time order: trial N's outline probes just before trial N.
 const trialRows = [...trials.map((tr) => ({ at: tr.trial, tr, p: undefined })), ...probesDone.map((p) => ({ at: p.for_trial - 0.5, tr: undefined, p }))].sort((a, b) => a.at - b.at);
 const leafCols = [
@@ -396,7 +399,7 @@ const leafCols = [
 	<h2 id="tasks">Every task</h2>
 	<p>
 		Every task of every trial and of the outline probes, grouped by leaf and outline; a run of trials 1 to 4 is one task.
-		Queued and running tasks come live from the gateway.
+		From trial 6 on, the tasks come live from the gateway’s records, each trial as soon as its tasks are made.
 	</p>
 	<script is:inline type="application/json" data-p2m-tasks-known set:html={JSON.stringify(taskKnown).replace(/</g, '\\u003c')} />
 	<details class="p2m-list p2m-alltasks not-content" data-p2m-alltasks>
@@ -455,6 +458,7 @@ const leafCols = [
 			</tfoot>
 		</table>
 	</div>
+	<p class="p2m-note" data-p2m-trials-live hidden></p>
 
 	{
 		trials.map((tr) => (
@@ -600,17 +604,20 @@ const leafCols = [
 	import { compareLeaves, leafFirstDir, type LeafKeys, type LeafSort, type LeafSortKey } from '../../data/prove2me-live';
 	import { attachTaskTable, workText, type TaskTableRow } from '../../data/task-table';
 	import { p2mTaskOptions, taskResult, type LeafInfo } from '../../data/prove2me-tasks';
-	import { CURRENT_URL, TASKS_URL, day, hhmm, mdLightHTML, parseCurrent, parseTasks, probeRound, refutedOutlines, roleLabel, submissionText, taskTableRows, theoremURL, trialQueue } from '../../data/prove2me-current';
+	import { CURRENT_URL, day, fetchAllTasks, hhmm, mdLightHTML, parseCurrent, probeRound, refutedOutlines, roleLabel, submissionText, taskTableRows, theoremURL, trialQueue } from '../../data/prove2me-current';
+	import { liveTrialHTML, liveTrials, liveTrialsNote } from '../../data/prove2me-trials';
+	import { roundNo } from '../../data/prove2me-tasks';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
 
-	// Every task: the build's rows, filtered here; the current trial's and the outline probes' tasks from the gateway
-	// replace or join them.
+	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
+	// replaces or joins them (trials 1 to 5 stay the build's).
 	const taskBox = document.querySelector<HTMLElement>('[data-p2m-alltasks]');
-	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"leafIds":{},"leaves":{},"holes":{}}') as {
+	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"leafIds":{},"leaves":{},"holes":{},"trials":[]}') as {
 		rows: TaskTableRow[];
 		leafIds: Record<string, string>;
 		leaves: LeafInfo;
 		holes: Record<string, string>;
+		trials: string[];
 	};
 	let refuted = new Set<string>();
 	const taskTable = taskBox ? attachTaskTable(taskBox, p2mTaskOptions(taskKnown.leaves, () => refuted), taskKnown.rows) : null;
@@ -748,9 +755,40 @@ const leafCols = [
 		box.querySelector<HTMLElement>('[data-probes-list]')!.replaceChildren(...items);
 	};
 
-	const showNow = (doc: CurrentDoc, tasks: TasksView) => {
-		refuted = refutedOutlines(doc);
+	/** The trials table: a row of every trial (and probe round) of the gateway's that has ended and is not the build's. */
+	const showTrials = (tasks: TasksView) => {
+		const body = document.querySelector<HTMLElement>('[data-p2m-trials] tbody');
+		const note = document.querySelector<HTMLElement>('[data-p2m-trials-live]');
+		if (!body) return;
+		const rows = liveTrials(tasks, taskKnown.trials ?? []);
+		body.querySelectorAll(':scope > tr[data-source=live]').forEach((tr) => tr.remove());
+		for (const r of rows) {
+			// in time order: before the first of the build's rows that is later (trial N's probes just before trial N)
+			const at = roundNo(r.trial);
+			const later = [...body.querySelectorAll<HTMLElement>(':scope > tr')].find((tr) => roundNo(tr.dataset.trial ?? '') > at);
+			const tpl = document.createElement('template');
+			tpl.innerHTML = liveTrialHTML(r); // every value escaped (prove2me-trials.ts)
+			body.insertBefore(tpl.content, later ?? null);
+		}
+		if (note) {
+			note.textContent = liveTrialsNote(rows);
+			note.hidden = !rows.length;
+		}
+	};
+	/** Every task of trial 6 on into the task table and the trials table; with the data document, its trial's leaves
+	 * (their theorems, their refuted outlines) too. */
+	const showTasks = (doc: CurrentDoc | null, tasks: TasksView) => {
+		if (doc) {
+			refuted = refutedOutlines(doc);
+			for (const l of doc.leaves) {
+				taskKnown.leaves[l.id] ??= { theorem: l.theorem, url: theoremURL.test(l.url) ? l.url : '' };
+				taskKnown.leafIds[l.theorem] ??= l.id;
+			}
+		}
 		taskTable?.setLive(taskTableRows(tasks, doc, taskKnown.leafIds, taskKnown.holes));
+		showTrials(tasks);
+	};
+	const showNow = (doc: CurrentDoc, tasks: TasksView) => {
 		showProbes(doc, tasks);
 		if (!nowBox) return;
 		const t = doc.trial;
@@ -792,15 +830,17 @@ const leafCols = [
 	};
 	const loadNow = async () => {
 		if (!window.fetch) return;
-		let doc: CurrentDoc | null, tasks: TasksView | null;
+		// each source on its own: the task list (every page of it) feeds the task and trials tables without the document
+		const [d, ts] = await Promise.allSettled([getJSON(CURRENT_URL), fetchAllTasks(getJSON)]);
+		const doc = d.status === 'fulfilled' ? parseCurrent(d.value) : null;
+		const tasks = ts.status === 'fulfilled' ? ts.value : null;
+		if (!tasks) return; // keep what the page shows
 		try {
-			const [d, ts] = await Promise.all([getJSON(CURRENT_URL), getJSON(TASKS_URL)]);
-			doc = parseCurrent(d);
-			tasks = parseTasks(ts);
+			showTasks(doc, tasks);
 		} catch {
-			return; // keep what the page shows
+			// keep what the tables show
 		}
-		if (!doc || !tasks) return;
+		if (!doc) return;
 		try {
 			showNow(doc, tasks);
 		} catch {
