@@ -223,14 +223,8 @@ export function outcomeLabel(r: LeafRun): string {
 
 import { day, hhmm } from './prove2me-current';
 export { day, hhmm };
-
-/** A trial's dates, short for a table: "7 Nov", "9–12 Nov", "30 Nov–2 Dec" (the year is in the trial's own list). */
-export function shortSpan(t: { start: string; end: string }) {
-	const m = (iso: string) => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][new Date(`${iso}T00:00:00Z`).getUTCMonth()];
-	const d = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDate();
-	if (t.start === t.end) return `${d(t.start)} ${m(t.start)}`;
-	return m(t.start) === m(t.end) ? `${d(t.start)}–${d(t.end)} ${m(t.end)}` : `${d(t.start)} ${m(t.start)}–${d(t.end)} ${m(t.end)}`;
-}
+// The trials table's helpers live in prove2me-trials.ts, which the browser's script imports without this data.
+export { qwenTokens, shortSpan, sumTokens, tokTitle, type Tok } from './prove2me-trials';
 
 /** A trial's dates: "7 November 2026", or "9 to 12 November 2026". */
 export function span(t: { start: string; end: string }) {
@@ -248,16 +242,3 @@ export function counts(rows: LeafRun[]) {
 	};
 	return { all: of(), calibration: of('calibration'), open: of('open') };
 }
-
-/** Qwen tokens as on the Tau Ceti page: everything the model read (cache re-reads included) and wrote. */
-export type Tok = { prompt_tokens: number; cached_tokens: number; output_tokens: number };
-export const qwenTokens = (r: Tok) => r.prompt_tokens + r.output_tokens;
-export const sumTokens = (rs: Tok[]): Tok => ({
-	prompt_tokens: rs.reduce((a, r) => a + r.prompt_tokens, 0),
-	cached_tokens: rs.reduce((a, r) => a + r.cached_tokens, 0),
-	output_tokens: rs.reduce((a, r) => a + r.output_tokens, 0),
-});
-const exact = (v: number) => new Intl.NumberFormat('en').format(v);
-/** The hover text of a token count: the exact number, how many were written and how many came from the cache. */
-export const tokTitle = (r: Tok) =>
-	`${exact(qwenTokens(r))} Qwen tokens, ${exact(r.output_tokens)} of them written; ${exact(r.cached_tokens)} of the ${exact(r.prompt_tokens)} read came from the cache`;

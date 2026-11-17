@@ -7,10 +7,14 @@
 //    its leaves (leaf id, alias, role, theorem and its prove2me page; from /2 each outline's holes: in place or a lemma,
 //    and what closed one without a task or a verdict reached outside one) and its submissions (from /2 with the theorem
 //    a reuse imports);
-//  - the gateway's generic task list, GET /v1/tasks?project=prove2me (gateway tasks_public.go): every task's state,
-//    outcome, try, relations, labels (trial, leaf id, alias, outline, hole) and counts, and for a running task the
-//    gateway's own live counters when it has them (`live`: requests, prompt_tokens with the cache reads in them,
-//    cached_tokens, completion_tokens, model_s; gateway tasks_live.go).
+//  - the gateway's generic task list, GET /v1/tasks?project=prove2me (gateway tasks_public.go), every page of it:
+//    every task's state, outcome, try, relations, labels (trial, leaf id, alias, outline, hole) and counts, and for a
+//    running task the gateway's own live counters when it has them (`live`: requests, prompt_tokens with the cache
+//    reads in them, cached_tokens, completion_tokens, model_s; gateway tasks_live.go).
+//
+// The task list stands on its own (decision 0021, 2026-11-17): the gateway is the record of every trial from trial 6 on,
+// so the table of every task and the trials table take every such trial from it, not only the document's (trial 7's
+// tasks vanished from the page when trial 8 started). Trials 1 to 5 stay the build's frozen history.
 //
 // When either is missing or not what it should be, the page keeps the copy the build rendered. Pure functions, no
 // data, so the browser's bundle stays small.
@@ -22,6 +26,18 @@ import type { HoleInfo, OutlineHoles } from './prove2me-outlines';
 
 export const CURRENT_URL = '/data/prove2me/current.json';
 export const TASKS_URL = '/v1/tasks?project=prove2me&limit=500';
+/** At most this many pages of GET /v1/tasks (500 tasks each) in one load. */
+export const TASK_PAGES = 20;
+/** Trials 1 to 5 are frozen history (decision 0021): the build's rows of them stand, though the gateway still has tasks
+ * of trials 4 and 5 (their counts there lack the cache reads). From trial 6 on, the gateway is the record. */
+export const FROZEN_THROUGH = 5;
+/** A trial's label on a task: t<N>, or t<N>p for the outline probes that chose trial N's leaves. */
+export const TRIAL_LABEL = /^t([0-9]+)(p?)$/;
+/** A trial label the page takes from the gateway: a trial or probe round after the frozen ones (not a test's label). */
+export function isLiveTrial(label: string | undefined): boolean {
+	const m = TRIAL_LABEL.exec(label ?? '');
+	return !!m && Number(m[1]) > FROZEN_THROUGH;
+}
 export const CURRENT_SCHEMA = 'prove2me-current/2';
 /** The schemas the page reads: /1 has no per-outline holes and no reuse details. */
 export const CURRENT_SCHEMAS = ['prove2me-current/1', CURRENT_SCHEMA];
@@ -144,6 +160,38 @@ export function parseTasks(d: unknown): TasksView | null {
 	return { updated: v.updated, tasks };
 }
 
+/** Every task of GET /v1/tasks: page after page by the gateway's cursor (`next`, sent back as `after`), at most
+ * `maxPages`. `get` fetches a URL's JSON (with its own timeout) and throws when it fails. Null when a page fails or is
+ * not what the gateway sends, so the page keeps what it shows; a cursor seen before ends the walk. */
+export async function fetchAllTasks(get: (url: string) => Promise<unknown>, url = TASKS_URL, maxPages = TASK_PAGES): Promise<TasksView | null> {
+	let updated = '';
+	const tasks: PublicTask[] = [];
+	const ids = new Set<string>();
+	const cursors = new Set<string>();
+	let after: string | null = null;
+	for (let i = 0; i < maxPages; i++) {
+		let d: unknown;
+		try {
+			d = await get(after === null ? url : `${url}&after=${encodeURIComponent(after)}`);
+		} catch {
+			return null;
+		}
+		const page = parseTasks(d);
+		if (!page) return null;
+		updated ||= page.updated;
+		for (const t of page.tasks) {
+			if (ids.has(t.id)) continue;
+			ids.add(t.id);
+			tasks.push(t);
+		}
+		const next = (d as { next?: unknown }).next;
+		if (typeof next !== 'string' || !next || cursors.has(next)) break;
+		cursors.add(next);
+		after = next;
+	}
+	return { updated, tasks };
+}
+
 const und = <T>(v: T | null | undefined): T | undefined => (v === null ? undefined : v);
 const int = (v: string | undefined) => (v && /^[0-9]+$/.test(v) ? Number(v) : undefined);
 // The roles as the page's leaf view names them (the v5 export's names; a task made before the typed fields says so too).
@@ -167,10 +215,13 @@ export function counts(t: PublicTask) {
 /** The document's leaf of a task: by its leaf id label, else by its alias (a task made before v7 names the alias "leaf"). */
 const docLeaf = (doc: CurrentDoc, lab: Record<string, string>) => doc.leaves.find((l) => l.id === lab.leaf || l.alias === (lab.alias ?? lab.leaf));
 
+/** The document's leaf of a task of the document's own trial (another trial's alias may name another leaf). */
+const ownLeaf = (doc: CurrentDoc | null, lab: Record<string, string>) => (doc && lab.trial === doc.trial.id ? docLeaf(doc, lab) : undefined);
+
 /** A task of GET /v1/tasks in the shape the leaf view takes (prove2me-live.ts liveLeaves). */
 export function asQueueTask(t: PublicTask, doc: CurrentDoc): QueueTask {
 	const lab = t.labels;
-	const leaf = docLeaf(doc, lab);
+	const leaf = ownLeaf(doc, lab);
 	return {
 		id: t.id,
 		state: t.state,
@@ -200,20 +251,19 @@ const kindOf: Record<string, string> = { outline: 'outline', skeleton: 'outline'
 
 /** An outline probe round's trial label: t<N>p (trial N's leaves chosen by one outline task each). */
 export const PROBE_TRIAL = /^t([0-9]+)p$/;
-const inTable = (t: PublicTask, doc: CurrentDoc) => t.labels.trial === doc.trial.id || PROBE_TRIAL.test(t.labels.trial ?? '');
 
-/** The current trial's tasks and every outline probe round's as rows of the task table (every state: the live row
- * replaces the build's of the same id). `leafIds`: theorem -> leaf id (a task made before v7 names its leaf by alias);
- * `holes`: a written outline's hole count by task id, from the build (the document's own outlines win). */
-export function taskTableRows(v: TasksView, doc: CurrentDoc, leafIds: Record<string, string> = {}, holes: Record<string, string> = {}): TaskTableRow[] {
+/** The tasks of every trial and outline probe round after the frozen ones (isLiveTrial) as rows of the task table, in
+ * every state: a live row replaces the build's of the same id (task-table.ts mergeRows). The document, when there is
+ * one, adds its own trial's leaves and outlines. `leafIds`: theorem -> leaf id (a task made before v7 names its leaf by
+ * alias); `holes`: a written outline's hole count by task id, from the build (the document's own outlines win). */
+export function taskTableRows(v: TasksView, doc: CurrentDoc | null, leafIds: Record<string, string> = {}, holes: Record<string, string> = {}): TaskTableRow[] {
 	return v.tasks
-		.filter((t) => inTable(t, doc))
+		.filter((t) => isLiveTrial(t.labels.trial))
 		.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)) // as they were made
 		.map((t) => {
 			const c = counts(t);
 			const lab = t.labels;
-			const probe = PROBE_TRIAL.test(lab.trial ?? '');
-			const leaf = probe ? undefined : docLeaf(doc, lab);
+			const leaf = ownLeaf(doc, lab);
 			const tokens = c.cached_tokens !== undefined ? (c.prompt_tokens ?? 0) + c.cached_tokens + (c.completion_tokens ?? 0) : null;
 			const kind = kindOf[t.role ?? ''] ?? t.role ?? 'task';
 			const gen = int(lab.outline) ?? 1;
@@ -237,7 +287,7 @@ export function taskTableRows(v: TasksView, doc: CurrentDoc, leafIds: Record<str
 				started_at: t.started_at,
 				finished_at: t.finished_at,
 				labels: {
-					trial: (probe ? lab.trial : doc.trial.id).slice(1),
+					trial: lab.trial.slice(1),
 					leaf: leaf?.id ?? (lab.leaf && leafID.test(lab.leaf) ? lab.leaf : (lab.theorem && leafIds[lab.theorem]) || ''),
 					alias: lab.alias ?? leaf?.alias ?? (lab.leaf && !leafID.test(lab.leaf) ? lab.leaf : ''),
 					...(lab.outline ? { outline: lab.outline } : {}),

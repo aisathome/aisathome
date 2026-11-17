@@ -2,8 +2,8 @@
 // generic task table (task-table.ts). Rows grouped by trial and leaf (newest trial first), then by outline; each task as
 // a label ("Hole 4 (outline 2)", "Probe: outline"), its result in one plain phrase (no raw outcome word), and filters by
 // trial (outline probe rounds as "Trial 7 probes"), by leaf, and the "Show" switch. The build's rows come from the
-// export (science/prove2me.json "tasks", finished probe rounds included); the current trial's and the probe rounds'
-// live rows come from the gateway's GET /v1/tasks (prove2me-current.ts taskTableRows).
+// export (science/prove2me.json "tasks", finished probe rounds included); the live rows of every trial and probe round
+// from trial 6 on come from the gateway's GET /v1/tasks (prove2me-current.ts taskTableRows).
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TaskShow, TaskTableOptions, TaskTableRow } from './task-table';
