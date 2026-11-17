@@ -9,6 +9,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **`aisathome-node pilot`: the node as a BOINC task.** BOINC's wrapper runs it (`boinc/job.xml`);
+  it starts llama-server itself, serves the gateway over the node connection with the credential
+  the work unit carries, and ends after 4 hours, after 30 minutes without a request, or within 8 s
+  of a SIGTERM, closing the connection with its reason. It never reads BOINC's `init_data.xml`.
+  `boinc/` has the job file, the work-unit templates and a script that lays out an app version
+  for offline signing. Not yet published on a BOINC project. (node)
 - **`aisathome-node modelcheck`: check that your engine and model compute correctly.** It sends
   100 built-in prompts to the local llama-server (greedy, top-20 logprobs) and compares the answers
   with a published reference: KL divergence per group of 4 prompts (limit 0.0085) and confident

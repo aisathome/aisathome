@@ -109,10 +109,12 @@ type Agent struct {
 	connected   bool
 	gatewayID   string
 	connectedAt time.Time
-	refused     string // the gateway's reason when it last refused this node's protocol version; "" once connected
-	rejected    string // the gateway's reason when it last refused the token or the hello; "" once connected
-	leave       func() // ends the current session at once; nil while disconnected
-	held        bool   // the engine is stopped on request (StopEngine) until StartEngine or RestartEngine
+	refused     string              // the gateway's reason when it last refused this node's protocol version; "" once connected
+	rejected    string              // the gateway's reason when it last refused the token or the hello; "" once connected
+	leave       func()              // ends the current session at once; nil while disconnected
+	closer      func(reason string) // closes the current session with a reason; nil while disconnected
+	left        bool                // Leave was called: Run returns instead of reconnecting
+	held        bool                // the engine is stopped on request (StopEngine) until StartEngine or RestartEngine
 	engine      string
 	started     time.Time
 	lastRestart time.Time
@@ -199,6 +201,9 @@ func (a *Agent) Run(ctx context.Context) error {
 func (a *Agent) serve(ctx context.Context) error {
 	backoff := time.Second
 	for {
+		if a.hasLeft() {
+			return nil
+		}
 		// Only offer capacity while the engine answers: a hung engine (e.g. after a CUDA
 		// fault, 2026-10-09) must not keep receiving requests through the gateway.
 		if err := a.waitHealthy(ctx); err != nil {
@@ -208,6 +213,9 @@ func (a *Agent) serve(ctx context.Context) error {
 		err := a.session(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if a.hasLeft() {
+			return nil
 		}
 		if time.Since(start) > time.Minute {
 			backoff = time.Second // the session was healthy; start over
@@ -379,16 +387,21 @@ func (a *Agent) session(ctx context.Context) error {
 		a.mu.Unlock()
 		return errEngineStopped
 	}
+	if a.left { // Leave came during the handshake
+		a.mu.Unlock()
+		return nil
+	}
 	a.connected, a.gatewayID, a.connectedAt, a.refused, a.rejected = true, welcome.GatewayID, a.now(), "", ""
 	a.push = func() { _ = heartbeat() }
 	a.leave = func() { stopCause(errEngineStopped) } // the session's end closes the connection
+	a.closer = func(reason string) { c.Close(websocket.StatusGoingAway, reason) }
 	a.eventLocked("connected", welcome.GatewayID)
 	paused := a.ps.Paused
 	a.mu.Unlock()
 	a.save()
 	defer func() {
 		a.mu.Lock()
-		a.connected, a.push, a.leave = false, nil, nil
+		a.connected, a.push, a.leave, a.closer = false, nil, nil, nil
 		a.mu.Unlock()
 	}()
 	if paused { // tell the gateway before it routes anything here
@@ -473,6 +486,38 @@ func (a *Agent) session(ctx context.Context) error {
 			a.mu.Unlock()
 		}
 	}
+}
+
+// Leave ends the agent's gateway connection for good: it closes the session with a close frame
+// that carries reason (such as "pilot: sigterm"), waiting at most wait for the close handshake,
+// and Run then returns nil instead of reconnecting. Requests still in flight end with the
+// connection; pause first and let them finish to drain. Without a session, Run returns as soon
+// as it would have reconnected.
+func (a *Agent) Leave(reason string, wait time.Duration) {
+	a.mu.Lock()
+	a.left = true
+	closer := a.closer
+	a.mu.Unlock()
+	if closer == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		closer(reason)
+	}()
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+	}
+}
+
+func (a *Agent) hasLeft() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.left
 }
 
 // handshakeTimeout bounds connecting to the gateway, up to its welcome.

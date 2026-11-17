@@ -25,6 +25,11 @@ import (
 // writes its arguments and pid there, says hello on stderr and answers /health on the
 // --host and --port it was given, until it is stopped.
 func TestMain(m *testing.M) {
+	// With AISATHOME_TEST_PILOT=1 it runs `aisathome-node pilot` (pilot_test.go); the engine
+	// that pilot starts inherits the variable, and is told apart by llama-server's "-m".
+	if os.Getenv("AISATHOME_TEST_PILOT") == "1" && (len(os.Args) < 2 || os.Args[1] != "-m") {
+		os.Exit(runPilot(os.Args[1:], os.Stderr))
+	}
 	if dir := os.Getenv("FAKE_LLAMA_SERVER"); dir != "" {
 		fakeLlamaServer(dir, os.Args[1:])
 		os.Exit(2)
@@ -47,6 +52,19 @@ func fakeLlamaServer(dir string, args []string) {
 		}
 	}
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
+	// A completion that streams until the client goes (the pilot's stop test).
+	http.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for {
+			fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n")
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	})
 	http.ListenAndServe(net.JoinHostPort(host, port), nil)
 }
 
