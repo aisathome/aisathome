@@ -57,6 +57,10 @@ const idOfTheorem = (theorem: string) =>
 	})();
 const idOfAlias = (alias: string) => p2m.leaves.find((l) => l.aliases.includes(alias))?.id ?? alias;
 const named = (id: string | undefined, alias: string) => (id && id !== alias ? `${id} (${alias})` : alias);
+// The open leaves proved, named in the "Small numbers" text (only when the list agrees with the total).
+const openProved = p2m.leaves.filter((l) => (l.outcome === 'accepted' || l.outcome === 'proved') && l.roles.some((r) => r !== 'calibration'));
+const openProvedNames = openProved.length === t.open_leaves_proved ? openProved.map((l) => named(l.id, l.aliases.at(-1) ?? l.id)) : [];
+const openProvedList = openProvedNames.length > 1 ? `${openProvedNames.slice(0, -1).join(', ')} and ${openProvedNames.at(-1)}` : (openProvedNames[0] ?? '');
 // Every leaf ever tried: the scorecard by role and the list (the browser filters and sorts it; see the script).
 const roles = p2m.by_role.filter((r) => r.leaves > 0);
 const outcomesShown = leafOutcomes.filter((o) => p2m.leaves.some((l) => l.outcome === o));
@@ -138,7 +142,7 @@ const leafCols = [
 		<div data-kpi="runs"><dt>runs proved, of {t.runs} in trials 1 to {trials.length}</dt><dd>{t.proved}</dd></div>
 	</dl>
 	<p data-p2m-small>
-		Small numbers. The {t.open_leaves_proved} open leaves proved show that the model can do it, not how often: {named(idOfAlias('O04'), 'O04')} (trial 3) was a short
+		Small numbers. The {t.open_leaves_proved} open leaves proved{openProvedList && `, ${openProvedList},`} show that the model can do it, not how often: {named(idOfAlias('O04'), 'O04')} (trial 3) was a short
 		proof of a leaf nobody had tried yet, and {named(idOfAlias('F01'), 'F01')} (trial 5) took a new scaffold, two outlines and {f01?.tasks?.length} tasks after
 		trials 3 and 4 had failed on it.{reuses.length > 0 && ` ${reuses.map((s) => named(idOfTheorem(s.theorem), s.leaf)).join(' and ')}, closed by reuse, ${reuses.length === 1 ? 'is' : 'are'} not among them.`} On calibration leaves, which others had proved before, {t.calibration_proved} of
 		{' '}{t.calibration_runs} runs succeeded. All runs together took {t.model_hours} hours of model time{probesDone.length > 0 && `, and the outline probes that chose leaves ${probeHours.toFixed(1)} more`}.
