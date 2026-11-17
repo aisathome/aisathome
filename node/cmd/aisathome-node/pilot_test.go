@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -115,6 +116,12 @@ func TestPilotProcessSigterm(t *testing.T) {
 		t.Fatalf("no streamed answer reached the gateway; pilot log:\n%s", stderr.String())
 	}
 	enginePID, _ := strconv.Atoi(readFile(t, filepath.Join(fake, "pid")))
+	// BOINC's paths are relative to the task folder, and the engine runs in its own folder: it
+	// must get the model as an absolute path.
+	args := strings.Split(readFile(t, filepath.Join(fake, "args")), "\n")
+	if i := slices.Index(args, "-m"); i < 0 || i+1 >= len(args) || args[i+1] != filepath.Join(slot, "model.gguf") {
+		t.Errorf("engine arguments %q: want -m %s", args, filepath.Join(slot, "model.gguf"))
+	}
 
 	start := time.Now()
 	cmd.Process.Signal(syscall.SIGTERM)

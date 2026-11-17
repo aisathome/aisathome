@@ -161,6 +161,15 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	if err != nil {
 		return fail(err)
 	}
+	// BOINC gives the task's files as paths relative to its slot folder (boinc_resolve), and
+	// llama-server runs in its own folder: make every path absolute first.
+	for _, p := range []*string{&o.Model, &o.LlamaServer, &o.EngineArchive, &o.EngineDir} {
+		if *p != "" {
+			if *p, err = filepath.Abs(*p); err != nil {
+				return fail(err)
+			}
+		}
+	}
 	exe, libDir := o.LlamaServer, ""
 	if exe == "" {
 		if exe, libDir, err = Unpack(o.EngineArchive, o.EngineDir); err != nil {
@@ -271,8 +280,15 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	}
 	log.Info("pilot stopping", "reason", reason)
 	agent.Pause()
-	if reason != ReasonEngine {
-		waitIdle(agent, drain, d.Tick/4+time.Millisecond)
+	// Only the long drain at the time limit gives way to SIGTERM; the others are short already.
+	dctx := context.Background()
+	if reason == ReasonTime {
+		dctx = ctx
+	}
+	if reason != ReasonEngine && !waitIdle(dctx, agent, drain, d.Tick/4+time.Millisecond) {
+		// SIGTERM during the drain at the time limit: the wrapper's 10 s count now.
+		reason, deadline = ReasonSigterm, d.Now().Add(o.StopBudget)
+		log.Info("pilot stopping", "reason", reason)
 	}
 	agent.Leave("pilot: "+reason, min(2*time.Second, time.Until(deadline)))
 	stopAgent()
@@ -358,12 +374,18 @@ func checkpointDue(now, nextSlice time.Time, idle, slice, yieldIdle time.Duratio
 	return true, next
 }
 
-// waitIdle waits until the agent has no request in flight, at most d.
-func waitIdle(a *node.Agent, d, poll time.Duration) {
+// waitIdle waits until the agent has no request in flight, at most d. It returns false when
+// ctx ends first (SIGTERM).
+func waitIdle(ctx context.Context, a *node.Agent, d, poll time.Duration) bool {
 	end := time.Now().Add(d)
 	for a.Status().SlotsInUse > 0 && time.Now().Before(end) {
-		time.Sleep(poll)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(poll):
+		}
 	}
+	return true
 }
 
 // readCredential reads the node credential from its file: one line, no spaces.
