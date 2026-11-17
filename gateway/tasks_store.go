@@ -7,6 +7,7 @@ package gateway
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,10 +41,16 @@ type taskStore struct {
 	byPr map[string]*projectTasks
 	// write stores one file; a test stops it to crash between two writes.
 	write func(path string, raw []byte) error
+	// compactAge: how long after its end a project's finished task is compacted (the project's
+	// task_compact_days; tasks.go, Retention).
+	compactAge func(project string) time.Duration
+	// maxFull: maxFullBytes; a test lowers it.
+	maxFull int
 }
 
 func newTaskStore(dir string, log *slog.Logger) *taskStore {
-	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{}, write: writeFileAtomic}
+	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{}, write: writeFileAtomic, maxFull: maxFullBytes,
+		compactAge: func(string) time.Duration { return defaultCompactDays * 24 * time.Hour }}
 }
 
 func (s *taskStore) pdir(project string) string { return filepath.Join(s.dir, "tasks-"+project) }
@@ -126,19 +133,6 @@ func (s *taskStore) save(t *Task) error {
 		t.size = len(raw)
 	}
 	return err
-}
-
-// drop forgets a finished task once its file is gone; a file that stays keeps the task, and the
-// next prune tries again. Holds s.mu.
-func (s *taskStore) drop(t *Task) bool {
-	if s.dir != "" {
-		if err := os.Remove(filepath.Join(s.pdir(t.Project), t.ID+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			s.log.Warn("removing task failed", "project", t.Project, "task", t.ID, "err", err)
-			return false
-		}
-	}
-	delete(s.byPr[t.Project].byID, t.ID)
-	return true
 }
 
 // How a lease ended when the next claim may continue its try (Task.Interrupted).
@@ -230,13 +224,14 @@ func (s *taskStore) sweepAll() {
 	}
 }
 
-// open loads and sweeps a project's queue, and gives the memory that matches the disk even when the
-// sweep could not write. The caller holds s.mu.
+// open loads, sweeps and compacts a project's queue, and gives the memory that matches the disk even
+// when the sweep or the compaction could not write. The caller holds s.mu.
 func (s *taskStore) open(project string) (*projectTasks, time.Time, error) {
 	now := s.now()
 	p, err := s.load(project)
 	if err == nil {
 		s.sweep(p, now)
+		s.compact(project, p, now)
 		p, err = s.load(project)
 	}
 	return p, now, err
@@ -251,42 +246,71 @@ func (s *taskStore) ready(project string) error {
 	return err
 }
 
-// prune drops the oldest exported finished tasks while the finished ones are beyond
-// maxKeptTasks or maxKeptBytes. A task not exported (again) is never dropped. Holds s.mu.
-func (s *taskStore) prune(p *projectTasks) {
+// compact compacts the project's finished tasks that ended (their updated_at) at least compactAge
+// ago and, while the finished tasks not yet compacted hold more than maxFullBytes, the oldest of
+// them; at most maxCompactPerPass a pass (tasks.go, Retention). No task is ever dropped. It stops at
+// a failed write, leaving p stale. Holds s.mu.
+func (s *taskStore) compact(project string, p *projectTasks, now time.Time) {
 	if p.stale {
 		return
 	}
-	var fin []*Task
-	n, kept := 0, 0
+	cut := now.Add(-s.compactAge(project))
+	full, due := 0, false
 	for _, t := range p.byID {
-		if finished(t.State) {
-			n++
-			kept += t.size
-			if t.ExportedAt != nil {
-				fin = append(fin, t)
-			}
+		if finished(t.State) && t.CompactedAt == nil {
+			full += t.size
+			due = due || !t.UpdatedAt.After(cut)
+		}
+	}
+	if !due && full <= s.maxFull {
+		return // the common case: nothing to do, and no sort
+	}
+	var fin []*Task
+	for _, t := range p.byID {
+		if finished(t.State) && t.CompactedAt == nil {
+			fin = append(fin, t)
 		}
 	}
 	sort.Slice(fin, func(i, j int) bool { return fin[i].UpdatedAt.Before(fin[j].UpdatedAt) })
-	for len(fin) > 0 && (n > maxKeptTasks || kept > maxKeptBytes) {
-		if s.drop(fin[0]) {
-			n--
-			kept -= fin[0].size
+	n := 0
+	for _, t := range fin {
+		if n == maxCompactPerPass || (t.UpdatedAt.After(cut) && full <= s.maxFull) {
+			break // oldest first: the rest are newer
 		}
-		fin = fin[1:]
+		size := t.size
+		if s.compactTask(t, now) != nil {
+			return
+		}
+		full -= size
+		n++
+	}
+	if n > 0 {
+		s.log.Info("tasks compacted", "project", project, "tasks", n)
 	}
 }
 
-// unexported counts the finished tasks that wait for the owner's export, and their bytes.
-func unexported(p *projectTasks) (n, size int) {
-	for _, t := range p.byID {
-		if finished(t.State) && t.ExportedAt == nil {
-			n++
-			size += t.size
-		}
+// compactTask slims one finished task to its public fields, its result and what a repeated create
+// compares (tasks.go, Retention), and saves it; its updated_at stays (the end the age counts from,
+// and what an export marked). Holds s.mu.
+func (s *taskStore) compactTask(t *Task, now time.Time) error {
+	if t.StartedAt == nil && t.Lease != nil { // the public started_at of a task from before started_at
+		at := t.Lease.Since
+		t.StartedAt = &at
 	}
-	return n, size
+	if len(t.Spec) > 0 && t.SpecSHA256 == "" {
+		sum := sha256.Sum256(t.Spec)
+		t.SpecSHA256 = hex.EncodeToString(sum[:])
+	}
+	if t.typed() {
+		t.Spec = nil
+	} else {
+		t.Spec = legacySpecRef(t.Spec)
+	}
+	t.Events, t.Lease, t.Live, t.Error = nil, nil, nil, ""
+	t.Interrupted, t.PreferWorker, t.PreferUntil = "", "", nil
+	at := now.UTC()
+	t.CompactedAt = &at
+	return s.save(t)
 }
 
 // taskErr is an error with its HTTP status.
@@ -299,9 +323,15 @@ func (e *taskErr) Error() string { return e.msg }
 
 func terr(code int, format string, a ...any) error { return &taskErr{code, fmt.Sprintf(format, a...)} }
 
-// sameNew: an existing task was made by this create request (its content, not its state).
+// sameNew: an existing task was made by this create request (its content, not its state). A
+// compacted task compares the spec by its SHA-256.
 func sameNew(t *Task, n *taskNew, spec json.RawMessage, maxTries int) bool {
-	return t.Kind == n.Kind && t.Title == n.Title && bytes.Equal(t.Spec, spec) && t.CreatedBy == n.CreatedBy &&
+	sameSpec := bytes.Equal(t.Spec, spec)
+	if t.SpecSHA256 != "" {
+		sum := sha256.Sum256(spec)
+		sameSpec = hex.EncodeToString(sum[:]) == t.SpecSHA256
+	}
+	return t.Kind == n.Kind && t.Title == n.Title && sameSpec && t.CreatedBy == n.CreatedBy &&
 		t.MaxTries == maxTries && t.Order == n.Order && t.Role == n.Role && t.Parent == n.Parent &&
 		slices.Equal(t.Needs, n.Needs) && t.RetryOf == n.RetryOf && t.Replaces == n.Replaces &&
 		t.HoleID == n.HoleID && maps.Equal(t.Labels, n.Labels)
@@ -343,7 +373,7 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 		State: TaskQueued, MaxTries: maxTries, Seq: p.seq, CreatedAt: now, Order: n.Order, Role: n.Role,
 		Parent: n.Parent, Needs: slices.Clone(n.Needs), RetryOf: n.RetryOf, Replaces: n.Replaces, HoleID: n.HoleID,
 		Labels: maps.Clone(n.Labels), Try: 1}
-	if n.RetryOf != "" { // one more than the try before; that task may have been dropped after its export
+	if n.RetryOf != "" { // one more than the try before; that task may be gone (dropped before 2026-11-17)
 		t.Try = 2
 		if prev := p.byID[n.RetryOf]; prev != nil && prev.Try > 0 {
 			t.Try = prev.Try + 1
@@ -354,12 +384,12 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	if err := s.save(t); err != nil {
 		return nil, false, err
 	}
-	s.prune(p)
 	s.log.Info("task created", "project", project, "task", t.ID, "kind", t.Kind, "role", t.Role, "by", t.CreatedBy)
 	return t.view(true), true, nil
 }
 
-// admit: the queue may take one more task (429).
+// admit: the queue may take one more task (429). Only open tasks count: finished ones are kept for
+// good and never refuse a new one.
 func admit(p *projectTasks) error {
 	open := 0
 	for _, t := range p.byID {
@@ -369,9 +399,6 @@ func admit(p *projectTasks) error {
 	}
 	if open >= maxOpenTasks {
 		return terr(http.StatusTooManyRequests, "at most %d open tasks per project", maxOpenTasks)
-	}
-	if n, size := unexported(p); n >= maxKeptTasks || size >= maxKeptBytes {
-		return terr(http.StatusTooManyRequests, "%d finished tasks (%d bytes) wait for the export to the ledger; export them first", n, size)
 	}
 	return nil
 }
@@ -528,7 +555,6 @@ func (s *taskStore) complete(project, id, worker, lease string, r *TaskResult, c
 	if err := s.save(t); err != nil {
 		return nil, err
 	}
-	s.prune(p)
 	s.log.Info("task done", "project", project, "task", id, "worker", worker, "outcome", r.Outcome)
 	return t.view(false), nil
 }
@@ -562,7 +588,6 @@ func (s *taskStore) fail(project, id, worker, lease, reason string, requeue bool
 		}
 		s.log.Info("task failed", "project", project, "task", id, "worker", worker)
 	}
-	s.prune(p)
 	return t.view(false), nil
 }
 
@@ -600,7 +625,6 @@ func (s *taskStore) cancel(project, id, reason, closedBy string) (*Task, error) 
 		return nil, err
 	}
 	s.log.Info("task cancelled", "project", t.Project, "task", t.ID, "worker", worker)
-	s.prune(p)
 	return t.view(false), nil
 }
 
@@ -633,9 +657,10 @@ func (s *taskStore) setMaxTries(project, id string, n int) (*Task, error) {
 	return t.view(false), nil
 }
 
-// exported marks a finished task as taken into the ledger as it was at seen (its updated_at
-// when the export read it): a task changed since gives 409, so the next
-// export takes the change. It does not change updated_at (the pruning order).
+// exported marks a finished task as taken into the project's own snapshot as it was at seen (its
+// updated_at when the export read it): a task changed since gives 409, so the next export takes the
+// change. Optional: it gates nothing (tasks.go, Retention). It does not change updated_at (the end
+// the compaction age counts from).
 func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -658,7 +683,6 @@ func (s *taskStore) exported(project, id string, seen time.Time) (*Task, error) 
 		if err := s.save(t); err != nil {
 			return nil, err
 		}
-		s.prune(p)
 	}
 	return t.view(false), nil
 }

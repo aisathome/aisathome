@@ -117,7 +117,7 @@ type opsData struct {
 	Now         string
 	Tasks       []opsTask // the gateway's task queue (decision 0015): open, then recent finished
 	TaskCounts  string
-	TaskExport  int // finished tasks waiting for the export to the ledger
+	TaskExport  int // finished tasks not exported (an optional snapshot; it gates nothing)
 	Forbidden   bool
 	SignedOut   bool
 	Error       string // a clear that failed
@@ -497,7 +497,7 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{if .Queue}}<ol>{{range .Queue}}<li><code>{{.Attempt}}</code>{{if .TaskType}} <span class="mut small">{{.TaskType}}{{with .Size}} {{.}}{{end}}</span>{{end}}{{with .AddedAt}} <span class="mut small">queued {{.UTC.Format "01-02 15:04"}} UTC</span>{{end}}</li>{{end}}</ol>
 {{else}}<p class="mut">The queue is empty.</p>{{end}}</div>
 <div class="card" id="tasks"><h2>Task queue (gateway)</h2>
-<p class="mut small">{{if .TaskCounts}}{{.TaskCounts}}{{else}}No tasks.{{end}}{{if .TaskExport}} · <strong>{{.TaskExport}} finished waiting for the export to the ledger</strong>{{end}}</p>
+<p class="mut small">{{if .TaskCounts}}{{.TaskCounts}}{{else}}No tasks.{{end}}{{if .TaskExport}} · {{.TaskExport}} finished not exported (optional){{end}}</p>
 {{if .Tasks}}<div class="table-wrap"><table><tr><th>Task</th><th>Kind</th><th>State</th><th>Tries</th><th>Worker</th><th>Outcome</th><th>Closed by</th><th>Updated</th></tr>
 {{range .Tasks}}<tr data-task="{{.ID}}"><td data-label="Task"><code>{{.ID}}</code></td><td data-label="Kind">{{.Kind}}{{with .Role}} <span class="mut small">{{.}}</span>{{end}}</td>
 <td data-label="State"><span class="badge {{badge .State}}">{{.State}}</span>{{if .Exported}} <span class="mut small">exported</span>{{end}}</td>

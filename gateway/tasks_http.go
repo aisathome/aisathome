@@ -351,7 +351,7 @@ func (g *Gateway) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"state": t.State})
 }
 
-// handleTaskExported marks a finished task as exported to the ledger (project key only).
+// handleTaskExported marks a finished task as exported to a project snapshot (project key only; optional).
 func (g *Gateway) handleTaskExported(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !g.projectFor(w, r, id) {

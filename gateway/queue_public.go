@@ -120,20 +120,25 @@ func (t *Task) ref() specRef {
 		Role: keepPublic(t.Role, pubRoleRe), Gen: labelNum(l["outline"]), Hole: labelNum(l["hole"])}
 }
 
+// legacySpec is the part of an older task's spec that the public views read.
+type legacySpec struct {
+	Trial   string        `json:"trial,omitempty"`
+	Leaf    string        `json:"leaf,omitempty"`
+	Group   string        `json:"group,omitempty"`
+	Theorem string        `json:"theorem,omitempty"`
+	V5      *legacySpecV5 `json:"v5,omitempty"`
+}
+
+type legacySpecV5 struct {
+	Role  string `json:"role,omitempty"`
+	Gen   int    `json:"gen,omitempty"`
+	Index *int   `json:"index,omitempty"`
+}
+
 // readSpecRef reads the public fields of an older task's spec; a field that does not match its
 // pattern is left empty, a spec that is not an object gives nothing.
 func readSpecRef(spec json.RawMessage) specRef {
-	var s struct {
-		Trial   string `json:"trial"`
-		Leaf    string `json:"leaf"`
-		Group   string `json:"group"`
-		Theorem string `json:"theorem"`
-		V5      *struct {
-			Role  string `json:"role"`
-			Gen   int    `json:"gen"`
-			Index *int   `json:"index"`
-		} `json:"v5"`
-	}
+	var s legacySpec
 	if len(spec) == 0 || json.Unmarshal(spec, &s) != nil {
 		return specRef{}
 	}
@@ -150,6 +155,29 @@ func readSpecRef(spec json.RawMessage) specRef {
 		}
 	}
 	return r
+}
+
+// legacySpecRef is what a compacted task made before the typed fields keeps of its spec: only the
+// public fields readSpecRef reads, so the public views show it as before (tasks.go, Retention); nil
+// when there are none.
+func legacySpecRef(spec json.RawMessage) json.RawMessage {
+	r := readSpecRef(spec)
+	s := legacySpec{Trial: r.Trial, Leaf: r.Leaf, Group: r.Group, Theorem: r.Theorem}
+	if r.Role != "" || r.Gen > 0 || r.Hole > 0 {
+		s.V5 = &legacySpecV5{Role: r.Role, Gen: r.Gen}
+		if r.Hole > 0 {
+			i := r.Hole - 1
+			s.V5.Index = &i
+		}
+	}
+	if s == (legacySpec{}) {
+		return nil
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // public copies the public fields of a task (see the top of the file).
