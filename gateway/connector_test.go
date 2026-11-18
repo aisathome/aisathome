@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -10,8 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/aisathome/aisathome/protocol"
 )
@@ -789,5 +793,71 @@ func TestPilotCredentialRedacted(t *testing.T) {
 	red.redactBody(body)
 	if strings.Contains(statusText(body), cred[3:]) {
 		t.Fatal("a pilot credential reached the node's copy of the request")
+	}
+}
+
+// A pilot reported while its connection registers is never routable: it waits, registered but
+// held back, until its record is read once more, and is then closed. "after": the report's drop finds
+// the socket; "before": the drop ran before the socket was registered, so only the second read of the
+// record closes it.
+func TestPilotReportedDuringRegistration(t *testing.T) {
+	for _, drop := range []bool{true, false} {
+		t.Run(map[bool]string{true: "after", false: "before"}[drop], func(t *testing.T) { reportedDuringRegistration(t, drop) })
+	}
+}
+
+func reportedDuringRegistration(t *testing.T, drop bool) {
+	r := newPilotRig(t, nil)
+	srv := httptest.NewServer(r.g.Handler())
+	defer srv.Close()
+	id, cred := r.create()
+	r.bind(id, "5")
+	var hooked, routable atomic.Bool
+	r.g.pilotRegistered = func(pid string) {
+		r.g.mu.Lock()
+		n := r.g.node[pid]
+		routable.Store(n != nil && (&route{class: ClassScience, project: "lab"}).allows(n, r.clock()))
+		r.g.mu.Unlock()
+		hooked.Store(true) // before the close below reaches the client
+		r.g.sci.endPilot("boinc", pid, "reported: success", r.clock())
+		if drop {
+			r.g.dropPilot(pid, "pilot reported")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/node/connect",
+		&websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion,
+		Models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: 1}}})
+	c.Write(ctx, websocket.MessageText, hello)
+	for {
+		if _, _, err = c.Read(ctx); err != nil {
+			break
+		}
+	}
+	if !hooked.Load() {
+		t.Fatalf("never registered: %v", err)
+	}
+	if routable.Load() {
+		t.Fatal("a pilot was routable before its record was read again")
+	}
+	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+		t.Fatalf("not closed as ended: %v", err)
+	}
+	r.g.mu.Lock()
+	for _, n := range r.g.node {
+		if (&route{class: ClassScience, project: "lab"}).allows(n, r.clock()) {
+			t.Error("the ended pilot is routable")
+		}
+	}
+	r.g.mu.Unlock()
+	for deadline := time.Now().Add(5 * time.Second); r.g.NodeCount() != 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the reported pilot stayed registered")
+		}
 	}
 }

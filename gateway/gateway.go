@@ -79,6 +79,9 @@ type Gateway struct {
 	// spendCap, if set, caps a connector's pilots by spend (demand): the hook for the monthly cap on
 	// feeding pilots with science. ok false: no cap.
 	spendCap func(connector string) (pilots int, ok bool)
+	// pilotRegistered, if set, runs when a pilot's connection is registered, before its record is
+	// checked once more (tests: a report racing the handshake).
+	pilotRegistered func(pilot string)
 }
 
 // New creates a gateway.

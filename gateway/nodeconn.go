@@ -71,6 +71,9 @@ type nodeConn struct {
 	// scienceOnly: the pilot serves only science requests (connector.go); guarded by g.mu, updated
 	// by sweepNodes when its account's switch or the connector's settings change.
 	scienceOnly bool
+	// registering: a pilot registered but not yet routable, until its record is checked once more
+	// (a report during its handshake ends it); guarded by g.mu.
+	registering bool
 }
 
 // pendingReq is one request in flight on a node. The reader delivers messages on ch; the
@@ -293,6 +296,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.held = g.nodeHeld(n.id)
+	n.registering = pl != nil
 	g.node[n.id] = n
 	now := time.Now()
 	flaps := 0
@@ -308,9 +312,21 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	if pl != nil {
 		// A report or the deadline may have ended it while it registered: dropPilot ran before the
-		// socket was here to close, so look again now that it is.
-		if p, err := g.sci.pilot("", n.pilot); err != nil || p.State != PilotConnected {
+		// socket was here to close. It is registered but not routable (registering) until the record,
+		// read now that dropPilot can find the socket, says it is still connected.
+		if g.pilotRegistered != nil {
+			g.pilotRegistered(n.pilot)
+		}
+		p, err := g.sci.pilot("", n.pilot)
+		switch {
+		case err != nil:
+			n.conn.Close(websocket.StatusTryAgainLater, "pilot records unavailable, try again")
+		case p.State != PilotConnected:
 			n.conn.Close(websocket.StatusPolicyViolation, "this pilot has ended")
+		default:
+			g.mu.Lock()
+			n.registering = false
+			g.mu.Unlock()
 		}
 	}
 	if old != nil { // reconnect replaces the stale connection; its close handshake may stall
