@@ -4,16 +4,16 @@
 // gateway's GET /v1/tasks, read into the QueueTask shape below (prove2me-current.ts). No data here, so the browser's
 // bundle stays small.
 //
-// Tokens (owner, 2026-11-14: the live counts were about a tenth of the real ones): "Qwen tokens" are
-// everything the model read, cache re-reads included, and wrote, as on the Tau Ceti page and in the
-// trial tables; "computed" are what the GPU processed fresh (read without the cache, plus written). The
-// gateway's prompt_tokens are the computed prompt only; its cached_tokens (workers from 2026-11-14 on)
-// complete them. A task finished before that takes its totals from the build's data (the export
-// script's per-task counts from the task's own records); with neither, its total is unknown and the
-// leaf's total says "at least".
+// Tokens (decision 0021, 2026-11-17: the computed tokens lead): "tokens computed" are what the GPU processed fresh
+// (what the model read without the cache, plus what it wrote); "with cache re-reads" adds what it read again from the
+// cache, which is most of an agent's reading. The gateway's explicit fields (tokens_computed, tokens_with_cache) give
+// both for a task whose worker reported its cache reads (from 2026-11-14 on); a task finished before that takes its
+// counts from the build's data (the task's own records); with neither, its total is unknown and the leaf's total
+// with cache re-reads says "at least".
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { CurrentLeaf } from './prove2me';
+import { attemptOf, inplaceStanding, provesLeaf, resultLabel as outcomeWords } from './prove2me-outcomes';
 
 /** One task as the leaf view reads it (prove2me-current.ts asQueueTask makes it from GET /v1/tasks). */
 export interface QueueTask {
@@ -170,7 +170,9 @@ export function leafDetail(rows: TaskRow[], outlines: Outline[] = []): LeafDetai
 		const o = outlines.find((x) => x.gen === gen);
 		const holes = mine.filter((r) => r.role === 'hole' && r.hole);
 		const provedHoles = new Set(holes.filter((r) => r.state === 'finished' && r.outcome === 'proved').map((r) => r.hole));
-		const rest = mine.find((r) => r.role === 'rest' && r.state === 'finished' && r.outcome === 'proved');
+		// the holes in place count once the assembly passed (prove2me-outcomes.ts inplaceStanding)
+		const newest = (role: string) => mine.filter((r) => r.role === role).sort((a, b) => a.attempt - b.attempt).at(-1);
+		const inplaceProved = inplaceStanding(newest('rest'), newest('asm'))?.state === 'proved';
 		const open = mine.filter((r) => r.role === 'hole' || r.role === 'rest');
 		return {
 			gen,
@@ -179,7 +181,7 @@ export function leafDetail(rows: TaskRow[], outlines: Outline[] = []): LeafDetai
 			n: o?.holes ?? null,
 			inplace: o?.inplace ?? null,
 			holeTasks: new Set(holes.map((r) => r.hole)).size,
-			proved: provedHoles.size + (o?.prepass.closed ?? 0) + (rest && o ? o.inplace : 0),
+			proved: provedHoles.size + (o?.prepass.closed ?? 0) + (inplaceProved && o ? o.inplace : 0),
 			running: open.filter((r) => r.state === 'running').length,
 			queued: open.filter((r) => r.state === 'queued').length,
 			cancelled: open.filter((r) => r.state === 'cancelled').length,
@@ -206,8 +208,7 @@ export function detailState(d: LeafDetail): string {
 }
 
 /** Proved: an outline without holes, or an assembly, that our full check passed. */
-export const detailProved = (d: LeafDetail) =>
-	d.rows.some((r) => r.state === 'finished' && r.outcome === 'proved' && (r.role === 'asm' || r.role === 'skeleton'));
+export const detailProved = (d: LeafDetail) => d.rows.some((r) => provesLeaf(attemptOf(r)));
 
 /**
  * The leaves of a trial, as the export script's leaf_view does it: a leaf runs while any of its tasks
@@ -285,27 +286,14 @@ export function roleLabel(r: TaskRow): string {
 	return { skeleton: 'Outline', hole: `Hole ${r.hole ?? '?'}`, rest: 'In place', asm: 'Assembly' }[r.role] ?? 'Task';
 }
 
-/** A task's state or outcome in words. */
-export function resultLabel(r: TaskRow): string {
-	if (r.state !== 'finished') return stateLabel[r.state] ?? r.state;
-	const o: Record<string, string> = {
-		proved: 'Proved',
-		outline: 'Outline written',
-		refused: 'Not proved: a sorry left',
-		compile_error: 'Not proved: did not compile',
-		no_solution: 'Not proved: no solution file',
-		'no-progress': 'Not proved: stopped, no progress',
-		infra: 'Not proved: a fault on our side',
-		assembly_failed: 'Assembly did not check',
-		no_manifest: 'Not assembled: no outline record',
-	};
-	return o[r.outcome ?? ''] ?? (r.outcome ? `Ended: ${r.outcome}` : 'Finished');
-}
+/** A task's state or outcome in words (prove2me-outcomes.ts). */
+export const resultLabel = (r: TaskRow): string => outcomeWords(r.state, r.outcome);
 
 /** The hover text of a task's or leaf's tokens. */
 export function tokensTitle(total: number | null, computed: number | null, cached: number | null, output: number | null): string {
-	if (total === null) return computed === null ? 'Not counted yet' : `${exact(computed)} computed; the cache reads of this task are not known`;
-	return `${exact(total)} Qwen tokens: ${output !== null ? `${exact(output)} written, ` : ''}${exact(total - (output ?? 0))} read, of them ${exact(cached ?? 0)} from the cache; ${exact(computed ?? 0)} computed`;
+	if (total === null) return computed === null ? 'Not counted yet' : `${exact(computed)} tokens computed; the cache re-reads of this task are not known`;
+	const c = computed ?? 0;
+	return `${exact(c)} tokens computed${output !== null ? ` (${exact(output)} written, ${exact(c - output)} read fresh)` : ''}; ${exact(total)} with ${exact(cached ?? 0)} cache re-reads`;
 }
 
 const prepassText = (o: Outline | undefined, r: TaskRow) => {
@@ -343,8 +331,8 @@ export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): str
 				`<td data-label="Result" class="result ${cls}">${esc(resultLabel(r))}</td>` +
 				`<td data-label="Steps" class="num">${r.steps ?? '–'}</td>` +
 				`<td data-label="Model min" class="num">${r.minutes === null ? '–' : r.minutes.toFixed(1)}</td>` +
-				tokCell('Qwen tokens', 'tok', r.total, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-total') +
-				tokCell('Computed', 'tok', r.computed, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-computed') +
+				tokCell('Tokens computed', 'tok', r.computed, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-computed') +
+				tokCell('With cache re-reads', 'tok', r.total, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-total') +
 				`</tr>`
 			);
 		})
@@ -355,21 +343,22 @@ export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): str
 	const foot =
 		`<tr data-task="all"><th scope="row">All ${d.rows.length} tasks</th><td></td><td></td><td></td>` +
 		`<td data-label="Steps" class="num">${steps}</td><td data-label="Model min" class="num">${mins.toFixed(1)}</td>` +
-		`<td data-label="Qwen tokens" class="num tok" data-total="${d.total}" data-exact="${d.exact}" title="${esc(`${exact(d.total)} Qwen tokens${d.exact ? '' : ' at least: the cache reads of some tasks are not known'}`)}">${esc(totalText)}</td>` +
-		`<td data-label="Computed" class="num tok" data-computed="${d.computed}" title="${esc(`${exact(d.computed)} computed`)}">${esc(compact(d.computed))}</td></tr>`;
+		`<td data-label="Tokens computed" class="num tok" data-computed="${d.computed}" title="${esc(`${exact(d.computed)} tokens computed`)}">${esc(compact(d.computed))}</td>` +
+		`<td data-label="With cache re-reads" class="num tok" data-total="${d.total}" data-exact="${d.exact}" title="${esc(`${exact(d.total)} with cache re-reads${d.exact ? '' : ' at least: the cache re-reads of some tasks are not known'}`)}">${esc(totalText)}</td></tr>`;
 	const notes = d.outlines.map((o) => `<p class="outline-note" data-outline-note="${o.gen}">${esc(outlineNote(o))}</p>`).join('');
 	return (
 		`<details class="p2m-tasks" data-leaf-tasks="${esc(leaf)}"><summary>${esc(label)} (${d.rows.length})</summary>` +
 		`<div class="p2m-tasks-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col" class="num">Outline</th><th scope="col" class="num">Try</th>` +
 		`<th scope="col">Result</th><th scope="col" class="num">Steps</th><th scope="col" class="num">Model min</th>` +
-		`<th scope="col" class="num">Qwen tokens</th><th scope="col" class="num">Computed</th></tr></thead>` +
+		`<th scope="col" class="num">Tokens computed</th><th scope="col" class="num">With cache re-reads</th></tr></thead>` +
 		`<tbody>${rows}</tbody><tfoot>${foot}</tfoot></table></div>${notes}</details>`
 	);
 }
 
-/** The leaf's tokens line: "18.3M Qwen tokens, 1.6M computed" (with "at least" when some cache reads are not known). */
+/** The leaf's tokens line: "1.6M tokens computed (18.3M with cache re-reads)" ("at least" when some cache re-reads
+ * are not known). */
 export function leafTokensText(d: LeafDetail, soFar: boolean): string {
-	return `${d.exact ? '' : 'at least '}${compact(d.total)} Qwen tokens${soFar ? ' so far' : ''}, ${compact(d.computed)} computed`;
+	return `${compact(d.computed)} tokens computed${soFar ? ' so far' : ''} (${d.exact ? '' : 'at least '}${compact(d.total)} with cache re-reads)`;
 }
 
 // ---- The table of every leaf (2026-11-14): its outcome labels, and the sort the browser applies (filters and sort are

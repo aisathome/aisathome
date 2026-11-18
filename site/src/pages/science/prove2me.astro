@@ -1,10 +1,15 @@
 ---
 // Science: prove2me (prove2.me), where Qwen3.8 27B on the AIs@home network tries leaves of research theorems in
-// Lean 4. The build renders src/data/science/prove2me.json (our trials and submissions, exported from the trial
-// records; the page works without JavaScript); the browser adds the network's share of the work from the gateway's
-// public /v1/stats (project prove2me), which stays hidden until real numbers arrive.
+// Lean 4. The build renders src/data/science/prove2me.json (our trials and submissions as of the build; trials 1 to 5
+// are frozen history there, decision 0021) and the page works without JavaScript. In the browser, the headline numbers,
+// the submissions, the trials table and every trial's list from trial 6 on come live from the gateway's public records
+// (campaigns, results and tasks: prove2me-records.ts), and the network's share of the work from its /v1/stats; when
+// the gateway does not answer, the build's copy stays.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
-import { compact, counts, day, hhmm, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, shortSpan, outcomeLabel, p2m, plainTitle, qwenTokens, span, stateLabel, sumTokens, theoremURL, tokTitle, type ProbeRound, type Tok } from '../../data/prove2me';
+import { compact, computedTokens, counts, day, hhmm, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, outcomeLabel, p2m, plainTitle, span, stateLabel, sumTokens, theoremURL, tokTitle, tokensWithCache, type ProbeRound, type Tok } from '../../data/prove2me';
+import { FROZEN_THROUGH } from '../../data/prove2me-current';
+import { builtDetail, builtTaskRows, historyOf, scienceView, type TrialDetail } from '../../data/prove2me-records';
+import { kpisHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialRowHTML, trialsFootHTML } from '../../data/prove2me-view';
 import { fromStatic, leafDetail, leafTokensText, taskTableHTML } from '../../data/prove2me-live';
 import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 import { taskTableHTML as allTasksHTML } from '../../data/task-table';
@@ -36,6 +41,13 @@ const known = {
 	),
 };
 const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.leaves.reduce((a, r) => a + r.model_minutes, 0) / 60, tok: sumTokens(tr.leaves), v5: tr.leaves.some((r) => r.tasks) }));
+// The page's numbers, submissions and trials (prove2me-records.ts): the build's history here; the browser redoes them
+// with the gateway's records (trial 6 on) and the same renderers (prove2me-view.ts).
+const hist = historyOf(p2m);
+const view = scienceView(hist, null);
+const kp = kpisHTML(view.kpis);
+const frozenTrials = trials.filter((tr) => tr.trial <= FROZEN_THROUGH);
+const builtDetails = p2m.trials.filter((tr) => tr.trial > FROZEN_THROUGH).map((tr) => builtDetail(p2m, hist, tr.trial)).filter((d): d is TrialDetail => !!d);
 // A finished v5 trial keeps each leaf's tasks: the same table as "Working on now", collapsed.
 type Run = (typeof p2m.trials)[number]['leaves'][number];
 const trialDetail = (r: Run) => leafDetail((r.tasks ?? []).map(fromStatic), r.outlines ?? []);
@@ -57,10 +69,8 @@ const idOfTheorem = (theorem: string) =>
 	})();
 const idOfAlias = (alias: string) => p2m.leaves.find((l) => l.aliases.includes(alias))?.id ?? alias;
 const named = (id: string | undefined, alias: string) => (id && id !== alias ? `${id} (${alias})` : alias);
-// The open leaves proved, named in the "Small numbers" text (only when the list agrees with the total).
-const openProved = p2m.leaves.filter((l) => (l.outcome === 'accepted' || l.outcome === 'proved') && l.roles.some((r) => r !== 'calibration'));
-const openProvedNames = openProved.length === t.open_leaves_proved ? openProved.map((l) => named(l.id, l.aliases.at(-1) ?? l.id)) : [];
-const openProvedList = openProvedNames.length > 1 ? `${openProvedNames.slice(0, -1).join(', ')} and ${openProvedNames.at(-1)}` : (openProvedNames[0] ?? '');
+// Alias -> leaf id for the history the "Small numbers" text names (O04, F01); the browser's script gets it too.
+const aliasIds: Record<string, string> = Object.fromEntries(['O04', 'F01'].map((a) => [a, idOfAlias(a)]));
 // Every leaf ever tried: the scorecard by role and the list (the browser filters and sorts it; see the script).
 const roles = p2m.by_role.filter((r) => r.leaves > 0);
 const outcomesShown = leafOutcomes.filter((o) => p2m.leaves.some((l) => l.outcome === o));
@@ -81,7 +91,9 @@ const taskLeaves: Record<string, { theorem: string; url: string }> = Object.from
 	...p2m.leaves.map((l) => [l.id, { theorem: l.theorem, url: safe(l.url) ?? '' }]),
 ]);
 const taskHoles: Record<string, string> = Object.fromEntries(p2m.tasks.filter((r) => r.labels.holes).map((r) => [r.id, r.labels.holes]));
-const tasksHTML = allTasksHTML(p2m.tasks, p2mTaskOptions(taskLeaves));
+// the build's rows with tokens computed (the export's hold the cache re-reads)
+const builtRows = builtTaskRows(p2m);
+const tasksHTML = allTasksHTML(builtRows, p2mTaskOptions(taskLeaves));
 // The finished outline probe rounds: not runs, but their model time and tokens count in the totals, named as probes.
 const probesDone = (p2m.probes ?? []).filter((r) => r.state === 'finished' && r.prompt_tokens !== null) as (ProbeRound & Tok)[];
 const probeTok = sumTokens(probesDone);
@@ -89,11 +101,9 @@ const probeHours = probesDone.reduce((a, r) => a + (r.model_minutes ?? 0), 0) / 
 const allTok = sumTokens([t, probeTok]);
 const allHours = t.model_hours + probeHours;
 const probeLeafCount = new Set(probesDone.flatMap((r) => r.leaves.map((l) => l.id))).size;
-// The trials table's rows (their labels): a trial or probe round of the gateway's that is not among them gets a live row.
-const builtTrials = [...p2m.trials.map((tr) => String(tr.trial)), ...probesDone.map((p) => p.trial.slice(1))];
-const taskKnown = { rows: p2m.tasks, leafIds, leaves: taskLeaves, holes: taskHoles, trials: builtTrials };
-// The trials table in time order: trial N's outline probes just before trial N.
-const trialRows = [...trials.map((tr) => ({ at: tr.trial, tr, p: undefined })), ...probesDone.map((p) => ({ at: p.for_trial - 0.5, tr: undefined, p }))].sort((a, b) => a.at - b.at);
+const taskKnown = { rows: builtRows, leafIds, leaves: taskLeaves, holes: taskHoles };
+// What the browser's script needs to redo the headline numbers, submissions and trials with the gateway's records.
+const recordsKnown = { history: hist, f01Tasks: f01?.tasks?.length ?? null, aliasIds };
 const leafCols = [
 	{ key: 'leaf', label: 'Leaf' },
 	{ key: 'theorem', label: 'Theorem' },
@@ -102,7 +112,7 @@ const leafCols = [
 	{ key: 'outcome', label: 'Outcome' },
 	{ key: 'first', label: 'First tried' },
 	{ key: 'minutes', label: 'Model min', num: true },
-	{ key: 'tokens', label: 'Qwen tokens', num: true },
+	{ key: 'tokens', label: 'Tokens computed', num: true },
 ];
 ---
 
@@ -134,31 +144,21 @@ const leafCols = [
 		every one of them that proves an open leaf is. AIs@home is not part of prove2me.
 	</p>
 	<p class="p2m-updated" data-p2m-updated>Updated on <time datetime={p2m.generated_at}>{day(p2m.generated_at)}</time></p>
+	<script is:inline type="application/json" data-p2m-records-known set:html={JSON.stringify(recordsKnown).replace(/</g, '\\u003c')} />
 
 	<h2 id="results">Results so far</h2>
-	<dl class="p2m-kpis not-content" data-p2m-kpis style={`--kpis: ${t.reused ? 4 : 3}`}>
-		<div data-kpi="accepted"><dt>{t.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of {t.submitted} submitted</dt><dd>{t.accepted}</dd></div>
-		<div data-kpi="open"><dt>open leaves proved, of {t.open_leaves} tried</dt><dd>{t.open_leaves_proved}</dd></div>
-		{t.reused > 0 && (
-			<div data-kpi="reused"><dt>{t.reused === 1 ? 'open leaf' : 'open leaves'} closed by reuse of a proof already on prove2me</dt><dd>{t.reused}</dd></div>
-		)}
-		<div data-kpi="runs"><dt>runs proved, of {t.runs} in trials 1 to {trials.length}</dt><dd>{t.proved}</dd></div>
-	</dl>
-	<p data-p2m-small>
-		Small numbers. The {t.open_leaves_proved} open leaves proved{openProvedList && `, ${openProvedList},`} show that the model can do it, not how often: {named(idOfAlias('O04'), 'O04')} (trial 3) was a short
-		proof of a leaf nobody had tried yet, and {named(idOfAlias('F01'), 'F01')} (trial 5) took a new scaffold, two outlines and {f01?.tasks?.length} tasks after
-		trials 3 and 4 had failed on it.{reuses.length > 0 && ` ${reuses.map((s) => named(idOfTheorem(s.theorem), s.leaf)).join(' and ')}, closed by reuse, ${reuses.length === 1 ? 'is' : 'are'} not among them.`} On calibration leaves, which others had proved before, {t.calibration_proved} of
-		{' '}{t.calibration_runs} runs succeeded. All runs together took {t.model_hours} hours of model time{probesDone.length > 0 && `, and the outline probes that chose leaves ${probeHours.toFixed(1)} more`}.
-	</p>
+	{/* The build's numbers; the browser redoes them from the gateway's records (see the script). */}
+	<dl class="p2m-kpis not-content" data-p2m-kpis data-source="build" style={`--kpis: ${kp.n}`} set:html={kp.html} />
+	<p data-p2m-small set:html={smallNumbersHTML(view, f01?.tasks?.length, idOfAlias)} />
 
 	<section class="p2m-live not-content" data-p2m-live hidden aria-labelledby="p2m-live-head">
 		<h3 id="p2m-live-head">prove2me on the network</h3>
 		<dl class="p2m-live-list">
 			<div><dt>requests today (UTC)</dt><dd data-live="today-requests"></dd></div>
 			<div><dt>of all the network’s requests today</dt><dd data-live="today-share"></dd></div>
-			<div><dt>requests since 11 November</dt><dd data-live="requests"></dd></div>
-			<div><dt>tokens read and written since 11 November</dt><dd data-live="tokens"></dd></div>
-			<div><dt>GPU hours since 11 November</dt><dd data-live="hours"></dd></div>
+			<div><dt>requests in all</dt><dd data-live="requests"></dd></div>
+			<div><dt>tokens computed in all</dt><dd data-live="tokens"></dd></div>
+			<div><dt>GPU hours in all</dt><dd data-live="hours"></dd></div>
 		</dl>
 		<p class="p2m-note">
 			Live from the gateway’s public statistics, updated <time data-live="updated"></time> UTC. The network counts prove2me on its own
@@ -167,48 +167,14 @@ const leafCols = [
 	</section>
 
 	<h2 id="submissions">Submitted to prove2me</h2>
-	{
-		p2m.submissions.length ? (
-			<div class="p2m-wrap not-content">
-				<table class="p2m-table" data-p2m-submissions>
-					<thead>
-						<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">From</th><th scope="col">Submitted</th><th scope="col">prove2me’s verdict</th></tr>
-					</thead>
-					<tbody>
-						{p2m.submissions.map((s) => (
-							<tr data-submission={s.leaf} data-verdict={s.verdict} data-kind={s.kind}>
-								<th scope="row">
-									{idOfTheorem(s.theorem) ?? s.leaf}
-									{idOfTheorem(s.theorem) && <span class="sub" data-alias title="The id the trials used">{s.leaf}</span>}
-								</th>
-								<td class="thm">
-									<a href={safe(s.url)} data-theorem>{s.theorem}</a>
-									{plainTitle(s.title) !== s.theorem && <span class="sub">{plainTitle(s.title)}</span>}
-									{s.reuses && (
-										<span class="sub" data-reuses>
-											{s.reuses.relation === 'part' ? 'part of' : 'same statement as'} <a href={safe(s.reuses.url)}>{s.reuses.theorem}</a> by {s.reuses.author}
-										</span>
-									)}
-								</td>
-								{s.kind === 'reuse' ? (
-									<td data-label="From">Closed by reuse<span class="sub">{s.found === 'trial' ? `found during trial ${s.trial}` : `found while preparing trial ${s.trial}`}</span></td>
-								) : (
-									<td data-label="From">Trial {s.trial}</td>
-								)}
-								<td data-label="Submitted"><time datetime={s.submitted_at}>{day(s.submitted_at)}, {hhmm(s.submitted_at)}</time></td>
-								<td data-label="Verdict" class:list={['verdict', `verdict-${s.verdict}`]}>
-									{s.verdict === 'accepted' ? 'Accepted' : s.verdict === 'pending' ? 'Pending' : 'Rejected'}
-									{s.verdict_at && <span class="sub">{hhmm(s.verdict_at)}</span>}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
-		) : (
-			<p>Nothing yet.</p>
-		)
-	}
+	<div class="p2m-wrap not-content">
+		<table class="p2m-table" data-p2m-submissions data-source="build">
+			<thead>
+				<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">From</th><th scope="col">Submitted</th><th scope="col">prove2me’s verdict</th></tr>
+			</thead>
+			<tbody set:html={view.submissions.map(submissionRowHTML).join('')} />
+		</table>
+	</div>
 	<p>
 		{named(idOfAlias('O04'), 'O04')} had been open for 13 days with no submission from anyone. Its proof is short: the distribution has a density, so a single
 		price carries no probability mass. {named(idOfAlias('F01'), 'F01')} was still open when we submitted it. Its proof follows the leaf’s own statement: the
@@ -290,7 +256,7 @@ const leafCols = [
 				<tr>
 					<th scope="col">Role</th><th scope="col" class="num">Leaves</th><th scope="col" class="num">Runs</th>
 					<th scope="col" class="num">Runs proved</th><th scope="col" class="num">Proofs accepted</th>
-					<th scope="col" class="num">Closed by reuse</th><th scope="col" class="num">Model hours</th><th scope="col" class="num">Qwen tokens</th>
+					<th scope="col" class="num">Closed by reuse</th><th scope="col" class="num">Model hours</th><th scope="col" class="num">Tokens computed</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -303,7 +269,7 @@ const leafCols = [
 						<td data-label="Proofs accepted" class="num" data-cell="accepted">{r.accepted}</td>
 						<td data-label="Closed by reuse" class="num" data-cell="reused">{r.reused}</td>
 						<td data-label="Model hours" class="num" data-cell="hours">{r.model_hours.toFixed(1)}</td>
-						<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(r)} title={tokTitle(r)}>{compact(qwenTokens(r))}</td>
+						<td data-label="Tokens computed" class="num tok" data-cell="tokens" data-tokens={computedTokens(r)} title={tokTitle(r)}>{compact(computedTokens(r))}</td>
 					</tr>
 				))}
 				{probesDone.length > 0 && (
@@ -315,7 +281,7 @@ const leafCols = [
 						<td data-label="Proofs accepted" class="num" data-cell="accepted">–</td>
 						<td data-label="Closed by reuse" class="num" data-cell="reused">–</td>
 						<td data-label="Model hours" class="num" data-cell="hours">{probeHours.toFixed(1)}</td>
-						<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(probeTok)} title={tokTitle(probeTok)}>{compact(qwenTokens(probeTok))}</td>
+						<td data-label="Tokens computed" class="num tok" data-cell="tokens" data-tokens={computedTokens(probeTok)} title={tokTitle(probeTok)}>{compact(computedTokens(probeTok))}</td>
 					</tr>
 				)}
 			</tbody>
@@ -328,7 +294,7 @@ const leafCols = [
 					<td data-label="Proofs accepted" class="num" data-cell="accepted">{t.accepted - t.reused}</td>
 					<td data-label="Closed by reuse" class="num" data-cell="reused">{t.reused}</td>
 					<td data-label="Model hours" class="num" data-cell="hours">{allHours.toFixed(1)}</td>
-					<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(allTok)} title={tokTitle(allTok)}>{compact(qwenTokens(allTok))}</td>
+					<td data-label="Tokens computed" class="num tok" data-cell="tokens" data-tokens={computedTokens(allTok)} title={tokTitle(allTok)}>{compact(computedTokens(allTok))}</td>
 				</tr>
 			</tfoot>
 		</table>
@@ -369,7 +335,7 @@ const leafCols = [
 						return (
 							<tr data-leaf-id={l.id} data-roles={l.roles.join(' ')} data-outcome={l.outcome} data-order={i}
 								data-sort-first={Date.parse(`${l.first_tried}T00:00:00Z`)} data-sort-outcome={leafOutcomes.indexOf(l.outcome)}
-								data-sort-tokens={tok ? qwenTokens(tok) : undefined} data-sort-minutes={l.model_minutes ?? undefined}>
+								data-sort-tokens={tok ? computedTokens(tok) : undefined} data-sort-minutes={l.model_minutes ?? undefined}>
 								<th scope="row">
 									{l.id}
 									<span class="sub" data-alias title="The id the trials used">{l.aliases.join(', ')}</span>
@@ -384,9 +350,9 @@ const leafCols = [
 								<td data-label="First tried" class="nowrap"><time datetime={l.first_tried}>{day(l.first_tried)}</time></td>
 								<td data-label="Model min" class="num" data-cell="minutes">{l.model_minutes === null ? '–' : l.model_minutes.toFixed(1)}</td>
 								{tok ? (
-									<td data-label="Qwen tokens" class="num tok" data-cell="tokens" data-tokens={qwenTokens(tok)} title={tokTitle(tok)}>{compact(qwenTokens(tok))}</td>
+									<td data-label="Tokens computed" class="num tok" data-cell="tokens" data-tokens={computedTokens(tok)} title={tokTitle(tok)}>{compact(computedTokens(tok))}</td>
 								) : (
-									<td data-label="Qwen tokens" class="num" data-cell="tokens" title="No run: closed by reuse">–</td>
+									<td data-label="Tokens computed" class="num" data-cell="tokens" title="No run: closed by reuse">–</td>
 								)}
 							</tr>
 						);
@@ -413,55 +379,25 @@ const leafCols = [
 		steps, not repeats. Tap a trial for every leaf it ran.
 	</p>
 	<div class="p2m-wrap not-content">
-		<table class="p2m-table p2m-trials" data-p2m-trials>
+		<table class="p2m-table p2m-trials" data-p2m-trials data-source="build">
 			<thead>
 				<tr>
 					<th scope="col">Trial</th><th scope="col">Dates</th><th scope="col">Scaffold</th><th scope="col" class="num">Proved</th>
 					<th scope="col" class="num">Calibration</th><th scope="col" class="num">Open</th><th scope="col" class="num">Model hours</th>
-					<th scope="col" class="num">Qwen tokens</th>
+					<th scope="col" class="num">Tokens computed</th>
 				</tr>
 			</thead>
-			<tbody>
-				{trialRows.map((x) => x.tr ? (
-					<tr data-trial={x.tr!.trial}>
-						<th scope="row"><a href={`#trial-${x.tr!.trial}`}>Trial {x.tr!.trial}</a></th>
-						<td data-label="Dates" class="nowrap"><time datetime={x.tr!.start}>{shortSpan(x.tr!)}</time></td>
-						<td data-label="Scaffold">{x.tr!.scaffold}</td>
-						<td data-label="Proved" class="num" data-cell="proved">{x.tr!.c.all.proved} of {x.tr!.c.all.runs}</td>
-						<td data-label="Calibration" class="num" data-cell="calibration">{x.tr!.c.calibration.runs ? `${x.tr!.c.calibration.proved} of ${x.tr!.c.calibration.runs}` : '–'}</td>
-						<td data-label="Open" class="num" data-cell="open">{x.tr!.c.open.proved} of {x.tr!.c.open.runs}</td>
-						<td data-label="Model hours" class="num">{x.tr!.hours.toFixed(1)}</td>
-						<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(x.tr!.tok)} data-output={x.tr!.tok.output_tokens} data-cached={x.tr!.tok.cached_tokens} title={tokTitle(x.tr!.tok)}>{compact(qwenTokens(x.tr!.tok))}</td>
-					</tr>
-				) : (
-					<tr data-trial={x.p!.trial.slice(1)} data-probes>
-						<th scope="row"><span title={x.p!.caps}>Trial {x.p!.for_trial} probes</span></th>
-						<td data-label="Dates" class="nowrap"><time datetime={x.p!.start}>{shortSpan({ start: x.p!.start, end: x.p!.end ?? x.p!.start })}</time></td>
-						<td data-label="Scaffold">{x.p!.scaffold}</td>
-						<td data-label="Proved" class="num" data-cell="proved">–</td>
-						<td data-label="Calibration" class="num" data-cell="calibration">–</td>
-						<td data-label="Open" class="num" data-cell="open">–</td>
-						<td data-label="Model hours" class="num">{((x.p!.model_minutes ?? 0) / 60).toFixed(1)}</td>
-						<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(x.p!)} data-output={x.p!.output_tokens} data-cached={x.p!.cached_tokens} title={tokTitle(x.p!)}>{compact(qwenTokens(x.p!))}</td>
-					</tr>
-				))}
-			</tbody>
-			<tfoot>
-				<tr data-trial="all">
-					<th scope="row">All</th><td></td><td></td>
-					<td data-label="Proved" class="num" data-cell="proved">{t.proved} of {t.runs}</td>
-					<td data-label="Calibration" class="num" data-cell="calibration">{t.calibration_proved} of {t.calibration_runs}</td>
-					<td data-label="Open" class="num" data-cell="open">{trials.reduce((a, tr) => a + tr.c.open.proved, 0)} of {t.open_runs}</td>
-					<td data-label="Model hours" class="num">{allHours.toFixed(1)}</td>
-					<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(allTok)} data-output={allTok.output_tokens} data-cached={allTok.cached_tokens} title={tokTitle(allTok)}>{compact(qwenTokens(allTok))}</td>
-				</tr>
-			</tfoot>
+			<tbody set:html={view.trials.map(trialRowHTML).join('')} />
+			<tfoot set:html={trialsFootHTML(view)} />
 		</table>
 	</div>
 	<p class="p2m-note" data-p2m-trials-live hidden></p>
 
+	{/* Trials 1 to 5 are frozen history; from trial 6 on each trial's list is made from its records (the build's here,
+	    the gateway's in the browser: prove2me-view.ts trialDetailHTML). */}
+	<div data-p2m-trial-lists>
 	{
-		trials.map((tr) => (
+		frozenTrials.map((tr) => (
 			<details class="p2m-trial" id={`trial-${tr.trial}`} data-p2m-trial={tr.trial}>
 				<summary>
 					Trial {tr.trial} · {span(tr)} · {tr.c.all.proved} of {tr.c.all.runs} proved
@@ -471,7 +407,7 @@ const leafCols = [
 				<div class="p2m-wrap not-content">
 					<table class="p2m-table p2m-leaves">
 						<thead>
-							<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">{tr.v5 ? 'Tasks' : 'Rounds'}</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Qwen tokens</th></tr>
+							<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">{tr.v5 ? 'Tasks' : 'Rounds'}</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Tokens computed</th></tr>
 						</thead>
 						<tbody>
 							{tr.leaves.map((r) => (
@@ -501,7 +437,7 @@ const leafCols = [
 										<td data-label="Rounds" class="num">{r.rounds}</td>
 									)}
 									<td data-label="Model min" class="num">{r.model_minutes.toFixed(1)}</td>
-									<td data-label="Qwen tokens" class="num tok" data-tokens={qwenTokens(r)} data-output={r.output_tokens} data-cached={r.cached_tokens} title={tokTitle(r)}>{compact(qwenTokens(r))}</td>
+									<td data-label="Tokens computed" class="num tok" data-tokens={computedTokens(r)} data-with-cache={tokensWithCache(r)} title={tokTitle(r)}>{compact(computedTokens(r))}</td>
 								</tr>
 							))}
 						</tbody>
@@ -525,6 +461,8 @@ const leafCols = [
 			</details>
 		))
 	}
+	<Fragment set:html={builtDetails.map(trialDetailHTML).join('')} />
+	</div>
 
 	<h2 id="how-to-read-this">How to read this</h2>
 	<ul>
@@ -549,24 +487,23 @@ const leafCols = [
 		</li>
 		<li>
 			<strong>Model minutes</strong> are the time the model spent generating, summed over a run’s rounds (from trial 5, its tasks).
-			{' '}<strong>Qwen tokens</strong> are everything the model read and wrote in a run, as on the Tau Ceti page:
-			{' '}{compact(qwenTokens(allTok))} in all{probesDone.length > 0 && ' (the outline probes included)'}, of which {compact(allTok.output_tokens)} written. Most of what it reads is the same files again:
-			{' '}{Math.round((100 * allTok.cached_tokens) / allTok.prompt_tokens)}% came from the cache. Hover a token count for the exact numbers. Two first tries in
-			trial 2 that the gateway’s personal-data filter cut off are not in the counts.
+			{' '}<strong>Tokens computed</strong> are the work the GPU did: what the model read that was not already in the cache, plus
+			what it wrote. An agent reads the same files again and again, and the cache serves those re-reads: counted with them, the
+			tokens are about {Math.round(view.kpis.withCache / Math.max(view.kpis.computed, 1))} times as many (<span data-p2m-cache-share>{Math.round((100 * (view.kpis.withCache - view.kpis.computed)) / Math.max(view.kpis.withCache, 1))}%</span> of everything read and written were re-reads).
+			Hover a token count for both numbers. Two first tries in trial 2 that the gateway’s personal-data filter cut off are not in the counts.
 		</li>
 		<li>
 			<strong>Working on now</strong> and the trials from trial 5 show each leaf’s outlines, newest first. An outline is in progress,
 			refuted (one of its holes is false, or its shape was refused), proved (its holes put together passed our full check) or
 			abandoned for a new outline. Each hole is proved by its own task, false (the model disproved it), closed before any task
 			by the pre-pass of standard tactics, by our index of prove2me’s library (reuse) or by the ledger (proved before), or it is
-			running, queued, not tried or cancelled; the holes left in the outline’s file (“in place”) share one task. A leaf’s tokens
-			count every task, each outline and each try included: <strong>Qwen tokens</strong> as above (everything read, cache
-			re-reads included, and everything written), and <strong>computed</strong> tokens, the part the GPU worked through fresh
-			(what it read without the cache, plus what it wrote). Open “Every task” for each task’s result, steps, model minutes and
-			tokens. A running task’s steps and tokens show as the gateway counts them where it can, else once the task ends.
+			running, queued, not tried or cancelled; the holes left in the outline’s file (“in place”) share one task. A cancelled
+			task says why: its outline refuted, replaced or abandoned after a hole failed, or its leaf proved. A leaf’s tokens count
+			every task, each outline and each try included: tokens computed as above, and the count with the cache re-reads beside
+			them. Open “Every task” for each task’s result, steps, model minutes and tokens. A running task’s steps and tokens show as the gateway counts them where it can, else once the task ends.
 		</li>
 		<li>
-			<strong>Small samples.</strong> {t.runs} runs in {trials.length} trials, each with a different scaffold, budget and set of leaves.
+			<strong>Small samples.</strong> <span data-p2m-runs-trials>{view.kpis.runs} runs in {view.kpis.lastTrial} trials</span>, each with a different scaffold, budget and set of leaves.
 			They show what happened, not a success rate.
 		</li>
 		<li>
@@ -605,19 +542,19 @@ const leafCols = [
 	import { attachTaskTable, workText, type TaskTableRow } from '../../data/task-table';
 	import { p2mTaskOptions, taskResult, type LeafInfo } from '../../data/prove2me-tasks';
 	import { CURRENT_URL, day, fetchAllTasks, hhmm, mdLightHTML, parseCurrent, probeRound, refutedOutlines, roleLabel, submissionText, taskTableRows, theoremURL, trialQueue } from '../../data/prove2me-current';
-	import { liveTrialHTML, liveTrials, liveTrialsNote } from '../../data/prove2me-trials';
-	import { roundNo } from '../../data/prove2me-tasks';
+	import { CAMPAIGNS_URL, RESULTS_URL, getJSON, parseCampaigns, parseResults, pickDoc, scienceView, trialDetails, type History, type Records } from '../../data/prove2me-records';
+	import { kpisHTML, plainHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialRowHTML, trialsFootHTML } from '../../data/prove2me-view';
+	import { walkPages } from '../../data/prove2me-current';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
 
 	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
 	// replaces or joins them (trials 1 to 5 stay the build's).
 	const taskBox = document.querySelector<HTMLElement>('[data-p2m-alltasks]');
-	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"leafIds":{},"leaves":{},"holes":{},"trials":[]}') as {
+	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"leafIds":{},"leaves":{},"holes":{}}') as {
 		rows: TaskTableRow[];
 		leafIds: Record<string, string>;
 		leaves: LeafInfo;
 		holes: Record<string, string>;
-		trials: string[];
 	};
 	let refuted = new Set<string>();
 	const taskTable = taskBox ? attachTaskTable(taskBox, p2mTaskOptions(taskKnown.leaves, () => refuted), taskKnown.rows) : null;
@@ -643,17 +580,6 @@ const leafCols = [
 		if (cls) e.className = cls;
 		if (text !== undefined) e.textContent = text;
 		return e;
-	};
-	const getJSON = async (url: string) => {
-		const ctl = new AbortController();
-		const timer = setTimeout(() => ctl.abort(), 8000);
-		try {
-			const res = await fetch(url, { signal: ctl.signal, headers: { accept: 'application/json' } });
-			if (!res.ok) throw new Error(String(res.status));
-			return await res.json();
-		} finally {
-			clearTimeout(timer);
-		}
 	};
 	const headText = (t: CurrentDoc['trial']) =>
 		t.status === 'preparing'
@@ -755,28 +681,76 @@ const leafCols = [
 		box.querySelector<HTMLElement>('[data-probes-list]')!.replaceChildren(...items);
 	};
 
-	/** The trials table: a row of every trial (and probe round) of the gateway's that has ended and is not the build's. */
-	const showTrials = (tasks: TasksView) => {
-		const body = document.querySelector<HTMLElement>('[data-p2m-trials] tbody');
+	// The headline numbers, "Small numbers", the submissions, the trials table and each trial's list from trial 6 on: the
+	// build's history with the gateway's records (campaigns, results, tasks), drawn by the build's renderers.
+	const recordsKnown = (() => {
+		try {
+			return JSON.parse(document.querySelector('[data-p2m-records-known]')?.textContent || 'null') as { history: History; f01Tasks: number | null; aliasIds: Record<string, string> } | null;
+		} catch {
+			return null;
+		}
+	})();
+	const showRecords = (live: Records) => {
+		if (!recordsKnown) return;
+		const h = recordsKnown.history;
+		const v = scienceView(h, live);
+		const kpis = document.querySelector<HTMLElement>('[data-p2m-kpis]');
+		if (kpis) {
+			const k = kpisHTML(v.kpis);
+			kpis.innerHTML = k.html;
+			kpis.style.setProperty('--kpis', String(k.n));
+			kpis.dataset.source = 'live';
+		}
+		const small = document.querySelector<HTMLElement>('[data-p2m-small]');
+		if (small) small.innerHTML = smallNumbersHTML(v, recordsKnown.f01Tasks ?? undefined, (a) => recordsKnown.aliasIds[a] ?? a);
+		const subs = document.querySelector<HTMLElement>('[data-p2m-submissions]');
+		if (subs) {
+			subs.querySelector('tbody')!.innerHTML = v.submissions.map(submissionRowHTML).join(''); // every value escaped (prove2me-view.ts)
+			subs.dataset.source = 'live';
+		}
+		const table = document.querySelector<HTMLElement>('[data-p2m-trials]');
+		if (table) {
+			table.querySelector('tbody')!.innerHTML = v.trials.map(trialRowHTML).join('');
+			table.querySelector('tfoot')!.innerHTML = trialsFootHTML(v);
+			table.dataset.source = 'live';
+		}
 		const note = document.querySelector<HTMLElement>('[data-p2m-trials-live]');
-		if (!body) return;
-		const rows = liveTrials(tasks, taskKnown.trials ?? []);
-		body.querySelectorAll(':scope > tr[data-source=live]').forEach((tr) => tr.remove());
-		for (const r of rows) {
-			// in time order: before the first of the build's rows that is later (trial N's probes just before trial N)
-			const at = roundNo(r.trial);
-			const later = [...body.querySelectorAll<HTMLElement>(':scope > tr')].find((tr) => roundNo(tr.dataset.trial ?? '') > at);
-			const tpl = document.createElement('template');
-			tpl.innerHTML = liveTrialHTML(r); // every value escaped (prove2me-trials.ts)
-			body.insertBefore(tpl.content, later ?? null);
-		}
 		if (note) {
-			note.textContent = liveTrialsNote(rows);
-			note.hidden = !rows.length;
+			note.textContent = `Trials 1 to 5 as recorded; from trial 6 on live from the gateway’s records, updated ${hhmm(live.updated)}.`;
+			note.hidden = false;
 		}
+		const runsTrials = document.querySelector<HTMLElement>('[data-p2m-runs-trials]');
+		if (runsTrials) runsTrials.textContent = `${v.kpis.runs} runs in ${v.kpis.lastTrial} trials`;
+		const share = document.querySelector<HTMLElement>('[data-p2m-cache-share]');
+		if (share && v.kpis.withCache > 0) share.textContent = `${Math.round((100 * (v.kpis.withCache - v.kpis.computed)) / v.kpis.withCache)}%`;
+		// each trial's list from trial 6 on: replaced in place (what is open stays open), a new one in order
+		const lists = document.querySelector<HTMLElement>('[data-p2m-trial-lists]');
+		if (lists) {
+			for (const d of trialDetails([], live, h)) {
+				const old = lists.querySelector<HTMLDetailsElement>(`details[data-p2m-trial="${d.sum.number}"]`);
+				const tpl = document.createElement('template');
+				tpl.innerHTML = trialDetailHTML(d);
+				const fresh = tpl.content.firstElementChild as HTMLDetailsElement;
+				if (old) {
+					const open = new Set([...old.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]')].filter((x) => x.open).map((x) => x.dataset.leafTasks));
+					fresh.open = old.open;
+					fresh.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]').forEach((x) => (x.open = open.has(x.dataset.leafTasks)));
+					old.replaceWith(fresh);
+				} else {
+					const later = [...lists.querySelectorAll<HTMLElement>(':scope > details[data-p2m-trial]')].find((x) => Number(x.dataset.p2mTrial) > d.sum.number);
+					lists.insertBefore(fresh, later ?? null);
+				}
+			}
+		}
+		const upd = document.querySelector<HTMLElement>('[data-p2m-updated]');
+		if (upd) {
+			upd.textContent = `Live from the gateway’s records, updated ${day(live.updated)}, ${hhmm(live.updated)}`;
+			upd.dataset.source = 'live';
+		}
+		openTrial();
 	};
-	/** Every task of trial 6 on into the task table and the trials table; with the data document, its trial's leaves
-	 * (their theorems, their refuted outlines) too. */
+	/** Every task of trial 6 on into the task table; with the data document, its trial's leaves (their theorems, their
+	 * refuted outlines) too. */
 	const showTasks = (doc: CurrentDoc | null, tasks: TasksView) => {
 		if (doc) {
 			refuted = refutedOutlines(doc);
@@ -786,7 +760,6 @@ const leafCols = [
 			}
 		}
 		taskTable?.setLive(taskTableRows(tasks, doc, taskKnown.leafIds, taskKnown.holes));
-		showTrials(tasks);
 	};
 	const showNow = (doc: CurrentDoc, tasks: TasksView) => {
 		showProbes(doc, tasks);
@@ -801,7 +774,8 @@ const leafCols = [
 		];
 		nowBox.querySelector<HTMLElement>('[data-now-head]')!.textContent = headText(t);
 		const about = nowBox.querySelector<HTMLElement>('[data-now-about]')!;
-		about.innerHTML = mdLightHTML(t.description); // escaped first (prove2me-current.ts)
+		// escaped first: the document's Markdown-light (prove2me-current.ts), a campaign's plain text (prove2me-view.ts)
+		about.innerHTML = doc.schema === 'campaign' ? plainHTML(t.description) : mdLightHTML(t.description);
 		about.hidden = !t.description.trim();
 		const budget = nowBox.querySelector<HTMLElement>('[data-now-budget]')!;
 		budget.textContent = t.budget ? `Budget: ${t.budget}.` : '';
@@ -821,8 +795,10 @@ const leafCols = [
 		const asof = nowBox.querySelector<HTMLElement>('[data-now-asof]')!;
 		asof.hidden = false;
 		asof.textContent =
-			`Live: the trial’s data as published ${day(doc.updated_at, false)}, ${hhmm(doc.updated_at)}; its tasks from the gateway, ` +
-			`updated ${hhmm(tasks.updated)}. It refreshes every minute.`;
+			doc.schema === 'campaign'
+				? `Live from the gateway’s records of the trial and its tasks, updated ${hhmm(tasks.updated)}. It refreshes every minute.`
+				: `Live: the trial’s data as published ${day(doc.updated_at, false)}, ${hhmm(doc.updated_at)}; its tasks from the gateway, ` +
+					`updated ${hhmm(tasks.updated)}. It refreshes every minute.`;
 		nowBox.dataset.source = 'live';
 		nowBox.dataset.trial = t.id;
 		nowBox.dataset.status = t.status;
@@ -830,19 +806,37 @@ const leafCols = [
 	};
 	const loadNow = async () => {
 		if (!window.fetch) return;
-		// each source on its own: the task list (every page of it) feeds the task and trials tables without the document
-		const [d, ts] = await Promise.allSettled([getJSON(CURRENT_URL), fetchAllTasks(getJSON)]);
+		// each source on its own: the task list (every page of it) feeds the task table without the rest; with the
+		// campaigns and results too, the numbers, submissions and trials; "Working on now" from the document or the newest
+		// trial campaign
+		const [d, ts, cs, rs] = await Promise.allSettled([
+			getJSON(CURRENT_URL),
+			fetchAllTasks(getJSON),
+			walkPages(getJSON, CAMPAIGNS_URL, parseCampaigns),
+			walkPages(getJSON, RESULTS_URL, parseResults),
+		]);
+		const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === 'fulfilled' ? r.value : null);
 		const doc = d.status === 'fulfilled' ? parseCurrent(d.value) : null;
-		const tasks = ts.status === 'fulfilled' ? ts.value : null;
+		const tasks = ok(ts);
 		if (!tasks) return; // keep what the page shows
+		const [camps, results] = [ok(cs), ok(rs)];
+		const live: Records | null = camps && results ? { updated: tasks.updated, campaigns: camps.items, results: results.items, tasks } : null;
 		try {
 			showTasks(doc, tasks);
 		} catch {
 			// keep what the tables show
 		}
-		if (!doc) return;
+		if (live) {
+			try {
+				showRecords(live);
+			} catch {
+				// keep what the page shows
+			}
+		}
+		const now = pickDoc(doc, live);
+		if (!now) return;
 		try {
-			showNow(doc, tasks);
+			showNow(now, tasks);
 		} catch {
 			// keep what the page shows
 		}
@@ -877,7 +871,9 @@ const leafCols = [
 			const today = d?.today?.projects?.prove2me ?? { requests: 0 };
 			const todayAll = d?.today?.requests;
 			const at = new Date(d?.updated);
-			const tokens = (all?.prompt_tokens ?? NaN) + (all?.completion_tokens ?? NaN);
+			// tokens computed: the prompt tokens the model computed (its cache re-reads left out) and the ones it wrote
+			const fresh = all?.uncached_prompt_tokens ?? (all?.prompt_tokens ?? NaN) - (all?.cached_tokens ?? NaN);
+			const tokens = fresh + (all?.completion_tokens ?? NaN);
 			if (!all || ![all.requests, tokens, all.node_seconds ?? 0, today.requests, todayAll].every(ok) || Number.isNaN(at.getTime())) throw new Error('data');
 			const vals: Record<string, string> = {
 				'today-requests': full.format(today.requests),
@@ -961,8 +957,10 @@ const leafCols = [
 	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>
 
-<style>
-	.p2m-updated, .p2m-note, .caps, .sub, .meta { color: var(--sl-color-gray-3); }
+<style is:global>
+	/* Global: the build and the browser draw parts of the page as HTML (prove2me-view.ts, prove2me-live.ts), which
+	   scoped styles would miss; every class here is the page's own (p2m-, tt-) or under main. */
+	.p2m-updated, .p2m-note, main :is(.caps, .sub, .meta) { color: var(--sl-color-gray-3); }
 	.p2m-updated { font-size: 0.85rem; }
 	.p2m-kpis { display: grid; grid-template-columns: repeat(var(--kpis, 3), 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
 	.p2m-kpis div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
@@ -1017,100 +1015,100 @@ const leafCols = [
 
 	/* The task table (task-table.ts renders it as HTML, outside this page's style scope): five columns, rows grouped by
 	   leaf (its cell on the first row in sight of a group), two drop-downs and the Show switch. */
-	:global(.tt-filters) { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin: 0.6rem 0 0.2rem; }
-	:global(.tt-select) { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--sl-color-gray-3); }
-	:global(.tt-select select) { max-width: 11rem; padding: 0.15rem 0.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.3rem; background: var(--sl-color-bg); color: var(--sl-color-white); font: inherit; font-size: 0.8rem; }
-	:global(.tt-show) { display: inline-flex; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; overflow: hidden; }
-	:global(.tt-show button) { padding: 0.15rem 0.6rem; border: 0; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
-	:global(.tt-show button + button) { border-left: 1px solid var(--sl-color-gray-5); }
-	:global(.tt-show button[aria-pressed='true']) { background: var(--sl-color-accent-low); color: var(--sl-color-white); }
-	:global(.tt-count) { font-size: 0.85rem; color: var(--sl-color-gray-3); }
-	:global(.tt-wrap) { overflow-x: auto; margin-top: 0.5rem; }
-	:global(.tt-table) { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-	:global(.tt-table :is(th, td)) { padding: 0.3rem 0.6rem 0.3rem 0; text-align: left; vertical-align: baseline; }
-	:global(.tt-table :is(th, td):last-child) { padding-right: 0; }
-	:global(.tt-table thead th) { border-bottom: 1px solid var(--sl-color-gray-5); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
-	:global(.tt-table tbody tr[data-first]) { border-top: 1px solid var(--sl-color-gray-5); }
-	:global(.tt-table tbody tr:not([data-first]) .tt-group > *) { visibility: hidden; }
-	:global(.tt-table tbody th) { font-weight: 400; }
-	:global(.tt-table .tt-group) { width: 9rem; max-width: 9rem; }
-	:global(.tt-table .tt-leaf) { display: block; font: 600 0.8rem var(--font-mono, monospace); white-space: nowrap; color: var(--sl-color-white); }
-	:global(.tt-table .tt-leaf[title]) { cursor: help; }
-	:global(.tt-table .tt-thm) { display: block; overflow: hidden; font: 0.72rem var(--font-mono, monospace); white-space: nowrap; text-overflow: ellipsis; color: var(--sl-color-accent-high); }
-	:global(.tt-table .tt-round) { display: block; font-size: 0.72rem; color: var(--sl-color-gray-3); }
-	:global(.tt-table .tt-task) { color: var(--sl-color-white); }
-	:global(.tt-table .tt-note > span) { display: block; font-size: 0.75rem; color: var(--sl-color-gray-3); }
-	:global(.tt-table a) { color: var(--sl-color-accent-high); }
-	:global(.tt-table .tt-r-proved), :global(.tt-table .tt-r-running) { font-weight: 600; color: var(--sl-color-accent-high); }
-	:global(.tt-table tr[data-state='cancelled'] .tt-r) { font-style: italic; color: var(--sl-color-gray-3); }
-	:global(.tt-table .tt-work) { min-width: 6.5rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
-	:global(.tt-table .tt-time) { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
-	:global(.tt-table tr[hidden]) { display: none; }
-	:global(.tt-table tr:target) { outline: 2px solid var(--sl-color-accent); outline-offset: -2px; }
+	.tt-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin: 0.6rem 0 0.2rem; }
+	.tt-select { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+	.tt-select select { max-width: 11rem; padding: 0.15rem 0.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.3rem; background: var(--sl-color-bg); color: var(--sl-color-white); font: inherit; font-size: 0.8rem; }
+	.tt-show { display: inline-flex; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; overflow: hidden; }
+	.tt-show button { padding: 0.15rem 0.6rem; border: 0; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
+	.tt-show button + button { border-left: 1px solid var(--sl-color-gray-5); }
+	.tt-show button[aria-pressed='true'] { background: var(--sl-color-accent-low); color: var(--sl-color-white); }
+	.tt-count { font-size: 0.85rem; color: var(--sl-color-gray-3); }
+	.tt-wrap { overflow-x: auto; margin-top: 0.5rem; }
+	.tt-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+	.tt-table :is(th, td) { padding: 0.3rem 0.6rem 0.3rem 0; text-align: left; vertical-align: baseline; }
+	.tt-table :is(th, td):last-child { padding-right: 0; }
+	.tt-table thead th { border-bottom: 1px solid var(--sl-color-gray-5); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
+	.tt-table tbody tr[data-first] { border-top: 1px solid var(--sl-color-gray-5); }
+	.tt-table tbody tr:not([data-first]) .tt-group > * { visibility: hidden; }
+	.tt-table tbody th { font-weight: 400; }
+	.tt-table .tt-group { width: 9rem; max-width: 9rem; }
+	.tt-table .tt-leaf { display: block; font: 600 0.8rem var(--font-mono, monospace); white-space: nowrap; color: var(--sl-color-white); }
+	.tt-table .tt-leaf[title] { cursor: help; }
+	.tt-table .tt-thm { display: block; overflow: hidden; font: 0.72rem var(--font-mono, monospace); white-space: nowrap; text-overflow: ellipsis; color: var(--sl-color-accent-high); }
+	.tt-table .tt-round { display: block; font-size: 0.72rem; color: var(--sl-color-gray-3); }
+	.tt-table .tt-task { color: var(--sl-color-white); }
+	.tt-table .tt-note > span { display: block; font-size: 0.75rem; color: var(--sl-color-gray-3); }
+	.tt-table a { color: var(--sl-color-accent-high); }
+	.tt-table .tt-r-proved, .tt-table .tt-r-running { font-weight: 600; color: var(--sl-color-accent-high); }
+	.tt-table tr[data-state='cancelled'] .tt-r { font-style: italic; color: var(--sl-color-gray-3); }
+	.tt-table .tt-work { min-width: 6.5rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+	.tt-table .tt-time { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+	.tt-table tr[hidden] { display: none; }
+	.tt-table tr:target { outline: 2px solid var(--sl-color-accent); outline-offset: -2px; }
 
 	.p2m-trial { margin-top: 0.75rem; }
 	.p2m-trial > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
 	.p2m-trial-tasks { margin-top: 0.75rem; }
 	.p2m-trial-tasks .caps { margin: 0 0 0.25rem; }
-	.caps { font-size: 0.85rem; }
+	main .caps { font-size: 0.85rem; }
 
 	/* Global: the live list is built by the script, outside this page's style scope. */
-	:global(.p2m-now) { margin: 1rem 0 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
-	:global(.p2m-now p) { margin: 0.5rem 0 0; }
-	:global(.p2m-now p[hidden]) { display: none; }
-	:global(.p2m-now .head) { margin: 0; font-weight: 600; color: var(--sl-color-white); }
-	:global(.p2m-now [data-now-leaves]) { margin: 0.75rem 0 0; padding: 0; list-style: none; }
-	:global(.p2m-now [data-now-leaves] > li + li) { margin-top: 0.9rem; }
-	:global(.p2m-now li:target), :global(.p2m-now li.target) { outline: 2px solid var(--sl-color-accent); outline-offset: 0.3rem; border-radius: 0.2rem; }
-	:global(.p2m-now .leaf) { font: 700 0.9rem var(--font-mono, monospace); margin-right: 0.4rem; color: var(--sl-color-white); }
-	:global(.p2m-now .alias) { margin-right: 0.5rem; font-size: 0.8rem; color: var(--sl-color-gray-3); cursor: help; }
-	:global(.p2m-now .thm-name) { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
-	:global(.p2m-now .meta) { display: block; font-size: 0.85rem; color: var(--sl-color-gray-3); }
-	:global(.p2m-now .meta > span + span::before) { content: ' · '; }
-	:global(.p2m-now .state) { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
-	:global(.p2m-now .state-running) { color: var(--sl-color-accent-high); }
-	:global(.p2m-now .probes) { margin: 0 0 0.9rem; padding: 0 0 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5); }
-	:global(.p2m-now .probes[hidden]) { display: none; }
-	:global(.p2m-now .probes-head) { margin: 0; font-weight: 600; color: var(--sl-color-white); }
-	:global(.p2m-now [data-probes-list]) { margin: 0.4rem 0 0; padding: 0; list-style: none; }
-	:global(.p2m-now [data-probes-list] > li + li) { margin-top: 0.35rem; }
-	:global(.p2m-now [data-probes-list] .leaf[title]) { cursor: help; }
+	.p2m-now { margin: 1rem 0 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+	.p2m-now p { margin: 0.5rem 0 0; }
+	.p2m-now p[hidden] { display: none; }
+	.p2m-now .head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+	.p2m-now [data-now-leaves] { margin: 0.75rem 0 0; padding: 0; list-style: none; }
+	.p2m-now [data-now-leaves] > li + li { margin-top: 0.9rem; }
+	.p2m-now li:target, .p2m-now li.target { outline: 2px solid var(--sl-color-accent); outline-offset: 0.3rem; border-radius: 0.2rem; }
+	.p2m-now .leaf { font: 700 0.9rem var(--font-mono, monospace); margin-right: 0.4rem; color: var(--sl-color-white); }
+	.p2m-now .alias { margin-right: 0.5rem; font-size: 0.8rem; color: var(--sl-color-gray-3); cursor: help; }
+	.p2m-now .thm-name { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
+	.p2m-now .meta { display: block; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+	.p2m-now .meta > span + span::before { content: ' · '; }
+	.p2m-now .state { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	.p2m-now .state-running { color: var(--sl-color-accent-high); }
+	.p2m-now .probes { margin: 0 0 0.9rem; padding: 0 0 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+	.p2m-now .probes[hidden] { display: none; }
+	.p2m-now .probes-head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+	.p2m-now [data-probes-list] { margin: 0.4rem 0 0; padding: 0; list-style: none; }
+	.p2m-now [data-probes-list] > li + li { margin-top: 0.35rem; }
+	.p2m-now [data-probes-list] .leaf[title] { cursor: help; }
 	/* A leaf's outlines (prove2me-outlines.ts renders them as HTML): newest first, a heading line each, one row per hole. */
-	:global(.p2m-plan) { margin: 0.35rem 0 0; font-size: 0.85rem; }
-	:global(.p2m-plan .p2m-sum) { margin: 0 0 0.3rem; font-weight: 600; color: var(--sl-color-gray-2); }
-	:global(.p2m-outline + .p2m-outline) { margin-top: 0.5rem; }
-	:global(.p2m-ohead) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.3rem; margin: 0; }
-	:global(.p2m-oname) { font-weight: 700; color: var(--sl-color-white); }
-	:global(.p2m-ostate::before) { content: '· '; color: var(--sl-color-gray-3); }
-	:global(.p2m-ostate) { color: var(--sl-color-gray-2); }
-	:global(.p2m-outline[data-outline-state='in_progress'] .p2m-ostate), :global(.p2m-outline[data-outline-state='writing'] .p2m-ostate), :global(.p2m-outline[data-outline-state='proved'] .p2m-ostate) { font-weight: 600; color: var(--sl-color-accent-high); }
-	:global(.p2m-ocost) { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-3); }
-	:global(.p2m-holes) { margin: 0.2rem 0 0; padding: 0 0 0 0.9rem; list-style: none; border-left: 2px solid var(--sl-color-gray-5); }
-	:global(.p2m-holes li) { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0 0.5rem; margin: 0; padding: 0.1rem 0; }
-	:global(.p2m-hname) { white-space: nowrap; color: var(--sl-color-gray-2); }
-	:global(.p2m-htext) { overflow-wrap: anywhere; color: var(--sl-color-gray-2); }
-	:global(.p2m-holes li[data-hole-state='running'] .p2m-htext), :global(.p2m-holes li[data-hole-state='proved'] .p2m-htext) { font-weight: 600; color: var(--sl-color-accent-high); }
-	:global(.p2m-holes li:is([data-hole-state='prepass'], [data-hole-state='index'], [data-hole-state='ledger']) .p2m-htext) { color: var(--sl-color-accent-high); }
-	:global(.p2m-holes li:is([data-hole-state='not_tried'], [data-hole-state='cancelled'], [data-hole-state='waiting'], [data-hole-state='queued']) .p2m-htext) { color: var(--sl-color-gray-3); }
-	:global(.p2m-holes li[data-hole-state='false'] .p2m-htext) { font-weight: 600; color: var(--sl-color-white); }
+	.p2m-plan { margin: 0.35rem 0 0; font-size: 0.85rem; }
+	.p2m-plan .p2m-sum { margin: 0 0 0.3rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	.p2m-outline + .p2m-outline { margin-top: 0.5rem; }
+	.p2m-ohead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.3rem; margin: 0; }
+	.p2m-oname { font-weight: 700; color: var(--sl-color-white); }
+	.p2m-ostate::before { content: '· '; color: var(--sl-color-gray-3); }
+	.p2m-ostate { color: var(--sl-color-gray-2); }
+	.p2m-outline[data-outline-state='in_progress'] .p2m-ostate, .p2m-outline[data-outline-state='writing'] .p2m-ostate, .p2m-outline[data-outline-state='proved'] .p2m-ostate { font-weight: 600; color: var(--sl-color-accent-high); }
+	.p2m-ocost { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-3); }
+	.p2m-holes { margin: 0.2rem 0 0; padding: 0 0 0 0.9rem; list-style: none; border-left: 2px solid var(--sl-color-gray-5); }
+	.p2m-holes li { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0 0.5rem; margin: 0; padding: 0.1rem 0; }
+	.p2m-hname { white-space: nowrap; color: var(--sl-color-gray-2); }
+	.p2m-htext { overflow-wrap: anywhere; color: var(--sl-color-gray-2); }
+	.p2m-holes li[data-hole-state='running'] .p2m-htext, .p2m-holes li[data-hole-state='proved'] .p2m-htext { font-weight: 600; color: var(--sl-color-accent-high); }
+	.p2m-holes li:is([data-hole-state='prepass'], [data-hole-state='index'], [data-hole-state='ledger']) .p2m-htext { color: var(--sl-color-accent-high); }
+	.p2m-holes li:is([data-hole-state='not_tried'], [data-hole-state='cancelled'], [data-hole-state='waiting'], [data-hole-state='queued']) .p2m-htext { color: var(--sl-color-gray-3); }
+	.p2m-holes li[data-hole-state='false'] .p2m-htext { font-weight: 600; color: var(--sl-color-white); }
 	.p2m-trial-leaf { margin-top: 0.9rem; }
 	.p2m-tleaf { margin: 0; font: 700 0.85rem var(--font-mono, monospace); color: var(--sl-color-white); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks) { margin-top: 0.35rem; font-size: 0.85rem; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks > summary) { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks-wrap) { overflow-x: auto; margin-top: 0.4rem; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table) { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td)) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td):last-child) { padding-right: 0; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead th) { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tbody th) { white-space: nowrap; font-weight: 600; color: var(--sl-color-white); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tfoot :is(th, td)) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .num) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .tok) { cursor: help; }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .sub) { display: block; font-size: 0.75rem; font-weight: 400; white-space: normal; color: var(--sl-color-gray-3); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .proved) { font-weight: 600; color: var(--sl-color-accent-high); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .running) { color: var(--sl-color-accent-high); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .cancelled) { font-style: italic; color: var(--sl-color-gray-3); }
-	:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks p.outline-note) { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks { margin-top: 0.35rem; font-size: 0.85rem; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks-wrap { overflow-x: auto; margin-top: 0.4rem; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td):last-child { padding-right: 0; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tbody th { white-space: nowrap; font-weight: 600; color: var(--sl-color-white); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tfoot :is(th, td) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .tok { cursor: help; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .sub { display: block; font-size: 0.75rem; font-weight: 400; white-space: normal; color: var(--sl-color-gray-3); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .proved { font-weight: 600; color: var(--sl-color-accent-high); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .running { color: var(--sl-color-accent-high); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .cancelled { font-style: italic; color: var(--sl-color-gray-3); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks p.outline-note { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--sl-color-gray-3); }
 
 	/* Phones: each row as a small card instead of a wide table. */
 	@media (max-width: 40rem) {
@@ -1128,24 +1126,24 @@ const leafCols = [
 		.p2m-lt thead th.nosort { display: none; }
 		.p2m-lt tbody tr[hidden] { display: none; }
 		/* a task as a small card: its leaf (first of a group), the task, the result, then the work and when it finished */
-		:global(.tt-table), :global(.tt-table tbody) { display: block; }
-		:global(.tt-table thead) { display: none; }
-		:global(.tt-table tbody tr) { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.1rem 0.75rem; padding: 0.4rem 0; border-top: 1px dashed var(--sl-color-gray-5); }
-		:global(.tt-table tbody tr[data-first]) { margin-top: 0.4rem; border-top: 1px solid var(--sl-color-gray-4); }
-		:global(.tt-table tbody tr[hidden]) { display: none; }
-		:global(.tt-table tbody :is(th, td)) { padding: 0; }
-		:global(.tt-table .tt-group) { grid-column: 1 / -1; width: auto; max-width: none; }
-		:global(.tt-table .tt-thm) { white-space: normal; overflow-wrap: anywhere; }
-		:global(.tt-table tbody tr:not([data-first]) .tt-group) { display: none; }
-		:global(.tt-table tbody th), :global(.tt-table .tt-r) { grid-column: 1 / -1; }
-		:global(.tt-table .tt-time) { text-align: right; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table), :global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot)) { display: block; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead) { display: none; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot) tr) { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td)) { padding: 0; border: 0; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tr > th), :global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks td.result) { grid-column: 1 / -1; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .num) { text-align: left; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks td[data-label]::before) { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
-		:global(:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tfoot td:empty) { display: none; }
+		.tt-table, .tt-table tbody { display: block; }
+		.tt-table thead { display: none; }
+		.tt-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.1rem 0.75rem; padding: 0.4rem 0; border-top: 1px dashed var(--sl-color-gray-5); }
+		.tt-table tbody tr[data-first] { margin-top: 0.4rem; border-top: 1px solid var(--sl-color-gray-4); }
+		.tt-table tbody tr[hidden] { display: none; }
+		.tt-table tbody :is(th, td) { padding: 0; }
+		.tt-table .tt-group { grid-column: 1 / -1; width: auto; max-width: none; }
+		.tt-table .tt-thm { white-space: normal; overflow-wrap: anywhere; }
+		.tt-table tbody tr:not([data-first]) .tt-group { display: none; }
+		.tt-table tbody th, .tt-table .tt-r { grid-column: 1 / -1; }
+		.tt-table .tt-time { text-align: right; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table, :is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot) { display: block; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead { display: none; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot) tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td) { padding: 0; border: 0; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tr > th, :is(.p2m-now, .p2m-trial-tasks) .p2m-tasks td.result { grid-column: 1 / -1; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .num { text-align: left; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+		:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tfoot td:empty { display: none; }
 	}
 </style>

@@ -96,6 +96,12 @@ export interface PublicTask {
 	prompt_tokens: number | null;
 	cached_tokens: number | null;
 	completion_tokens: number | null;
+	/** The explicit counts (gateway, 2026-11-18): null when the worker did not report its cache reads (trials 4 and 5),
+	 * absent from an older gateway. tokens_computed = uncached_prompt_tokens + completion_tokens; tokens_with_cache adds
+	 * cached_tokens. */
+	uncached_prompt_tokens?: number | null;
+	tokens_computed?: number | null;
+	tokens_with_cache?: number | null;
 	created_at: string;
 	started_at: string | null;
 	finished_at: string | null;
@@ -154,42 +160,57 @@ export function parseTasks(d: unknown): TasksView | null {
 		(t) =>
 			t && isStr(t.id) && states.includes(t.state) && isTime(t.created_at) && isTime(t.updated_at) && t.labels && typeof t.labels === 'object' &&
 			Object.values(t.labels).every(isStr) && [t.role, t.outcome, t.parent, t.retry_of, t.replaces, t.closed_by, t.started_at, t.finished_at].every(optStr) &&
-			[t.try, t.steps, t.model_min, t.prompt_tokens, t.cached_tokens, t.completion_tokens].every(opt) &&
+			[t.try, t.steps, t.model_min, t.prompt_tokens, t.cached_tokens, t.completion_tokens, t.uncached_prompt_tokens, t.tokens_computed, t.tokens_with_cache].every(opt) &&
 			(t.live === undefined || t.live === null || (typeof t.live === 'object' && liveCounts.every((k) => opt(t.live![k])))),
 	);
 	return { updated: v.updated, tasks };
 }
 
-/** Every task of GET /v1/tasks: page after page by the gateway's cursor (`next`, sent back as `after`), at most
- * `maxPages`. `get` fetches a URL's JSON (with its own timeout) and throws when it fails. Null when a page fails or is
- * not what the gateway sends, so the page keeps what it shows; a cursor seen before ends the walk. */
-export async function fetchAllTasks(get: (url: string) => Promise<unknown>, url = TASKS_URL, maxPages = TASK_PAGES): Promise<TasksView | null> {
-	let updated = '';
-	const tasks: PublicTask[] = [];
+/** Every item of a paged list of the gateway (GET /v1/tasks, campaigns, results): page after page by its cursor
+ * (`next`, sent back as `after`), at most `maxPages`. `get` fetches a URL's JSON (with its own timeout) and throws when
+ * it fails; `parse` reads one page's items, or null when it is not what the gateway sends. Null when a page fails, so
+ * the page keeps what it shows; a cursor seen before ends the walk, and an id seen before counts once. */
+export async function walkPages<T extends { id: string }, P>(
+	get: (url: string) => Promise<unknown>,
+	url: string,
+	parse: (d: unknown) => (P & { items: T[] }) | null,
+	maxPages = TASK_PAGES,
+): Promise<{ first: P; items: T[] } | null> {
+	let first: P | null = null;
+	const items: T[] = [];
 	const ids = new Set<string>();
 	const cursors = new Set<string>();
 	let after: string | null = null;
 	for (let i = 0; i < maxPages; i++) {
 		let d: unknown;
 		try {
-			d = await get(after === null ? url : `${url}&after=${encodeURIComponent(after)}`);
+			d = await get(after === null ? url : `${url}${url.includes('?') ? '&' : '?'}after=${encodeURIComponent(after)}`);
 		} catch {
 			return null;
 		}
-		const page = parseTasks(d);
+		const page = parse(d);
 		if (!page) return null;
-		updated ||= page.updated;
-		for (const t of page.tasks) {
+		first ??= page;
+		for (const t of page.items) {
 			if (ids.has(t.id)) continue;
 			ids.add(t.id);
-			tasks.push(t);
+			items.push(t);
 		}
 		const next = (d as { next?: unknown }).next;
 		if (typeof next !== 'string' || !next || cursors.has(next)) break;
 		cursors.add(next);
 		after = next;
 	}
-	return { updated, tasks };
+	return first ? { first, items } : null;
+}
+
+/** Every task of GET /v1/tasks, page after page (walkPages). */
+export async function fetchAllTasks(get: (url: string) => Promise<unknown>, url = TASKS_URL, maxPages = TASK_PAGES): Promise<TasksView | null> {
+	const r = await walkPages(get, url, (d) => {
+		const v = parseTasks(d);
+		return v ? { ...v, items: v.tasks } : null;
+	}, maxPages);
+	return r ? { updated: r.first.updated, tasks: r.items } : null;
 }
 
 const und = <T>(v: T | null | undefined): T | undefined => (v === null ? undefined : v);
@@ -198,11 +219,15 @@ const int = (v: string | undefined) => (v && /^[0-9]+$/.test(v) ? Number(v) : un
 const internalRole: Record<string, string> = { outline: 'skeleton', assembly: 'asm' };
 
 /** A task's counts: a running task's from the gateway's live counters when it has them, else the numbers its worker
- * reported. Tokens as in a task's result: prompt_tokens computed fresh (the live count less its cache reads),
- * cached_tokens read from the cache, completion_tokens written. */
+ * reported. Tokens as in a task's result: prompt_tokens computed fresh (the live count less its cache reads; the
+ * explicit uncached_prompt_tokens when the gateway sends it), cached_tokens read from the cache, completion_tokens
+ * written. */
 export function counts(t: PublicTask) {
 	const lv = t.state === 'leased' && t.live ? t.live : null;
-	if (!lv) return { steps: und(t.steps), model_min: und(t.model_min), prompt_tokens: und(t.prompt_tokens), cached_tokens: und(t.cached_tokens), completion_tokens: und(t.completion_tokens) };
+	if (!lv) {
+		const fresh = t.uncached_prompt_tokens ?? t.prompt_tokens;
+		return { steps: und(t.steps), model_min: und(t.model_min), prompt_tokens: und(fresh), cached_tokens: und(t.cached_tokens), completion_tokens: und(t.completion_tokens) };
+	}
 	return {
 		steps: lv.requests,
 		model_min: lv.model_s === undefined ? undefined : Math.round(lv.model_s / 6) / 10,
@@ -264,7 +289,10 @@ export function taskTableRows(v: TasksView, doc: CurrentDoc | null, leafIds: Rec
 			const c = counts(t);
 			const lab = t.labels;
 			const leaf = ownLeaf(doc, lab);
-			const tokens = c.cached_tokens !== undefined ? (c.prompt_tokens ?? 0) + c.cached_tokens + (c.completion_tokens ?? 0) : null;
+			// tokens computed (what the GPU did); with the cache re-reads only for the hover
+			const known = c.cached_tokens !== undefined;
+			const tokens = known ? (c.prompt_tokens ?? 0) + (c.completion_tokens ?? 0) : null;
+			const withCache = known ? (c.prompt_tokens ?? 0) + c.cached_tokens! + (c.completion_tokens ?? 0) : null;
 			const kind = kindOf[t.role ?? ''] ?? t.role ?? 'task';
 			const gen = int(lab.outline) ?? 1;
 			const docHoles = leaf?.outlines?.find((o) => o.outline === gen)?.holes.length;
@@ -284,6 +312,7 @@ export function taskTableRows(v: TasksView, doc: CurrentDoc | null, leafIds: Rec
 				steps: c.steps ?? null,
 				model_min: c.model_min ?? null,
 				tokens,
+				tokens_with_cache: withCache,
 				started_at: t.started_at,
 				finished_at: t.finished_at,
 				labels: {

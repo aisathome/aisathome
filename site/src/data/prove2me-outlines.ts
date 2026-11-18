@@ -7,11 +7,15 @@
 // Made from the leaf's tasks (their roles, outlines, holes, tries, states and outcomes, and `closed_by`: GET /v1/tasks
 // or the build's data), the build's outline records (holes, how many in place, what the pre-pass closed) and, when the
 // project's data document has them, its per-hole states: which holes are in place, what closed a hole without a task,
-// and a verdict reached outside a task (a hole re-judged false after our check failed on the model's disproof). Pure
-// functions and one HTML renderer (every value escaped) for the build and the browser alike.
+// and a verdict reached outside a task (a hole re-judged false after our check failed on the model's disproof). What
+// an outcome means (a leaf proved, the holes in place, closed_by, an outcome in words) is prove2me-outcomes.ts's.
+// Pure functions and one HTML renderer (every value escaped) for the build and the browser alike.
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { LeafDetail, Outline, TaskRow } from './prove2me-live';
+import { attemptOf, closedByText, inplaceStanding, isStaleCancel, outlineRefusal, provesLeaf, staleCancelReason, tryWord } from './prove2me-outcomes';
+
+export { closedByText, tryWord };
 
 /** A hole as the project's data document states it (prove2me-current/2): in place or extracted as a lemma, and its
  * standing when the trial's records know it without a task of this outline (`by`: prepass, index, ledger,
@@ -54,28 +58,6 @@ export interface LeafPlan {
 	outlines: OutlineView[];
 }
 
-// A try's outcome in a few words (the task's own outcome; a hole's or the in-place task's).
-const tryWords: Record<string, string> = {
-	proved: 'proved',
-	disproved: 'disproved',
-	refused: 'a sorry left',
-	compile_error: 'did not compile',
-	no_solution: 'no solution file',
-	'no-progress': 'stopped, no progress',
-	no_progress: 'stopped, no progress',
-	timeout: 'out of time',
-	infra: 'a fault on our side',
-	check_error: 'our check failed',
-	type_mismatch: 'proved another statement',
-	axioms: 'used an axiom not allowed',
-	not_theorem: 'not a theorem',
-	assembly_failed: 'did not check',
-	no_manifest: 'no outline record',
-};
-export const tryWord = (o: string | null) => (o ? tryWords[o] ?? o.replace(/[_-]/g, ' ') : 'ended');
-// An outline task that ended without an outline: refuted (the outline's own shape) or no outline at all.
-const refusedOutline: Record<string, string> = { degenerate_outline: 'degenerate (a hole is the leaf’s own claim)', inline_proof: 'an inline proof too long' };
-
 /** "hole 2", "holes 2 and 3", "holes 1, 2 and 4". */
 export function holesText(ns: number[]): string {
 	const s = [...ns].sort((a, b) => a - b).map(String);
@@ -97,16 +79,6 @@ export function rangesText(ns: number[]): string {
 }
 const andList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
-/** What a task's `closed_by` says: the index's theorem, the ledger's proof, the pre-pass, or another task. */
-export function closedByText(c: string): { state: HoleState; text: string } {
-	if (c.startsWith('reuse:formalpedia:')) return { state: 'index', text: 'closed by the index (reuse)' };
-	if (c.startsWith('reuse:ledger')) return { state: 'ledger', text: 'closed by the ledger' };
-	if (c.startsWith('reuse:prepass')) return { state: 'prepass', text: 'closed by the pre-pass' };
-	if (c.startsWith('reuse:')) return { state: 'closed', text: 'closed by reuse' };
-	if (/-s[0-9]+$|^t[0-9]+-p2m-[0-9a-f]+$/.test(c)) return { state: 'prepass', text: 'closed by the pre-pass' }; // run by that outline task
-	return { state: 'closed', text: `closed by another task (${c})` };
-}
-
 /** A hole as the document states it, when that settles it (a verdict, or closed without a task). */
 function docHole(e: HoleInfo): { state: HoleState; text: string } | null {
 	const note = e.note ? `; ${e.note}` : '';
@@ -125,11 +97,13 @@ function docHole(e: HoleInfo): { state: HoleState; text: string } | null {
 
 const byTry = (a: TaskRow, b: TaskRow) => a.attempt - b.attempt;
 
-/** A hole's (or the in-place holes') tasks in words; `why` names the outline's end for a try that was cancelled or never made. */
-function triesText(ts: TaskRow[], why: string): { state: HoleState; text: string } {
+/** A hole's (or the in-place holes') tasks in words; `why` names the outline's end for a try that was cancelled or never
+ * made, unless the try's own `closed_by` names the task that ended the outline (`peers`: the leaf's tasks). */
+function triesText(ts: TaskRow[], why: string, peers: TaskRow[] = []): { state: HoleState; text: string } {
 	const sorted = [...ts].sort(byTry);
 	const last = sorted.at(-1)!;
-	const closed = sorted.find((t) => t.closed_by);
+	// what closed the hole before a model ran; a cancelled try's closed_by is why it was cancelled (below)
+	const closed = sorted.find((t) => t.closed_by && !isStaleCancel(attemptOf(t)));
 	if (closed?.closed_by) return closedByText(closed.closed_by);
 	const before = sorted.slice(0, -1).filter((t) => t.state === 'finished' || t.state === 'failed');
 	const earlier = before.length ? before.map((t) => `try ${t.attempt}: ${t.state === 'failed' ? 'a fault' : tryWord(t.outcome)}`).join(', ') : '';
@@ -144,7 +118,9 @@ function triesText(ts: TaskRow[], why: string): { state: HoleState; text: string
 		case 'cancelled': {
 			const started = last.started ?? (last.steps ?? 0) > 0;
 			const word = started ? `cancelled${last.steps ? ` after ${last.steps} steps` : ''}` : 'not tried';
-			const tail = `${word}${why ? ` (${why})` : ''}`;
+			// "cancelled: outline abandoned after hole 1 failed" (the task its closed_by names), else the outline's end
+			const own = staleCancelReason(attemptOf(last), peers.map(attemptOf));
+			const tail = own ? `${word}: ${own}` : `${word}${why ? ` (${why})` : ''}`;
 			// after earlier tries: "try 1: our check failed; try 2 not tried (outline refuted)"
 			return { state: started ? 'cancelled' : 'not_tried', text: earlier ? `${earlier}; try ${a} ${tail}` : a > 1 ? `try ${a} ${tail}` : tail };
 		}
@@ -165,7 +141,7 @@ const cost = (sk: TaskRow | undefined) => {
 };
 
 /** One outline in words: its state and one row per hole (and the in-place holes and the assembly). */
-export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined, doc: HoleInfo[] | undefined, newer: boolean): OutlineView {
+export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined, doc: HoleInfo[] | undefined, newer: boolean, peers: TaskRow[] = rows): OutlineView {
 	const newest = (role: string) => rows.filter((r) => r.role === role).sort(byTry).at(-1);
 	const sk = newest('skeleton');
 	const asm = newest('asm');
@@ -177,9 +153,9 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 		const started = sk.started ?? (sk.steps ?? 0) > 0;
 		return view('abandoned', started ? 'abandoned: cancelled while being written' : 'abandoned: cancelled before it started', 'cancelled');
 	}
-	if (sk && sk.outcome === 'proved') return view('proved', 'proved without holes');
+	if (sk && provesLeaf(attemptOf(sk))) return view('proved', 'proved without holes');
 	if (sk && sk.outcome && sk.outcome !== 'outline') {
-		const r = refusedOutline[sk.outcome];
+		const r = outlineRefusal(sk.outcome);
 		return r ? view('refuted', `refuted: ${r}`, r) : view('ended', `no outline: ${tryWord(sk.outcome)}`, tryWord(sk.outcome));
 	}
 
@@ -222,24 +198,15 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	});
 	const anyInplace = (inplaceCount ?? 0) > 0 || rest.length > 0 || (inplace?.length ?? 0) > 0;
 	if (anyInplace) {
-		// The in-place task never says "proved": it ends `rest_done` with the outline's file filled in, and the
-		// assembly's full check decides. So its holes are proved when the assembly is, and wait for it until then.
-		const last = [...rest].sort(byTry).at(-1);
-		const done = last?.state === 'finished' && last.outcome === 'rest_done';
-		const byAsm: Draft['fixed'] = !done
-			? undefined
-			: asm?.state === 'finished'
-				? asm.outcome === 'proved'
-					? { state: 'proved', text: 'proved (checked in the assembly)' }
-					: { state: 'not_proved', text: 'filled in, but the assembly did not check' }
-				: { state: 'waiting', text: 'filled in; the assembly checks it' };
+		// The in-place task never says "proved": the assembly's full check decides (prove2me-outcomes.ts).
+		const byAsm: Draft['fixed'] = inplaceStanding([...rest].sort(byTry).at(-1), asm);
 		// a verdict the data document holds for a hole in place (e.g. false, found outside a task) comes first
 		const fixedFor = (h: number | null) => (h !== null && docBy.has(h) ? docHole(docBy.get(h)!) : null) ?? byAsm;
 		// one row per hole in place, as many as two; more share one row (they are one task)
 		if (inplace?.length && inplace.length <= 2) for (const h of inplace) drafts.push({ hole: h, kind: 'inplace', ts: rest, fixed: fixedFor(h) });
 		else drafts.push({ hole: null, kind: 'inplace', ts: rest, fixed: byAsm });
 	}
-	const own = (d: Draft) => d.fixed ?? (d.ts.length ? triesText(d.ts, '') : null);
+	const own = (d: Draft) => d.fixed ?? (d.ts.length ? triesText(d.ts, '', peers) : null);
 	const states = drafts.map(own);
 	const live = [...rows.filter((r) => r.role !== 'skeleton')].some((r) => r.state === 'running' || r.state === 'queued');
 
@@ -254,7 +221,7 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	};
 	const cancelled = rows.some((r) => r.role !== 'skeleton' && r.state === 'cancelled');
 	let state: OutlineState, text = '', reason = '';
-	if (asm && asm.state === 'finished' && asm.outcome === 'proved') [state, text] = ['proved', 'proved (assembled)'];
+	if (asm && provesLeaf(attemptOf(asm))) [state, text] = ['proved', 'proved (assembled)'];
 	else if (falseHoles.length) [state, reason] = ['refuted', `${holesText(falseHoles)} ${falseHoles.length > 1 ? 'are' : 'is'} false`];
 	else if (live) [state, text] = ['in_progress', newer ? 'in progress (a newer outline was started)' : asm?.state === 'running' ? 'being assembled' : 'in progress'];
 	else if (newer) [state, reason] = ['abandoned', failed.length ? failedText() : cancelled ? 'its tasks were cancelled' : ''];
@@ -272,7 +239,7 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 
 	const holes: HoleView[] = drafts.map((d, i) => {
 		let s = states[i];
-		if (s && (s.state === 'cancelled' || s.state === 'not_tried')) s = triesText(d.ts, why);
+		if (s && (s.state === 'cancelled' || s.state === 'not_tried')) s = triesText(d.ts, why, peers);
 		if (!s) {
 			// no task: in place before the in-place task exists, or a lemma hole with none
 			if (d.kind === 'inplace') s = ended ? { state: 'not_tried', text: `not tried${why ? ` (${why})` : ''}` } : { state: 'waiting', text: 'waiting for its task' };
@@ -342,7 +309,7 @@ export function leafPlan(d: LeafDetail, doc: OutlineHoles[] = [], reuse?: string
 	const gens = [...new Set([...d.rows.map((r) => r.gen)])].sort((a, b) => a - b);
 	const top = gens.at(-1) ?? 0;
 	const views = gens.map((g) =>
-		outlineView(g, d.rows.filter((r) => r.gen === g), d.outlines.find((o) => o.gen === g), doc.find((x) => x.outline === g)?.holes, g < top),
+		outlineView(g, d.rows.filter((r) => r.gen === g), d.outlines.find((o) => o.gen === g), doc.find((x) => x.outline === g)?.holes, g < top, d.rows),
 	);
 	return { summary: leafSummary(views, d.rows, reuse), outlines: [...views].reverse() };
 }

@@ -12,6 +12,7 @@ import raw from './science/prove2me.json';
 export { compact, leafOutcomeLabel, leafOutcomes, leafProgress, leafRoleLabel, plural, stateLabel } from './prove2me-live';
 import type { Outline, StaticTask } from './prove2me-live';
 import type { TaskTableRow } from './task-table';
+import { resultLabel } from './prove2me-outcomes';
 
 export type Group = 'calibration' | 'open';
 export type Outcome = 'proved' | 'refused' | 'compile_error' | 'no_solution' | 'no-progress' | string;
@@ -198,8 +199,6 @@ export const p2m = raw as Prove2me;
 /** Links go to prove2me's theorem pages only. */
 export const theoremURL = /^https:\/\/prove2\.me\/theorems\/[0-9a-f-]{36}$/;
 
-/** A prove2me title without its TeX delimiters (the page has no TeX renderer). */
-export const plainTitle = (t: string) => t.replace(/\$([^$]*)\$/g, '$1').trim();
 
 export function outcomeLabel(r: LeafRun): string {
 	if (!r.scored) return 'Not scored';
@@ -207,32 +206,20 @@ export function outcomeLabel(r: LeafRun): string {
 		case 'proved':
 			if (r.proved_in_outline && r.rounds > 1) return `Proved with outline ${r.proved_in_outline}`;
 			return r.rounds > 1 && r.proved_in_round ? `Proved in round ${r.proved_in_round}` : 'Proved';
-		case 'refused':
-			return 'Not proved: a sorry left';
-		case 'compile_error':
-			return 'Not proved: did not compile';
-		case 'no_solution':
-			return 'Not proved: no solution file';
-		case 'no-progress':
-			return 'Not proved: stopped, no progress';
-		default:
-			return 'Not proved';
+		default: {
+			// a sorry left, did not compile, ... (prove2me-outcomes.ts)
+			const w = resultLabel('done', r.outcome);
+			return w.startsWith('Not proved') ? w : 'Not proved';
+		}
 	}
 }
 
 
 import { day, hhmm } from './prove2me-current';
 export { day, hhmm };
-// The trials table's helpers live in prove2me-trials.ts, which the browser's script imports without this data.
-export { qwenTokens, shortSpan, sumTokens, tokTitle, type Tok } from './prove2me-trials';
-
-/** A trial's dates: "7 November 2026", or "9 to 12 November 2026". */
-export function span(t: { start: string; end: string }) {
-	if (t.start === t.end) return day(t.start);
-	const a = new Date(`${t.start}T00:00:00Z`), b = new Date(`${t.end}T00:00:00Z`);
-	if (a.getUTCMonth() === b.getUTCMonth()) return `${a.getUTCDate()} to ${day(t.end)}`;
-	return `${day(t.start, false)} to ${day(t.end)}`;
-}
+// The tables' helpers live in prove2me-trials.ts and prove2me-view.ts, which the browser's script imports without this data.
+export { computedTokens, shortSpan, sumTokens, tokTitle, tokensWithCache, type Tok } from './prove2me-trials';
+export { plainTitle, span } from './prove2me-view';
 
 /** Proved of run, by group, for one trial. */
 export function counts(rows: LeafRun[]) {

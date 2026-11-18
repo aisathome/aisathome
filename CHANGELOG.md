@@ -81,6 +81,15 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **The prove2me page reads the gateway's records.** Its headline numbers, the submissions, the
+  trials table and every trial's own list from trial 6 on come live from the project's public
+  campaigns, results and tasks (trials 1 to 5 stay the recorded history), as do the home page's
+  prove2me line and the `/science/` card; without the gateway the build's copy stays. Token counts
+  lead with the tokens computed (what the GPU worked through: reads without the cache, plus
+  writes); the count with the cache re-reads shows beside them or on hover. A trial's list states
+  its facts from the records, then the trial's own text, shown as plain text. A task cancelled
+  because its outline was abandoned now says so ("cancelled: outline abandoned after hole 1
+  failed") instead of "closed by another task". (site)
 - **The gateway keeps every science task.** Finished tasks are no longer dropped after an export,
   and creating tasks is no longer refused (429) while 200 finished tasks wait for one; only open
   tasks (500 per project) are capped. A finished task is compacted 30 days after its end (a

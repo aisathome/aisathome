@@ -1,14 +1,16 @@
 ---
 // Science overview (/science/): one card per project, the active one first, each with its status, a few headline numbers
 // from the same committed data its own page renders (science/prove2me.json, science/tauceti.json), and a link to it.
+// prove2me's numbers come live from the gateway's records in the browser, as on its own page (prove2me-records.ts).
 // SPDX-License-Identifier: Apache-2.0
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../data/prove2me';
+import { historyOf, scienceView } from '../../data/prove2me-records';
+import { cardNumbers } from '../../data/prove2me-view';
 import { science as tc } from '../../data/science';
 
-const t = p2m.totals;
-const cur = p2m.current;
-const running = !!cur && cur.leaves.some((l) => l.state === 'running' || l.state === 'queued');
+const p2mHistory = historyOf(p2m);
+const p2mView = scienceView(p2mHistory, null);
 const dayLabel = (iso: string) => {
 	const d = new Date(iso);
 	return `${d.getUTCDate()} ${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getUTCMonth()]} ${d.getUTCFullYear()}`;
@@ -21,12 +23,7 @@ const cards = [
 		status: 'Active',
 		state: 'active',
 		about: 'Research theorems stated in Lean 4 and split into leaves. The Lean kernel checks every proof.',
-		numbers: [
-			{ key: 'accepted', value: String(t.accepted), label: `${t.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of ${t.submitted} submitted` },
-			{ key: 'open', value: `${t.open_leaves_proved} of ${t.open_leaves}`, label: `open leaves proved${t.reused ? `; ${t.reused} more closed by reuse` : ''}` },
-			...(cur && running ? [{ key: 'trial', value: `Trial ${cur.trial}`, label: `running since ${dayLabel(cur.start ?? p2m.generated_at)}` }] : []),
-			...(cur?.state === 'preparing' ? [{ key: 'trial', value: `Trial ${cur.trial}`, label: 'being prepared' }] : []),
-		],
+		numbers: cardNumbers(p2mView),
 		asOf: p2m.generated_at,
 	},
 	{
@@ -65,7 +62,7 @@ const cards = [
 					</h2>
 					<p class="status" data-project-status>{c.status}</p>
 					<p class="about">{c.about}</p>
-					<dl>
+					<dl data-card-numbers>
 						{c.numbers.map((n) => (
 							<div data-number={n.key}>
 								<dt>{n.label}</dt>
@@ -74,14 +71,41 @@ const cards = [
 						))}
 					</dl>
 					<p class="foot">
-						{c.asOf && <span>As of {dayLabel(c.asOf)}. </span>}
+						{c.asOf && <span data-card-asof>As of {dayLabel(c.asOf)}. </span>}
 						<a href={c.href}>See {c.name} <span aria-hidden="true">→</span></a>
 					</p>
 				</li>
 			))
 		}
 	</ul>
+	<script is:inline type="application/json" data-science-p2m-known set:html={JSON.stringify({ history: p2mHistory }).replace(/</g, '\\u003c')} />
 </StarlightPage>
+
+<script>
+	// prove2me's card, live: the build's history with the gateway's records (prove2me-records.ts); without them the
+	// build's numbers stay.
+	import { liveSummary, type History } from '../../data/prove2me-records';
+	import { cardNumbersHTML } from '../../data/prove2me-view';
+	import { day, hhmm } from '../../data/prove2me-current';
+
+	const card = document.querySelector<HTMLElement>('[data-project=prove2me]');
+	const load = async () => {
+		if (!card || !window.fetch) return;
+		try {
+			const known = JSON.parse(document.querySelector('[data-science-p2m-known]')?.textContent || 'null') as { history: History } | null;
+			if (!known) return;
+			const v = await liveSummary(known.history);
+			if (!v) return;
+			card.querySelector<HTMLElement>('[data-card-numbers]')!.innerHTML = cardNumbersHTML(v); // every value escaped
+			const asOf = card.querySelector<HTMLElement>('[data-card-asof]');
+			if (asOf) asOf.textContent = `Live, ${day(v.updated)}, ${hhmm(v.updated)}. `;
+			card.dataset.source = 'live';
+		} catch {
+			// keep the build's numbers
+		}
+	};
+	load();
+</script>
 
 <style>
 	.sci-cards { display: grid; gap: 1rem; margin: 1.5rem 0 0; padding: 0; list-style: none; }

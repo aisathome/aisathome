@@ -7,20 +7,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { TaskShow, TaskTableOptions, TaskTableRow } from './task-table';
-import { closedByText, tryWord } from './prove2me-outlines';
+import { cancelReason, closedByText, inplaceStanding, kindOf, taskRef, tryWord, type Attempt } from './prove2me-outcomes';
+
+export { taskRef };
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-// <trial>-<leaf>[-s<gen>][-h<hole>|-rest|-asm][-a<try>] (p2m_holes.py names them so); a run of trials 1 to 4 is t<N>-<leaf>;
-// an outline probe's trial is t<N>p.
-const TASK_ID = /^(t[0-9]+p?)-(p2m-[0-9a-f]{6,8}|[A-Za-z0-9]+)(?:-s([0-9]+))?(?:-(?:h([0-9]+)|(rest|asm)))?(?:-a([0-9]+))?$/;
-const KIND: Record<string, string> = { rest: 'rest', asm: 'assembly' };
-export function taskRef(id: string) {
-	const m = TASK_ID.exec(id);
-	if (!m) return null;
-	return { trial: m[1], leaf: m[2], gen: Number(m[3] ?? 1), hole: m[4] ? Number(m[4]) : null, kind: m[4] ? 'hole' : m[5] ? KIND[m[5]] : 'outline', attempt: Number(m[6] ?? 1) };
-}
 
 /** A trial label's place in time: trial N's outline probes ("6p") come just before trial N. */
 export const roundNo = (t: string) => (t.endsWith('p') ? Number(t.slice(0, -1)) - 0.5 : Number(t));
@@ -50,16 +42,11 @@ export function taskLabel(r: TaskTableRow): string {
 export type Refuted = Set<string>;
 export const refutedKey = (trial: string, leaf: string, outline: number | string) => `${trial}|${leaf}|${outline}`;
 
-/** Why a task was cancelled, when the rows say: its outline refuted or replaced, or its leaf proved. */
-function cancelledWhy(r: TaskTableRow, rows: TaskTableRow[], refuted?: Refuted): string {
-	const mine = rows.filter((x) => same(x, r));
-	const g = outlineOf(r);
-	if (refuted?.has(refutedKey(r.labels.trial, leafOf(r), g))) return 'outline refuted';
-	if (mine.some((x) => x.kind === 'hole' && outlineOf(x) === g && x.outcome === 'disproved')) return 'outline refuted';
-	if (mine.some((x) => x.kind === 'outline' && outlineOf(x) > g)) return 'outline replaced';
-	if (mine.some((x) => x !== r && x.outcome === 'proved' && ['outline', 'assembly', 'run'].includes(x.kind))) return 'leaf proved';
-	return '';
-}
+/** A row of the table as the outcome rules read it (prove2me-outcomes.ts). */
+const attempt = (r: TaskTableRow): Attempt => ({
+	id: r.id, kind: kindOf(r.kind), state: r.state, outcome: r.outcome, gen: outlineOf(r), hole: r.labels.hole ? Number(r.labels.hole) : null,
+	try: r.try, closed_by: r.closed_by, started: !!r.started_at, steps: r.steps,
+});
 
 /** The result in one plain phrase (the outline view's words), and its "Show" set. */
 export function taskResult(r: TaskTableRow, rows: TaskTableRow[], refuted?: Refuted): { text: string; show: TaskShow } {
@@ -67,8 +54,9 @@ export function taskResult(r: TaskTableRow, rows: TaskTableRow[], refuted?: Refu
 	if (r.state === 'queued') return { text: 'Queued', show: 'running' };
 	if (r.state === 'failed') return { text: 'Stopped by a fault', show: 'not_proved' };
 	if (r.state === 'cancelled') {
-		const why = cancelledWhy(r, rows, refuted);
-		return { text: `Cancelled${why ? ` (${why})` : ''}`, show: 'not_proved' };
+		// "Cancelled: outline abandoned after hole 1 failed" (the task its closed_by names), else "Cancelled (outline replaced)"
+		const why = cancelReason(attempt(r), rows.filter((x) => same(x, r)).map(attempt), !!refuted?.has(refutedKey(r.labels.trial, leafOf(r), outlineOf(r))));
+		return { text: `Cancelled${why.text ? (why.own ? `: ${why.text}` : ` (${why.text})`) : ''}`, show: 'not_proved' };
 	}
 	switch (r.outcome) {
 		case 'proved':
@@ -79,8 +67,8 @@ export function taskResult(r: TaskTableRow, rows: TaskTableRow[], refuted?: Refu
 		}
 		case 'rest_done': {
 			// the holes left in place, filled in: proved when the outline's assembly passed our full check
-			const asm = rows.some((x) => same(x, r) && x.kind === 'assembly' && outlineOf(x) === outlineOf(r) && x.outcome === 'proved');
-			return { text: 'Filled in, checked by the assembly', show: asm ? 'proved' : 'not_proved' };
+			const asm = rows.filter((x) => same(x, r) && x.kind === 'assembly' && outlineOf(x) === outlineOf(r)).sort((a, b) => a.try - b.try).at(-1);
+			return { text: 'Filled in, checked by the assembly', show: inplaceStanding(r, asm)?.state === 'proved' ? 'proved' : 'not_proved' };
 		}
 		case 'check_error':
 			return { text: 'Our check failed', show: 'not_proved' };

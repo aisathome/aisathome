@@ -37,10 +37,16 @@ not start with it), `date`, `summary` (one line for the list and the feed) and `
 author name.
 
 prove2me (`/science/prove2me/`): built from `src/data/science/prove2me.json` (committed, exported from
-the trial records, public fields only), which stays the history and the fallback. In the browser its
-"Working on now" comes from the gateway's public view of the project's task queue
-(`/v1/projects/prove2me/queue`, on load and every minute; `src/data/prove2me-live.ts`), and the
-build's list stays when that fails.
+the trial records, public fields only), which stays the history (trials 1 to 5 are frozen there) and
+the fallback. In the browser the headline numbers, the submissions, the trials table and each trial's
+list from trial 6 on, the home page's prove2me line and the `/science/` card come from the gateway's
+public campaigns, results and tasks (`/v1/projects/prove2me/campaigns`, `/results`, `/v1/tasks`;
+`src/data/prove2me-records.ts`, drawn by `prove2me-view.ts` for the build and the browser alike), and
+"Working on now" from the project's data document or the newest trial campaign with its tasks, on load
+and every minute; the build's copy stays when they fail. What a task's outcome means (a leaf proved,
+the holes in place, `closed_by`, an outcome in words) lives in `prove2me-outcomes.ts`. Unit tests on
+fixed data are `tests/prove2me-*.test.ts`; the page in a browser against fixed gateway answers is
+`e2e/browser/test_site_prove2me.py` (needs `site/dist`).
 
 Science (`/science/tauceti/`, data at `/science/tauceti.json`): a finished project (2026-11-15).
 Built from `src/data/science/tauceti.json`, the final data (public fields only, frozen from the
