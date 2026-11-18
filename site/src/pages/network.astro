@@ -1,6 +1,6 @@
 ---
-// The network page: the live strip, the daily history and the credit leaderboard. All read the
-// gateway's public statistics (same origin: /v1/stats, /v1/stats/history and /v1/stats/credit)
+// The network page: the live strip, the daily history, the network's pressure and the credit leaderboard. All read
+// the gateway's public statistics (same origin: /v1/stats, /v1/stats/history, /v1/stats/pressure and /v1/stats/credit)
 // and stay hidden until real numbers arrive; on any failure they hide again: never dashes,
 // zeros-by-default or error text. A history chart needs at least two days with its numbers.
 // Names come only from volunteers who set a username (their consent to appear); they are
@@ -74,6 +74,68 @@ import LiveStats from '../components/LiveStats.astro';
 				</table>
 			</div>
 		</details>
+	</section>
+
+	<section class="history pressure not-content" data-pressure hidden aria-labelledby="pressure-title">
+		<h2 id="pressure-title">Pressure</h2>
+		<p class="limit-line" data-pressure-line></p>
+		<p class="history-note">
+			Per UTC hour, <span data-pressure-range></span>, as the gateway sees it: GPU slots on the nodes that serve
+			(held and paused nodes left out), sampled every 10 seconds. Waits and times count from when a request reached
+			the gateway. Totals only, never a node or a person.
+		</p>
+		<figure class="chart" data-pchart="util" hidden>
+			<figcaption>GPU slots busy</figcaption>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-pchart="wait" hidden>
+			<figcaption>Wait for a free slot, p95</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-chat)"></span>Chat</li>
+				<li><span class="swatch line" style="background: var(--h-agent)"></span>API and agents</li>
+				<li><span class="swatch line" style="background: var(--h-science)"></span>Science</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-pchart="ttft" hidden>
+			<figcaption>Time to the first token, p95</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-chat)"></span>Chat</li>
+				<li><span class="swatch line" style="background: var(--h-agent)"></span>API and agents</li>
+				<li><span class="swatch line" style="background: var(--h-science)"></span>Science</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-pchart="demand" hidden>
+			<figcaption>Science: demand and the slots it may use</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-avg)"></span>Demand (open tasks those slots could run)</li>
+				<li><span class="swatch line" style="background: var(--h-peak)"></span>Slots science may use</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<details class="history-table" data-pressure-table hidden>
+			<summary>The numbers</summary>
+			<div class="board-wrap">
+				<table>
+					<thead>
+						<tr>
+							<th scope="col">Hour (UTC)</th>
+							<th scope="col" class="num">Slots</th>
+							<th scope="col" class="num">Busy</th>
+							<th scope="col" class="num">Waiting, peak</th>
+							<th scope="col" class="num">Wait p95</th>
+							<th scope="col" class="num">First token p95</th>
+							<th scope="col" class="num">Demand</th>
+							<th scope="col" class="num">Requests</th>
+							<th scope="col" class="num">Refused</th>
+						</tr>
+					</thead>
+					<tbody data-pressure-rows></tbody>
+				</table>
+			</div>
+		</details>
+		<p class="history-note">Updated <time data-pressure-updated></time> UTC.</p>
 	</section>
 
 	<section class="board not-content" data-credit-board hidden aria-labelledby="board-title">
@@ -285,6 +347,127 @@ import LiveStats from '../components/LiveStats.astro';
 	})();
 </script>
 
+<script>
+	// Pressure: how full the network was, per hour, from /v1/stats/pressure (gateway pressure.go), with one line on what
+	// limits it now. Hidden until real numbers arrive, and again on any failure, like the sections above.
+	import { CLASSES, CLASS_LABEL, bucketLabel, fmtDuration, limitLine, onGrid, parsePressure, type Bucket, type PressureView } from '../data/pressure';
+	import { barChart, lineChart, type Point } from '../data/pressure-chart';
+
+	const box = document.querySelector<HTMLElement>('[data-pressure]');
+	const RANGE = '7d';
+	const full = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
+	const pct = (v: number) => `${Math.round(v * 100)}%`;
+	const secs = (v: number) => (v <= 0 ? '0' : v < 60 ? `${full.format(v)} s` : v < 3600 ? `${full.format(v / 60)} min` : `${full.format(v / 3600)} h`);
+	const hide = () => box && (box.hidden = true);
+	let last: PressureView | null = null;
+
+	const fig = (name: string) => box!.querySelector<HTMLElement>(`[data-pchart="${name}"]`)!;
+	const svgOf = (name: string) => fig(name).querySelector('svg') as SVGSVGElement;
+	const p95 = (b: Bucket | null, kind: 'wait' | 'firstToken', k: (typeof CLASSES)[number]) => b?.[kind][k]?.p95 ?? null;
+	const requests = (b: Bucket) => Object.values(b.outcomes).reduce((a, n) => a + n, 0);
+
+	const draw = (v: PressureView) => {
+		if (!box) return;
+		const line = limitLine(v.last24h);
+		if (!line) return hide();
+		box.querySelector('[data-pressure-line]')!.textContent = line;
+		const grid = onGrid(v.buckets, v.bucket);
+		const hours = grid.length;
+		box.querySelector('[data-pressure-range]')!.textContent = hours > 1 ? `the last ${hours} hours` : 'so far';
+		const t = box.querySelector<HTMLTimeElement>('[data-pressure-updated]')!;
+		t.textContent = `${String(v.updated.getUTCHours()).padStart(2, '0')}:${String(v.updated.getUTCMinutes()).padStart(2, '0')}`;
+		t.dateTime = v.updated.toISOString();
+		box.hidden = false; // shown before drawing: the charts are drawn at their width
+		const enough = hours >= 2; // a chart needs two hours; with less, the line says it all
+		const label = (s: string) => bucketLabel(s);
+
+		const util: Point[] = grid.map(({ start, b }) => ({
+			label: label(start), values: { util: b?.utilisation ?? null },
+			tip: b && b.utilisation !== null
+				? `${label(start)}: ${pct(b.utilisation)} busy (${full.format(b.busy.avg)} of ${full.format(b.slots.avg)} slots on average, peak ${b.busy.peak} busy); waiting, peak ${b.queue.people.peak} people's and ${b.queue.science.peak} science requests`
+				: `${label(start)}: no slots online`,
+		}));
+		const showUtil = enough && util.some((p) => p.values.util !== null);
+		fig('util').hidden = !showUtil;
+		if (showUtil) barChart(svgOf('util'), util, 'util', pct, `GPU slots busy per hour, ${hours} hours`, 1);
+
+		const byClass = (kind: 'wait' | 'firstToken', what: string): Point[] => grid.map(({ start, b }) => {
+			const parts = CLASSES.filter((k) => p95(b, kind, k) !== null).map((k) => `${CLASS_LABEL[k]} ${fmtDuration(p95(b, kind, k)!)} (${b![kind][k]!.count})`);
+			return {
+				label: label(start), values: Object.fromEntries(CLASSES.map((k) => [k, p95(b, kind, k)])),
+				tip: `${label(start)}: ${what} p95 ${parts.length ? parts.join(', ') : 'no requests'}`,
+			};
+		});
+		for (const [name, kind, what] of [['wait', 'wait', 'wait for a slot'], ['ttft', 'firstToken', 'first token']] as const) {
+			const pts = byClass(kind, what);
+			const on = enough && pts.some((p) => CLASSES.some((k) => p.values[k] !== null));
+			fig(name).hidden = !on;
+			if (on) lineChart(svgOf(name), pts, [...CLASSES], secs, `${what}, p95 per hour by class, ${hours} hours`);
+		}
+
+		const dem: Point[] = grid.map(({ start, b }) => ({
+			label: label(start), values: { demand: b ? b.demand.avg : null, sslots: b ? b.scienceSlots.avg : null },
+			tip: b ? `${label(start)}: demand ${full.format(b.demand.avg)} on average (peak ${b.demand.peak}), ${full.format(b.openTasks.avg)} open tasks, ${full.format(b.scienceSlots.avg)} slots science may use`
+				: `${label(start)}: no data`,
+		}));
+		const showDem = enough && grid.some(({ b }) => b && (b.scienceSlots.peak > 0 || b.openTasks.peak > 0));
+		fig('demand').hidden = !showDem;
+		if (showDem) lineChart(svgOf('demand'), dem, ['demand', 'sslots'], (x) => full.format(x), `Science demand and slots per hour, ${hours} hours`);
+
+		const rows = grid.filter((g) => g.b).reverse();
+		const table = box.querySelector<HTMLElement>('[data-pressure-table]')!;
+		table.hidden = rows.length === 0;
+		const worst = (b: Bucket, kind: 'wait' | 'firstToken') => {
+			const xs = CLASSES.map((k) => p95(b, kind, k)).filter((x): x is number => x !== null);
+			return xs.length ? fmtDuration(Math.max(...xs)) : '';
+		};
+		box.querySelector('[data-pressure-rows]')!.replaceChildren(...rows.map(({ start, b }) => {
+			const tr = document.createElement('tr');
+			const vals = [start.replace('T', ' ').replace(':00Z', ':00'), full.format(b!.slots.avg), b!.utilisation === null ? '' : pct(b!.utilisation),
+				String(b!.queue.people.peak + b!.queue.science.peak), worst(b!, 'wait'), worst(b!, 'firstToken'), full.format(b!.demand.avg),
+				String(requests(b!)), String(b!.outcomes.refused ?? 0)];
+			vals.forEach((text, j) => {
+				const td = document.createElement(j === 0 ? 'th' : 'td');
+				if (j === 0) (td as HTMLTableCellElement).scope = 'row';
+				else td.className = 'num';
+				td.textContent = text;
+				tr.append(td);
+			});
+			return tr;
+		}));
+		last = v;
+	};
+
+	const load = async () => {
+		if (!box || !window.fetch) return;
+		try {
+			const ctl = new AbortController();
+			const timer = setTimeout(() => ctl.abort(), 8000);
+			const res = await fetch(`/v1/stats/pressure?range=${RANGE}`, { signal: ctl.signal, headers: { accept: 'application/json' } });
+			clearTimeout(timer);
+			if (!res.ok) return hide();
+			const v = parsePressure(await res.json());
+			if (!v) return hide();
+			draw(v);
+		} catch {
+			hide();
+		}
+	};
+	load();
+	setInterval(() => document.visibilityState === 'visible' && load(), 300000);
+	let resized: ReturnType<typeof setTimeout> | undefined;
+	window.addEventListener('resize', () => {
+		clearTimeout(resized);
+		resized = setTimeout(() => {
+			try {
+				if (last) draw(last);
+			} catch {
+				hide();
+			}
+		}, 200);
+	});
+</script>
+
 <script is:inline>
 	(() => {
 		const box = document.querySelector('[data-credit-board]');
@@ -390,6 +573,16 @@ import LiveStats from '../components/LiveStats.astro';
 	.history-table :global(:is(th, td)) { padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; white-space: nowrap; }
 	.history-table thead th { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
 	.history-table :global(.num) { text-align: right; font-variant-numeric: tabular-nums; }
+	.pressure[hidden], .pressure .chart[hidden], .pressure details[hidden] { display: none !important; }
+	.limit-line { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 600; color: var(--sl-color-white); }
+	.chart :global(.s-util) { fill: var(--h-peak); }
+	.chart :global(.line.s-chat) { stroke: var(--h-chat); }
+	.chart :global(.line.s-agent) { stroke: var(--h-agent); }
+	.chart :global(.line.s-science) { stroke: var(--h-science); }
+	.chart :global(.line.s-demand) { stroke: var(--h-avg); }
+	.chart :global(.line.s-sslots) { stroke: var(--h-peak); }
+	.chart :global(:is(.dot, .point).s-demand) { fill: var(--h-avg); }
+	.chart :global(:is(.dot, .point).s-sslots) { fill: var(--h-peak); }
 	.board[hidden] { display: none !important; }
 	:global(.net-live) {
 		display: flex;
