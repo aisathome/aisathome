@@ -1,4 +1,4 @@
-// Pilot records (decision 0020, integration map PR 4a): a pilot is one bounded serving session that
+// Pilot records (decision 0020): a pilot is one bounded serving session that
 // a connector (the BOINC bridge is the first) hands to a volunteer's machine. The gateway is the
 // source of truth for it: the connector asks for a pilot, gets its id ("p-" and 12 hex digits) and a
 // credential, makes its own work item with the same name, and later tells the gateway who runs it
@@ -9,7 +9,7 @@
 // its node id from it as it does from an account's node token. Only its SHA-256 is stored. It works
 // for one connection at a time, only after the bind, and only until the pilot ends or its deadline
 // passes; a pilot that reconnects with it (a suspended BOINC task resumed) continues the same record,
-// so the record's totals cover every run of the work unit (BACKLOG 7u).
+// so the record's totals cover every run of the work unit.
 //
 // States: created (no machine yet), bound (the connector named the machine's user, host and team),
 // connected, disconnected (it may come back: a suspend), ended (it said it ended for good, the
@@ -22,7 +22,7 @@
 // capped per pilot and per account and UTC day, and never into the public ledger: pilot credit is
 // granted through the connector (BOINC's own statistics), not the gateway's /stats/ exports. It
 // becomes final pilotCreditHold after the pilot's last disconnect, once it has ended; it is withheld
-// (final 0) if a guard held the pilot, and the model check (BACKLOG 11) withholds it the same way
+// (final 0) if a guard held the pilot, and the gateway-side model check, when it comes, withholds it the same way
 // (withholdPilotCredit).
 //
 // The records live in the science database (science_db.go, migration 2).
@@ -358,15 +358,16 @@ func (s *scienceDB) bindPilot(connector, id, user, host, team, account string, n
 	return p, nil
 }
 
-// pilotConnected marks a bound or disconnected pilot connected; false if it may not connect now
-// (ended, not bound, or past its deadline).
+// pilotConnected marks a bound or disconnected pilot connected (or one still marked connected: the
+// caller has no live connection of it); false if it may not connect now (ended, not bound, or past
+// its deadline).
 func (s *scienceDB) pilotConnected(id, agent string, now time.Time) (bool, error) {
 	ctx, cancel := pilotCtx()
 	defer cancel()
 	t := ptime(now)
 	res, err := s.db.ExecContext(ctx, `UPDATE pilots SET state = 'connected', connections = connections + 1, connected_at = ?,
 		seen_at = ?, first_connected_at = COALESCE(first_connected_at, ?), agent = ?
-		WHERE id = ? AND state IN ('bound', 'disconnected') AND deadline > ?`, t, t, t, agent, id, t)
+		WHERE id = ? AND state IN ('bound', 'connected', 'disconnected') AND deadline > ?`, t, t, t, agent, id, t)
 	if err != nil {
 		return false, s.fail("pilot connect", "", err)
 	}

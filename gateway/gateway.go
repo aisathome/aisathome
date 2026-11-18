@@ -77,7 +77,7 @@ type Gateway struct {
 	// connCfgs: the config's connectors (connector.go); replaced on reload.
 	connCfgs atomic.Pointer[connectorTable]
 	// spendCap, if set, caps a connector's pilots by spend (demand): the hook for the monthly cap on
-	// feeding pilots with science (BACKLOG 7v). ok false: no cap.
+	// feeding pilots with science. ok false: no cap.
 	spendCap func(connector string) (pilots int, ok bool)
 }
 

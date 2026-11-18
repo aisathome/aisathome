@@ -1,4 +1,4 @@
-// Connectors (decision 0020; integration map, PR 4a): an outside system that brings machines to the
+// Connectors (decision 0020): an outside system that brings machines to the
 // network in bounded serving sessions, pilots (pilots.go). BOINC's bridge is the first; nothing here
 // knows BOINC beyond the configuration. A connector exists only in the gateway config, has its own
 // keys (by SHA-256) and an optional address allowlist, and its key opens only its own endpoints:
@@ -21,7 +21,7 @@
 //   - its account turned "chat on pilots" off, or
 //   - pilots_chat_enabled is false for its connector (the default) and its user is not in
 //     trusted_users. This keeps the rule that people's prompts reach strangers' machines only after
-//     anti-retention and the privacy notice (BACKLOG 10 and 12): the owner turns it on at launch.
+//     anti-retention measures and the privacy notice are in place: the operator turns it on then.
 //
 // Pilots of trusted_users are the maintainer's own machines (test hosts): trusted, like a config
 // node token with trust "trusted".
@@ -59,7 +59,7 @@ type Connector struct {
 	// MaxDeadlineHours: a pilot's deadline at most this far ahead. Default 336 (14 days).
 	MaxDeadlineHours int `json:"max_deadline_hours,omitempty"`
 	// PilotsChatEnabled lets its pilots serve chat, agents and API calls besides science (each
-	// account's switch still applies). Off by default: science only, until the owner turns it on.
+	// account's switch still applies). Off by default: science only, until the operator turns it on.
 	PilotsChatEnabled bool `json:"pilots_chat_enabled,omitempty"`
 	// NoChatUsers: its users whose pilots serve science only, whatever else says.
 	NoChatUsers []string `json:"no_chat_users,omitempty"`
@@ -80,7 +80,7 @@ type Connector struct {
 
 // Defaults of a connector's limits. The credit caps are about 1.3 times what a pilot serving all
 // the time for 4 hours, and two such GPUs all day, earn at the measured rate of about 28,750 credit
-// an hour on a 3090 (launch plan, 2026-11-18): tune them with B1-B2 measurements.
+// an hour on a 3090 (2026-11-18, our science traffic): tune them once the first pilots are measured.
 const (
 	defaultMintPerHour       = 120
 	defaultMaxDeadlineHours  = 14 * 24
@@ -428,6 +428,9 @@ func (g *Gateway) handlePilotCredit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		taskError(w, err)
 		return
+	}
+	if p.Withheld == "" && g.nodeHeld(p.ID) { // a hold whose withholding write failed
+		p.Withheld = "guard hold"
 	}
 	writeJSON(w, http.StatusOK, p.creditView(g.pilotNow()))
 }

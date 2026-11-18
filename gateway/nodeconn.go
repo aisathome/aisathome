@@ -220,12 +220,41 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	case account != "":
 		first, _ = g.accounts.nodeLive(keyHash(token))
 	}
+	if pl != nil {
+		// The record decides before the pilot is routable: one reported, ended or past its deadline
+		// since authPilot may not connect. With no live connection here, a record still "connected"
+		// is one whose disconnect was not written, and the pilot may continue it.
+		g.mu.Lock()
+		live := g.node[n.id] != nil
+		g.mu.Unlock()
+		if live {
+			c.Close(websocket.StatusPolicyViolation, "this pilot is already connected")
+			return
+		}
+		if ok, err := g.sci.pilotConnected(n.pilot, n.agent, g.pilotNow()); err != nil {
+			c.Close(websocket.StatusTryAgainLater, "pilot records unavailable, try again")
+			return
+		} else if !ok {
+			c.Close(websocket.StatusPolicyViolation, "this pilot has ended")
+			return
+		}
+	}
+	// refuse closes a connection the checks below turn away; a pilot's record, marked connected
+	// above, goes back to disconnected unless another connection of it holds it.
+	refuse := func(why string, revert bool) {
+		if pl != nil && revert {
+			if err := g.sci.pilotDisconnected(n.pilot, "refused", time.Now(), g.pilotNow()); err != nil {
+				g.log.Error("pilot refusal not recorded", "pilot", n.pilot, "err", err)
+			}
+		}
+		c.Close(websocket.StatusPolicyViolation, why)
+	}
 	g.mu.Lock()
 	// Reload, a revocation or a ban may have changed the token while we waited for hello:
 	// decide with the token as it is now, under the same lock that registers the node.
 	var still bool
 	switch {
-	case pl != nil: // its record is checked again when it is marked connected, below
+	case pl != nil: // its record was checked when it was marked connected, above
 		still = true
 		n.probEnd = first.Add(g.acfg.probation)
 	case account == "":
@@ -239,28 +268,28 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	if !still || g.idReservedLocked(token, hello.NodeID) {
 		g.mu.Unlock()
-		c.Close(websocket.StatusPolicyViolation, "node token revoked or changed")
+		refuse("node token revoked or changed", true)
 		return
 	}
 	old := g.node[n.id]
 	if old != nil && old.token != token { // only the node's own token may replace it
 		g.mu.Unlock()
-		c.Close(websocket.StatusPolicyViolation, "node id is in use")
+		refuse("node id is in use", false)
 		return
 	}
 	if old != nil && pl != nil { // a pilot's credential serves one connection at a time
 		g.mu.Unlock()
-		c.Close(websocket.StatusPolicyViolation, "this pilot is already connected")
+		refuse("this pilot is already connected", false) // the live one holds the record
 		return
 	}
 	if old == nil && g.connectionsLocked(token) >= g.cfg.MaxNodesPerToken {
 		g.mu.Unlock()
-		c.Close(websocket.StatusPolicyViolation, "too many nodes for this token")
+		refuse("too many nodes for this token", true)
 		return
 	}
 	if account != "" && g.nodesFromLocked(ip, n.id) >= maxNodesPerIP {
 		g.mu.Unlock()
-		c.Close(websocket.StatusPolicyViolation, fmt.Sprintf("at most %d nodes per address", maxNodesPerIP))
+		refuse(fmt.Sprintf("at most %d nodes per address", maxNodesPerIP), true)
 		return
 	}
 	n.held = g.nodeHeld(n.id)
@@ -277,19 +306,6 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	g.rememberLocked(n.models, now)
 	g.mu.Unlock()
-	if pl != nil {
-		// The record decides: a pilot reported or past its deadline since authPilot may not connect.
-		ok, err := g.sci.pilotConnected(n.pilot, n.agent, g.pilotNow())
-		if !ok || err != nil {
-			g.mu.Lock()
-			if g.node[n.id] == n {
-				delete(g.node, n.id)
-			}
-			g.mu.Unlock()
-			c.Close(websocket.StatusPolicyViolation, "this pilot has ended")
-			return
-		}
-	}
 	if old != nil { // reconnect replaces the stale connection; its close handshake may stall
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}

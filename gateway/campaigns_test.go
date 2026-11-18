@@ -186,6 +186,7 @@ func TestCampaignValidation(t *testing.T) {
 		"text node token":  mod(func(b map[string]any) { b["text"] = "the node used " + fakeNodeToken }),
 		"title node token": mod(func(b map[string]any) { b["title"] = fakeNodeToken }),
 		"glued node token": mod(func(b map[string]any) { b["text"] = "token:x" + fakeNodeToken }),
+		"pilot credential": mod(func(b map[string]any) { b["text"] = "pilot pc-0123456789ab.FAKE_not_a_real_credential_xxxxxxxxxxxx" }),
 		"label node token": mod(func(b map[string]any) { b["labels"] = map[string]string{"node": fakeNodeToken} }),
 		"item node token":  item("id", fakeNodeToken[:40]),
 		"item twice":       mod(func(b map[string]any) { b["items"].([]map[string]any)[1]["id"] = "p2m-3ad60f" }),

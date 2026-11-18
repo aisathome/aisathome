@@ -1,4 +1,4 @@
-// Connector pilots end to end (decision 0020, map PR 4a): a connector creates and binds a pilot, a
+// Connector pilots end to end (decision 0020): a connector creates and binds a pilot, a
 // real node agent connects with the pilot's credential, and the gateway routes, meters and ends it.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -170,6 +170,9 @@ func TestPilotEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntil(t, "chat to reach the pilot", func() bool { code, _ := ask(t, a.rig, "user-key", deepBody); return code == 200 })
+	if code, _ := ask(t, a.rig, "user-key", pii); code != 503 {
+		t.Fatalf("personal data reached a chat pilot: %d", code)
+	}
 	acct := ""
 	a.store.Refresh() // the gateway wrote the unclaimed account
 	for _, x := range a.store.Snapshot().Accounts {

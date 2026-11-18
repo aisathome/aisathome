@@ -549,7 +549,7 @@ func (g *Gateway) sweepNodes() {
 		switch {
 		case n.pilot != "": // its account, connector and trust as they are now (connector.go)
 			var chatOff bool
-			st[i].first, chatOff, st[i].live = g.accounts.pilotAccountState(n.account)
+			st[i].first, chatOff, st[i].live = g.accounts.pilotAccountState(n.account, n.connector, n.extUser)
 			c := g.connector(n.connector)
 			trusted := c != nil && c.trusted[n.extUser] && !c.noChat[n.extUser]
 			st[i].live = st[i].live && c != nil && trusted == n.trusted

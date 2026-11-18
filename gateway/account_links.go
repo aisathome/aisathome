@@ -1,7 +1,7 @@
 // Accounts and connectors (decision 0020, addendum 2026-11-17): every user a connector names (a BOINC
 // user id) maps to one account here. An account linked to that user serves its pilots; without one,
 // the first pilot of that user creates an unclaimed account keyed by a link to it, which its person
-// claims later (the claim and linking from the account page come with the account work, map PR 4b;
+// claims later (the claim and linking from the account page come with the account work;
 // the operator links by hand with `accounts link`). The link is an id, never an address.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -65,13 +65,14 @@ func (s *AccountStore) pilotAccount(connector, user string, now time.Time) (id s
 	return id, unclaimed, err
 }
 
-// pilotAccountState says whether account id may run pilots now (active or unclaimed), when its
+// pilotAccountState says whether account id may run pilots of connector's user now (active or
+// unclaimed, and still linked to that user: an unlinked or relinked user's pilots stop), when its
 // probation started, and whether its "chat on pilots" switch is off.
-func (s *AccountStore) pilotAccountState(id string) (first time.Time, chatOff, live bool) {
+func (s *AccountStore) pilotAccountState(id, connector, user string) (first time.Time, chatOff, live bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.f.find(id)
-	if a == nil || (a.Status != StatusActive && a.Status != StatusUnclaimed) {
+	if a == nil || (a.Status != StatusActive && a.Status != StatusUnclaimed) || s.f.linkOwner(connector, user) != a {
 		return time.Time{}, false, false
 	}
 	if a.FirstNode != nil {
