@@ -22,6 +22,8 @@ import (
 	"net/netip"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Guard rules, as logged and stored in pause records.
@@ -272,36 +274,85 @@ func localHost(h string) bool {
 }
 
 // requestHosts are the host-like words of a request text: each maximal run of letters, digits,
-// '.', '-', '_' and non-ASCII bytes with a dot in it, without dots at its ends. A host is named only
-// as a whole word: "hub.com" is not named by "github.com", nor "pkgs.example.net" by
-// "my_pkgs.example.net" (code review, 2026-11-18: a substring let a registrable host pass).
+// '.', '-' and '_' with a dot in it, without dots at its ends, and each IPv6 address (a run of hex
+// digits, ':' and '.' that parses as one), in its canonical form. A host is named only as a whole
+// word: "hub.com" is not named by "github.com", nor "pkgs.example.net" by "my_pkgs.example.net"
+// (code review, 2026-11-18: a substring let a registrable host pass). Letters and digits may be
+// any script's (an internationalized name), but other non-ASCII characters end a word: a host in
+// curly quotes or Chinese punctuation is still named (code review, 2026-11-18).
 func requestHosts(req string) map[string]bool {
 	m := map[string]bool{}
-	start := -1
-	for i := 0; i <= len(req); i++ {
-		if i < len(req) {
-			c := req[i]
-			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_' || c >= 0x80 {
-				if start < 0 {
-					start = i
-				}
-				continue
+	runs(req, hostRune, func(w string) {
+		if w = strings.Trim(w, "."); strings.Contains(w, ".") {
+			m[w] = true
+		}
+	})
+	runs(req, func(r rune) bool { return r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r == ':' || r == '.' }, func(w string) {
+		if strings.Count(w, ":") < 2 || len(w) > maxIPv6Text {
+			return
+		}
+		for _, c := range []string{w, strings.TrimRight(w, ".:")} {
+			if a, err := netip.ParseAddr(c); err == nil && a.Is6() {
+				m[a.String()] = true
+				return
 			}
 		}
-		if start >= 0 {
-			if w := strings.Trim(req[start:i], "."); strings.Contains(w, ".") {
-				m[strings.ToLower(w)] = true
-			}
-			start = -1
-		}
-	}
+	})
 	return m
 }
 
+// maxIPv6Text is the longest text of an IPv6 address: eight groups, or six and an IPv4 address.
+const maxIPv6Text = len("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255")
+
+// hostRune: r can be part of a host name in a request (requestHosts). Invalid UTF-8 counts, as
+// before: it ends no word.
+func hostRune(r rune) bool {
+	if r < utf8.RuneSelf {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_'
+	}
+	return r == utf8.RuneError || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
+}
+
+// runs calls f with each maximal run of s whose runes satisfy in.
+func runs(s string, in func(rune) bool, f func(string)) {
+	start := -1
+	for i := 0; i < len(s); {
+		r, n := rune(s[i]), 1
+		if r >= utf8.RuneSelf {
+			r, n = utf8.DecodeRuneInString(s[i:])
+		}
+		if in(r) {
+			if start < 0 {
+				start = i
+			}
+		} else if start >= 0 {
+			f(s[start:i])
+			start = -1
+		}
+		i += n
+	}
+	if start >= 0 {
+		f(s[start:])
+	}
+}
+
+// maxHostLen is the longest host name DNS can resolve (253 bytes, so at most 127 labels).
+const maxHostLen = 253
+
 // hostNamed: the host, or a parent domain with at least two labels, is a word of the request
 // (requestHosts); e.g. "raw.githubusercontent.com" is fine if the user wrote
-// "githubusercontent.com".
+// "githubusercontent.com". An IPv6 address is compared in its canonical form. A host longer than
+// DNS allows is never named: looking up each parent of a long host would hash each suffix, work
+// quadratic in its length (code review, 2026-11-18); within the bound it is at most 127 lookups
+// of at most 253 bytes.
 func hostNamed(h string, named map[string]bool) bool {
+	if strings.Contains(h, ":") {
+		a, err := netip.ParseAddr(h)
+		return err == nil && named[a.String()]
+	}
+	if len(h) > maxHostLen {
+		return false
+	}
 	for {
 		if named[h] {
 			return true
@@ -426,24 +477,24 @@ var shellShebang = regexp.MustCompile(`^#!\s*(?:\S*/)?(?:env\s+(?:-\S+\s+)*)?(?:
 
 // stringsIn lists the strings in a JSON value: the value itself, or those in an array or object,
 // in order.
-func stringsIn(v any) []string {
+func stringsIn(v any) []string { return appendStrings(nil, v) }
+
+// appendStrings appends the strings in v to out: one slice for all levels, so deep nesting costs
+// no copies of what lower levels found.
+func appendStrings(out []string, v any) []string {
 	switch x := v.(type) {
 	case string:
-		return []string{x}
+		out = append(out, x)
 	case []any:
-		var out []string
 		for _, e := range x {
-			out = append(out, stringsIn(e)...)
+			out = appendStrings(out, e)
 		}
-		return out
 	case map[string]any:
-		var out []string
 		for _, e := range x {
-			out = append(out, stringsIn(e)...)
+			out = appendStrings(out, e)
 		}
-		return out
 	}
-	return nil
+	return out
 }
 
 // argValues maps each key of a JSON object of arguments to its strings (stringsIn), every value
