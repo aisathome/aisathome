@@ -2,10 +2,13 @@
 // change what its node answers; an agent such as opencode may run a tool call without a
 // person reading it. So tool calls from untrusted nodes are held back until complete and
 // checked before the client sees them: download-and-execute, credential files, encoded
-// commands, uploads of files, and web addresses that appear nowhere in the request and are not
-// well-known sources (knownAddrs). A flagged tool call is never released, and the node is held
-// (gets no requests) until the operator looks. Plain text with unknown addresses is only flagged
-// (logged), not blocked.
+// commands and uploads of files. A tool call that breaks one of these rules is never released,
+// and the node is held (gets no requests) until the operator looks. Web addresses that appear
+// nowhere in the request and are not well-known sources (knownAddrs) are only flagged (logged),
+// in tool calls as in plain text: honest coding agents write such addresses all the time
+// (package indexes, documentation, git clones), and holding a node for one stopped all chat
+// for hours (2026-11-18). An address used to download and run something still blocks, through
+// download-and-execute.
 //
 // These are tripwires for crude attacks, not a proof that an answer is honest: a careful
 // attacker writes a harmful command that matches no pattern. Answer checking comes later.
@@ -27,7 +30,7 @@ const (
 	ruleCredentials  = "credential-path"
 	ruleEncoded      = "encoded-command"
 	ruleUpload       = "file-upload"
-	ruleUnknownURL   = "unknown-address"
+	ruleUnknownURL   = "unknown-address"         // flagged only
 	ruleTextURL      = "unknown-address-in-text" // flagged only
 	// Streams no honest engine sends, built to make the guard and the client see different
 	// calls: tool-call pieces after the calls were completed and released, or keys the guard
@@ -289,6 +292,9 @@ type guardHit struct {
 	rule, why string
 }
 
+// blocks: the hit stops the answer and holds the node. An unknown address is only flagged.
+func (h guardHit) blocks() bool { return h.rule != "" && h.rule != ruleUnknownURL }
+
 // Reasons of the rules that are not a pattern of guardRules.
 const (
 	whyUnknownURL  = "a web address that is not in the request"
@@ -346,7 +352,8 @@ func callText(name, args string) string {
 	return name + "\n" + flatLines.Replace(b.String())
 }
 
-// checkToolCall returns what a tool call breaks; hit.rule is "" if nothing. The rules read a
+// checkToolCall returns what a tool call breaks; hit.rule is "" if nothing. A hit that blocks
+// comes before ruleUnknownURL, which only flags (guardHit.blocks). The rules read a
 // write or edit tool's file text as well as shell commands: a script written now can run in the
 // next call, and in 1,032 recorded write and edit calls no rule fired on such text.
 func checkToolCall(name, args, req string, known knownAddrs) guardHit {
@@ -468,6 +475,7 @@ type guard struct {
 	req   string     // requestText of the request
 	known knownAddrs // sources known without the request (defaultKnownAddrs)
 	calls []*heldCall
+	flag  string   // a flag-only rule a checked tool call broke (ruleUnknownURL)
 	held  int      // bytes of arguments held
 	early [][]byte // chunks before any content (the role): held, so that an answer made only of
 	// a flagged tool call has sent nothing yet and can be retried on a trusted node
@@ -629,18 +637,27 @@ func (gd *guard) hold(tcs []any) {
 	}
 }
 
-// check returns what the held tool calls break; hit.rule is "" if nothing.
+// check returns what the held tool calls break that blocks; hit.rule is "" if nothing. A rule
+// that only flags is kept for flagged.
 func (gd *guard) check() guardHit {
 	for _, k := range gd.calls {
-		if h := checkToolCall(k.name, k.args.String(), gd.req, gd.known); h.rule != "" {
+		h := checkToolCall(k.name, k.args.String(), gd.req, gd.known)
+		if h.blocks() {
 			return h
+		}
+		if h.rule != "" && gd.flag == "" {
+			gd.flag = h.rule
 		}
 	}
 	return guardHit{}
 }
 
-// textFlag returns ruleTextURL if the answer text names a web address absent from the request.
-func (gd *guard) textFlag() string {
+// flagged returns the rule to log for an answer that passed: ruleUnknownURL if a tool call named
+// a web address absent from the request, else ruleTextURL if the answer text did, else "".
+func (gd *guard) flagged() string {
+	if gd.flag != "" {
+		return gd.flag
+	}
 	if unknownHost(gd.text.String(), gd.req, gd.known) != "" {
 		return ruleTextURL
 	}
@@ -703,9 +720,10 @@ func oddKey(v any) bool {
 	return false
 }
 
-// checkAssembled returns what a tool call in an assembled (non-streaming) answer breaks; hit.rule
-// is "" if nothing. The client gets exactly these calls, however the stream was cut into pieces.
-func checkAssembled(ans map[string]any, req string, known knownAddrs) guardHit {
+// checkAssembled returns what a tool call in an assembled (non-streaming) answer breaks that
+// blocks; hit.rule is "" if nothing. flag is a flag-only rule a call broke. The client gets exactly
+// these calls, however the stream was cut into pieces.
+func checkAssembled(ans map[string]any, req string, known knownAddrs) (hit guardHit, flag string) {
 	choices, _ := ans["choices"].([]any)
 	for _, ch := range choices {
 		cm, _ := ch.(map[string]any)
@@ -715,12 +733,16 @@ func checkAssembled(ans map[string]any, req string, known knownAddrs) guardHit {
 			fn, _ := c.(map[string]any)["function"].(map[string]any)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
-			if h := checkToolCall(name, args, req, known); h.rule != "" {
-				return h
+			h := checkToolCall(name, args, req, known)
+			if h.blocks() {
+				return h, ""
+			}
+			if flag == "" {
+				flag = h.rule
 			}
 		}
 	}
-	return guardHit{}
+	return guardHit{}, flag
 }
 
 // guardError is a tool call stopped by a guard.

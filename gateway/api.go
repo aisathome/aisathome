@@ -455,7 +455,7 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 				}
 			}
 			apiError(w, http.StatusBadGateway, "the volunteer node's answer was stopped by a safety check (a tool call that "+
-				"downloads and runs code, reads credentials, sends files, or uses a web address not in the conversation), "+
+				"downloads and runs code, reads credentials, encodes a command or sends files), "+
 				"and no trusted node is free to answer instead; try again later")
 			return
 		}
