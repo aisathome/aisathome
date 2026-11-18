@@ -9,9 +9,12 @@ over TLS with the endpoint's certificate checked (or plain HTTP when the endpoin
 
 - the API key never enters the model's container: the forwarder reads it from its own file and sets
   `Authorization: Bearer <key>` itself; whatever Authorization or proxy header the client sent is dropped;
-- the target is fixed: Host is set to the endpoint, a request in absolute form (`GET http://other/...`) is
-  refused, and so is any path outside the endpoint's base path (or with `..` segments), so the key goes
-  only to the endpoint's API and never to another host;
+- the target is fixed: Host is set to the endpoint and a request in absolute form (`GET http://other/...`) is
+  refused, so the key never goes to another host;
+- only model calls pass: `POST <base>/chat/completions` and `GET <base>/models` (MODEL_API), the exact
+  path with no query, fragment, encoding or dot segment. Everything else is refused before the endpoint is
+  contacted: an aisathome gateway serves its task, campaign and project API under the same base path,
+  and the key must not open it to code run in the sandbox;
 - one request per connection: `Connection: close` on the request and on the response head (so the client
   never reuses a connection the forwarder closes); hop-by-hop headers and `Expect` are dropped; the rest
   of the request (its body) and of the response are passed through as they come (streams stay streams).
@@ -66,15 +69,20 @@ def read_key(path: str | None) -> str | None:
     return key
 
 
-def path_allowed(path: str, prefix: str) -> bool:
-    """`path` (origin form, query allowed) is the base path or below it, with no dot segments."""
-    p = path.split("?", 1)[0].split("#", 1)[0]
-    if not p.startswith("/") or "\\" in p or "%2e" in p.lower() or "%2f" in p.lower() or "%5c" in p.lower():
-        return False
-    if any(seg in (".", "..") for seg in p.split("/")):
-        return False
+# The calls the model's client (opencode's @ai-sdk/openai-compatible provider) makes, under the endpoint's
+# base path, with their methods. The forwarder adds the key to these and to nothing else.
+MODEL_API = {"chat/completions": "POST", "models": "GET"}
+
+
+def path_allowed(method: str, target: str, prefix: str) -> bool:
+    """`target` (the request target as sent) is exactly one of MODEL_API's paths under the base path
+    `prefix`, asked with its method. Compared as raw text, so a query, fragment, percent-encoding, dot
+    segment, doubled or trailing slash makes it another path, which is refused."""
     base = "/" + prefix.strip("/")
-    return base == "/" or p == base or p.startswith(base + "/")
+    for sub, m in MODEL_API.items():
+        if target == base.rstrip("/") + "/" + sub:
+            return method == m
+    return False
 
 
 def rewrite(head: bytes, host_header: str, prefix: str, key: str | None) -> bytes:
@@ -92,8 +100,8 @@ def rewrite(head: bytes, host_header: str, prefix: str, key: str | None) -> byte
     method, target, version = parts
     if method == "CONNECT" or not target.startswith("/"):
         raise Refused(400, "only origin-form requests to the endpoint")
-    if not path_allowed(target, prefix):
-        raise Refused(403, "path outside the endpoint's API")
+    if not path_allowed(method, target, prefix):
+        raise Refused(403, "not a model call (only POST chat/completions and GET models pass)")
     headers: list[tuple[str, str]] = []
     for ln in lines[1:]:
         if ln[:1] in (" ", "\t") or ":" not in ln:
@@ -249,7 +257,7 @@ def main():
     ap.add_argument("--listen", default="0.0.0.0:80")
     ap.add_argument("--target", required=True, help="host:port, the only destination")
     ap.add_argument("--scheme", choices=("https", "http"), default="https", help="how to reach the target")
-    ap.add_argument("--path-prefix", default="/", help="the endpoint's base path; other paths are refused")
+    ap.add_argument("--path-prefix", default="/", help="the endpoint's base path; only its model calls pass (MODEL_API)")
     ap.add_argument("--key-file", help="the API key, sent as `Authorization: Bearer <key>`")
     ap.add_argument("--cafile", help="CA certificates for the target (default: the image's)")
     a = ap.parse_args()
