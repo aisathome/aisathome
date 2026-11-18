@@ -84,16 +84,18 @@ var guardRules = []struct {
 }
 
 // urlHostRe finds the host of a web address; bareHostRe a host given to curl or wget without
-// a scheme.
+// a scheme. User information ends at the first '/', '?', '#' or '\\': in
+// "https://evil.example#@pypi.org" or "https://evil.example\\@pypi.org" the host a client
+// contacts is evil.example (code review, 2026-11-18).
 var (
-	urlHostRe  = regexp.MustCompile(`(?i)\b(?:https?|ftp|wss?)://(?:[^\s/@"'<>]*@)?(\[[0-9a-f:.]+\]|[^\s/"'<>?#:\\)\]]+)`)
+	urlHostRe  = regexp.MustCompile(`(?i)\b(?:https?|ftp|wss?)://(?:[^\s/?#\\@"'<>]*@)?(\[[0-9a-f:.]+\]|[^\s/"'<>?#:\\)\]]+)`)
 	bareHostRe = regexp.MustCompile(`(?i)\b(?:curl|wget)\s+(?:-\S+\s+)*([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[:/\s"']|$)`)
 )
 
-// unknownHost returns the first web address host in s that appears nowhere in the request
-// (nor a parent domain of it) and is not a known source, ignoring local and private addresses.
-// The work is linear in s: each host is looked up in the request once, and a known-source
-// check reads at most maxAddrTail bytes after its host.
+// unknownHost returns the first web address host in s that the request does not name (nor a
+// parent domain of it) and is not a known source, ignoring local and private addresses.
+// The work is linear in s and req: the request's host words are collected once, each host is
+// looked up among them, and a known-source check reads at most maxAddrTail bytes after its host.
 func unknownHost(s, req string, known knownAddrs) string {
 	type addr struct{ host, end int } // the host is s[host:end]
 	var addrs []addr
@@ -103,6 +105,7 @@ func unknownHost(s, req string, known knownAddrs) string {
 		}
 	}
 	excused := map[string]bool{} // host → local or named in the request
+	var named map[string]bool    // requestHosts(req), when first needed
 	for _, a := range addrs {
 		h := strings.ToLower(strings.Trim(strings.TrimRight(s[a.host:a.end], ".,;"), "[]"))
 		if h == "" {
@@ -110,7 +113,13 @@ func unknownHost(s, req string, known knownAddrs) string {
 		}
 		ok, seen := excused[h]
 		if !seen {
-			ok = localHost(h) || hostInRequest(h, req)
+			ok = localHost(h)
+			if !ok {
+				if named == nil {
+					named = requestHosts(req)
+				}
+				ok = hostNamed(h, named)
+			}
 			excused[h] = ok
 		}
 		if ok {
@@ -262,12 +271,39 @@ func localHost(h string) bool {
 	return err == nil && (a.IsLoopback() || a.IsPrivate() || a.IsUnspecified() || a.IsLinkLocalUnicast())
 }
 
-// hostInRequest: the host, or a parent domain with at least two labels, occurs in the
-// request text (e.g. "raw.githubusercontent.com" is fine if the user wrote
-// "githubusercontent.com").
-func hostInRequest(h, req string) bool {
+// requestHosts are the host-like words of a request text: each maximal run of letters, digits,
+// '.', '-', '_' and non-ASCII bytes with a dot in it, without dots at its ends. A host is named only
+// as a whole word: "hub.com" is not named by "github.com", nor "pkgs.example.net" by
+// "my_pkgs.example.net" (code review, 2026-11-18: a substring let a registrable host pass).
+func requestHosts(req string) map[string]bool {
+	m := map[string]bool{}
+	start := -1
+	for i := 0; i <= len(req); i++ {
+		if i < len(req) {
+			c := req[i]
+			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_' || c >= 0x80 {
+				if start < 0 {
+					start = i
+				}
+				continue
+			}
+		}
+		if start >= 0 {
+			if w := strings.Trim(req[start:i], "."); strings.Contains(w, ".") {
+				m[strings.ToLower(w)] = true
+			}
+			start = -1
+		}
+	}
+	return m
+}
+
+// hostNamed: the host, or a parent domain with at least two labels, is a word of the request
+// (requestHosts); e.g. "raw.githubusercontent.com" is fine if the user wrote
+// "githubusercontent.com".
+func hostNamed(h string, named map[string]bool) bool {
 	for {
-		if strings.Contains(req, h) {
+		if named[h] {
 			return true
 		}
 		_, parent, ok := strings.Cut(h, ".")

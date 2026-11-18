@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,18 @@ func TestGuardInstallSource(t *testing.T) {
 		file("proj/.cargo/config.toml", "[registries.x]\nindex = \"sparse+https://pkgs.example.net/crates/\"\n"),
 		file("uv.toml", "[[index]]\nurl = \""+idx+"\"\n"),
 		`{"filePath":".npmrc","oldString":"","newString":"registry=https://pkgs.example.net/npm/"}`,
+		// code review, 2026-11-18
+		cmd(`GOPROXY="https://proxy.golang.org|https://pkgs.example.net/go" go get example.org/mod`), // a quoted fallback
+		cmd(`$env:GOPROXY="https://pkgs.example.net/go"; go install example.org/tool@latest`),
+		cmd(`pip install -i "https://pkgs.example.net#@pypi.org/simple" requests`), // the host is pkgs.example.net
+		cmd(`pip install -i "https://pkgs.example.net?@pypi.org/simple" requests`),
+		file(".npmrc", `registry=https://pkgs.example.net\@registry.npmjs.org/`),
+		cmd("pip install -i https://med.example/simple requests"), // inside "named.example" of the request
+		cmd("yarn workspace web add https://pkgs.example.net/x.tgz"),
+		file("package.json", `{"name":"app","dependencies":{"x":"https://pkgs.example.net/x-1.0.0.tgz"}}`),
+		`{"filePath":"package.json","oldString":"\"deps\": {","newString":"\"deps\": {\n  \"x\": \"git+https://git.example.net/x.git\","}`,
+		file("package-lock.json", `{"packages":{"node_modules/x":{"version":"1.0.0","resolved":"https://pkgs.example.net/x-1.0.0.tgz"}}}`),
+		file("yarn.lock", "x@^1.0.0:\n  version \"1.0.0\"\n  resolved \"https://pkgs.example.net/x-1.0.0.tgz\"\n"),
 	}
 	for _, args := range blocked {
 		h := checkToolCall("bash", args, req, known)
@@ -134,6 +147,12 @@ func TestGuardInstallSource(t *testing.T) {
 		{file("README.md", "pip install -i "+idx+" requests\n"), ruleUnknownURL},
 		{file("requirements.txt", "# mirror: "+idx+"\nrequests\n"), ruleUnknownURL},
 		{file("requirements.txt", "requests  # see https://pkgs.example.net/why\n"), ruleUnknownURL},
+		// code review, 2026-11-18: a run command's arguments, a project's own links
+		{cmd("npm run update -- https://pkgs.example.net/feed"), ruleUnknownURL},
+		{cmd("cargo run --bin tool -- install https://pkgs.example.net/x"), ruleUnknownURL},
+		{file("package.json", `{"name":"app","homepage":"https://pkgs.example.net/","repository":{"type":"git","url":"https://git.example.net/app.git"},"bugs":{"url":"https://pkgs.example.net/issues"},"dependencies":{"left-pad":"^1.3.0"}}`), ruleUnknownURL},
+		{file("package-lock.json", `{"packages":{"node_modules/x":{"resolved":"https://registry.npmjs.org/x/-/x-1.0.0.tgz","funding":{"url":"https://pkgs.example.net/sponsor"}}}}`), ruleUnknownURL},
+		{file("package.json", `{"dependencies":{"x":"https://registry.npmjs.org/x/-/x-1.0.0.tgz"}}`), ruleUnknownURL},
 	} {
 		h := checkToolCall("bash", c.args, req, known)
 		if h.rule != c.want {
@@ -170,10 +189,21 @@ func TestGuardInstallSourceIsLinear(t *testing.T) {
 		}
 		return b.String()
 	}
+	distinct := func(unit string) string {
+		var b strings.Builder
+		for i := 0; b.Len() < maxHeldArgs/2-len(unit)-10; i++ {
+			fmt.Fprintf(&b, unit, i)
+		}
+		return b.String()
+	}
 	for _, c := range []struct{ name, args string }{
 		{"one host named in the request", `{"command":"pip install ` + fill("https://a.example/x ") + `"}`},
 		{"many commands", `{"command":"` + fill("pip install -i https://a.example/s x; ") + `"}`},
 		{"a source file", `{"filePath":"requirements.txt","content":"` + fill(`https://a.example/x.whl\n`) + `"}`},
+		// distinct hosts, each looked up once: subdomains of a default registry, and hosts the
+		// request does not name under a parent it does
+		{"distinct registry hosts", `{"command":"pip install ` + distinct("https://h%d.pypi.org/x ") + `"}`},
+		{"distinct named hosts", `{"command":"pip install ` + distinct("https://h%d.a.example/x ") + `"}`},
 	} {
 		done := make(chan time.Duration, 1)
 		go func() { start := time.Now(); installSourceHit("bash", c.args, req, known); done <- time.Since(start) }()
