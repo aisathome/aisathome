@@ -410,6 +410,16 @@ func (rl *relay) block(hit guardHit) error {
 	return &guardError{hit.rule}
 }
 
+// noteFlag keeps a flag-only rule (an unknown address, in tool calls or text: logged, not
+// stopped) for the usage record and logs it, once per attempt; the first one noted stays.
+func (rl *relay) noteFlag(rule string) {
+	if rule == "" || rl.flag != "" {
+		return
+	}
+	rl.flag = rule
+	rl.g.log.Warn("guard flagged a node's answer", "node", rl.n.id, "operator", rl.n.operator, "rule", rule, "req", rl.reqID)
+}
+
 // onChunk meters and relays (or collects) one piece of the answer. A non-nil error ends
 // the attempt.
 func (rl *relay) onChunk(m protocol.Msg) error {
@@ -454,6 +464,7 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 			if hit := gd.check(); hit.rule != "" {
 				return rl.block(hit)
 			}
+			rl.noteFlag(gd.flag) // flagged calls go out now: noted even if the answer then fails
 			outs = append(outs, gd.release()...)
 		}
 	}
@@ -498,18 +509,22 @@ func (rl *relay) onDone(m protocol.Msg) error {
 			return rl.block(hit)
 		}
 		released = gd.release()
-		if rl.flag = gd.textFlag(); rl.flag != "" { // text is only flagged, not stopped
-			rl.g.log.Warn("guard flagged a node's answer", "node", rl.n.id, "operator", rl.n.operator, "rule", rl.flag, "req", rl.reqID)
-		}
 	}
 	var ans map[string]any
 	if !rl.req.clientStream {
 		ans = assemble(rl.reqID, rl.model, rl.collected, u, rl.req.logprobs)
 		if rl.gd != nil { // what the client gets, not the pieces the guard saw
-			if hit := checkAssembled(ans, rl.gd.req, rl.gd.known); hit.rule != "" {
+			hit, flag := checkAssembled(ans, rl.gd.req, rl.gd.known)
+			if hit.rule != "" {
 				return rl.block(hit)
 			}
+			if rl.gd.flag == "" {
+				rl.gd.flag = flag
+			}
 		}
+	}
+	if rl.gd != nil {
+		rl.noteFlag(rl.gd.flagged())
 	}
 	rl.free() // the node is finished with it, and it passed: free before the client sees the end
 	// The end must reach the client: one that left before it (or whose connection fails on it)

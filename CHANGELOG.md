@@ -94,6 +94,13 @@ and **(site)** are live on aisathome.org once deployed.
 - **llama.cpp b12342** (was b12323): the release with PR #31533, faster small-batch kernels for the
   verify step of speculative decoding. The Linux bundle's `llama-server --version` now names the release
   (it said "build 1"). (node)
+- **An unknown web address in a tool call no longer stops the answer or holds the node.** Honest
+  coding agents write addresses the request never named (package indexes, documentation, git
+  clones), and the guard cannot tell them from one a node injected; one agent session's calls
+  held every node and stopped all chat for hours. Such a call now reaches the client and is only
+  flagged (usage log `guard: unknown-address`, outcome `ok`), as unknown addresses in plain text
+  already were. Every other rule still stops the answer and holds the node, and a download piped
+  into a shell is stopped whatever its address. (gateway)
 
 ### Fixed
 

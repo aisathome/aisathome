@@ -174,7 +174,7 @@ or misusing data harder, less valuable and more visible.
 |---|---|---|---|
 | Client → gateway | The gateway's operator | Requests and answers while they pass through | TLS; the gateway does not store prompts or answers; the usage log has no content |
 | Gateway → node | The node's operator | The request body the node serves: messages, tools, sampling settings | No identity (no user, account, key or email reaches a node); well-known secret formats replaced by placeholders; requests that look like personal data only to trusted nodes; agent requests (with tools) to volunteers only with the key's consent and past the node's probation; no volunteer gets more than about a third of recent conversations while others are free |
-| Node → gateway | The gateway, the requester | The node's answer | Guards on tool calls and unknown addresses in volunteers' answers; a flagged node is held; revoking a token cuts a node off within seconds |
+| Node → gateway | The gateway, the requester | The node's answer | Guards on tool calls in volunteers' answers (a node that trips one is held) and flags on unknown addresses; revoking a token cuts a node off within seconds |
 | Node machine | The node's operator | Everything on the machine | Engine bound to `127.0.0.1`; services sandboxed; no core dumps, no swap for the services, no prompt logging, a bounded prompt cache in RAM. These reduce traces; they cannot stop an operator who wants to look. The terms forbid logging or inspecting prompts |
 | Public views | Anyone | Aggregates and public task fields | See below |
 
