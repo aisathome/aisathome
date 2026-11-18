@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -33,6 +34,14 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
                        up again); its connected nodes are dropped within seconds
   username-clear <id>  remove an account's public username (offensive or impersonating);
                        it leaves the leaderboard and exports at their next regeneration
+  contacts [id]        the addresses of accounts that asked to be emailed about important
+                       changes and outages (opt-in on the sign-in or account page), with the
+                       consent time and where the address came from; for writing by hand
+  contact-clear <id>   delete an account's contact address (the user asked to stop)
+  notice               show the notice on the account pages and in the chat
+  notice set "<text>"  set it: one line of plain text, at most 300 characters; it replaces
+                       the last one and shows again to people who dismissed that
+  notice clear         remove it
 
   nodes                node tokens of all accounts, held nodes and the node settings
   nodes close | open   stop or allow new node tokens (existing nodes keep working)
@@ -185,6 +194,38 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return err
 		}
 		return store.ClearUsername(a[1])
+	case "contacts":
+		if len(a) > 2 {
+			fs.Usage()
+			return errors.New("contacts takes at most one account id")
+		}
+		only := ""
+		if len(a) == 2 {
+			only = a[1]
+		}
+		return listContacts(out, store.Snapshot(), only)
+	case "contact-clear":
+		if err := need(1); err != nil {
+			return err
+		}
+		return store.ClearContact(a[1])
+	case "notice":
+		switch {
+		case len(a) == 1:
+			n := store.Snapshot().Settings.Notice
+			if n == nil {
+				fmt.Fprintln(out, "no notice")
+				return nil
+			}
+			fmt.Fprintf(out, "%s (set %s)\n", n.Text, n.Set.Format("2006-01-02 15:04 UTC"))
+			return nil
+		case len(a) == 3 && a[1] == "set":
+			return store.SetNotice(a[2], time.Now())
+		case len(a) == 2 && a[1] == "clear":
+			return store.ClearNotice()
+		}
+		fs.Usage()
+		return errors.New(`notice takes set "<text>" (one argument: quote it) or clear`)
 	case "routing":
 		if err := need(1); err != nil {
 			return err
@@ -206,6 +247,40 @@ func runAccounts(args []string, out, msg io.Writer) error {
 	}
 	fs.Usage()
 	return fmt.Errorf("unknown command %q", a[0])
+}
+
+// listContacts prints the opted-in addresses (of one account with only), oldest consent first.
+func listContacts(out io.Writer, f gateway.AccountsFile, only string) error {
+	var rows []*gateway.Account
+	for _, x := range f.Accounts {
+		if x.ContactEmail != "" && x.Status != gateway.StatusBanned && (only == "" || x.ID == only) {
+			rows = append(rows, x)
+		}
+	}
+	if only != "" && len(rows) == 0 {
+		if f.Find(only) == nil {
+			return fmt.Errorf("no account %s", only)
+		}
+		return fmt.Errorf("%s has no contact address", only)
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return consentTime(rows[i]).Before(consentTime(rows[j])) })
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ACCOUNT\tSTATE\tEMAIL\tFROM\tCONSENT (UTC)")
+	for _, x := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", x.ID, x.Status, x.ContactEmail, x.ContactSource, consentTime(x).Format("2006-01-02 15:04"))
+	}
+	tw.Flush()
+	if only == "" {
+		fmt.Fprintf(out, "\n%d address(es). Write from contact@aisathome.org with the addresses in Bcc, and only about important changes and outages.\n", len(rows))
+	}
+	return nil
+}
+
+func consentTime(a *gateway.Account) time.Time {
+	if a.ContactConsentAt == nil {
+		return time.Time{}
+	}
+	return *a.ContactConsentAt
 }
 
 // holdLine is a hold's rule, time and, when recorded, the guard's reason (fixed words, no content).

@@ -9,6 +9,15 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Opt-in email notices and an operator notice.** The sign-in page has an unticked box "Email me
+  about important changes and outages". Only when it is ticked does sign-in ask GitHub for
+  `user:email` (the primary verified address) or Google for `email` (kept only if verified), or keep
+  the address typed for email sign-in. The account page shows the address masked, when consent was
+  given, and turns it off (deleting the address at once) or on ("Connect email"). The operator lists
+  the addresses with `aisathome-gateway accounts contacts`; nothing is mailed automatically.
+  `accounts notice set "<text>"` shows a short plain-text banner on the account pages and, through
+  `GET /account/notice/chat`, in the chat. See "Contact address and notice" in `docs/gateway.md`.
+  (gateway)
 - **Campaigns and external results.** A project keeps its public record in the gateway: campaigns
   (a named round of work with a status, dates, labels, a short text and its items) and external
   results (what an outside service said about a piece of the work: a state, the verdict, times, and

@@ -38,6 +38,7 @@ const (
 func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /account", g.handleAccount)
 	mux.HandleFunc("GET /account/login", g.handleLogin)
+	mux.HandleFunc("POST /account/login", smallForm(g.handleLoginForm))
 	if g.acfg.githubOn() {
 		mux.HandleFunc("GET /account/callback", g.handleCallback)
 	}
@@ -55,6 +56,11 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/username", smallForm(g.handleUsername))
 	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
 	mux.HandleFunc("POST /account/theme", smallForm(g.handleTheme))
+	mux.HandleFunc("POST /account/contact/connect", smallForm(g.handleContactConnect))
+	mux.HandleFunc("POST /account/contact/email", smallForm(g.handleContactEmail))
+	mux.HandleFunc("POST /account/contact/off", smallForm(g.handleContactOff))
+	mux.HandleFunc("POST /account/notice/dismiss", smallForm(g.handleNoticeDismiss))
+	mux.HandleFunc("GET /account/notice/chat", g.handleNoticeChat)
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
 	mux.HandleFunc("GET /account/ops", g.handleOps)
 	mux.HandleFunc("POST /account/ops/clear", smallForm(g.handleOpsClear))
@@ -146,12 +152,14 @@ func randomToken() string {
 }
 
 // oauthFlow is what the browser keeps between the redirect to a provider and the callback,
-// in a short-lived cookie: the provider, the state, where to go next and, for Google, the
-// OpenID Connect nonce and the PKCE verifier.
-type oauthFlow struct{ provider, state, next, nonce, verifier string }
+// in a short-lived cookie that the callback clears: the provider, the state, where to go next,
+// for Google the OpenID Connect nonce and the PKCE verifier, and whether the user ticked "Email
+// me about important changes and outages" for this sign-in (contact "1") and whether it was
+// started from the account page to add the address to the signed-in account (connect "1").
+type oauthFlow struct{ provider, state, next, nonce, verifier, contact, connect string }
 
 func (f oauthFlow) String() string {
-	return strings.Join([]string{f.provider, f.state, f.next, f.nonce, f.verifier}, "|")
+	return strings.Join([]string{f.provider, f.state, f.next, f.nonce, f.verifier, f.contact, f.connect}, "|")
 }
 
 // takeFlow reads and clears the flow cookie; ok only if it was started for provider and the
@@ -159,8 +167,11 @@ func (f oauthFlow) String() string {
 func (g *Gateway) takeFlow(w http.ResponseWriter, r *http.Request, provider string) (oauthFlow, bool) {
 	var f oauthFlow
 	if c, err := r.Cookie(g.cookieName(oauthCookie)); err == nil {
-		if p := strings.Split(c.Value, "|"); len(p) == 5 {
-			f = oauthFlow{p[0], p[1], p[2], p[3], p[4]}
+		switch p := strings.Split(c.Value, "|"); len(p) {
+		case 7:
+			f = oauthFlow{p[0], p[1], p[2], p[3], p[4], p[5], p[6]}
+		case 5: // a flow started before the contact fields existed
+			f = oauthFlow{provider: p[0], state: p[1], next: p[2], nonce: p[3], verifier: p[4]}
 		}
 	}
 	g.setCookie(w, oauthCookie, "", "/account", -time.Second)
@@ -168,28 +179,57 @@ func (g *Gateway) takeFlow(w http.ResponseWriter, r *http.Request, provider stri
 	return f, f.provider == provider && f.state != "" && subtle.ConstantTimeCompare([]byte(got), []byte(f.state)) == 1
 }
 
-// handleLogin starts sign-in with ?provider=github (the default, if enabled) or google.
-// GitHub gets no scopes: /user without a scope gives the public profile, of which only the
-// numeric id is kept. Google gets scope "openid" only (google.go).
+// handleLogin starts sign-in with ?provider=github (the default, if enabled) or google, as a
+// link can: never with the contact address, whose consent only the sign-in form (a same-origin
+// POST) carries, so a link from elsewhere cannot tick the box for someone.
 func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
-	provider := r.URL.Query().Get("provider")
-	if provider == "" {
-		provider = "github"
-		if !g.acfg.githubOn() {
-			provider = "google"
-		}
-	}
-	f := oauthFlow{provider: provider, state: randomToken()}
+	f := oauthFlow{provider: r.URL.Query().Get("provider")}
 	if r.URL.Query().Get("next") == "chat" {
 		f.next = "chat"
 	}
+	g.startLogin(w, r, f)
+}
+
+// handleLoginForm starts sign-in from the sign-in page's form: provider, next and the box
+// "Email me about important changes and outages" (contact=1). The form also carries the email
+// field of email sign-in, which is not read here.
+func (g *Gateway) handleLoginForm(w http.ResponseWriter, r *http.Request) {
+	if !g.sameOrigin(r) {
+		http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
+		return
+	}
+	f := oauthFlow{provider: r.PostFormValue("provider")}
+	if r.PostFormValue("next") == "chat" {
+		f.next = "chat"
+	}
+	if r.PostFormValue("contact") == "1" {
+		f.contact = "1"
+	}
+	g.startLogin(w, r, f)
+}
+
+// startLogin sends the browser to the provider of f (github, the default if enabled, or
+// google). Without contact, GitHub gets no scopes: /user without a scope gives the public
+// profile, of which only the numeric id is kept; Google gets scope "openid" only (google.go).
+// With contact, GitHub also gets "user:email" and Google "email" (contact.go).
+func (g *Gateway) startLogin(w http.ResponseWriter, r *http.Request, f oauthFlow) {
+	if f.provider == "" {
+		f.provider = "github"
+		if !g.acfg.githubOn() {
+			f.provider = "google"
+		}
+	}
+	f.state = randomToken()
 	var target string
 	switch {
-	case provider == "github" && g.acfg.githubOn():
+	case f.provider == "github" && g.acfg.githubOn():
 		q := url.Values{"client_id": {g.acfg.GitHubClientID}, "state": {f.state},
 			"redirect_uri": {g.acfg.PublicURL + "/account/callback"}, "allow_signup": {"true"}}
+		if f.contact == "1" {
+			q.Set("scope", "user:email")
+		}
 		target = g.acfg.GitHubAuthURL + "?" + q.Encode()
-	case provider == "google" && g.acfg.googleOn():
+	case f.provider == "google" && g.acfg.googleOn():
 		f.nonce, f.verifier = randomToken(), randomToken()
 		target = g.googleAuthURL(f)
 	default:
@@ -197,7 +237,11 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.setCookie(w, oauthCookie, f.String(), "/account", 10*time.Minute)
-	http.Redirect(w, r, target, http.StatusFound)
+	status := http.StatusFound
+	if r.Method == http.MethodPost {
+		status = http.StatusSeeOther
+	}
+	http.Redirect(w, r, target, status)
 }
 
 // handleCallback finishes GitHub sign-in: code → token → numeric id. The token is used once
@@ -208,18 +252,41 @@ func (g *Gateway) handleCallback(w http.ResponseWriter, r *http.Request) {
 		g.accountPage(w, r, http.StatusBadRequest, pageData{Error: "The sign-in expired or came from elsewhere. Please try again."})
 		return
 	}
-	id, err := g.githubID(r, r.URL.Query().Get("code"))
+	id, addr, err := g.githubID(r, r.URL.Query().Get("code"), f.contact == "1")
 	if err != nil {
 		g.log.Warn("github sign-in failed", "err", err)
 		g.accountPage(w, r, http.StatusBadGateway, pageData{Error: "GitHub sign-in failed. Please try again."})
 		return
 	}
-	g.finishSignIn(w, r, id, f.next)
+	g.finishSignIn(w, r, f, id, addr, ContactGitHub)
 }
 
 // finishSignIn creates or finds the account for a verified provider id and starts a session.
-func (g *Gateway) finishSignIn(w http.ResponseWriter, r *http.Request, id, next string) {
+// addr is the provider's verified address when the flow asked for one (else ""). A flow from
+// the account page's "Connect email" only adds the address, and only to the signed-in account.
+func (g *Gateway) finishSignIn(w http.ResponseWriter, r *http.Request, f oauthFlow, id, addr, source string) {
+	if f.connect == "1" {
+		if sid, ok := g.session(r); !ok || sid != id {
+			d := pageData{}
+			if ok {
+				d = g.accountData(sid)
+			}
+			d.Error = "You chose a different " + sourceName(source) + " account than the one you are signed in with. Nothing was stored."
+			g.accountPage(w, r, http.StatusBadRequest, d)
+			return
+		}
+		back := "/account#contact"
+		if !g.storeContact(id, addr, source) {
+			back = "/account?contact=none#contact"
+		}
+		http.Redirect(w, r, g.acfg.PublicURL+back, http.StatusFound)
+		return
+	}
 	a, err := g.accounts.SignIn(id, time.Now())
+	next := f.next
+	if err == nil && f.contact == "1" && a.Status != StatusBanned && !g.storeContact(id, addr, source) {
+		next = contactNone
+	}
 	g.signedIn(w, r, a, err, next)
 }
 
@@ -238,13 +305,19 @@ func (g *Gateway) signedIn(w http.ResponseWriter, r *http.Request, a Account, er
 		http.Redirect(w, r, g.acfg.ChatURL, http.StatusFound)
 		return
 	}
+	if next == contactNone { // the account page says that no address was available
+		http.Redirect(w, r, g.acfg.PublicURL+"/account?contact=none#contact", http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusFound)
 }
 
-// githubID exchanges an OAuth code for the user's numeric GitHub id ("gh:<id>").
-func (g *Gateway) githubID(r *http.Request, code string) (string, error) {
+// githubID exchanges an OAuth code for the user's numeric GitHub id ("gh:<id>") and, with
+// wantEmail (the user asked for notices, so the flow had scope user:email), their primary
+// verified address, or "" if there is none.
+func (g *Gateway) githubID(r *http.Request, code string, wantEmail bool) (string, string, error) {
 	if code == "" {
-		return "", errors.New("no code")
+		return "", "", errors.New("no code")
 	}
 	form := url.Values{"client_id": {g.acfg.GitHubClientID}, "client_secret": {g.acfg.GitHubClientSecret},
 		"code": {code}, "redirect_uri": {g.acfg.PublicURL + "/account/callback"}}
@@ -256,10 +329,10 @@ func (g *Gateway) githubID(r *http.Request, code string) (string, error) {
 		Error       string `json:"error"`
 	}
 	if err := g.getJSON(req, &tok); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if tok.AccessToken == "" {
-		return "", fmt.Errorf("token exchange: %s", tok.Error)
+		return "", "", fmt.Errorf("token exchange: %s", tok.Error)
 	}
 	req, _ = http.NewRequestWithContext(r.Context(), "GET", g.acfg.GitHubUserURL, nil)
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
@@ -268,12 +341,39 @@ func (g *Gateway) githubID(r *http.Request, code string) (string, error) {
 		ID int64 `json:"id"`
 	}
 	if err := g.getJSON(req, &user); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if user.ID <= 0 {
-		return "", errors.New("no user id")
+		return "", "", errors.New("no user id")
 	}
-	return fmt.Sprintf("gh:%d", user.ID), nil
+	addr := ""
+	if wantEmail {
+		addr = g.githubEmail(r, tok.AccessToken)
+	}
+	return fmt.Sprintf("gh:%d", user.ID), addr, nil
+}
+
+// githubEmail is the user's primary address if GitHub has verified it, else "". Without it
+// sign-in still works; the account page then says that no address was available.
+func (g *Gateway) githubEmail(r *http.Request, token string) string {
+	req, _ := http.NewRequestWithContext(r.Context(), "GET", g.acfg.GitHubEmailsURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	var list []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if err := g.getJSON(req, &list); err != nil {
+		g.log.Warn("github sign-in: no address list", "err", err) // host and status only
+		return ""
+	}
+	for _, e := range list {
+		if e.Primary && e.Verified && validEmail(e.Email) {
+			return e.Email
+		}
+	}
+	return ""
 }
 
 func (g *Gateway) getJSON(req *http.Request, v any) error {
@@ -322,7 +422,15 @@ func (g *Gateway) handleAccount(w http.ResponseWriter, r *http.Request) {
 		g.accountPage(w, r, http.StatusOK, pageData{Next: r.URL.Query().Get("next") == "chat"})
 		return
 	}
-	g.accountPage(w, r, http.StatusOK, g.accountData(id))
+	d := g.accountData(id)
+	if r.URL.Query().Get("contact") == "none" && d.ContactMasked == "" {
+		d.ContactNone = "No verified email address was available"
+		if name := sourceName(d.ContactWay); d.ContactWay != ContactEmail && name != "" {
+			d.ContactNone = name + " gave no verified email address"
+		}
+		d.ContactNone += ", so none is stored and you get no notices. Check that your address there is verified, then try again."
+	}
+	g.accountPage(w, r, http.StatusOK, d)
 }
 
 func (g *Gateway) accountData(id string) pageData {
@@ -352,6 +460,11 @@ func (g *Gateway) accountData(id string) pageData {
 		}
 		d.Probation = probationText(g.acfg.probation)
 	}
+	if a.ContactEmail != "" && a.ContactConsentAt != nil {
+		d.ContactMasked, d.ContactSince, d.ContactFrom = maskEmail(a.ContactEmail), *a.ContactConsentAt, sourceName(a.ContactSource)
+	}
+	d.ContactWay = g.contactWay(id)
+	d.Account.ContactEmail = "" // the page shows the masked form only
 	st := g.accounts.Settings()
 	d.MaxNodes = st.MaxNodesPerAccountOrDefault()
 	d.NodesClosed = st.NodesClosed
@@ -503,6 +616,13 @@ type pageData struct {
 
 	CreditToday, CreditTotal, CreditRAC string // the account's credit; "" before any
 	TriedName                           string // a username that was refused, to show it again
+
+	// The contact address (contact.go): shown masked, never in full.
+	ContactMasked string    // "" when there is none
+	ContactSince  time.Time // when the user agreed
+	ContactFrom   string    // "GitHub", "Google" or "email sign-in"
+	ContactWay    string    // how to turn it on from this page: "github", "google", "email" or ""
+	ContactNone   string    // after a sign-in that asked for an address and got none: says so
 }
 
 type nodeRow struct {
@@ -556,13 +676,13 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 	if n := len(ways); n > 1 {
 		d.Separate = strings.Join(ways[:n-1], ", ") + " and " + ways[n-1]
 	}
-	d.shell = shell{Title: "Your account", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account"}
+	d.shell = shell{Title: "Your account", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account", Notice: g.noticeFor(r)}
 	if d.Next {
 		d.Back = "/account?next=chat"
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
-	csp := pageCSP + "; form-action 'self' https://github.com; frame-ancestors 'none'"
+	csp := pageCSP + "; form-action 'self'" + g.providerOrigins() + "; frame-ancestors 'none'"
 	if d.NewKey != "" || d.NewNode != "" {
 		csp += secretScriptSrc // the Copy button; every other account page runs no script
 	}
@@ -572,6 +692,21 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 	if err := accountTmpl.Execute(w, d); err != nil {
 		g.log.Error("account page", "err", err)
 	}
+}
+
+// providerOrigins are the sign-in providers' origins, which the sign-in form redirects to
+// (CSP form-action also covers redirects after a form's post).
+func (g *Gateway) providerOrigins() string {
+	var out string
+	for _, on := range []struct {
+		on  bool
+		url string
+	}{{g.acfg.githubOn(), g.acfg.GitHubAuthURL}, {g.acfg.googleOn(), g.acfg.GoogleAuthURL}} {
+		if u, err := url.Parse(on.url); on.on && err == nil && u.Host != "" {
+			out += " " + u.Scheme + "://" + u.Host
+		}
+	}
+	return out
 }
 
 var accountTmpl = newPage("account", template.FuncMap{
@@ -585,17 +720,22 @@ var accountTmpl = newPage("account", template.FuncMap{
 <h1>Sign in</h1>
 <div class="card">{{if or .GitHub .Google}}<p>AIs@home uses your {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}
 account only to tell accounts apart. We keep only its user id ({{if .GitHub}}GitHub's numeric
-id{{end}}{{if and .GitHub .Google}}, {{end}}{{if .Google}}Google's account identifier{{end}}): no email, no
-name, no password.</p>
-<div class="signin">{{if .GitHub}}<a class="btn-gh" href="/account/login?provider=github{{if .Next}}&amp;next=chat{{end}}">`+githubMark+`<span>Sign in with GitHub</span></a>{{end}}
-{{if .Google}}<a class="btn-google" href="/account/login?provider=google{{if .Next}}&amp;next=chat{{end}}">{{if .Theme}}<img src="{{asset (printf "google-signin-%s.svg" .Theme)}}" alt="Sign in with Google" width="180" height="40">{{else}}<picture>
+id{{end}}{{if and .GitHub .Google}}, {{end}}{{if .Google}}Google's account identifier{{end}}): no name, no password, and
+no email unless you tick the box below.</p>{{end}}
+<form class="form" id="signin" method="post" action="{{if .Email}}/account/email{{else}}/account/login{{end}}">{{if .Next}}<input type="hidden" name="next" value="chat">{{end}}
+{{if .Email}}<button class="default-submit" tabindex="-1" aria-hidden="true">Email me a code</button>{{end}}
+{{if or .GitHub .Google}}<div class="signin">{{if .GitHub}}<button class="btn-gh" formaction="/account/login" formnovalidate name="provider" value="github">`+githubMark+`<span>Sign in with GitHub</span></button>{{end}}
+{{if .Google}}<button class="btn-google" formaction="/account/login" formnovalidate name="provider" value="google">{{if .Theme}}<img src="{{asset (printf "google-signin-%s.svg" .Theme)}}" alt="Sign in with Google" width="180" height="40">{{else}}<picture>
 <source media="(prefers-color-scheme: dark)" srcset="{{asset "google-signin-dark.svg"}}">
-<img src="{{asset "google-signin-light.svg"}}" alt="Sign in with Google" width="180" height="40"></picture>{{end}}</a>{{end}}</div>{{end}}
-{{if .Email}}<form class="form" method="post" action="/account/email"><div class="field"><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
+<img src="{{asset "google-signin-light.svg"}}" alt="Sign in with Google" width="180" height="40"></picture>{{end}}</button>{{end}}</div>{{end}}
+<label class="check"><input type="checkbox" name="contact" value="1" id="contact"><span>Email me about important changes and outages</span></label>
+<p class="hint">Optional. If you tick it, we keep your email address{{if or .GitHub .Google}} ({{if .Email}}the one you type below, or {{end}}a verified one from {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}){{end}}
+for these notices only, until you turn them off on your account page.</p>
+{{if .Email}}<div class="field"><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
 send you a one-time code.</label>
 <div class="row"><input id="email" type="email" name="email" required autocomplete="email" maxlength="254">
-{{if .Next}}<input type="hidden" name="next" value="chat">{{end}}<button class="btn secondary">Email me a code</button></div></div></form>
-<p class="mut small">For email we keep a keyed hash of the address (still personal data), not the address itself.</p>{{end}}
+<button class="btn secondary">Email me a code</button></div></div>
+<p class="mut small">For email we keep a keyed hash of the address (still personal data), and the address itself only if you tick the box.</p>{{end}}</form>
 {{if .Separate}}<p class="mut small">{{.Separate}} are separate accounts; use the same one each time.</p>{{end}}
 <p class="mut small">New accounts are let in in order while there is room; otherwise you get a place in the
 waitlist.</p></div>
@@ -605,6 +745,7 @@ waitlist.</p></div>
 appears; come back to this page to check.</p></div>
 {{else}}<div class="card"><p>Your account is on hold: the maintainer lets it in by hand. You can write to
 <a href="mailto:contact@aisathome.org">contact@aisathome.org</a>.</p></div>{{end}}
+{{template "contact" .}}
 {{else if eq .Account.Status "banned"}}
 <h1>Account closed</h1>
 <div class="card"><p>This account can no longer use AIs@home.</p></div>
@@ -639,6 +780,7 @@ See <a href="/use/api/">API and opencode</a>.</p></div>
 <p class="hint">Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit. Leave it empty to stay anonymous.</p></div></form>
 {{if .Account.Username}}<p class="mut small">You appear as <strong>{{.Account.Username}}</strong> on the <a href="/network/">leaderboard</a>.</p>
 {{else}}<p class="mut small">You are anonymous: your credit counts in the totals only.</p>{{end}}</div>
+{{template "contact" .}}
 <div class="card" id="nodes"><h2>Your nodes</h2>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
 strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that{{if .Probation}},
@@ -673,6 +815,20 @@ requests only, never what they asked.</p>
 {{if or .NewKey .NewNode}}<script>`+secretScript+`</script>
 {{else if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
 {{template "bottom" .}}
+{{define "contact"}}<div class="card" id="contact"><div class="card-head"><h2>Email notices</h2>{{if .ContactMasked}}<span class="badge on">On</span>{{else}}<span class="badge off">Off</span>{{end}}</div>
+{{if .ContactMasked}}<p>We may email <strong>{{.ContactMasked}}</strong> about important changes and outages, and about nothing else.
+You agreed on {{day .ContactSince}}{{with .ContactFrom}} (the address is from {{.}}){{end}}.</p>
+<form method="post" action="/account/contact/off"><button class="btn ghost">Turn off and delete the address</button></form>
+{{else}}<p>Email me about important changes and outages: off. We keep no email address for this account.</p>
+{{with .ContactNone}}<p class="mut" role="status">{{.}}</p>{{end}}
+{{if eq .ContactWay "email"}}<form class="form" method="post" action="/account/contact/email"><div class="field"><label for="contact-email">To turn it on, type the address you sign in with</label>
+<div class="row"><input id="contact-email" type="email" name="email" required autocomplete="email" maxlength="254"><button class="btn secondary">Turn on</button></div>
+<p class="hint">We check it against the keyed hash we keep for signing in, then keep the address itself for these notices.</p></div></form>
+{{else if .ContactWay}}<form method="post" action="/account/contact/connect"><button class="btn secondary">Connect email</button></form>
+<p class="hint">Takes you to {{if eq .ContactWay "github"}}GitHub{{else}}Google{{end}} to share your email address; we keep it only if it is verified there.</p>
+{{else}}<p class="mut">Not available for this account.</p>{{end}}{{end}}
+<p class="mut small">Never shown publicly and never sent to nodes. Turning it off deletes the address at once.
+See <a href="/about/privacy/">Privacy</a>.</p></div>{{end}}
 {{define "secret"}}<h1 id="secret-title">{{.Title}}</h1>
 <div class="card accent"><p><strong>You will not see this again.</strong> Copy it now and keep it somewhere safe: only a hash
 of it is stored, so nobody can show it to you later.</p>

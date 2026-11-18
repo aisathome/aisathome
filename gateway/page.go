@@ -96,6 +96,7 @@ type shell struct {
 	Theme   string        // "dark" or "light" from the theme cookie; "" follows the system
 	Back    string        // where the theme form returns to: this page, as a GET
 	Head    template.HTML // a page's own additions to <head> (a constant, never user data)
+	Notice  noticeView    // the operator's notice (contact.go), unless this browser dismissed it
 }
 
 // navLink is an item of the header's main navigation.
@@ -150,7 +151,9 @@ var pageShell = `{{define "head"}}<!doctype html>
 <div class="menu-pane"><nav aria-label="Main">{{template "navlinks" .}}</nav>
 <div class="menu-foot">{{template "source" .}}{{template "theme" .}}</div></div></details>
 </header>
-<main id="main" class="wrap">{{end}}
+<main id="main" class="wrap">{{with .Notice}}{{if .Text}}<div class="card notice" role="status" data-notice="{{.ID}}"><p>{{.Text}}</p>
+<form method="post" action="/account/notice/dismiss"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="back" value="{{$.Back}}">
+<button class="btn ghost sm">Dismiss</button></form></div>{{end}}{{end}}{{end}}
 {{define "bottom"}}</main>
 <footer class="site-foot"><div class="wrap">
 <div><p class="foot-name">AIs@home</p><p>Open AI models on volunteers’ GPUs. Non-commercial, open source, run by volunteers.</p></div>
@@ -187,6 +190,7 @@ const githubMark = `<svg viewBox="0 0 16 16" width="20" height="20" aria-hidden=
 //
 //	layout     .wrap (centred column)  .card (panel)  .card.accent (orange top rule)
 //	           .card.err / .card.ok (notices)  .card-head (h2 + badge or button on one line)
+//	           .card.notice (the operator's notice, with its Dismiss button)
 //	text       h1, h2 (display face, upper case)  .mut (muted)  .small  .back (back link)
 //	           code, .key (an API key or token shown once: selectable block)
 //	buttons    .btn (primary)  .btn.secondary (outline)  .btn.ghost (quiet)  .btn.danger
@@ -196,9 +200,10 @@ const githubMark = `<svg viewBox="0 0 16 16" width="20" height="20" aria-hidden=
 //	tables     table (full width)  th  .num (right-aligned figures)  .end (right-aligned cell)
 //	           .table-wrap (scrolls sideways on narrow screens)
 //	data       dl.kv (label/value pairs)
-//	status     .badge + .online | .busy | .offline | .probation | .paused | .held | .banned (dot + text, so the
+//	status     .badge + .online | .busy | .offline | .probation | .paused | .held | .banned | .on | .off (dot + text, so the
 //	           state never depends on colour alone)
 //	sign-in    .signin (provider buttons)  .btn-gh  .btn-google (brand buttons, see above)
+//	           .default-submit (an unseen first button: Enter in the email field sends a code)
 //
 // Keep provider names out of the CSS and the shell: a test checks that a page without GitHub
 // sign-in never says "GitHub".
@@ -274,10 +279,14 @@ dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;marg
 .badge{display:inline-flex;align-items:center;gap:.4em;padding:.05em .6em;border:1px solid currentColor;border-radius:999px;font-size:.75rem;font-weight:700;
 letter-spacing:.05em;text-transform:uppercase;line-height:1.6;white-space:nowrap;color:var(--mut)}
 .badge::before{content:"";width:.55em;height:.55em;border-radius:50%;background:currentColor}
-.badge.online{color:var(--ok)}.badge.busy{color:var(--acc)}.badge.probation{color:var(--warn)}.badge.paused{color:var(--info)}.badge.held,.badge.banned{color:var(--bad)}
-.badge.offline::before{background:transparent;box-shadow:inset 0 0 0 1.5px currentColor}
+.badge.online,.badge.on{color:var(--ok)}.badge.busy{color:var(--acc)}.badge.probation{color:var(--warn)}.badge.paused{color:var(--info)}.badge.held,.badge.banned{color:var(--bad)}
+.badge.offline::before,.badge.off::before{background:transparent;box-shadow:inset 0 0 0 1.5px currentColor}
 .signin{display:flex;flex-wrap:wrap;gap:.75rem;margin:1.25rem 0}
-.btn-gh,.btn-google{display:inline-flex;border-radius:4px;text-decoration:none}
+.btn-gh,.btn-google{display:inline-flex;border-radius:4px;text-decoration:none;margin:0;cursor:pointer}
+.btn-google{padding:0;border:0;background:none}
+.default-submit{position:absolute;left:-999rem;width:1px;height:1px;overflow:hidden}
+.card.notice{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem 1rem;border-left:5px solid var(--info)}
+.card.notice p{margin:0;flex:1 1 20rem;overflow-wrap:anywhere}
 .btn-gh{align-items:center;gap:10px;height:40px;min-width:180px;padding:0 12px;border:1px solid #747775;background:#fff;color:#1f1f1f;font:500 14px/20px var(--sans)}
 .btn-gh svg{flex:none;fill:#000}
 .btn-google img{display:block;height:40px;width:auto}

@@ -358,20 +358,52 @@ both its client id and secret are set:
 
 | Provider | Fields | Redirect URI to register |
 |---|---|---|
-| GitHub (OAuth app, no scopes) | `github_client_id`, `github_client_secret` | `<public_url>/account/callback` |
-| Google (OpenID Connect, scope `openid` only) | `google_client_id`, `google_client_secret` | `<public_url>/account/callback/google` |
+| GitHub (OAuth app, no scopes; `user:email` only with the user's opt-in) | `github_client_id`, `github_client_secret` | `<public_url>/account/callback` |
+| Google (OpenID Connect, scope `openid`; `email` only with the user's opt-in) | `google_client_id`, `google_client_secret` | `<public_url>/account/callback/google` |
 
-Only the provider's user id is stored: `gh:<numeric id>` or `google:<sub>`. No email, name or
-token. Google's ID token is checked against Google's published keys (RS256, issuer,
+Only the provider's user id is stored: `gh:<numeric id>` or `google:<sub>`. No name or token, and
+no email unless the user opts in to notices (below). Google's ID token is checked against Google's published keys (RS256, issuer,
 audience, expiry, nonce) and the flow uses state and PKCE. The same person signing in with
 GitHub and with Google gets two separate accounts. Manage accounts with
-`aisathome-gateway accounts list|limit|close|open|add|activate|waitlist|ban` (nodes: see
+`aisathome-gateway accounts list|limit|close|open|add|activate|waitlist|ban|contacts|contact-clear|notice` (nodes: see
 below); `list` with `-config` also shows the limits each account has and its weighted tokens
 used today (UTC), the account page's number, from `state_dir/budgets.json`. Run it as the
 gateway's own user (in a container: `podman exec aisathome-gateway aisathome-gateway accounts
 ...`), otherwise the file may become unwritable for the gateway. `waitlist` holds an account
 back until you `activate` it. The usage log names accounts by a pseudonym (an HMAC of the id),
 never by their GitHub, Google or email id.
+
+### Contact address and notice
+
+- **Opt-in.** Under the sign-in buttons is an unticked box, "Email me about important changes
+  and outages". Its state travels with that one sign-in (the OAuth flow cookie, which the
+  callback clears, or the pending email sign-in in memory), and only a same-origin form post
+  carries it: `GET /account/login` never asks for an address. Ticked, GitHub's flow adds scope
+  `user:email` and the gateway keeps the primary address if GitHub marks it verified; Google's
+  adds scope `email` and the address is kept only if `email_verified` is true; email sign-in
+  keeps the address as typed once the code or link proves it. Without a verified address,
+  sign-in still works and the account page says that none was available. An unticked sign-in
+  leaves an earlier choice as it is.
+- **Stored.** `contact_email`, `contact_consent_at` and `contact_source` (`github`, `google` or
+  `email`) in the account's record, nothing else. Never shown publicly (the account page shows
+  it masked), never logged, never in the usage log, never sent to nodes. Turning it off on the
+  account page deletes it at once; `accounts ban` and `accounts contact-clear <id>` delete it
+  too. "Connect email" on the account page runs the provider's flow again with the scope, for
+  the signed-in account only; an email account types its sign-in address instead, which must
+  match the stored hash.
+- **Writing.** `aisathome-gateway accounts contacts [id]` lists the addresses with consent time
+  and source, for the operator to write from by hand. Nothing is mailed automatically.
+- **Provider setup.** A GitHub OAuth app needs no change (scopes are asked per sign-in). For
+  Google, add the `.../auth/userinfo.email` scope (non-sensitive) to the OAuth consent screen's
+  data access.
+- **Notice.** `accounts notice set "<text>"` (one line of plain text, at most 300 characters),
+  `accounts notice clear`, and `accounts notice` to show it. It lives in the accounts file, so
+  the running gateway shows it within seconds. The account and email sign-in pages show it as a
+  banner with a Dismiss button (a cookie with the notice's id, so a new notice shows again).
+  `GET /account/notice/chat` gives it in Open WebUI's banner format (v0.11.4,
+  `GET /api/v1/configs/banners`): point that path of the chat at the gateway in the reverse
+  proxy, and the chat shows it, dismissible, above the conversation. The text is escaped for
+  Markdown and HTML, so it is shown as typed.
 
 ## Volunteer nodes (self-registered)
 
