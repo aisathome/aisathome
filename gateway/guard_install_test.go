@@ -287,6 +287,12 @@ func TestGuardInstallSourceIsLinear(t *testing.T) {
 		}
 		return b.String()
 	}
+	// Short dependency specs up to near the size limit, under the deepest nesting JSON allows.
+	var keys strings.Builder
+	for i := 0; keys.Len() < maxHeldArgs-200<<10; i++ {
+		fmt.Fprintf(&keys, `\"%d\":\"\",`, i)
+	}
+	manyKeys := keys.String()
 	labels := strings.Repeat("b.", 115) // hosts of about 250 bytes, near the most DNS allows
 	for _, c := range []struct {
 		name, args string
@@ -306,6 +312,7 @@ func TestGuardInstallSourceIsLinear(t *testing.T) {
 		{"distinct hosts of many labels", `{"command":"pip install ` + distinct("https://h%d."+labels+"a.example/x ") + `"}`, false},
 		{"a package.json of many sources", `{"filePath":"package.json","content":"{\"dependencies\":{` + distinct(`\"x%[1]d\":\"https://h%[1]d.a.example/x.tgz\",`) + `\"y\":\"1\"}}"}`, false},
 		{"a package.json nested deep", `{"filePath":"package.json","content":"{\"overrides\":` + strings.Repeat("[", 9000) + fill(`\"x\",`) + `\"https://h.a.example/x.tgz\"` + strings.Repeat("]", 9000) + `}"}`, false},
+		{"a lock file nested deep", `{"filePath":"package-lock.json","content":"{\"dependencies\":` + strings.Repeat(`{\"a\":{\"dependencies\":`, 4900) + `{` + manyKeys + `\"z\":\"https://h.a.example/z.tgz\"}` + strings.Repeat("}}", 4900) + `}"}`, false},
 		{"shell text of many quoted words", `{"command":"` + fill(`GOPROXY=\"https://a.example|https://b.a.example\" echo \"x;y\" # z\n`) + `"}`, false},
 	} {
 		// The bound is relative to linear passes over the same text on the same machine (a race
