@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -300,7 +301,7 @@ class Recipe(unittest.TestCase):
             self.assertIn(want, s)
         wrapper = (sb.state / "bin" / "lake").read_text()
         self.assertIn(f"/run/harness/buildslot.sh /run/harness/slots {self.elan}/bin/lake", wrapper)
-        self.assertEqual(sorted(p.name for p in self.host.slot_dir.iterdir()), ["slot.1", "slot.2", "slot.3"])
+        self.assertEqual(sorted(p.name for p in self.host.slot_dir.iterdir()), ["slot.1", "slot.2", "slot.3", "turnstile"])
         self.assertEqual(sorted(p.name for p in sb.home.iterdir()), ["knowledge"])   # the only host write in HOME
 
     def test_the_container_runs_as_the_user_who_owns_the_tree(self):
@@ -502,6 +503,63 @@ class Host_(unittest.TestCase):
                         run(timeout=1.5)
             finally:
                 os.chmod(slots, 0o755)
+
+    def test_waiting_is_first_come_first_served(self):
+        """A holder that releases its slot and asks again at once (a pre-pass's back-to-back compiles) must not take
+        it again before a session already waiting (2026-11-18: with one slot, polling let it win every time)."""
+        import threading
+        with tempfile.TemporaryDirectory() as d:
+            h = Host(state=Path(d), slots=1, build_min_free_gb=0, slot_poll_s=0.01)
+            n, got, first = [0], [], threading.Event()
+
+            def holder():
+                for _ in range(60):
+                    with h.slot():
+                        n[0] += 1
+                        first.set()
+                        time.sleep(0.02)
+
+            def waiter():
+                first.wait(5)
+                time.sleep(0.005)
+                with h.slot():
+                    got.append(n[0])
+            th = [threading.Thread(target=holder), threading.Thread(target=waiter)]
+            for t in th:
+                t.start()
+            for t in th:
+                t.join(30)
+            self.assertEqual(len(got), 1)
+            self.assertLessEqual(got[0], 3, f"the waiter got the slot only after {got[0]} of the holder's builds")
+
+    @unittest.skipUnless(shutil.which("flock"), "needs flock(1)")
+    def test_buildslot_waits_in_line_too(self):
+        """buildslot.sh (the sandboxes' side) takes the turnstile like the host: a host-side holder asking again
+        right after its build waits behind a sandbox build already waiting."""
+        import threading
+        script = Path(container.__file__).with_name("buildslot.sh")
+        with tempfile.TemporaryDirectory() as d:
+            h = Host(state=Path(d), slots=1, build_min_free_gb=0, slot_poll_s=0.01)
+            slots = h.slot_dir
+            env = {**os.environ, "BUILD_MIN_FREE_GB": "0"}
+            n, at = [0], []
+            stop = threading.Event()
+
+            def holder():
+                while not stop.is_set() and n[0] < 200:
+                    with h.slot():
+                        n[0] += 1
+                        time.sleep(0.02)
+            t = threading.Thread(target=holder)
+            t.start()
+            time.sleep(0.1)
+            r = subprocess.run(["sh", str(script), str(slots), "sh", "-c", "echo built"], env=env,
+                               capture_output=True, text=True, timeout=20)
+            at.append(n[0])
+            stop.set()
+            t.join(10)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, "built"), r.stderr)
+            self.assertLess(at[0], 200, "the sandbox build waited for all of the holder's builds")
 
     def test_the_host_opens_no_slot_file_through_a_link(self):
         """A link in the slot directory (planted while it was writable, by an older harness's sandbox) is
