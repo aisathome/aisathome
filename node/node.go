@@ -38,9 +38,9 @@ func AgentVersion() string { return "aisathome-node/" + strings.TrimPrefix(Versi
 
 // Config holds node settings.
 type Config struct {
-	// NodeID names the node. A token created on the account page ("nt-<id>.<secret>")
-	// carries the id the gateway assigned, and that id is used; only tokens from the gateway's
-	// config need a node_id here.
+	// NodeID names the node. A token created on the account page ("nt-<id>.<secret>") or a
+	// pilot's credential ("pc-<hex>.<secret>") carries the id the gateway assigned, and that id
+	// is used; only tokens from the gateway's config need a node_id here.
 	NodeID     string               `json:"node_id"`
 	GatewayURL string               `json:"gateway_url"` // ws(s)://host/v1/node/connect
 	Token      string               `json:"token"`       // node token from the account page (or the operator)
@@ -158,7 +158,11 @@ func New(cfg Config, log *slog.Logger) *Agent {
 	if cfg.Watchdog == 0 {
 		cfg.Watchdog = DefaultWatchdog
 	}
-	if id, ok := TokenNodeID(cfg.Token); ok && cfg.NodeID != id {
+	id, ok := TokenNodeID(cfg.Token)
+	if !ok {
+		id, ok = PilotNodeID(cfg.Token)
+	}
+	if ok && cfg.NodeID != id {
 		if cfg.NodeID != "" {
 			log.Warn("the node token belongs to another node id than node_id in the config; using the token's", "node", id)
 		}
@@ -172,6 +176,20 @@ func New(cfg Config, log *slog.Logger) *Agent {
 		log.Info("starting paused (resume in the local UI)")
 	}
 	return a
+}
+
+// PilotNodeID returns the node id carried by a pilot's credential: "pc-<12 hex>.<secret>", whose
+// node id is the pilot's, "p-" and those 12 hex digits.
+func PilotNodeID(cred string) (string, bool) {
+	rest, ok := strings.CutPrefix(cred, "pc-")
+	if !ok {
+		return "", false
+	}
+	h, _, ok := strings.Cut(rest, ".")
+	if !ok || len(h) != 12 || strings.Trim(h, "0123456789abcdef") != "" {
+		return "", false
+	}
+	return "p-" + h, true
 }
 
 // TokenNodeID returns the node id carried by a token from the account page:
