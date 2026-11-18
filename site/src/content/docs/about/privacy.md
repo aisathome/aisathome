@@ -3,7 +3,7 @@ title: Privacy
 description: How AIs@home handles your messages.
 ---
 
-*Last changed: 2026-11-11.*
+*Last changed: 2026-11-18.*
 
 AIs@home is an experiment: chat with an open AI model that runs on volunteers' GPUs instead
 of a big company's data centre. Read this before you type anything you care about.
@@ -28,8 +28,9 @@ and sends the answer back the same way.
 **What we store.**
 - Your account: GitHub’s numeric user id or Google’s account identifier (“sub”), depending
   on which you sign in with; its state (active or waiting) and when it was created. No
-  email, no name, no password: we ask Google only to confirm who you are (the “openid”
-  scope). API keys are stored only as a hash.
+  name, no password, and no email unless you ask for email notices (below); otherwise we
+  ask Google only to confirm who you are (the “openid” scope). API keys are stored only as
+  a hash.
 - Chats: temporary by default. Chats you save are kept until you delete them.
 - For each request: time, a pseudonymous user id, which node answered, token counts,
   duration, the credit it earned, and whether a safety check flagged the answer (which
@@ -44,6 +45,18 @@ and sends the answer back the same way.
 - To keep a conversation on the same model file, the gateway remembers, in memory only,
   the length and hashes of each answered conversation and which model answered, never its
   text, for 24 hours after the last answer.
+
+**Email about important changes (only if you ask).** If you tick “Email me about important
+changes and outages” when you sign in, or turn it on on your account page, we store an email
+address with your account: the one GitHub or Google marks as verified (we ask them for it only
+then). We also store when you agreed and where the address came from. We use it only to write
+to you ourselves, from contact@aisathome.org, about important changes to the service and
+outages: no newsletters, no marketing; we never sell it, and share it only with the mail service below. It is
+never shown publicly, never sent to nodes and not written to our logs. The mail goes out
+through Amazon SES (Amazon Web Services, Stockholm region), which sends it for us; if an address
+bounces or marks our mail as spam, SES keeps it on its suppression list. Turn it off on your
+account page at any time and the address is deleted at once; we also delete it if you ask us or
+if we ban your account. The legal basis is your consent (GDPR Art. 6(1)(a)).
 
 **Visitor statistics (this website only).** To know whether anyone reads the site, the
 server counts visits to its pages from its own web server log: no cookies, no JavaScript,
@@ -63,8 +76,10 @@ no outside service. The chat, the API and the account pages are not counted.
 - No IP addresses, hashes or browser names are stored. The code that does the counting is
   public: [`tools/sitestats`](https://github.com/aisathome/aisathome/tree/main/tools/sitestats).
 
-**Cookies.** A sign-in cookie (only once you sign in), and `aisathome_theme`, which remembers
-whether you chose light or dark. No tracking or advertising cookies.
+**Cookies.** A sign-in cookie (only once you sign in), `aisathome_theme`, which remembers
+whether you chose light or dark, and `aisathome_notice_…`, which remembers that you dismissed a
+notice on the account pages (only the notice's id). The chat remembers a dismissed notice in
+your browser's own storage instead. No tracking or advertising cookies.
 
 **What we never do.** We don't sell data, don't show ads, don't train models on your
 chats, and run no tracking: no analytics scripts, no outside analytics service, no
