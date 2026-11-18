@@ -63,6 +63,14 @@ type nodeConn struct {
 	paused   bool // from the last heartbeat: take no new requests; guarded by mu
 	lastSeen time.Time
 	closed   chan struct{}
+	// Pilots (connector.go): id is the pilot id. Set before the node is registered, never changed.
+	pilot     string    // the pilot id; "" for a node
+	connector string    // its connector
+	extUser   string    // its connector user (no_chat_users, trusted_users)
+	deadline  time.Time // its credential's end
+	// scienceOnly: the pilot serves only science requests (connector.go); guarded by g.mu, updated
+	// by sweepNodes when its account's switch or the connector's settings change.
+	scienceOnly bool
 }
 
 // pendingReq is one request in flight on a node. The reader delivers messages on ch; the
@@ -134,10 +142,23 @@ func (n *nodeConn) slots(model string) int {
 
 func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	tok, account, ok := g.nodeAuth(token)
-	if !ok {
-		http.Error(w, "unknown node token", http.StatusUnauthorized)
-		return
+	var pl *pilotLogin
+	var tok NodeToken
+	var account string
+	if strings.HasPrefix(token, "pc-") { // a pilot's credential (pilot_nodes.go)
+		var status int
+		var why string
+		if pl, status, why = g.authPilot(token); pl == nil {
+			http.Error(w, why, status)
+			return
+		}
+		tok, account = pl.tok, pl.account
+	} else {
+		var ok bool
+		if tok, account, ok = g.nodeAuth(token); !ok {
+			http.Error(w, "unknown node token", http.StatusUnauthorized)
+			return
+		}
 	}
 	operator, ip := tok.Operator, clientIP(r)
 	c, err := websocket.Accept(w, r, nil)
@@ -172,7 +193,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "this node token belongs to another node id")
 		return
 	}
-	if account == "" && validNodeID(hello.NodeID) { // the gateway assigns these to account nodes
+	if account == "" && (validNodeID(hello.NodeID) || validPilotID(hello.NodeID)) { // the gateway assigns these to account nodes and pilots
 		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
 		return
 	}
@@ -185,24 +206,34 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", account: account, ip: ip,
 		agent: cleanAgent(hello.Agent), proto: proto, since: time.Now(), models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
+	if pl != nil {
+		n.pilot, n.connector, n.extUser, n.deadline, n.scienceOnly = pl.pilot.ID, pl.conn.ID, pl.pilot.User, pl.pilot.Deadline, pl.scienceOnly
+	}
 	if err := n.send(ctx, protocol.Msg{Type: protocol.TypeWelcome, GatewayID: g.cfg.GatewayID, Protocol: protocol.LegacyVersion,
 		ProtocolVersion: proto, ProtocolMin: g.cfg.NodeProtocolMin, ProtocolMax: g.cfg.NodeProtocolMax}); err != nil {
 		return
 	}
 	var first time.Time
-	if account != "" {
+	switch {
+	case pl != nil:
+		first = pl.first
+	case account != "":
 		first, _ = g.accounts.nodeLive(keyHash(token))
 	}
 	g.mu.Lock()
 	// Reload, a revocation or a ban may have changed the token while we waited for hello:
 	// decide with the token as it is now, under the same lock that registers the node.
 	var still bool
-	if account == "" {
+	switch {
+	case pl != nil: // its record is checked again when it is marked connected, below
+		still = true
+		n.probEnd = first.Add(g.acfg.probation)
+	case account == "":
 		var cur NodeToken
 		cur, still = g.tokens[token]
 		still = still && (cur.NodeID == "" || cur.NodeID == hello.NodeID)
 		n.trusted, n.operator = cur.Trust == "trusted", cur.Operator
-	} else {
+	default:
 		_, _, still = g.accounts.nodeToken(token)
 		n.probEnd = first.Add(g.acfg.probation)
 	}
@@ -215,6 +246,11 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	if old != nil && old.token != token { // only the node's own token may replace it
 		g.mu.Unlock()
 		c.Close(websocket.StatusPolicyViolation, "node id is in use")
+		return
+	}
+	if old != nil && pl != nil { // a pilot's credential serves one connection at a time
+		g.mu.Unlock()
+		c.Close(websocket.StatusPolicyViolation, "this pilot is already connected")
 		return
 	}
 	if old == nil && g.connectionsLocked(token) >= g.cfg.MaxNodesPerToken {
@@ -241,6 +277,19 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	g.rememberLocked(n.models, now)
 	g.mu.Unlock()
+	if pl != nil {
+		// The record decides: a pilot reported or past its deadline since authPilot may not connect.
+		ok, err := g.sci.pilotConnected(n.pilot, n.agent, g.pilotNow())
+		if !ok || err != nil {
+			g.mu.Lock()
+			if g.node[n.id] == n {
+				delete(g.node, n.id)
+			}
+			g.mu.Unlock()
+			c.Close(websocket.StatusPolicyViolation, "this pilot has ended")
+			return
+		}
+	}
 	if old != nil { // reconnect replaces the stale connection; its close handshake may stall
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}
@@ -265,7 +314,14 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		// In-flight requests see n.closed and fail over or report the error themselves.
 		g.log.Info("node disconnected", "node", n.id)
 	}()
-	g.readLoop(ctx, n)
+	err = g.readLoop(ctx, n)
+	if pl != nil {
+		reason := pilotClose(err)
+		if err := g.sci.pilotDisconnected(n.pilot, reason, n.since, g.pilotNow()); err != nil {
+			g.log.Error("pilot disconnect not recorded", "pilot", n.pilot, "err", err)
+		}
+		g.log.Info("pilot disconnected", "pilot", n.pilot, "reason", reason)
+	}
 }
 
 // Two clients with one node token and id replace each other's connection in turn, each
@@ -330,7 +386,7 @@ func (g *Gateway) idReservedLocked(token, id string) bool {
 
 // readLoop reads a node's messages until the connection ends: heartbeats update its state,
 // answers go to the requests waiting for them.
-func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) {
+func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) error {
 	c := n.conn
 	badFrames := 0
 	for {
@@ -338,20 +394,20 @@ func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) {
 		_, b, err := c.Read(rctx)
 		cancel()
 		if err != nil {
-			return
+			return err
 		}
 		var m protocol.Msg
 		if json.Unmarshal(b, &m) != nil { // skip a bad frame; only a run of them ends the node
 			if badFrames++; badFrames > 10 {
 				c.Close(websocket.StatusPolicyViolation, "malformed frames")
-				return
+				return nil
 			}
 			continue
 		}
 		badFrames = 0
 		if m.Type == protocol.TypeChunk && len(m.Data) > maxChunkBytes {
 			c.Close(websocket.StatusPolicyViolation, "chunk too large")
-			return
+			return nil
 		}
 		n.mu.Lock()
 		n.lastSeen = time.Now()

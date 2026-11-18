@@ -111,7 +111,11 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	trusted := n.trusted
 	n.mu.Unlock()
 	if req.task != "" && g.tasks != nil { // the task's public node_classes (tasks.go)
-		g.tasks.noteNode(req.project, req.task, nodeClassOf(trusted))
+		cls := nodeClassOf(trusted)
+		if n.pilot != "" {
+			cls = nodeClassPilot
+		}
+		g.tasks.noteNode(req.project, req.task, cls)
 	}
 	var preempt <-chan struct{} // nil, never ready: only science is preempted
 	var sr *sciRun
@@ -314,7 +318,9 @@ func (rl *relay) undelivered(rec *usageRecord) {
 // commit logs the record, grants its credit and charges the budgets.
 func (rl *relay) commit(rec *usageRecord) {
 	g, n, req := rl.g, rl.n, rl.req
-	if (rec.Outcome == "ok" || rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted) && !rec.SelfServed {
+	if n.pilot != "" { // into the pilot's record, never the public ledger (pilots.go)
+		g.pilotServed(n, rec)
+	} else if (rec.Outcome == "ok" || rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted) && !rec.SelfServed {
 		g.grantCredit(n, rec.Credit, rec.Time)
 	}
 	g.use.record(*rec)

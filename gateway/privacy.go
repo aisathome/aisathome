@@ -81,6 +81,7 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`), // JWT
 	regexp.MustCompile(`\b(?:ak|nt)-[A-Za-z0-9_\-]{40,}`),                                       // AIs@home API keys and node tokens
 	regexp.MustCompile(`\bnt-n-[0-9a-f]{8}\.[A-Za-z0-9_\-]{40,}`),                               // AIs@home account node tokens
+	regexp.MustCompile(`\bpc-[0-9a-f]{12}\.[A-Za-z0-9_\-]{40,}`),                                // AIs@home pilot credentials
 }
 
 // redactor replaces secrets with per-request placeholders and restores them. Its mapping
@@ -116,7 +117,7 @@ func (r *redactor) restoring() bool { return r.restoreOn && r.active() }
 
 // typePrefixRe matches the fixed marker that names a secret's kind. The placeholder keeps
 // only this marker, never any of the random part.
-var typePrefixRe = regexp.MustCompile(`^(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA|ASIA|xox[abprs]-|[sr]k_live_|AIza|hf_|eyJ|ak-|nt-)`)
+var typePrefixRe = regexp.MustCompile(`^(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA|ASIA|xox[abprs]-|[sr]k_live_|AIza|hf_|eyJ|ak-|nt-|pc-)`)
 
 // typePrefix is the part of a secret that names its kind ("sk-proj-", "ghp_", "AKIA").
 func typePrefix(s string) string { return typePrefixRe.FindString(s) }

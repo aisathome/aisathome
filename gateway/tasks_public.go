@@ -10,7 +10,7 @@
 //	steps, model_min, tokens (prompt + completion), prompt_tokens, cached_tokens, completion_tokens,
 //	uncached_prompt_tokens, tokens_computed, tokens_with_cache      explicit counts (below)
 //	created_at, started_at, finished_at, updated_at,
-//	node_classes                                    trusted or volunteer: the nodes that served it
+//	node_classes                                    trusted, volunteer or pilot: the nodes that served it
 //	live                                            while it runs: the gateway's own count of its
 //	                                                model calls so far (tasks_live.go), else null
 //
@@ -146,7 +146,7 @@ func (t *Task) publicV1() publicTaskV1 {
 		}
 	}
 	for _, c := range t.NodeClasses {
-		if c == nodeClassTrusted || c == nodeClassVolunteer {
+		if c == nodeClassTrusted || c == nodeClassVolunteer || c == nodeClassPilot {
 			p.NodeClasses = append(p.NodeClasses, c)
 		}
 	}

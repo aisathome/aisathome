@@ -53,9 +53,20 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   routing trusted-only | any
                        emergency switch: send every request to trusted nodes only, or back
 
+  chat-on-pilots <id> on | off
+                       an account's switch for its connector pilots (BOINC): off = they serve
+                       science only (default on; the connector's pilots_chat_enabled and
+                       no_chat_users still apply)
+  link <id> <connector> <user>
+                       link an account to a connector's user (a BOINC user id), so that user's
+                       pilots serve as that account's nodes; a user links to one account only
+  unlink <id> <connector> <user>
+                       remove such a link
+
 Ids look like gh:12345 (GitHub's numeric user id), google:<sub> (Google's account
-identifier, digits) or em:<32 hex digits> (email sign-in: random, not derived from the
-address; "add" does not take em: ids, since only a sign-in can attach an address to one).
+identifier, digits), em:<32 hex digits> (email sign-in: random, not derived from the
+address; "add" does not take em: ids, since only a sign-in can attach an address to one) or
+cx:<32 hex digits> (unclaimed: made by a connector's pilot for a user with no account yet).
 The running gateway picks up changes within seconds.`
 
 func runAccounts(args []string, out, msg io.Writer) error {
@@ -238,6 +249,22 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			routing = gateway.RoutingTrustedOnly
 		}
 		return store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = routing; return nil })
+	case "chat-on-pilots":
+		if err := need(2); err != nil {
+			return err
+		}
+		if a[2] != "on" && a[2] != "off" {
+			return errors.New("chat-on-pilots takes on or off")
+		}
+		return store.SetPilotChat(a[1], a[2] == "on")
+	case "link", "unlink":
+		if err := need(3); err != nil {
+			return err
+		}
+		if a[0] == "unlink" {
+			return store.Unlink(a[1], a[2], a[3])
+		}
+		return store.Link(a[1], a[2], a[3], time.Now())
 	case "activate", "waitlist", "ban":
 		if err := need(1); err != nil {
 			return err

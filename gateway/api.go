@@ -65,10 +65,13 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{id}/queue", g.handlePublicQueue)
 	g.taskRoutes(mux)
 	g.campaignRoutes(mux)
+	g.connectorRoutes(mux)
 	mux.HandleFunc("GET /stats/{$}", handleExportIndex)
 	mux.HandleFunc("GET /stats/{file}", g.handleExport)
 	if g.accounts != nil {
 		g.accountRoutes(mux)
+		mux.HandleFunc("GET /v1/account/settings", g.handleAccountSettings)
+		mux.HandleFunc("PATCH /v1/account/settings", g.handleAccountSettings)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	return mux
@@ -360,7 +363,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	rt.class = c.class
 	queueWait := g.cfg.QueueTimeoutSec
 	if c.proj != nil {
-		rt.project, rt.share = c.proj.ID, c.proj.MaxNodeShare
+		rt.project, rt.share, rt.pilotProbationOK = c.proj.ID, c.proj.MaxNodeShare, c.proj.PilotProbationOK
 		if c.proj.QueueTimeoutSec > 0 {
 			queueWait = c.proj.QueueTimeoutSec
 		}

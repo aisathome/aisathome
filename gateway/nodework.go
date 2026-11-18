@@ -15,7 +15,7 @@
 // task's place on it as the project's configuration says (Project.Page, PageAnchor).
 //
 // The task's node_classes (tasks.go): a named task's request notes the class of the node serving
-// it, trusted or volunteer, never which node or whose. Its live count (tasks_live.go): a named
+// it, trusted, volunteer or pilot, never which node or whose. Its live count (tasks_live.go): a named
 // task's call that ended ok adds its tokens and time.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -115,6 +115,7 @@ type workItem struct {
 const (
 	nodeClassTrusted   = "trusted"
 	nodeClassVolunteer = "volunteer"
+	nodeClassPilot     = "pilot" // a connector's pilot (connector.go), trusted or not
 )
 
 func nodeClassOf(trusted bool) string {

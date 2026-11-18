@@ -437,6 +437,9 @@ func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
 	if !was {
 		g.press.hold(time.Now())
 	}
+	if n.pilot != "" {
+		g.withholdPilotCredit(n.pilot, "guard: "+hit.rule)
+	}
 }
 
 // maxUnrecorded bounds the holds kept in memory while the accounts file cannot be written.
@@ -536,13 +539,22 @@ func (g *Gateway) sweepNodes() {
 	}
 	g.mu.Unlock()
 	type state struct {
-		live  bool
-		first time.Time
+		live        bool
+		first       time.Time
+		scienceOnly bool
 	}
 	st := make([]state, len(conns))
 	for i, n := range conns {
 		st[i].live = true
-		if n.account != "" {
+		switch {
+		case n.pilot != "": // its account, connector and trust as they are now (connector.go)
+			var chatOff bool
+			st[i].first, chatOff, st[i].live = g.accounts.pilotAccountState(n.account)
+			c := g.connector(n.connector)
+			trusted := c != nil && c.trusted[n.extUser] && !c.noChat[n.extUser]
+			st[i].live = st[i].live && c != nil && trusted == n.trusted
+			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff, trusted)
+		case n.account != "":
 			st[i].first, st[i].live = g.accounts.nodeLive(keyHash(n.token))
 		}
 	}
@@ -559,6 +571,10 @@ func (g *Gateway) sweepNodes() {
 		n.held = p
 		if n.account != "" {
 			n.probEnd = st[i].first.Add(g.acfg.probation)
+		}
+		if n.pilot != "" {
+			cleared = cleared || (n.scienceOnly && !st[i].scienceOnly)
+			n.scienceOnly = st[i].scienceOnly
 		}
 	}
 	g.mu.Unlock()

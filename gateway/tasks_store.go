@@ -46,10 +46,14 @@ type taskStore struct {
 	compactAge func(project string) time.Duration
 	// maxFull: maxFullBytes; a test lowers it.
 	maxFull int
+	// workers: when each project's workers last claimed (a task or none) or renewed a lease, in
+	// memory: how many runner workers can feed science now (connector demand).
+	workers map[string]map[string]time.Time
 }
 
 func newTaskStore(dir string, log *slog.Logger) *taskStore {
 	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{}, write: writeFileAtomic, maxFull: maxFullBytes,
+		workers:    map[string]map[string]time.Time{},
 		compactAge: func(string) time.Duration { return defaultCompactDays * 24 * time.Hour }}
 }
 
@@ -433,6 +437,7 @@ func (s *taskStore) claim(project, worker string, ttl int, kinds []string, only 
 	if err != nil {
 		return nil, err
 	}
+	s.sawWorker(project, worker, now)
 	var t *Task
 	if only != "" {
 		t = p.byID[only]
@@ -512,6 +517,7 @@ func (s *taskStore) heartbeat(project, id, worker, lease string) (*Task, error) 
 	if err != nil {
 		return nil, err
 	}
+	s.sawWorker(project, worker, now)
 	t, err := s.leased(p, id, worker, lease)
 	if err != nil {
 		return nil, err
@@ -760,4 +766,62 @@ func (s *taskStore) noteNode(project, id, class string) {
 	}
 	t.NodeClasses = append(t.NodeClasses, class)
 	slices.Sort(t.NodeClasses)
+}
+
+// workerFresh: a worker that claimed or renewed within this long counts as running (workers poll
+// for a task every minute when idle and renew leases every minute).
+const workerFresh = 5 * time.Minute
+
+// maxWorkersSeen bounds the workers remembered per project (names come from the project's key).
+const maxWorkersSeen = 1024
+
+// sawWorker records that worker of project was active at now. Holds s.mu.
+func (s *taskStore) sawWorker(project, worker string, now time.Time) {
+	m := s.workers[project]
+	if m == nil {
+		m = map[string]time.Time{}
+		s.workers[project] = m
+	}
+	if _, ok := m[worker]; !ok && len(m) >= maxWorkersSeen {
+		for w, at := range m {
+			if now.Sub(at) > workerFresh {
+				delete(m, w)
+			}
+		}
+		if len(m) >= maxWorkersSeen {
+			return
+		}
+	}
+	m[worker] = now
+}
+
+// scienceLoad is a project's open tasks (queued or leased) and the workers that can run them now:
+// those active within workerFresh, and at least the distinct workers holding a lease (after a
+// restart, before they renew).
+func (s *taskStore) scienceLoad(project string) (open, workers int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.load(project)
+	if err != nil {
+		return 0, 0
+	}
+	now := s.now()
+	leasing := map[string]bool{}
+	for _, t := range p.byID {
+		switch t.State {
+		case TaskQueued:
+			open++
+		case TaskLeased:
+			open++
+			if t.Lease != nil {
+				leasing[t.Lease.Worker] = true
+			}
+		}
+	}
+	for w, at := range s.workers[project] {
+		if now.Sub(at) <= workerFresh {
+			leasing[w] = true
+		}
+	}
+	return open, len(leasing)
 }

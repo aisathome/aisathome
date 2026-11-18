@@ -73,6 +73,12 @@ type Gateway struct {
 	stop     chan struct{} // closed by Close: ends background work
 	stopOnce sync.Once
 	bg       sync.WaitGroup
+
+	// connCfgs: the config's connectors (connector.go); replaced on reload.
+	connCfgs atomic.Pointer[connectorTable]
+	// spendCap, if set, caps a connector's pilots by spend (demand): the hook for the monthly cap on
+	// feeding pilots with science (BACKLOG 7v). ok false: no cap.
+	spendCap func(connector string) (pilots int, ok bool)
 }
 
 // New creates a gateway.
@@ -182,6 +188,9 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		return err
 	}
 	g.sci.log = log
+	if err := g.sci.recoverPilots(); err != nil { // connections a stopped gateway left open
+		return err
+	}
 	if cfg.StateDir != "" {
 		g.budget.path = filepath.Join(cfg.StateDir, BudgetsFile)
 		g.budget.load(time.Now(), log)
@@ -222,6 +231,7 @@ func (g *Gateway) startBackground() {
 	}
 	g.every(keysFileCheck, g.checkKeysFile)
 	g.every(taskSweepEvery, g.tasks.sweepAll) // expired leases go back to the queue without a call
+	g.every(pilotSeenEvery, g.sweepPilots)    // pilots past their deadline end; connected ones are seen
 	if g.cfg.StateDir != "" {
 		g.every(saveEvery, func() {
 			if err := g.budget.save(); err != nil {

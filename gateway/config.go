@@ -80,6 +80,9 @@ type Config struct {
 	// Projects are operator-run workloads (science, decision 0011) with their own keys, quota
 	// and the lowest priority (project.go).
 	Projects []Project `json:"projects,omitempty"`
+	// Connectors bring machines as pilots (connector.go): BOINC's bridge is the first. They need
+	// accounts (pilots serve as accounts' nodes) and a state_dir for their records.
+	Connectors []Connector `json:"connectors,omitempty"`
 	// HistorySample, if set, replaces how often the number of nodes online is sampled for the
 	// daily history (a minute). For tests.
 	HistorySample time.Duration `json:"-"`
@@ -88,6 +91,8 @@ type Config struct {
 	StatsRefresh time.Duration `json:"-"`
 	// TasksNow, if set, is the task queue's clock (leases, affinity). For tests.
 	TasksNow func() time.Time `json:"-"`
+	// PilotsNow, if set, is the pilots' clock (deadlines, credit hold, caps). For tests.
+	PilotsNow func() time.Time `json:"-"`
 }
 
 // NodeToken authorises node connections. In JSON it is either a plain operator id (any
