@@ -592,19 +592,8 @@ func nodeSlots(n *nodeConn) int {
 // openCount is the number of a project's tasks queued or running; its queue is read from the disk
 // if no call loaded it yet, so a project with no worker running still shows its demand.
 func (s *taskStore) openCount(project string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, err := s.load(project)
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, t := range p.byID {
-		if t.State == TaskQueued || t.State == TaskLeased {
-			n++
-		}
-	}
-	return n
+	open, _ := s.scienceLoad(project) // the same count as connector demand's (tasks_store.go)
+	return open
 }
 
 // handlePressure serves GET /v1/stats/pressure?range=24h|48h|7d|14d|30d|90d (default 7d) without

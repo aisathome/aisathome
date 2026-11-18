@@ -100,16 +100,6 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) demandScience {
 	return d
 }
 
-// nodeSlots is how many requests a node runs at once: its models share its slots (pick), so the
-// largest model's count.
-func nodeSlots(n *nodeConn) int {
-	s := 0
-	for _, m := range n.models {
-		s = max(s, m.Slots)
-	}
-	return s
-}
-
 // demand is c's pilots-wanted answer as of now.
 func (g *Gateway) demand(c *connector, now time.Time) (*pilotDemand, error) {
 	by, recent, err := g.sci.pilotCounts(c.ID, now)
