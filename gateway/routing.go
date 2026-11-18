@@ -472,6 +472,7 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 				return nil, "", queueFull
 			}
 			waiting = true
+			g.press.queuePeak(int(g.queued.Load()), int(g.queuedSc.Load()), time.Now())
 		}
 		d := time.Until(deadline)
 		if d <= 0 {

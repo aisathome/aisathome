@@ -59,6 +59,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/stats", g.handleStats)
 	mux.HandleFunc("GET /v1/stats/credit", g.handleCreditStats)
 	mux.HandleFunc("GET /v1/stats/history", g.handleHistory)
+	mux.HandleFunc("GET /v1/stats/pressure", g.handlePressure)
 	mux.HandleFunc("POST /v1/projects/{id}/status", g.handleStatusPost)
 	mux.HandleFunc("GET /v1/projects/{id}/status", g.handleStatusGet)
 	mux.HandleFunc("GET /v1/projects/{id}/queue", g.handlePublicQueue)
@@ -228,6 +229,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	arrived := time.Now() // the time to the first token counts from here, not the upload (pressure.go)
 	for _, l := range c.limits {
 		release, reason := g.lim.acquire(l.k, l.info, time.Now())
 		if release == nil {
@@ -240,6 +242,7 @@ func (g *Gateway) handleChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	job.req.arrived = arrived
 	g.chatExecute(w, r, job)
 }
 
@@ -402,16 +405,31 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 // place behind the people.
 func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJob) {
 	rt, req := job.rt, job.req
-	deadline := time.Now().Add(time.Duration(job.queueWait) * time.Second)
+	start := time.Now()
+	deadline := start.Add(time.Duration(job.queueWait) * time.Second)
 	preempted := 0
+	// The pressure statistics count the request once, by how it ended, and its first wait for a slot.
+	outcome, waited := pressFailed, false
+	defer func() {
+		if outcome != pressOK && r.Context().Err() != nil {
+			outcome = pressCancelled
+		}
+		g.press.outcome(outcome, time.Now())
+	}()
 	for attempt := 0; attempt < 2; attempt++ { // one retry before any output, on another connection
 		n, model, why := g.pickWait(r.Context(), rt, deadline)
+		if !waited {
+			waited = true
+			g.press.wait(rt.class, time.Since(start), time.Now())
+		}
 		if n == nil {
 			switch {
 			case why == clientGone:
 			case preempted > 0: // it had a node, and gave it to a person
+				outcome = pressPreempted
 				preemptedError(w)
 			case attempt == 0:
+				outcome = pressRefused
 				g.unavailable(w, rt, why)
 			case rt.model != "":
 				apiError(w, http.StatusBadGateway, fmt.Sprintf("request failed on all available nodes serving %q, the model this conversation started on", rt.model))
@@ -431,6 +449,7 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 			// one it gave up included). This is no failover attempt, and it gets some time to
 			// wait even near its deadline.
 			if preempted++; preempted > maxPreemptRetries {
+				outcome = pressPreempted
 				preemptedError(w)
 				return
 			}
@@ -447,19 +466,23 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 			fb.trustedOnly, fb.preferSelf = true, false
 			if tn, tmodel := g.pick(&fb); tn != nil {
 				if started, err = g.run(w, r, req, tn, tmodel, nil); err == nil || started {
+					outcome = runOutcome(err)
 					return
 				}
 				if errors.Is(err, errPreempted) {
+					outcome = pressPreempted
 					preemptedError(w)
 					return
 				}
 			}
+			outcome = pressBlocked
 			apiError(w, http.StatusBadGateway, "the volunteer node's answer was stopped by a safety check (a tool call that "+
 				"downloads and runs code, reads credentials, encodes a command or sends files), "+
 				"and no trusted node is free to answer instead; try again later")
 			return
 		}
 		if err == nil || started {
+			outcome = runOutcome(err)
 			return // success, or failure after output began: the client sees the error
 		}
 		if isContextOverflow(err.Error()) { // the request itself is too large: no retry
@@ -474,6 +497,21 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 		g.log.Warn("node failed before output, retrying", "node", n.id, "err", errCategory(err.Error()))
 	}
 	apiError(w, http.StatusBadGateway, "request failed on all available nodes")
+}
+
+// runOutcome is how an attempt that ended (or whose output began) ended, for the pressure
+// statistics; a client that left is told apart where the request ends (chatExecute).
+func runOutcome(err error) string {
+	var flagged *guardError
+	switch {
+	case err == nil:
+		return pressOK
+	case errors.As(err, &flagged):
+		return pressBlocked
+	case errors.Is(err, errPreempted):
+		return pressPreempted
+	}
+	return pressFailed
 }
 
 // servedBy reports whether a request's answer may name the node that served it: only for the

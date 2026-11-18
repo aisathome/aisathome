@@ -431,8 +431,12 @@ func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
 		g.held.LoadOrStore(n.id, p) // the first hold stands, as in the accounts file
 	}
 	g.mu.Lock()
+	was := n.held
 	n.held = true
 	g.mu.Unlock()
+	if !was {
+		g.press.hold(time.Now())
+	}
 }
 
 // maxUnrecorded bounds the holds kept in memory while the accounts file cannot be written.
