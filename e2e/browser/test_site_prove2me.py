@@ -690,6 +690,7 @@ def test_the_status_block_shows_the_queue_and_the_network(pages, site, records, 
     widths = {p: bar.locator(f"[data-part={p}]").bounding_box()["width"] for p in ("proved", "ended", "queued")}
     assert widths["ended"] > widths["proved"] > widths["queued"], widths
     expect(box.locator("[data-st=elsewhere]")).to_be_hidden()
+    expect(box.locator("[data-st=empty]")).to_be_hidden()
     expect(box.locator("[data-num=nodes] dd")).to_have_text("2")
     expect(box.locator("[data-num=slots] dd")).to_have_text("1 of 2")
     expect(box.locator("[data-num=leaves] dd")).to_have_text("2 of 6")
@@ -717,3 +718,16 @@ def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, si
         accepted = sum(1 for s in data["submissions"] if s["verdict"] == "accepted")
         expect(box.locator("[data-num=accepted] dd")).to_have_text(f"{accepted} of {len(data['submissions'])}")
         expect(box.locator("[data-st=updated]")).to_contain_text("As of the site’s last build")
+
+
+def test_the_status_block_says_when_the_trial_has_no_tasks_yet(pages, site, records):
+    """Trial 8's campaign without any of its tasks: no bar, the words "No tasks yet.", 0 of 6 leaves proved."""
+    tasks = dict(records["tasks"], tasks=[t for t in records["tasks"]["tasks"] if t["labels"].get("trial") != "t8"])
+    page = _page(pages, live=(404, tasks), records={"campaigns": records["campaigns"], "results": records["results"]})
+    page.clock.set_fixed_time("2026-11-18T15:00:00Z")
+    page.goto(site + PAGE)
+    box = page.locator("[data-p2m-status][data-source=live][data-trial=t8]")
+    expect(box.locator("[data-st=empty]")).to_have_text("No tasks yet.")
+    expect(box.locator("[data-st-bar]")).to_be_hidden()
+    expect(box.locator("[data-st-legend]")).to_be_hidden()
+    expect(box.locator("[data-num=leaves] dd")).to_have_text("0 of 6")
