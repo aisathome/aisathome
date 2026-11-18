@@ -28,7 +28,11 @@ func TestMain(m *testing.M) {
 	// With AISATHOME_TEST_PILOT=1 it runs `aisathome-node pilot` (pilot_test.go); the engine
 	// that pilot starts inherits the variable, and is told apart by llama-server's "-m".
 	if os.Getenv("AISATHOME_TEST_PILOT") == "1" && (len(os.Args) < 2 || os.Args[1] != "-m") {
-		os.Exit(runPilot(os.Args[1:], os.Stderr))
+		args := os.Args[1:]
+		if len(args) > 0 && args[0] == "pilot" { // as main does
+			args = args[1:]
+		}
+		os.Exit(runPilot(args, os.Stderr))
 	}
 	if dir := os.Getenv("FAKE_LLAMA_SERVER"); dir != "" {
 		fakeLlamaServer(dir, os.Args[1:])
