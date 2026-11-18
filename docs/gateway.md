@@ -554,7 +554,8 @@ connects over the ordinary node WebSocket (`/v1/node/connect`, protocol 2) and w
   the agent retries within seconds);
 - for **one connection at a time** (a second one is closed: "this pilot is already connected");
 - until the pilot ends or its deadline passes (then 401 "this pilot has ended");
-- while its account may run pilots (a banned account's pilots are refused and dropped).
+- while its account may run pilots and is still linked to its user (a banned account's pilots,
+  and those of a user unlinked or linked elsewhere, are refused and dropped).
 
 **States**: `created`, `bound`, `connected`, `disconnected` (it may come back), `ended`. A pilot
 ends when it closes with `pilot: time`, `pilot: idle` or `pilot: engine`, when the connector reports
@@ -562,7 +563,9 @@ it, or when its deadline passes (`end_reason` `deadline`). `pilot: sigterm` (BOI
 task) and a lost connection leave it `disconnected`; when the task resumes, the same credential
 continues **the same record**: `connections`, `served_seconds`, requests, tokens and credit add up
 over every run of the work unit. A gateway restart counts a connected pilot's serve time up to the
-last minute it was seen (`close_reason` `gateway restart`).
+last minute it was seen (`close_reason` `gateway restart`). The record keeps only the pilot's own
+close reasons (`pilot: time|idle|engine|sigterm`); any other text is stored as `closed`, and a
+dropped connection as `connection lost`.
 
 ### Which account a pilot serves
 
@@ -570,7 +573,7 @@ At the bind the connector's user maps to an account: the one **linked** to that 
 a new **unclaimed** account (`cx:<32 hex>`, not derived from the user id) linked to it. Every pilot
 of that user lands there; its probation clock starts with its first pilot. An unclaimed account has
 no sign-in, keys or node tokens and does not count against `max_active`. Claiming it from the
-account page comes later (map PR 4b); until then the operator links by hand:
+account page comes later; until then the operator links by hand:
 
 ```bash
 aisathome-gateway accounts link gh:12345 boinc 678      # this account is BOINC user 678
@@ -587,14 +590,17 @@ A bound pilot is an **untrusted account node** under decision 0007 and every rul
 nodes" above: personal data only to trusted nodes, the share cap per operator (the account's
 pseudonym), the guards and holds, requests with tools only with the requester's consent and past
 the account's probation, except that a project with `pilot_probation_ok` may use pilots during
-it. On top of that it serves **science only** (requests with a project's key), not chat, agents or
+it. Unlike a standalone node, a pilot gets no "own node" exemption: the connector, not the person,
+made the link, so the account's own personal data does not go to it, and its answers to the
+account are guarded too (they still earn no credit). Past its deadline it gets nothing, before the
+sweep drops it. On top of that it serves **science only** (requests with a project's key), not chat, agents or
 API calls, when any of these holds:
 
 | Rule | Why |
 |---|---|
 | its user is in `no_chat_users` | Science United's hosts: their owners cannot reach a switch |
 | its account's "chat on pilots" is off | the person's choice (on by default, also for unclaimed accounts) |
-| `pilots_chat_enabled` is false (the default) and its user is not in `trusted_users` | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (BACKLOG 10 and 12; decision 0020's follow-up makes them M3 work done before outside hosts join). Until the owner turns this on at launch, only science (which carries no user data) reaches pilots; the maintainer's own test pilots go in `trusted_users` |
+| `pilots_chat_enabled` is false (the default) and its user is not in `trusted_users` | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (decision 0020: they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots; the maintainer's own test pilots go in `trusted_users` |
 
 Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
 seconds. Nothing here makes a pilot confidential: whoever runs the machine can read what it serves
@@ -620,7 +626,7 @@ cancel_unsent    = min(unsent, max(0, outstanding − target))
 Open tasks are queued or leased; a runner worker counts once it claims (a task or none) or renews a
 lease, and the distinct workers holding leases count after a restart. The answer shows each part
 (`science`, `chat`, `pilots` by state, `capped_by`). The spend cap is a hook for the monthly cap on
-feeding pilots with science (BACKLOG 7v); none is set yet. The science part counts the same open
+feeding pilots with science; none is set yet. The science part counts the same open
 tasks and slots as runner autoscaling's demand, seen from the other side: there runners are
 bounded by GPU slots, here pilots by runners, so neither grows the other from nothing; the runner
 pool's minimum size seeds both.

@@ -379,6 +379,19 @@ func TestPilotCredentialRules(t *testing.T) {
 		t.Errorf("banned account's pilot: %d", status)
 	}
 	r.g.accounts.SetStatus(p.account, StatusUnclaimed)
+	// Unlinked from its user (the operator, or a claim moving the link): its pilots stop.
+	if err := r.g.accounts.Unlink(p.account, "boinc", "5"); err != nil {
+		t.Fatal(err)
+	}
+	if pl, status, _ := r.g.authPilot(cred); pl != nil || status != http.StatusForbidden {
+		t.Errorf("unlinked user's pilot: %d", status)
+	}
+	if err := r.g.accounts.Link(p.account, "boinc", "5", r.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if pl, _, _ := r.g.authPilot(cred); pl == nil {
+		t.Error("relinked: refused")
+	}
 	// After its deadline.
 	r.advance(49 * time.Hour)
 	if pl, _, why := r.g.authPilot(cred); pl != nil || !strings.Contains(why, "ended") {
@@ -408,7 +421,8 @@ func TestPilotCredentialRules(t *testing.T) {
 // past probation or for a project with pilot_probation_ok.
 func TestPilotRouting(t *testing.T) {
 	now := time.Now()
-	pilot := &nodeConn{id: "p-000000000001", operator: "acct-x", account: "cx:1", pilot: "p-000000000001", probEnd: now.Add(time.Hour)}
+	pilot := &nodeConn{id: "p-000000000001", operator: "acct-x", account: "cx:1", pilot: "p-000000000001", probEnd: now.Add(time.Hour),
+		deadline: now.Add(time.Hour)}
 	sci := &route{class: ClassScience, project: "lab"}
 	chat := &route{class: ClassChat}
 	agent := &route{class: ClassAgent, tools: true, consent: true}
@@ -439,6 +453,19 @@ func TestPilotRouting(t *testing.T) {
 	pilot.probEnd = now.Add(-time.Second)
 	check("pilot past probation, agent with consent", agent, true)
 	check("pilot past probation, agent without consent", &route{class: ClassAgent, tools: true}, false)
+	// The own-node exemption is not for pilots: the connector made the link, not the person.
+	own := &route{class: ClassChat, trusted: true, pii: "email", self: pilot.operator}
+	check("own-account pilot, personal data", own, false)
+	ownNode := &nodeConn{id: "n-00000002", operator: pilot.operator, account: "cx:1", probEnd: now}
+	if !own.allows(ownNode, now) {
+		t.Error("an account's own standalone node lost its exemption")
+	}
+	// Past its deadline a pilot gets nothing, before the sweep drops it.
+	pilot.deadline = now.Add(-time.Second)
+	check("pilot past its deadline, science", sci, false)
+	pilot.deadline = time.Time{}
+	check("pilot without a deadline, science", sci, false)
+	pilot.deadline = now.Add(time.Hour)
 
 	// The switches: no_chat_users wins over all; the account's switch; pilots_chat_enabled unless trusted.
 	c := &connector{Connector: Connector{PilotsChatEnabled: true}, noChat: map[string]bool{"900": true}, trusted: map[string]bool{}}
@@ -579,7 +606,7 @@ func TestPilotCredit(t *testing.T) {
 }
 
 // The record carries a pilot's totals over every connection of its credential (a suspended and
-// resumed work unit, BACKLOG 7u): "pilot: sigterm" leaves it disconnected, a final reason ends it;
+// resumed work unit): "pilot: sigterm" leaves it disconnected, a final reason ends it;
 // a gateway restart counts its serve time until it was last seen.
 func TestPilotRecordAcrossRestarts(t *testing.T) {
 	r := newPilotRig(t, nil)
@@ -590,6 +617,12 @@ func TestPilotRecordAcrossRestarts(t *testing.T) {
 		t.Fatal("bound pilot may not connect")
 	}
 	t0 := r.clock()
+	// A record left "connected" (its disconnect not written) may be continued by the next connection
+	// (the gateway checks first that none is live).
+	if ok, _ := db.pilotConnected(id, "aisathome-node/0.6.0", r.clock()); !ok {
+		t.Fatal("a record stranded in connected cannot be continued")
+	}
+	db.db.Exec(`UPDATE pilots SET connections = 1 WHERE id = ?`, id)
 	r.advance(10 * time.Minute)
 	db.pilotDisconnected(id, "pilot: sigterm", t0, r.clock())
 	p, _ := db.pilot("boinc", id)

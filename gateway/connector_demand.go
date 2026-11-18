@@ -12,7 +12,7 @@
 //	cancel_unsent = min(unsent, max(0, outstanding − target))
 //
 // "Unsent" are created pilots no machine has taken yet (not bound). The science number is the one
-// runner autoscaling (BACKLOG 7v) starts from, seen from the other side: there, demand is open tasks
+// runner autoscaling (planned) starts from, seen from the other side: there, demand is open tasks
 // bounded by GPU slots; here, pilots are bounded by what runners can feed. Neither grows the other
 // from nothing: the runner pool's minimum size seeds both.
 //

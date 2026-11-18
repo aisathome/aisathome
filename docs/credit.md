@@ -72,12 +72,12 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   `max_credit_per_account_day` (default 1,800,000, over all its pilots), set per connector; `-1`
   turns one off. The defaults are about 1.3 times what a pilot busy for its whole 4 hours, and two
   such GPUs all day, earn at the rate measured on a 3090 on our science traffic (about 28,750 an
-  hour, launch plan 2026-11-18, one measurement); they are to be tuned with B1-B2 measurements.
+  hour, 2026-11-18, one measurement); they are to be tuned once the first pilots are measured.
 - **Final after a hold.** A pilot's credit becomes final 24 hours after its last disconnect, once
   it has ended (`GET /v1/connectors/{id}/pilots/{pid}/credit` says `final` and `final_at`; the
   connector passes the final number on). Until then it can still be withheld.
 - **Withheld.** If a guard holds the pilot, its credit is withheld (`withheld: "guard: <rule>"`)
-  and its final credit is 0. The gateway-side model check (BACKLOG 11) will withhold it the same
+  and its final credit is 0. The gateway-side model check, when it comes, will withhold it the same
   way when it is built.
 - **Idle earns nothing**: credit comes only from metered answers.
 

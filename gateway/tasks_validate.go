@@ -17,8 +17,9 @@ var (
 	// publicSecret: key-shaped text (secretLike without its long-run rule: public text quotes long
 	// Lean names). A key's body may hold '_' and '-' (base64url), so they count after the prefix.
 	// A node token is "nt-<node id>.<secret>" (nodes.go; a BOINC pilot's credential is one too); an
-	// account node's ("nt-n-<8 hex>.") counts even right after a letter or digit.
-	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9_-]{8})|(?i:\bnt-[a-z0-9-]{1,32}\.[a-z0-9_-]{8})|nt-n-[0-9a-f]{8}\.[A-Za-z0-9_-]{8}|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
+	// account node's ("nt-n-<8 hex>.") counts even right after a letter or digit; a connector pilot's
+	// credential is "pc-<12 hex>.<secret>" (pilots.go).
+	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9_-]{8})|(?i:\bnt-[a-z0-9-]{1,32}\.[a-z0-9_-]{8})|nt-n-[0-9a-f]{8}\.[A-Za-z0-9_-]{8}|\bpc-[0-9a-f]{12}\.[A-Za-z0-9_-]{8}|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
 	// publicEmail: an e-mail address, which no public label carries.
 	publicEmail = regexp.MustCompile(`[^\s@]+@[^\s@]+\.[^\s@]+`)
 )

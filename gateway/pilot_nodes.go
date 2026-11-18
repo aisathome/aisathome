@@ -51,7 +51,7 @@ func (g *Gateway) authPilot(cred string) (*pilotLogin, int, string) {
 		// Held until the connector names who runs it: the node agent retries within seconds.
 		return nil, http.StatusConflict, "pilot not bound yet"
 	}
-	first, chatOff, live := g.accounts.pilotAccountState(p.account)
+	first, chatOff, live := g.accounts.pilotAccountState(p.account, p.Connector, p.User)
 	if !live {
 		return nil, http.StatusForbidden, "this pilot's account is closed"
 	}
@@ -64,23 +64,21 @@ func (g *Gateway) authPilot(cred string) (*pilotLogin, int, string) {
 		scienceOnly: pilotScienceOnly(c, p.User, chatOff, trusted)}, 0, ""
 }
 
-// pilotClose is the reason in a pilot's close frame (err from its read loop): printable ASCII, at
-// most 64 bytes; "connection lost" without one.
+// pilotReasons are the close reasons a pilot sends (node/pilot) that its record keeps; any other
+// text from the node is never stored or logged.
+var pilotReasons = map[string]bool{"pilot: time": true, "pilot: idle": true, "pilot: engine": true, "pilot: sigterm": true}
+
+// pilotClose is the reason in a pilot's close frame (err from its read loop): one of pilotReasons,
+// "closed" for another close frame, "connection lost" without one.
 func pilotClose(err error) string {
 	var ce websocket.CloseError
-	if !errors.As(err, &ce) || ce.Reason == "" {
+	switch {
+	case !errors.As(err, &ce):
 		return "connection lost"
+	case pilotReasons[ce.Reason]:
+		return ce.Reason
 	}
-	r := ce.Reason
-	if len(r) > 64 {
-		r = r[:64]
-	}
-	for i := 0; i < len(r); i++ {
-		if r[i] < 0x20 || r[i] > 0x7e {
-			return "connection lost"
-		}
-	}
-	return r
+	return "closed"
 }
 
 // dropPilot closes pilot id's connection, if it has one.
@@ -114,13 +112,14 @@ func (g *Gateway) pilotServed(n *nodeConn, rec *usageRecord) {
 }
 
 // withholdPilotCredit withholds a pilot's credit (final 0) for reason: a guard held it, or the model
-// check (BACKLOG 11) found it serving another model; that check calls this when it is built.
+// check (to come) found it serving another model; that check calls this when it is built.
 func (g *Gateway) withholdPilotCredit(id, reason string) {
 	if g.sci == nil || !validPilotID(id) {
 		return
 	}
 	if err := g.sci.withholdPilot(id, reason); err != nil {
-		g.log.Error("pilot credit not withheld", "pilot", id, "reason", reason, "err", err)
+		// The hold itself still withholds it: the credit endpoint reads the node's hold too.
+		g.log.Error("PILOT CREDIT NOT WITHHELD in its record; its hold withholds it", "pilot", id, "reason", reason, "err", err)
 		return
 	}
 	g.log.Warn("pilot credit withheld", "pilot", id, "reason", reason)

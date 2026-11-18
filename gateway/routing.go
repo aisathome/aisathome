@@ -164,8 +164,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	switch {
 	case rt.exclude[n] || n.held:
 		return false
-	case n.scienceOnly && rt.class != ClassScience: // a pilot without chat (connector.go)
-		return false
+	case n.pilot != "" && (!now.Before(n.deadline) || (n.scienceOnly && rt.class != ClassScience)):
+		return false // a pilot past its deadline, or without chat (connector.go)
 	case rt.operator != "" && n.operator != rt.operator:
 		return false
 	case rt.onlySelf && n.operator != rt.self:
@@ -174,8 +174,10 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 		return true
 	case rt.trustedOnly:
 		return false
-	case rt.self != "" && n.operator == rt.self:
-		return true // one's own node sees nothing one did not send oneself
+	case rt.self != "" && n.operator == rt.self && n.pilot == "":
+		// One's own node sees nothing one did not send oneself. Not a pilot: the connector binds it
+		// to the account, and a connector (or its host) could bind a stranger's machine.
+		return true
 	case rt.trusted:
 		return false
 	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
