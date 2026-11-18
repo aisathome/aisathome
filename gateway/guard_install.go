@@ -81,6 +81,11 @@ var installEnv = map[string]bool{
 	"NPM_CONFIG_REGISTRY": true, "YARN_REGISTRY": true, "YARN_NPM_REGISTRY_SERVER": true,
 }
 
+// installEnvRe finds an assignment of an install-source variable anywhere in shell text, its value
+// whole even when quoted: GOPROXY="https://a|https://b" holds a '|' that installSeps would split
+// (code review, 2026-11-18). Also PowerShell's $env:GOPROXY="…".
+var installEnvRe = regexp.MustCompile(`(?i)\b(GOPROXY|PIP_INDEX_URL|PIP_EXTRA_INDEX_URL|PIP_FIND_LINKS|UV_INDEX_URL|UV_EXTRA_INDEX_URL|UV_INDEX|UV_DEFAULT_INDEX|UV_FIND_LINKS|NPM_CONFIG_REGISTRY|YARN_REGISTRY|YARN_NPM_REGISTRY_SERVER|CARGO_REGISTRIES_\w+_INDEX)\s*=\s*("[^"]*"|'[^']*'|[^\s;&|()]+)`)
+
 // envSources: the sources an assignment of name sets. Go adds "https://" to a GOPROXY entry
 // without a scheme.
 func envSources(name, val string) []string {
@@ -250,11 +255,15 @@ func installSources(w []string) []string {
 		out = append(out, flagValues(args, uvRunFlags)...)
 	case npmNames[name]:
 		out = append(out, flagValues(args, []string{"--registry"})...)
-		if hasWord(args, npmVerbs) {
+		verb, rest := npmVerb(args)
+		if verb == "workspace" && len(rest) > 1 { // yarn workspace <name> add …
+			verb, rest = npmVerb(rest[1:])
+		}
+		if npmVerbs[verb] {
 			return urls()
 		}
-		if hasWord(args, wordSet("set")) {
-			for _, a := range args {
+		if verb == "set" || verb == "config" && hasWord(rest, wordSet("set")) {
+			for _, a := range rest {
 				if strings.Contains(strings.ToLower(a), "registry") {
 					return urls()
 				}
@@ -263,7 +272,7 @@ func installSources(w []string) []string {
 	case name == "npx" || name == "pnpx" || name == "bunx":
 		return append(out, flagValues(args, npxFlags)...)
 	case name == "cargo":
-		if hasWord(args, cargoVerbs) {
+		if v, _ := firstVerb(args); cargoVerbs[v] { // not "cargo run -- install …"
 			return urls()
 		}
 		out = append(out, flagValues(args, []string{"--index"})...)
@@ -274,11 +283,11 @@ func installSources(w []string) []string {
 			}
 		}
 	case name == "gem":
-		if hasWord(args, gemVerbs) {
+		if v, _ := firstVerb(args); gemVerbs[v] {
 			return urls()
 		}
 	case condaNames[name]:
-		if hasWord(args, condaVerbs) {
+		if v, _ := firstVerb(args); condaVerbs[v] {
 			return urls()
 		}
 		out = append(out, flagValues(args, []string{"-c", "--channel"})...)
@@ -294,6 +303,24 @@ func installSources(w []string) []string {
 	return out
 }
 
+// npmValueFlags take the next word as their value when given without "=".
+var npmValueFlags = wordSet("--registry", "--prefix", "-C", "--workspace", "-w", "--userconfig", "--cache", "--loglevel", "--filter", "-F", "--dir", "--cwd")
+
+// npmVerb is npm's, pnpm's, yarn's or bun's subcommand: the first word that is neither a flag nor
+// a flag's value (not "update" in "npm run update -- …"), lower case, and the words after it.
+func npmVerb(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			if npmValueFlags[args[i]] {
+				i++
+			}
+			continue
+		}
+		return strings.ToLower(args[i]), args[i+1:]
+	}
+	return "", nil
+}
+
 // firstVerb is the first word of args that is not a flag, and the words after it.
 func firstVerb(args []string) (string, []string) {
 	for i, a := range args {
@@ -304,20 +331,37 @@ func firstVerb(args []string) (string, []string) {
 	return "", nil
 }
 
-// installConfigFile: a package manager reads its install sources from the file at p.
-func installConfigFile(p string) bool {
+// Kinds of package source files (installConfigFile).
+const (
+	configNone  = iota
+	configLines // every address outside comments is a source (.npmrc, pip.conf, requirements.txt)
+	configJSON  // npm's package files: every "key": "value" address but the project's own links
+)
+
+// installConfigFile: how a package manager reads install sources from the file at p.
+func installConfigFile(p string) int {
 	p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
 	base := path.Base(p)
 	switch base {
-	case ".npmrc", "npmrc", ".yarnrc", ".yarnrc.yml", "pip.conf", "pip.ini", ".condarc", "condarc", ".gemrc", "uv.toml":
-		return true
+	case ".npmrc", "npmrc", ".yarnrc", ".yarnrc.yml", "pip.conf", "pip.ini", ".condarc", "condarc", ".gemrc", "uv.toml",
+		"yarn.lock", "pnpm-lock.yaml":
+		return configLines
+	case "package.json", "package-lock.json", "npm-shrinkwrap.json":
+		return configJSON
 	}
 	if strings.HasSuffix(p, ".cargo/config") || strings.HasSuffix(p, ".cargo/config.toml") {
-		return true
+		return configLines
 	}
-	return (strings.HasPrefix(base, "requirements") || strings.HasPrefix(base, "constraints")) &&
-		(strings.HasSuffix(base, ".txt") || strings.HasSuffix(base, ".in"))
+	if (strings.HasPrefix(base, "requirements") || strings.HasPrefix(base, "constraints")) &&
+		(strings.HasSuffix(base, ".txt") || strings.HasSuffix(base, ".in")) {
+		return configLines
+	}
+	return configNone
 }
+
+// configWords are the words of a source file's text with quotes taken out, but not backslashes:
+// the file is no shell text, and a client may read "\\" in an address as '/' (WHATWG URLs).
+var configWords = strings.NewReplacer(`"`, " ", "'", " ")
 
 // configSources are the words of a package manager's source file text, without comment lines and
 // comments after " #".
@@ -331,7 +375,25 @@ func configSources(text string) []string {
 		if i := strings.Index(line, " #"); i >= 0 {
 			line = line[:i]
 		}
-		out = append(out, installWords(line)...)
+		out = append(out, strings.Fields(configWords.Replace(line))...)
+	}
+	return out
+}
+
+// jsonPairRe is a "key": "value" pair of JSON text, a whole file or an edit's piece of one.
+var jsonPairRe = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+
+// npmLinkKeys hold the project's own links in npm's package files, which npm never installs from.
+var npmLinkKeys = wordSet("homepage", "url", "funding", "$schema", "bugs", "repository", "author", "email", "web")
+
+// jsonSources are the values of npm package-file text that npm can install from: dependency specs
+// ("x": "https://…/x.tgz", "git+https://…"), "resolved" and "version" addresses of a lock file.
+func jsonSources(text string) []string {
+	var out []string
+	for _, m := range jsonPairRe.FindAllStringSubmatch(text, -1) {
+		if !npmLinkKeys[strings.ToLower(m[1])] {
+			out = append(out, m[2])
+		}
 	}
 	return out
 }
@@ -352,20 +414,32 @@ func installSourceHit(name, args, req string, known knownAddrs) bool {
 			}
 		}
 	}
-	for _, seg := range installSeps.Split(commandText(name, args), -1) {
+	cmds := commandText(name, args)
+	for _, seg := range installSeps.Split(cmds, -1) {
 		add(installSources(installWords(seg)))
 	}
+	for _, m := range installEnvRe.FindAllStringSubmatch(cmds, -1) {
+		add(envSources(m[1], unquote.Replace(m[2])))
+	}
 	if vals, ok := argValues(args); ok {
-		file := false
+		lines, js := false, false
 		for _, k := range []string{"filePath", "path", "file_path"} {
 			for _, p := range vals[k] {
-				file = file || installConfigFile(p)
+				switch installConfigFile(p) {
+				case configLines:
+					lines = true
+				case configJSON:
+					js = true
+				}
 			}
 		}
 		for _, k := range []string{"content", "newString", "new_string"} {
 			for _, c := range vals[k] {
-				if file {
+				if lines {
 					add(configSources(c))
+				}
+				if js {
+					add(jsonSources(c))
 				}
 			}
 		}
