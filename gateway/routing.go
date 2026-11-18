@@ -164,8 +164,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	switch {
 	case rt.exclude[n] || n.held:
 		return false
-	case n.pilot != "" && (!now.Before(n.deadline) || (n.scienceOnly && rt.class != ClassScience)):
-		return false // a pilot past its deadline, or without chat (connector.go)
+	case n.pilot != "" && (n.registering || !now.Before(n.deadline) || (n.scienceOnly && rt.class != ClassScience)):
+		return false // a pilot still registering, past its deadline, or without chat (connector.go)
 	case rt.operator != "" && n.operator != rt.operator:
 		return false
 	case rt.onlySelf && (n.operator != rt.self || n.pilot != ""): // a pilot is not "my own" (the connector linked it)
