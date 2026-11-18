@@ -139,7 +139,8 @@ The flow:
    lease go first, then lower `order`, then oldest. A task that came back is held for its last
    worker for a while, because that worker has its checkpoint.
 3. **Run.** The worker (the harness) runs the task: an agent session in a sandbox whose only
-   way out is a forwarder to the gateway's API. Its model calls are ordinary chat requests
+   way out is a forwarder that passes only model calls (chat completions and the model list) to
+   the gateway, so the key it adds opens nothing else. Its model calls are ordinary chat requests
    with the project's key, class `science`: lowest priority, preemptable, within the
    project's node share and budget. A call may name its task in an `X-Aisathome-Task` header.
 4. **Heartbeat.** The worker renews the lease while the task runs. A lease that runs out puts

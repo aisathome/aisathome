@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import shutil
 import socket
 import ssl
@@ -130,6 +131,7 @@ class Upstream:
 
     def __init__(self, cert: tuple[str, str] | None = None, gate: threading.Event | None = None):
         self.seen: list[bytes] = []
+        self.conns = 0               # connections accepted, whatever came over them
         self.gate = gate             # a stream: the first event, then the rest once the gate opens
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
@@ -147,6 +149,7 @@ class Upstream:
                 c, _ = self.sock.accept()
             except OSError:
                 return
+            self.conns += 1
             try:
                 if self.ctx:
                     c = self.ctx.wrap_socket(c, server_side=True)
@@ -287,10 +290,92 @@ class Forwarder(unittest.TestCase):
                              (b"GET /v1/models HTTP/1.1\r\n folded: header", b"400")):
             out = self.ask(lport, line + b"\r\nHost: x\r\n\r\n")
             self.assertTrue(out.startswith(b"HTTP/1.1 " + status), (line, out[:40]))
-        self.assertEqual(up.seen, [])
+        self.assertEqual((up.seen, up.conns), ([], 0))
         self.assertTrue(self.ask(lport, b"GET /v1/models HTTP/1.1\r\nHost: x\r\n\r\n").endswith(b"ok"))
         self.assertEqual(len(up.seen), 1)
         up.close()
+
+    # Routes of an aisathome gateway under /v1 besides the model calls (gateway/*.go), with a project key:
+    # tasks, campaigns, results, status, the queue, stats, the node socket. None may get the key.
+    GATEWAY_V1 = (
+        "POST /v1/projects/prove2me/tasks", "GET /v1/projects/prove2me/tasks",
+        "GET /v1/projects/prove2me/tasks/t1", "POST /v1/projects/prove2me/tasks/claim",
+        "POST /v1/projects/prove2me/tasks/t1/cancel", "POST /v1/projects/prove2me/tasks/t1/complete",
+        "POST /v1/projects/prove2me/tasks/t1/fail", "POST /v1/projects/prove2me/tasks/t1/heartbeat",
+        "POST /v1/projects/prove2me/tasks/t1/exported", "POST /v1/projects/prove2me/tasks/t1/max_tries",
+        "GET /v1/projects/prove2me/campaigns", "GET /v1/projects/prove2me/campaigns/c1",
+        "PUT /v1/projects/prove2me/campaigns/c1", "PATCH /v1/projects/prove2me/campaigns/c1",
+        "DELETE /v1/projects/prove2me/campaigns/c1", "GET /v1/projects/prove2me/results",
+        "POST /v1/projects/prove2me/results", "DELETE /v1/projects/prove2me/results/r1",
+        "GET /v1/projects/prove2me/status", "POST /v1/projects/prove2me/status",
+        "GET /v1/projects/prove2me/queue", "GET /v1/tasks", "GET /v1/stats", "GET /v1/stats/credit",
+        "GET /v1/stats/history", "GET /v1/node/connect", "POST /account/keys", "GET /healthz")
+
+    # Ways to dress another path (or method) up as a model call. Each is refused.
+    TRICKS = (
+        "POST /v1/chat/completions/../projects/prove2me/tasks", "POST /v1/chat/completions/%2e%2e/tasks",
+        "POST /v1/chat/%2e%2e/projects/prove2me/tasks", "POST /v1/chat/completions%2f..%2fprojects",
+        "POST /v1/./chat/completions", "POST /v1/chat/./completions", "POST //v1/chat/completions",
+        "POST /v1//chat/completions", "POST /v1/chat//completions", "POST /v1/chat/completions/",
+        "POST /v1/chat/completions?x=1", "POST /v1/chat/completions?/../projects/prove2me/tasks",
+        "POST /v1/chat/completions#/../../projects/prove2me/tasks", "POST /v1/chat/completions;x",
+        "POST /v1/chat/completion%73", "POST /v1/Chat/Completions", "POST /V1/chat/completions",
+        "POST /v1/chat/completions\\..\\projects", "POST /v1/models", "GET /v1/models/", "GET /v1/models?x",
+        "GET /v1/models/../tasks", "GET /v1/chat/completions", "PUT /v1/chat/completions",
+        "DELETE /v1/chat/completions", "HEAD /v1/models", "OPTIONS /v1/chat/completions",
+        "post /v1/chat/completions", "POST /chat/completions", "POST /v1/v1/chat/completions",
+        "POST /v1/projects/prove2me/chat/completions", "POST /v1/tasks/chat/completions")
+
+    def test_only_model_calls_get_the_key(self):
+        """The forwarder's key opens an aisathome gateway's whole /v1 API (a project key creates and cancels
+        tasks, writes campaigns and results). Code in the sandbox must reach only the model calls:
+        POST chat/completions and GET models under the base path, exactly. Every other route, and every
+        dressed-up form of an allowed one, is a 403 before the endpoint is contacted (no connection, so the
+        key is never sent); the allowed ones still pass with the key."""
+        up = Upstream()
+        lport = self.start(up)
+        for req in self.GATEWAY_V1 + self.TRICKS:
+            out = self.ask(lport, req.encode() + b" HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            self.assertTrue(out.startswith(b"HTTP/1.1 403") or out.startswith(b"HTTP/1.1 400"), (req, out[:60]))
+            m, t = req.split(" ", 1)
+            self.assertFalse(egress_forward.path_allowed(m, t, "/v1"), req)
+        self.assertEqual((up.seen, up.conns), ([], 0))
+        for req in ("POST /v1/chat/completions", "GET /v1/models"):
+            out = self.ask(lport, req.encode() + b" HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            self.assertTrue(out.endswith(b"ok"), (req, out[:60]))
+        self.assertEqual([x.split(b"\r\n")[0] for x in up.seen],
+                         [b"POST /v1/chat/completions HTTP/1.1", b"GET /v1/models HTTP/1.1"])
+        self.assertTrue(all(b"Authorization: Bearer sk-secret-key-0123456789" in x for x in up.seen))
+        up.close()
+
+    def test_the_allowlist_follows_the_base_path(self):
+        for prefix in ("/", ""):
+            self.assertTrue(egress_forward.path_allowed("POST", "/chat/completions", prefix))
+            self.assertTrue(egress_forward.path_allowed("GET", "/models", prefix))
+            self.assertFalse(egress_forward.path_allowed("POST", "/v1/chat/completions", prefix))
+            self.assertFalse(egress_forward.path_allowed("POST", "//chat/completions", prefix))
+        for prefix in ("/api/v1", "/api/v1/", "api/v1"):
+            self.assertTrue(egress_forward.path_allowed("POST", "/api/v1/chat/completions", prefix))
+            self.assertFalse(egress_forward.path_allowed("POST", "/v1/chat/completions", prefix))
+            self.assertFalse(egress_forward.path_allowed("POST", "/api/v1/tasks", prefix))
+
+    @unittest.skipUnless((Path(__file__).resolve().parents[2] / "gateway" / "api.go").is_file(),
+                         "needs the gateway's source beside the harness (this repository)")
+    def test_no_other_gateway_route_is_allowed(self):
+        """Every route the gateway registers (gateway/*.go), with its path parameters filled in, is refused,
+        except the two model calls: a route added later is covered without editing this test."""
+        gw = Path(__file__).resolve().parents[2] / "gateway"
+        routes = set()
+        for f in gw.glob("*.go"):
+            if not f.name.endswith("_test.go"):
+                routes |= set(re.findall(r'HandleFunc\("([A-Z]+) (/[^"]*)"', f.read_text()))
+        self.assertGreater(len(routes), 20)
+        allowed = []
+        for method, pattern in sorted(routes):
+            path = re.sub(r"\{\$\}", "", re.sub(r"\{[a-z_]+\.{0,3}\}", "x", pattern))
+            if egress_forward.path_allowed(method, path, "/v1"):
+                allowed.append(f"{method} {path}")
+        self.assertEqual(sorted(allowed), ["GET /v1/models", "POST /v1/chat/completions"])
 
     def test_control_bytes_cannot_split_off_a_second_request(self):
         """A target that passes the base-path check but holds LF, TAB, CR, NUL or DEL could be split into two
@@ -315,8 +400,8 @@ class Forwarder(unittest.TestCase):
             with self.assertRaises(egress_forward.Refused, msg=repr(line)):
                 egress_forward.rewrite(line + b"\r\nHost: x", "api", "/v1", "k")
         self.assertEqual(up.seen, [])
-        ok = egress_forward.rewrite(b"GET /v1/models?q=a%20b HTTP/1.1\r\nX-A: tab\there \x85", "api", "/v1", "k")
-        self.assertTrue(ok.startswith(b"GET /v1/models?q=a%20b HTTP/1.1\r\nHost: api\r\nX-A: tab\there \x85\r\n"))
+        ok = egress_forward.rewrite(b"GET /v1/models HTTP/1.1\r\nX-A: tab\there \x85", "api", "/v1", "k")
+        self.assertTrue(ok.startswith(b"GET /v1/models HTTP/1.1\r\nHost: api\r\nX-A: tab\there \x85\r\n"))
         up.close()
 
     def test_a_key_that_could_break_a_header_is_refused(self):

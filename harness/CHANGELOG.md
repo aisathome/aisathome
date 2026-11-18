@@ -14,6 +14,14 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   back before a waiting session. With one slot, a pre-pass's back-to-back compiles kept another session's build
   waiting (measured on a 2-vCPU runner, 2026-11-18).
 
+### Security
+
+- The egress forwarder adds the endpoint's key only to the model calls: `POST <base>/chat/completions` and
+  `GET <base>/models`, the exact path. Every other path under the base path, and every other method, is
+  refused (403) before the endpoint is contacted. Before, any path under the base path got the key, so code
+  run in the sandbox could use a gateway project key for the project's task, campaign and result API under
+  the same `/v1`. A request target with a query string is now refused too.
+
 ## [0.3.0] - unreleased
 
 The execution side of a stateless queue worker, taken out of prove2me's worker (which now uses it, with the

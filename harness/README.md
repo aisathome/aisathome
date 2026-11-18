@@ -42,8 +42,9 @@ an AIs@home gateway. Node operators do not need it.
 - **The sandbox** (`sandbox/`): per session, an internal Docker network with no route out and no other
   session on it; the only exit is a forwarder to that session's endpoint (one per endpoint and key). The
   model's client speaks plain HTTP to the forwarder, which adds the API key and speaks TLS to the
-  endpoint (certificate checked), only to the endpoint's base path: the key never enters the model's
-  container. All capabilities dropped, no new privileges, memory and process caps, per-session
+  endpoint (certificate checked), only for the model calls (`POST <base>/chat/completions`,
+  `GET <base>/models`; any other path or method is refused): the key never enters the model's container
+  and opens nothing else the endpoint serves, such as a gateway's task API. All capabilities dropped, no new privileges, memory and process caps, per-session
   copy-on-write overlays for shared build caches, web tools off. A `Recipe` says what a project needs in
   the container (image, toolchain mounts, environment, commands that take a build slot).
 - **The host** (`host.py`): the machine's limits and its shared build slots, used by the sandboxes and by
