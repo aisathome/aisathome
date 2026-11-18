@@ -456,6 +456,7 @@ func TestPilotRouting(t *testing.T) {
 	// The own-node exemption is not for pilots: the connector made the link, not the person.
 	own := &route{class: ClassChat, trusted: true, pii: "email", self: pilot.operator}
 	check("own-account pilot, personal data", own, false)
+	check("own-account pilot, only my own nodes", &route{class: ClassChat, self: pilot.operator, onlySelf: true}, false)
 	ownNode := &nodeConn{id: "n-00000002", operator: pilot.operator, account: "cx:1", probEnd: now}
 	if !own.allows(ownNode, now) {
 		t.Error("an account's own standalone node lost its exemption")
