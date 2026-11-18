@@ -7,6 +7,7 @@
 import { day, hhmm, theoremURL } from './prove2me-current';
 import { compact, leafRoleLabel, taskTableHTML } from './prove2me-live';
 import { leafPlan, leafPlanHTML } from './prove2me-outlines';
+import { attemptOf, provesLeaf } from './prove2me-outcomes';
 import type { Kpis, ScienceView, SubRec, TrialDetail, TrialSum } from './prove2me-records';
 import { shortSpan, tokTitleOf } from './prove2me-trials';
 
@@ -164,15 +165,18 @@ export function trialDetailHTML(d: TrialDetail): string {
 	const head = `Trial ${t.number} · ${t.start ? span({ start: t.start, end: t.status === 'running' ? null : t.end ?? t.start }) : 'being prepared'} · ${t.all.proved} of ${t.all.runs} proved`;
 	const rows = d.leaves
 		.map((l) => {
-			const res = l.reuse ? 'closed' : l.proved ? 'proved' : /^(Running|Queued)/.test(l.summary) ? 'running' : 'failed';
+			// as the build's earlier trials: the outcome first (the outline that proved it), the leaf's line under it
+			const res = l.reuse ? 'reused' : l.proved ? 'proved' : /^(Running|Queued)/.test(l.summary) ? 'running' : 'not_proved';
 			const outlines = new Set(l.detail.rows.map((r) => r.gen)).size;
+			const won = l.detail.rows.find((r) => provesLeaf(attemptOf(r)));
+			const word = { reused: 'Closed by reuse', proved: won && outlines > 1 ? `Proved with outline ${won.gen}` : 'Proved', running: 'Running', not_proved: 'Not proved' }[res];
 			const mins = l.detail.rows.reduce((a, r) => a + (r.minutes ?? 0), 0);
 			return (
 				`<tr data-leaf="${esc(l.alias)}" data-leaf-id="${esc(l.id)}" data-outcome="${res}">` +
 				`<th scope="row">${esc(l.id)}${l.alias && l.alias !== l.id ? `<span class="sub" data-alias title="The id the trials used">${esc(l.alias)}</span>` : ''}</th>` +
 				`<td class="thm">${link(l.url, l.theorem)}${l.title ? `<span class="sub">${esc(plainTitle(l.title))}</span>` : ''}</td>` +
 				`<td data-label="Kind">${esc(leafRoleLabel[l.role] ?? 'Open')}${l.earlier.length ? `<span class="sub">tried before in trial${l.earlier.length > 1 ? 's' : ''} ${esc(andList(l.earlier.map(String)))}</span>` : ''}</td>` +
-				`<td data-label="Result" class="result ${res === 'proved' ? 'proved' : res === 'failed' ? 'failed' : ''}" data-cell="result">${esc(l.summary)}</td>` +
+				`<td data-label="Result" class="result ${res === 'proved' ? 'proved' : res === 'not_proved' ? 'failed' : ''}" data-cell="result">${esc(word)}<span class="sub" data-leaf-line>${esc(l.summary)}</span></td>` +
 				`<td data-label="Tasks" class="num">${l.detail.rows.length}<span class="sub">${outlines === 1 ? '1 outline' : `${outlines} outlines`}</span></td>` +
 				`<td data-label="Model min" class="num">${mins.toFixed(1)}</td>` +
 				`<td data-label="Tokens computed" class="num tok" data-tokens="${l.detail.computed}" data-with-cache="${l.detail.total}" title="${esc(tokTitleOf(l.detail.computed, l.detail.total, l.detail.exact))}">${esc(compact(l.detail.computed))}</td>` +
