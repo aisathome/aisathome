@@ -35,6 +35,8 @@ type chatReq struct {
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
+	arrived      time.Time  // when its body was read, for the time to its first token (pressure.go); zero = not counted
+	firstSeen    bool       // its first generated token came, on any attempt
 }
 
 // maxCollected bounds a non-streaming answer; all of them share g.buffered.
@@ -426,6 +428,10 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 	g := rl.g
 	if hasText(m.Data) {
 		rl.relayed++
+		if req := rl.req; !req.firstSeen && !req.arrived.IsZero() {
+			req.firstSeen = true
+			g.press.firstToken(req.class, time.Since(req.arrived), time.Now())
+		}
 	}
 	rl.mt.chunk(m.Data)
 	rl.chunks++

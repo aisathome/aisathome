@@ -34,6 +34,7 @@ type Gateway struct {
 	science  map[*sciRun]struct{}  // science requests holding a slot, for preemption (preempt.go); guarded by mu
 	projects atomic.Pointer[projectTable]
 	hist     *history         // daily snapshots for the network page (history.go)
+	press    *pressure        // hourly and daily network pressure (pressure.go)
 	pstatus  *projectStatuses // runners' latest status, for the operations page (projstatus.go)
 	pubq     publicQueues     // built public views of task queues (queue_public.go)
 	ptasks   publicTaskList   // the built list of GET /v1/tasks (tasks_public.go)
@@ -127,7 +128,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	// and what it opens is closed again when a later one fails; background work starts last, once
 	// nothing can fail any more, so a gateway that does not start leaves no goroutine or file behind.
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), press: newPressure(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
@@ -188,6 +189,8 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		g.credit.load(log)
 		g.hist.path = filepath.Join(cfg.StateDir, "history.json")
 		g.hist.load(log)
+		g.press.path = filepath.Join(cfg.StateDir, pressureFile)
+		g.press.load(log, time.Now())
 	}
 	// The usage log rebuilds today's and all-time statistics, and the history's request and
 	// token counts of the days it still covers.
@@ -231,6 +234,11 @@ func (g *Gateway) startBackground() {
 				log.Warn("saving history failed", "err", err)
 			}
 		})
+		g.every(pressureSaveEvery, func() {
+			if err := g.press.save(); err != nil {
+				log.Warn("saving pressure statistics failed", "err", err)
+			}
+		})
 		g.every(scienceBackupCheck, g.backupScience)
 	}
 	sample := g.cfg.HistorySample
@@ -238,6 +246,7 @@ func (g *Gateway) startBackground() {
 		sample = time.Minute
 	}
 	g.every(sample, func() { g.hist.sample(g.nodesOnline(), time.Now()) })
+	g.every(pressureSampleEvery, func() { g.press.sample(g.pressureNow(), time.Now()) })
 }
 
 // closeFiles closes what New opened: the usage log and the science database.
@@ -278,5 +287,5 @@ func (g *Gateway) every(d time.Duration, f func()) {
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
 	g.bg.Wait()
-	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.closeFiles())
+	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.closeFiles())
 }

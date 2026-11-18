@@ -18,6 +18,13 @@ and **(site)** are live on aisathome.org once deployed.
   `accounts notice set "<text>"` shows a short plain-text banner on the account pages and, through
   `GET /account/notice/chat`, in the chat. See "Contact address and notice" in `docs/gateway.md`.
   (gateway)
+- **Network pressure.** `GET /v1/stats/pressure` gives, per hour (two weeks) and per day (90
+  days), how full the network was: GPU slots online and busy, requests waiting for a slot and
+  how long they waited (p50/p95 per class), the time to the first token per class, how requests
+  ended (ok, failed, blocked, refused, preempted, cancelled), guard holds, and science's demand
+  (min(open tasks, the slots science may use)). Aggregates only; kept in
+  `state_dir/pressure.json`. The network page shows it in a new "Pressure" section with a line
+  on what limits the network now. (gateway, site)
 - **Campaigns and external results.** A project keeps its public record in the gateway: campaigns
   (a named round of work with a status, dates, labels, a short text and its items) and external
   results (what an outside service said about a piece of the work: a state, the verdict, times, and

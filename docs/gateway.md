@@ -332,6 +332,25 @@ operators):
   (per class: `requests` and tokens), and `nodes_peak` / `nodes_avg` (nodes online, sampled
   every minute; missing for days before the gateway kept samples). Kept in
   `state_dir/history.json`; on start the days the usage log still covers are recounted from it.
+- `GET /v1/stats/pressure?range=24h|48h|7d|14d|30d|90d` (default `7d`): how full the network was,
+  per UTC hour (up to 14 days) or per UTC day (up to 90 days), oldest first, hours or days without
+  data left out; `total` sums the range and `last_24h` the last 24 hours; `now` is the current
+  sample. Per bucket: `slots` and `busy` (GPU slots on nodes that serve: not held, not paused; a
+  node's slots are its largest model's), `utilisation` (busy slot-time over slot-time online,
+  missing without slots), `queue.people` and `queue.science` (requests waiting for a slot),
+  `held` (nodes held by a guard) and `holds` (new holds), `science_slots` (slots science may use:
+  each project's trust and agent rules and its share of nodes), `open_tasks` (science tasks queued
+  or running) and `demand` = min(open tasks, science slots), per project then in all, the signal a
+  runner pool can be sized by. Each of these is sampled every 10 s and given as `avg` and `peak`
+  (the queue's peak also counts every request that starts to wait). `wait_s` (from arrival to a
+  slot, or to giving up) and `first_token_s` (from arrival, once its body is read, to the first
+  generated token the gateway receives) per class: `count`, `p50`, `p95`, in seconds, each the
+  upper edge of a log-spaced bin (never more than the longest seen; 0 = no wait). `outcomes`: one
+  per request, however many nodes it tried: `ok`, `failed`, `blocked` (a guard),
+  `refused` (no node took it: busy until its time ran out, queue full, no node with the model or
+  context), `preempted` (science given up for a person) and `cancelled` (the client left).
+  Answers are built at most every 15 s. Kept in `state_dir/pressure.json`, written every minute
+  and at shutdown.
 - `GET /v1/stats/credit` and `/stats/`: credit (see [credit.md](credit.md)).
 
 ## A chat front end (Open WebUI)
