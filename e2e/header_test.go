@@ -69,7 +69,7 @@ func TestThemeCookieSetsDataTheme(t *testing.T) {
 				t.Fatalf("%s with %q: theme control marks %v, want %s", p.path, c.cookie, pressed, want)
 			}
 			if p.path == "/account?next=chat" {
-				google := regexp.MustCompile(`<a class="btn-google"[^>]*>(?s:.*?)</a>`).FindString(page)
+				google := regexp.MustCompile(`<button class="btn-google"[^>]*>(?s:.*?)</button>`).FindString(page)
 				if (c.want == "") != strings.Contains(google, "<picture>") ||
 					c.want != "" && !strings.Contains(google, `<img src="/account/assets/google-signin-`+c.want+`.`) {
 					t.Fatalf("with %q: Google button %s", c.cookie, google)

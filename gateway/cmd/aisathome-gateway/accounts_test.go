@@ -268,3 +268,74 @@ func TestLimitsLineAndThousands(t *testing.T) {
 		}
 	}
 }
+
+// contacts lists the opted-in addresses (oldest consent first), one account's with an id;
+// contact-clear deletes one; banned accounts have none.
+func TestAccountsContacts(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "accounts.json")
+	store, _ := gateway.OpenAccountStore(file)
+	for _, id := range []string{"gh:1", "google:2", "gh:3"} {
+		store.SignIn(id, time.Now())
+	}
+	store.SetContact("google:2", "two@example.com", gateway.ContactGoogle, time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC))
+	store.SetContact("gh:1", "one@example.com", gateway.ContactGitHub, time.Date(2026, 11, 18, 10, 30, 0, 0, time.UTC))
+	run := func(args ...string) (string, error) {
+		var out, msg bytes.Buffer
+		err := runAccounts(append([]string{"-file", file}, args...), &out, &msg)
+		return out.String(), err
+	}
+	out, err := run("contacts")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if err != nil || len(lines) < 4 || strings.Join(strings.Fields(lines[1]), " ") != "google:2 active two@example.com google 2026-11-18 09:00" ||
+		strings.Join(strings.Fields(lines[2]), " ") != "gh:1 active one@example.com github 2026-11-18 10:30" ||
+		!strings.Contains(out, "2 address(es)") || strings.Contains(out, "gh:3") {
+		t.Fatalf("contacts: %v\n%s", err, out)
+	}
+	if out, err := run("contacts", "gh:1"); err != nil || !strings.Contains(out, "one@example.com") || strings.Contains(out, "two@") {
+		t.Fatalf("contacts gh:1: %v\n%s", err, out)
+	}
+	if _, err := run("contacts", "gh:3"); err == nil || !strings.Contains(err.Error(), "no contact address") {
+		t.Fatalf("contacts gh:3: %v", err)
+	}
+	if _, err := run("contact-clear", "gh:1"); err != nil {
+		t.Fatal(err)
+	}
+	run("ban", "google:2")
+	if out, _ := run("contacts"); strings.Contains(out, "@example.com") || !strings.Contains(out, "0 address(es)") {
+		t.Fatalf("after clear and ban: %s", out)
+	}
+	raw, _ := os.ReadFile(file)
+	if strings.Contains(string(raw), "@example.com") {
+		t.Fatalf("the file keeps an address: %s", raw)
+	}
+}
+
+func TestAccountsNotice(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "accounts.json")
+	run := func(args ...string) (string, error) {
+		var out, msg bytes.Buffer
+		err := runAccounts(append([]string{"-file", file}, args...), &out, &msg)
+		return strings.TrimSpace(out.String()), err
+	}
+	if out, err := run("notice"); err != nil || out != "no notice" {
+		t.Fatalf("notice: %q %v", out, err)
+	}
+	if _, err := run("notice", "set", "Maintenance 18:00 UTC"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := run("notice"); !strings.HasPrefix(out, "Maintenance 18:00 UTC (set ") {
+		t.Fatalf("notice: %q", out)
+	}
+	for _, bad := range [][]string{{"notice", "set"}, {"notice", "set", "a", "b"}, {"notice", "set", "two\nlines"},
+		{"notice", "set", strings.Repeat("x", 301)}, {"notice", "show"}} {
+		if _, err := run(bad...); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	if _, err := run("notice", "clear"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := run("notice"); out != "no notice" {
+		t.Fatalf("after clear: %q", out)
+	}
+}

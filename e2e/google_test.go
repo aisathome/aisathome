@@ -26,8 +26,9 @@ import (
 
 // fakeGoogle plays Google's authorization, token and key endpoints. /authorize stands in for
 // the user's consent: it binds a code to the sub in "as", the nonce and the PKCE challenge.
-// /token answers with an RS256-signed ID token that carries an email, a name and a picture
-// too, so tests can show the gateway drops them.
+// /token answers with an RS256-signed ID token that carries a verified email, a name and a
+// picture too, so tests can show the gateway drops them (and keeps the email only when the user
+// asked for notices: contact_test.go). /authorize takes scope "openid" or "openid email".
 type fakeGoogle struct {
 	*httptest.Server
 	key *rsa.PrivateKey
@@ -72,7 +73,7 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 		switch r.URL.Path {
 		case "/authorize":
 			q := r.URL.Query()
-			if q.Get("response_type") != "code" || q.Get("scope") != "openid" || q.Get("client_id") != googleClientID ||
+			if q.Get("response_type") != "code" || q.Get("scope") != "openid" && q.Get("scope") != "openid email" || q.Get("client_id") != googleClientID ||
 				q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" {
 				http.Error(w, "bad authorization request", http.StatusBadRequest)
 				return
@@ -102,7 +103,7 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 			hdr := map[string]any{"alg": "RS256", "kid": "g1", "typ": "JWT"}
 			claims := map[string]any{"iss": "https://accounts.google.com", "aud": googleClientID, "azp": googleClientID,
 				"sub": grant.Get("as"), "iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "nonce": grant.Get("nonce"),
-				"email": "someone@gmail.example", "name": "Some One", "picture": "https://pics.example/someone"}
+				"email": "someone@gmail.example", "email_verified": true, "name": "Some One", "picture": "https://pics.example/someone"}
 			key := fg.key
 			if mutate != nil {
 				if k := mutate(hdr, claims); k != nil {
@@ -295,7 +296,7 @@ func TestGoogleIDTokenChecks(t *testing.T) {
 func TestGoogleOnly(t *testing.T) {
 	a, fg := newGoogleRig(t, 100, func(c *gateway.AccountsConfig) { c.GitHubClientID, c.GitHubClientSecret = "", "" })
 	if _, page := a.get(t, "/account?next=chat", ""); strings.Contains(page, "GitHub") ||
-		!strings.Contains(page, `href="/account/login?provider=google&amp;next=chat"`) {
+		!strings.Contains(page, `name="provider" value="google"`) || !strings.Contains(page, `<input type="hidden" name="next" value="chat">`) {
 		t.Fatalf("sign-in page: %s", page)
 	}
 	if r, _ := a.get(t, "/account/login", ""); !strings.HasPrefix(r.Header.Get("Location"), fg.URL+"/authorize?") {

@@ -1,7 +1,9 @@
 // Google sign-in: OpenID Connect with the "openid" scope only, so Google tells us nothing
 // but its account identifier ("sub"). No email, no profile; the ID token is checked and
 // dropped, and only "google:<sub>" is kept. The flow is the authorization-code flow with
-// state, a nonce and PKCE (S256).
+// state, a nonce and PKCE (S256). Only when the user ticks "Email me about important changes
+// and outages" does the flow add the "email" scope, and the address is kept only if Google
+// says it is verified (contact.go).
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -31,9 +33,14 @@ const (
 	maxGoogleSub = 255
 )
 
-// googleAuthURL is where handleLogin sends the browser: scope "openid" and nothing else.
+// googleAuthURL is where startLogin sends the browser: scope "openid", plus "email" only when
+// the user asked for notices.
 func (g *Gateway) googleAuthURL(f oauthFlow) string {
-	q := url.Values{"client_id": {g.acfg.GoogleClientID}, "response_type": {"code"}, "scope": {"openid"},
+	scope := "openid"
+	if f.contact == "1" {
+		scope = "openid email"
+	}
+	q := url.Values{"client_id": {g.acfg.GoogleClientID}, "response_type": {"code"}, "scope": {scope},
 		"redirect_uri": {g.acfg.PublicURL + "/account/callback/google"}, "state": {f.state},
 		"nonce": {f.nonce}, "code_challenge": {pkceChallenge(f.verifier)}, "code_challenge_method": {"S256"}}
 	return g.acfg.GoogleAuthURL + "?" + q.Encode()
@@ -52,20 +59,21 @@ func (g *Gateway) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		g.accountPage(w, r, http.StatusBadRequest, pageData{Error: "The sign-in expired or came from elsewhere. Please try again."})
 		return
 	}
-	id, err := g.googleID(r.Context(), r.URL.Query().Get("code"), f)
+	id, addr, err := g.googleID(r.Context(), r.URL.Query().Get("code"), f)
 	if err != nil {
 		g.log.Warn("google sign-in failed", "err", err) // errors never carry tokens or claims
 		g.accountPage(w, r, http.StatusBadGateway, pageData{Error: "Google sign-in failed. Please try again."})
 		return
 	}
-	g.finishSignIn(w, r, id, f.next)
+	g.finishSignIn(w, r, f, id, addr, ContactGoogle)
 }
 
-// googleID exchanges an authorization code for an ID token and returns "google:<sub>". The
-// access token in the same answer is never decoded.
-func (g *Gateway) googleID(ctx context.Context, code string, f oauthFlow) (string, error) {
+// googleID exchanges an authorization code for an ID token and returns "google:<sub>" and,
+// when the flow asked for it, the verified address (else ""). The access token in the same
+// answer is never decoded.
+func (g *Gateway) googleID(ctx context.Context, code string, f oauthFlow) (string, string, error) {
 	if code == "" {
-		return "", errors.New("no code")
+		return "", "", errors.New("no code")
 	}
 	form := url.Values{"client_id": {g.acfg.GoogleClientID}, "client_secret": {g.acfg.GoogleClientSecret},
 		"code": {code}, "grant_type": {"authorization_code"}, "code_verifier": {f.verifier},
@@ -78,54 +86,55 @@ func (g *Gateway) googleID(ctx context.Context, code string, f oauthFlow) (strin
 		Error   string `json:"error"`
 	}
 	if err := g.getJSON(req, &tok); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if tok.IDToken == "" {
-		return "", fmt.Errorf("token exchange: no id_token (%.40s)", tok.Error)
+		return "", "", fmt.Errorf("token exchange: no id_token (%.40s)", tok.Error)
 	}
-	sub, err := g.verifyIDToken(ctx, tok.IDToken, f.nonce, time.Now())
+	sub, addr, err := g.verifyIDToken(ctx, tok.IDToken, f.nonce, time.Now(), f.contact == "1")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return "google:" + sub, nil
+	return "google:" + sub, addr, nil
 }
 
-// verifyIDToken checks a Google ID token and returns its sub.
+// verifyIDToken checks a Google ID token and returns its sub and, with wantEmail, its address
+// if Google marks it verified (else "").
 //
 // The token comes straight from Google's token endpoint over TLS, which OpenID Connect
 // (Core 3.1.3.7) accepts in place of a signature check. We check the RS256 signature against
 // Google's published keys anyway, as defence in depth: a wrong token URL, a proxy or a bug in
 // the exchange then cannot turn a forged token into an account. The claim checks (iss, aud,
 // exp, iat, nonce) are needed either way.
-func (g *Gateway) verifyIDToken(ctx context.Context, raw, nonce string, now time.Time) (string, error) {
+func (g *Gateway) verifyIDToken(ctx context.Context, raw, nonce string, now time.Time, wantEmail bool) (string, string, error) {
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
-		return "", errors.New("id token: not a JWS")
+		return "", "", errors.New("id token: not a JWS")
 	}
 	var hdr struct {
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
 	}
 	if err := decodeSegment(parts[0], &hdr); err != nil {
-		return "", fmt.Errorf("id token header: %w", err)
+		return "", "", fmt.Errorf("id token header: %w", err)
 	}
 	if hdr.Alg != "RS256" { // never "none" or an HMAC keyed with something public
-		return "", errors.New("id token: alg is not RS256")
+		return "", "", errors.New("id token: alg is not RS256")
 	}
 	key, err := g.gkeys.key(ctx, hdr.Kid)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return "", errors.New("id token: bad signature encoding")
+		return "", "", errors.New("id token: bad signature encoding")
 	}
 	sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
 	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig); err != nil {
-		return "", errors.New("id token: bad signature")
+		return "", "", errors.New("id token: bad signature")
 	}
 	// Only these claims are decoded; anything else in the token (there should be nothing
-	// personal with scope "openid") is never held.
+	// personal with scope "openid") is never held. The address is decoded only when asked for.
 	var c struct {
 		Iss   string          `json:"iss"`
 		Aud   json.RawMessage `json:"aud"`
@@ -135,28 +144,38 @@ func (g *Gateway) verifyIDToken(ctx context.Context, raw, nonce string, now time
 		Nonce string          `json:"nonce"`
 	}
 	if err := decodeSegment(parts[1], &c); err != nil {
-		return "", fmt.Errorf("id token claims: %w", err)
+		return "", "", fmt.Errorf("id token claims: %w", err)
 	}
 	iss := g.acfg.GoogleIssuerURL // Google uses it with and without "https://"
 	if c.Iss != iss && c.Iss != strings.TrimPrefix(iss, "https://") {
-		return "", errors.New("id token: wrong issuer")
+		return "", "", errors.New("id token: wrong issuer")
 	}
 	if !audIs(c.Aud, g.acfg.GoogleClientID) {
-		return "", errors.New("id token: wrong audience")
+		return "", "", errors.New("id token: wrong audience")
 	}
 	if c.Exp == 0 || !now.Before(time.Unix(c.Exp, 0).Add(idTokenSkew)) {
-		return "", errors.New("id token: expired")
+		return "", "", errors.New("id token: expired")
 	}
 	if c.Iat == 0 || time.Unix(c.Iat, 0).After(now.Add(idTokenSkew)) {
-		return "", errors.New("id token: issued in the future")
+		return "", "", errors.New("id token: issued in the future")
 	}
 	if nonce == "" || subtle.ConstantTimeCompare([]byte(c.Nonce), []byte(nonce)) != 1 {
-		return "", errors.New("id token: wrong nonce")
+		return "", "", errors.New("id token: wrong nonce")
 	}
 	if !validGoogleSub(c.Sub) {
-		return "", errors.New("id token: sub is not a Google account number")
+		return "", "", errors.New("id token: sub is not a Google account number")
 	}
-	return c.Sub, nil
+	if !wantEmail {
+		return c.Sub, "", nil
+	}
+	var e struct {
+		Email    string          `json:"email"`
+		Verified json.RawMessage `json:"email_verified"` // true, or "true" in some tokens
+	}
+	if decodeSegment(parts[1], &e) != nil || (string(e.Verified) != "true" && string(e.Verified) != `"true"`) || !validEmail(e.Email) {
+		return c.Sub, "", nil
+	}
+	return c.Sub, e.Email, nil
 }
 
 // validGoogleSub accepts what Google issues: decimal digits, at most 255 of them. Letters

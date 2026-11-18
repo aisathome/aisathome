@@ -41,9 +41,20 @@ func TestPagesLoadNothingFromOtherOrigins(t *testing.T) {
 			t.Fatalf("%s: %d", p.path, resp.StatusCode)
 		}
 		csp := resp.Header.Get("Content-Security-Policy")
-		if !strings.HasPrefix(csp, "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self'") ||
-			strings.Count(csp, "//") > strings.Count(csp, "form-action 'self' https://github.com") {
+		if !strings.HasPrefix(csp, "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self'") {
 			t.Fatalf("%s: CSP %q", p.path, csp)
+		}
+		// Other origins only as form targets: the sign-in providers (here the fakes, on loopback).
+		for _, d := range strings.Split(csp, ";") {
+			if f := strings.Fields(d); len(f) > 0 && f[0] != "form-action" && strings.Contains(d, "//") {
+				t.Fatalf("%s: CSP %q names another origin outside form-action", p.path, csp)
+			} else if len(f) > 0 && f[0] == "form-action" {
+				for _, src := range f[1:] {
+					if src != "'self'" && !regexp.MustCompile(`^http://127\.0\.0\.1:\d+$`).MatchString(src) {
+						t.Fatalf("%s: form-action allows %q", p.path, src)
+					}
+				}
+			}
 		}
 		found := 0
 		for _, m := range resourceRe.FindAllStringSubmatch(page, -1) {
@@ -81,10 +92,10 @@ func TestPagesLoadNothingFromOtherOrigins(t *testing.T) {
 
 // Both provider buttons render when both are configured, each only when it is.
 func TestProviderButtons(t *testing.T) {
-	gh := `<a class="btn-gh" href="/account/login?provider=github&amp;next=chat"><svg viewBox="0 0 16 16"`
-	google := `<a class="btn-google" href="/account/login?provider=google&amp;next=chat"><picture>`
+	gh := `<button class="btn-gh" formaction="/account/login" formnovalidate name="provider" value="github"><svg viewBox="0 0 16 16"`
+	google := `<button class="btn-google" formaction="/account/login" formnovalidate name="provider" value="google"><picture>`
 	_, page := threeWayRig(t).get(t, "/account?next=chat", "")
-	for _, want := range []string{gh, "<span>Sign in with GitHub</span></a>", google,
+	for _, want := range []string{gh, "<span>Sign in with GitHub</span></button>", google, `<input type="hidden" name="next" value="chat">`,
 		`srcset="/account/assets/google-signin-dark.`, `<img src="/account/assets/google-signin-light.`, `alt="Sign in with Google"`,
 		`<button class="btn secondary">Email me a code</button>`} {
 		if !strings.Contains(page, want) {

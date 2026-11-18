@@ -1,5 +1,6 @@
-// Email sign-in: a one-time code and link by email, no passwords. The address is never stored or logged: accounts
-// keep a keyed hash of it (HMAC-SHA256 under a key ring) and get a random id. Codes and link
+// Email sign-in: a one-time code and link by email, no passwords. The address is never logged, and stored only if
+// the user ticks "Email me about important changes and outages" (contact.go): accounts keep a keyed hash of it
+// (HMAC-SHA256 under a key ring) and get a random id. Codes and link
 // tokens live only in memory, as SHA-256 hashes, for 10 minutes, bound to the browser that
 // asked by a "pending" cookie; a restart drops pending sign-ins.
 //
@@ -159,6 +160,7 @@ type emailAttempt struct {
 	expires time.Time
 	fails   int
 	next    string
+	contact string // the typed address, only if the user ticked the box for notices; else ""
 }
 
 // emailMsg is a mail waiting in the queue. It holds the address, code and token only until
@@ -208,8 +210,9 @@ func (e *emailSignIn) macs(norm string) []EmailMAC {
 }
 
 // start queues a code for typed (normalised: norm) unless something stops it. It reports
-// nothing on purpose: the caller answers the same either way.
-func (e *emailSignIn) start(typed, norm, client, next, pending string) {
+// nothing on purpose: the caller answers the same either way. With contact (the user ticked
+// the box for notices) the attempt keeps typed until it is used or expires.
+func (e *emailSignIn) start(typed, norm, client, next, pending string, contact bool) {
 	macs := e.macs(norm)
 	if isDisposable(norm[strings.LastIndexByte(norm, '@')+1:]) {
 		return
@@ -238,28 +241,33 @@ func (e *emailSignIn) start(typed, norm, client, next, pending string) {
 	for _, k := range []string{"a:" + mac, "c:" + client, "*"} {
 		e.sends.add(k, now)
 	}
-	e.pending[pending] = &emailAttempt{macs: macs, code: sha256.Sum256([]byte(code)),
+	a := &emailAttempt{macs: macs, code: sha256.Sum256([]byte(code)),
 		token: sha256.Sum256([]byte(token)), expires: now.Add(emailCodeTTL), next: next}
+	if contact {
+		a.contact = typed
+	}
+	e.pending[pending] = a
 }
 
 // verify checks a code or a link token against the attempt of the pending cookie. A
-// success consumes the attempt (code and token alike). Every wrong guess counts against the
-// attempt and the address; a new code does not reset the address's count.
-func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next string, ok bool) {
+// success consumes the attempt (code and token alike) and returns its hashes, where to go
+// next and the contact address if the user asked for notices. Every wrong guess counts
+// against the attempt and the address; a new code does not reset the address's count.
+func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next, contact string, ok bool) {
 	now := e.cfg.Now()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	a := e.pending[pending]
 	if a == nil {
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if !now.Before(a.expires) {
 		delete(e.pending, pending)
-		return nil, "", false
+		return nil, "", "", false
 	}
 	mac := a.macs[0].MAC
 	if now.Before(e.locked[mac]) {
-		return nil, "", false
+		return nil, "", "", false
 	}
 	var got, want [32]byte
 	switch {
@@ -268,11 +276,11 @@ func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next
 	case token != "" && code == "":
 		got, want = sha256.Sum256([]byte(token)), a.token
 	default: // neither or both: not a guess
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if subtle.ConstantTimeCompare(got[:], want[:]) == 1 {
 		delete(e.pending, pending)
-		return a.macs, a.next, true
+		return a.macs, a.next, a.contact, true
 	}
 	if a.fails++; a.fails >= emailCodeTries {
 		delete(e.pending, pending)
@@ -281,7 +289,7 @@ func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next
 	if e.fails.count(mac, now, emailFailWin) >= emailMaxFails {
 		e.locked[mac] = now.Add(emailLockout)
 	}
-	return nil, "", false
+	return nil, "", "", false
 }
 
 // prune forgets expired attempts, old counts and ended locks.
@@ -473,7 +481,7 @@ func (g *Gateway) handleEmailStart(w http.ResponseWriter, r *http.Request) {
 		rand.Read(b)
 		pending = base64.RawURLEncoding.EncodeToString(b)
 	}
-	g.email.start(typed, norm, clientIP(r), next, pending)
+	g.email.start(typed, norm, clientIP(r), next, pending, r.FormValue("contact") == "1")
 	g.setCookie(w, pendingCookie, pending, "/account/email", emailCodeTTL)
 	http.Redirect(w, r, g.acfg.PublicURL+"/account/email", http.StatusSeeOther)
 }
@@ -496,13 +504,16 @@ func (g *Gateway) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 		g.emailPage(w, r, http.StatusBadRequest, "Open the link in the browser where you asked for the code, or type the code there. A code works for 10 minutes.")
 		return
 	}
-	macs, next, ok := g.email.verify(c.Value, strings.TrimSpace(r.FormValue("code")), r.FormValue("token"))
+	macs, next, contact, ok := g.email.verify(c.Value, strings.TrimSpace(r.FormValue("code")), r.FormValue("token"))
 	if !ok { // one message for every failure, so it tells nothing about the address
 		g.emailPage(w, r, http.StatusBadRequest, "That did not work: the code is wrong, used or expired. Check the latest email or ask for a new code. After many wrong codes, email sign-in for the address pauses for an hour.")
 		return
 	}
 	g.setCookie(w, pendingCookie, "", "/account/email", -time.Second)
 	a, err := g.accounts.SignInEmail(macs, time.Now())
+	if err == nil && contact != "" && a.Status != StatusBanned {
+		g.storeContact(a.ID, contact, ContactEmail)
+	}
 	g.signedIn(w, r, a, err, next)
 }
 
@@ -526,7 +537,7 @@ func (g *Gateway) emailPage(w http.ResponseWriter, r *http.Request, status int, 
 	if err := emailTmpl.Execute(w, struct {
 		shell
 		Error string
-	}{shell{Title: "Sign in with email", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account/email"}, msg}); err != nil {
+	}{shell{Title: "Sign in with email", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account/email", Notice: g.noticeFor(r)}, msg}); err != nil {
 		g.log.Error("email page", "err", err)
 	}
 }

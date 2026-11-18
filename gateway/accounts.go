@@ -1,9 +1,10 @@
 // Accounts: self-service sign-in with GitHub, Google or email, API keys and a waitlist
 // (research decision 0006). The gateway stores only the provider's user id: GitHub's numeric
 // id ("gh:<id>") or Google's account identifier ("google:<sub>"). Email accounts get a random
-// id ("em:<hex>") and keep only a keyed hash of the address (email.go). No address, no name,
-// no password, no token. Accounts beyond the operator's limit wait in a first-come waitlist
-// and are let in automatically when room appears.
+// id ("em:<hex>") and keep only a keyed hash of the address (email.go). No name, no password,
+// no token, and no address unless the user opts in to notices (contact.go). Accounts beyond
+// the operator's limit wait in a first-come waitlist and are let in automatically when room
+// appears.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -53,6 +54,7 @@ type AccountsConfig struct {
 	GitHubAuthURL   string `json:"-"`
 	GitHubTokenURL  string `json:"-"`
 	GitHubUserURL   string `json:"-"`
+	GitHubEmailsURL string `json:"-"` // the user's addresses; asked only with the user's consent (contact.go)
 	GoogleAuthURL   string `json:"-"`
 	GoogleTokenURL  string `json:"-"`
 	GoogleCertsURL  string `json:"-"` // Google's signing keys (JWKS)
@@ -109,6 +111,9 @@ func (c *AccountsConfig) defaults() error {
 	if c.GitHubUserURL == "" {
 		c.GitHubUserURL = "https://api.github.com/user"
 	}
+	if c.GitHubEmailsURL == "" {
+		c.GitHubEmailsURL = "https://api.github.com/user/emails"
+	}
 	if c.GoogleAuthURL == "" {
 		c.GoogleAuthURL = "https://accounts.google.com/o/oauth2/v2/auth"
 	}
@@ -143,6 +148,8 @@ type AccountSettings struct {
 	MaxNodesPerAccount int    `json:"max_nodes_per_account,omitempty"` // node tokens per account; 0 = DefaultMaxNodesPerAccount
 	NodesClosed        bool   `json:"nodes_closed,omitempty"`          // no new node tokens (existing ones keep working)
 	Routing            string `json:"routing,omitempty"`               // RoutingTrustedOnly sends every request to trusted nodes; "" or "any" = normal
+	// Notice is the operator's banner on the account pages and in the chat (contact.go).
+	Notice *Notice `json:"notice,omitempty"`
 }
 
 // Account is one user.
@@ -164,6 +171,12 @@ type Account struct {
 	// Username is public: setting one is the consent to appear in the leaderboard and the
 	// BOINC-format statistics (username.go). Empty = anonymous, in totals only.
 	Username string `json:"username,omitempty"`
+	// The address the user asked us to write to about important changes and outages, when
+	// (contact.go). Only with the user's consent; deleted when they turn it off. Never shown
+	// publicly, logged, or sent to nodes.
+	ContactEmail     string     `json:"contact_email,omitempty"`
+	ContactConsentAt *time.Time `json:"contact_consent_at,omitempty"`
+	ContactSource    string     `json:"contact_source,omitempty"` // ContactGoogle, ContactGitHub or ContactEmail
 }
 
 // EmailMAC is an email address as HMAC-SHA256 (hex) under the email key with KeyID.
@@ -519,8 +532,8 @@ func (s *AccountStore) RevokeKey(id, prefix string) error {
 }
 
 // SetStatus activates, waitlists or bans an account (operator). A banned account keeps its
-// record, so signing in again does not create a fresh one; its keys and node tokens are
-// deleted (the gateway drops its connected nodes within seconds). An account that is merely
+// record, so signing in again does not create a fresh one; its keys, node tokens and contact
+// address are deleted (the gateway drops its connected nodes within seconds). An account that is merely
 // waitlisted keeps its node tokens, but they work only while it is active.
 func (s *AccountStore) SetStatus(id, status string) error {
 	return s.Update(func(f *AccountsFile) error {
@@ -535,6 +548,7 @@ func (s *AccountStore) SetStatus(id, status string) error {
 		a.Status, a.Held = status, status == StatusWaitlisted // only the operator waitlists an account by hand
 		if status == StatusBanned {
 			a.Keys, a.Nodes = nil, nil
+			a.clearContact()
 		}
 		return nil
 	})
