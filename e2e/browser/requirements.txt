@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Browser tests of the node's local page (e2e/browser): pinned, installed by CI and by
+#   uv run --with-requirements requirements.txt pytest
+playwright==1.55.0
+pytest==8.4.2

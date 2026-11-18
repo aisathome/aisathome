@@ -2,3 +2,4 @@
 /aisathome-node
 *.jsonl
 /dist/
+__pycache__/

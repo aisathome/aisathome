@@ -2,8 +2,8 @@
 // (package setupflow) on any platform, against stand-ins: one NVIDIA card (an RTX 4080 16 GB,
 // driver 566.36), a small "model" served over local TLS, an engine that answers the speed test
 // at 31.5 tokens/s, and a gateway that accepts only the token in -good-token and refuses every
-// other one with 401 "unknown node token", as the real one does. The browser tests in the ops
-// repository drive it; the page, the setup steps and the agent are the real code.
+// other one with 401 "unknown node token", as the real one does. The browser test in e2e/browser
+// drives it; the page, the setup steps and the agent are the real code.
 //
 //	setup-harness -ui-port 7399 -password-file <file> -dir <empty folder>
 //
