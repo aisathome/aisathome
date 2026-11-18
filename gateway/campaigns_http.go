@@ -108,8 +108,8 @@ func (g *Gateway) handleCampaignPut(w http.ResponseWriter, r *http.Request) {
 	if !g.projectFor(w, r, id) {
 		return
 	}
-	if !recordIDRe.MatchString(cid) {
-		apiError(w, http.StatusBadRequest, "campaign: 1-64 letters, digits, '.', '_' or '-'")
+	if !publicRef(recordIDRe, cid) {
+		apiError(w, http.StatusBadRequest, "campaign: 1-64 letters, digits, '.', '_' or '-', nothing key-shaped")
 		return
 	}
 	var in campaignIn
