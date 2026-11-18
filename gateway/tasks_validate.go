@@ -15,8 +15,8 @@ import (
 
 var (
 	// publicSecret: key-shaped text (secretLike without its long-run rule: public text quotes long
-	// Lean names).
-	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9]{8})|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
+	// Lean names). A key's body may hold '_' and '-' (base64url), so they count after the prefix.
+	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9_-]{8})|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
 	// publicEmail: an e-mail address, which no public label carries.
 	publicEmail = regexp.MustCompile(`[^\s@]+@[^\s@]+\.[^\s@]+`)
 )

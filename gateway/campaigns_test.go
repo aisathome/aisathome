@@ -175,6 +175,8 @@ func TestCampaignValidation(t *testing.T) {
 		"label email":      mod(func(b map[string]any) { b["labels"] = map[string]string{"who": "a@b.org"} }),
 		"unknown field":    mod(func(b map[string]any) { b["owner"] = "someone" }),
 		"item id":          item("id", "bad id"),
+		"item key":         item("id", "ak-AbC_dEf-GhIjKlMnOpQrStUvWxYz0123456789abcde"),
+		"text key dash":    mod(func(b map[string]any) { b["text"] = "ak-A_b-cdefghij" }),
 		"item twice":       mod(func(b map[string]any) { b["items"].([]map[string]any)[1]["id"] = "p2m-3ad60f" }),
 		"item role":        item("role", "Calibration!"),
 		"item other host":  item("url", "https://elsewhere.example/theorems/x"),
@@ -197,6 +199,7 @@ func TestCampaignValidation(t *testing.T) {
 		}
 	}
 	r.want(400, "PUT", campPath+"/bad%20id", testProjectKey, trialBody())
+	r.want(400, "PUT", campPath+"/ak-AbC_dEf-GhIjKlMnOpQrStUvWxYz0123456789abcde", testProjectKey, trialBody())
 	many := mod(func(b map[string]any) {
 		var its []map[string]any
 		for i := range maxCampaignItems + 1 {
@@ -245,6 +248,10 @@ func TestCampaignValidation(t *testing.T) {
 		"pending verdict":  map[string]any{"source": "prove2me", "external_id": "x", "state": "pending", "submitted_at": "2026-11-17T12:00:00Z", "verdict_at": "2026-11-17T12:10:00Z"},
 		"labels":           res("labels", map[string]string{"k": "sk-abcdefgh12345678"}),
 		"unknown field":    res("user_id", "u-0000feed"),
+		"item key":         res("item", "ak-AbC_dEf-GhIjKlMnOpQrStUvWxYz0123456789abcde"),
+		"task key":         res("task", "sk-proj_abcdefghijklmnop"),
+		"campaign key":     res("campaign", "ak-0123456789_abc"),
+		"future":           res("submitted_at", time.Now().Add(time.Hour).UTC().Format(time.RFC3339)),
 	} {
 		if w, _ := r.call("POST", resPath, testProjectKey, b); w.Code != 400 {
 			t.Errorf("result %s: HTTP %d %s", name, w.Code, w.Body)

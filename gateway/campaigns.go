@@ -59,15 +59,17 @@ import (
 )
 
 const (
-	maxCampaignBody      = 128 << 10
-	maxResultBody        = 8 << 10
-	maxCampaignItems     = 200
-	maxCampaignTitle     = 200
-	maxCampaignText      = 4096
-	maxItemTitle         = 300
-	maxResultVerdict     = 1000
-	maxPublicURL         = 500
-	maxProjectLinks      = 8
+	maxCampaignBody  = 128 << 10
+	maxResultBody    = 8 << 10
+	maxCampaignItems = 200
+	maxCampaignTitle = 200
+	maxCampaignText  = 4096
+	maxItemTitle     = 300
+	maxResultVerdict = 1000
+	maxPublicURL     = 500
+	maxProjectLinks  = 8
+	// maxClockSkew: how far ahead of the gateway's clock a writer's submitted_at may be.
+	maxClockSkew         = 5 * time.Minute
 	campaignsListDefault = 50
 	campaignsListMax     = 200
 	resultsListDefault   = 100
@@ -187,6 +189,12 @@ type resultIn struct {
 	VerdictAt   *time.Time        `json:"verdict_at"`
 }
 
+// publicRef: a public id or reference (a campaign's, an item's, a task's) that holds nothing
+// key-shaped: the id patterns alone would take a whole API key.
+func publicRef(re *regexp.Regexp, s string) bool {
+	return re.MatchString(s) && !publicSecret.MatchString(s)
+}
+
 // resultID is a result's public id.
 func resultID(source, externalID string) string {
 	h := sha256.Sum256([]byte(source + "\x00" + externalID))
@@ -288,7 +296,7 @@ func (c *Campaign) validate(links []string) error {
 		seen := map[string]bool{}
 		for i, it := range c.Items {
 			f := fmt.Sprintf("items[%d]", i)
-			if !recordIDRe.MatchString(it.ID) {
+			if !publicRef(recordIDRe, it.ID) {
 				errs = append(errs, fmt.Errorf("%s.id: 1-64 letters, digits, '.', '_' or '-'", f))
 			} else if seen[it.ID] {
 				errs = append(errs, fmt.Errorf("%s.id: %s twice", f, it.ID))
@@ -706,13 +714,13 @@ func (in *resultIn) validate(links []string) error {
 	if !externalIDRe.MatchString(in.ExternalID) {
 		errs = append(errs, errors.New("external_id: 1-200 visible ASCII characters, no spaces"))
 	}
-	if in.Campaign != "" && !recordIDRe.MatchString(in.Campaign) {
+	if in.Campaign != "" && !publicRef(recordIDRe, in.Campaign) {
 		errs = append(errs, errors.New("campaign: a campaign's id"))
 	}
-	if in.Item != "" && !recordIDRe.MatchString(in.Item) {
+	if in.Item != "" && !publicRef(recordIDRe, in.Item) {
 		errs = append(errs, errors.New("item: 1-64 letters, digits, '.', '_' or '-'"))
 	}
-	if in.Task != "" && !pubTaskIDRe.MatchString(in.Task) {
+	if in.Task != "" && !publicRef(pubTaskIDRe, in.Task) {
 		errs = append(errs, errors.New("task: a task's id"))
 	}
 	if !slices.Contains(resultStates, in.State) {
@@ -785,6 +793,9 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 	}
 	if r.State != ResultPending && r.VerdictAt == nil {
 		r.VerdictAt = &now
+	}
+	if r.SubmittedAt.After(now.Add(maxClockSkew)) {
+		return nil, false, &taskErr{code: http.StatusBadRequest, msg: "submitted_at: in the future"}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
