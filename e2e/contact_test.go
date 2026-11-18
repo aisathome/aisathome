@@ -404,18 +404,18 @@ func TestContactEmailSignIn(t *testing.T) {
 	}
 
 	// Unticked: only the keyed hash, as before.
-	s1 := ask("first@example.org", false, 1)
+	s1 := ask("first@example.com", false, 1)
 	id1 := e.accountOf(t, s1)
 	if addr, _, _ := e.contactOf(t, id1); addr != "" || fileHas(t, e.file, "first@") {
 		t.Fatalf("unticked stored %q", addr)
 	}
 	// Ticked: the address as typed, after the link proves it.
-	s2 := ask("Second@Example.org", true, 2)
+	s2 := ask("Second@Example.com", true, 2)
 	id2 := e.accountOf(t, s2)
-	if addr, src, at := e.contactOf(t, id2); addr != "Second@Example.org" || src != "email" || at == nil {
+	if addr, src, at := e.contactOf(t, id2); addr != "Second@Example.com" || src != "email" || at == nil {
 		t.Fatalf("ticked stored %q %q %v", addr, src, at)
 	}
-	if _, page := e.get(t, "/account", s2); !strings.Contains(page, "Se•••@Example.org") || !strings.Contains(page, "the address is from email sign-in") {
+	if _, page := e.get(t, "/account", s2); !strings.Contains(page, "Se•••@Example.com") || !strings.Contains(page, "the address is from email sign-in") {
 		t.Fatalf("account page: %s", page)
 	}
 	// Off deletes it.
@@ -427,7 +427,7 @@ func TestContactEmailSignIn(t *testing.T) {
 	if _, page := e.get(t, "/account", s1); !strings.Contains(page, `action="/account/contact/email"`) {
 		t.Fatalf("no way to turn it on: %s", page)
 	}
-	req, _ := http.NewRequest("POST", e.gw.URL+"/account/contact/email", strings.NewReader("email=second%40example.org"))
+	req, _ := http.NewRequest("POST", e.gw.URL+"/account/contact/email", strings.NewReader("email=second%40example.com"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Cookie", s1)
@@ -440,8 +440,8 @@ func TestContactEmailSignIn(t *testing.T) {
 	if addr, _, _ := e.contactOf(t, id1); addr != "" {
 		t.Fatalf("a wrong address was stored: %q", addr)
 	}
-	e.postForm(t, "/account/contact/email", "email=First%40example.org", s1)
-	if addr, src, _ := e.contactOf(t, id1); addr != "First@example.org" || src != "email" {
+	e.postForm(t, "/account/contact/email", "email=First%40example.com", s1)
+	if addr, src, _ := e.contactOf(t, id1); addr != "First@example.com" || src != "email" {
 		t.Fatalf("turned on: %q %q", addr, src)
 	}
 	for _, leak := range []string{"irst@example", "econd@example", "Second@"} {
@@ -505,6 +505,10 @@ func TestNotice(t *testing.T) {
 		t.Fatalf("chat banner content: %q", content)
 	}
 
+	// Not on the panel that shows a new key once: its Dismiss would leave the key's only showing.
+	if _, page := e.createKey(t, s); !keyRe.MatchString(page) || strings.Contains(page, `class="card notice"`) {
+		t.Fatal("the notice shows on the new key's panel")
+	}
 	// Dismissing hides it in this browser (a cookie with its id); the next page load has none.
 	r := e.postForm(t, "/account/notice/dismiss", "id="+id+"&back=%2Faccount%3Fnext%3Dchat", "")
 	dismissed := cookieValue(r, "aisathome_notice")
