@@ -9,6 +9,26 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Connectors and pilots.** A connector (the BOINC project's bridge first) brings machines as
+  pilots: bounded serving sessions the gateway mints, routes and meters. Generic endpoints under
+  `/v1/connectors/{id}/` with the connector's own key (and an optional `allow_from`): demand
+  ("pilots wanted"), create a pilot (id `p-…` and a credential `pc-…`, shown once, stored as a
+  hash), list and read pilots, bind one to the connector's user, host and team, report it done,
+  read its final credit. A pilot connects over the node WebSocket with its credential, only once
+  bound, one connection at a time, until it ends or its deadline passes; a resumed run continues
+  the same record. It serves as an untrusted node of the account linked to its user, or of an
+  unclaimed account made for it, under the volunteer-node rules (personal data to trusted nodes
+  only, share cap, guards, probation; `pilot_probation_ok` per project). It serves science only
+  while the connector's `pilots_chat_enabled` is off (the default, until anti-retention and the
+  privacy notice are done), for users in `no_chat_users`, and when its account's "chat on pilots"
+  switch is off (`accounts chat-on-pilots`, `PATCH /v1/account/settings`). Its credit goes into the
+  pilot's record with per-pilot and per-account daily caps, final 24 h after its last disconnect,
+  withheld if a guard held it, and stays out of the public ledger and `/stats/`. Public task views
+  name the node class `pilot`. See "Connectors and pilots" in `docs/gateway.md` and
+  `docs/credit.md`. (gateway)
+- **The node takes its id from a pilot credential** (`pc-<hex>.<secret>` gives `p-<hex>`), as from
+  an account's node token. (node)
+
 - **Opt-in email notices and an operator notice.** The sign-in page has an unticked box "Email me
   about important changes and outages". Only when it is ticked does sign-in ask GitHub for
   `user:email` (the primary verified address) or Google for `email` (kept only if verified), or keep

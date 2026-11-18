@@ -82,7 +82,9 @@ match (`scripts/build-llama.sh`). The big tier needs about 22 GB of GPU memory.
 
 - The pilot starts a fresh 4-hour budget when the client restarts a task it quit.
 - The client's RAM accounting with the memory-mapped model and the prompt cache is not measured.
-- The credential becomes a single-use per-pilot credential minted by the gateway; until then a
-  test work unit carries an ordinary node token. The project keeps the credential file in its
-  download folder until the work unit is done and the file deleter removes it; only the
-  single-use credential makes that copy worthless.
+- The gateway now mints per-pilot credentials (`pc-<hex>.<secret>`, "Connectors and pilots" in
+  `docs/gateway.md`): one pilot, one connection at a time, until the pilot ends or its deadline
+  passes; the node agent takes its node id from it. The bridge that requests them comes next; until
+  then a test work unit can still carry an ordinary node token. The project keeps the credential
+  file in its download folder until the work unit is done and the file deleter removes it; the
+  credential dies with the pilot, which makes that copy worthless.
