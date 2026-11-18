@@ -140,7 +140,8 @@ test('a trial’s list: generated facts, the campaign’s own text as plain text
 	assert.doesNotMatch(html, /<script>|<a href="https:\/\/example/);
 	assert.match(html, /<p class="caps">Budget per leaf: one round of 110 steps/);
 	assert.match(html, /<tr data-leaf="N10" data-leaf-id="p2m-aec6a2" data-outcome="proved">/);
-	assert.match(html, /<tr data-leaf="N08" data-leaf-id="p2m-115f6c" data-outcome="failed">/);
+	assert.match(html, /<tr data-leaf="N08" data-leaf-id="p2m-115f6c" data-outcome="not_proved">/);
+	assert.match(html, /<tr data-leaf="N07" [^>]*>.*?data-cell="result">Proved with outline 3<span class="sub" data-leaf-line>Proved: outline 3 assembled<\/span>/s);
 	assert.match(html, /data-trial-leaf="C07".*data-leaf-plan="C07"/s);
 	assert.match(plainHTML('a\nb\n\n<i>c</i>'), /^<p>a b<\/p><p>&lt;i&gt;c&lt;\/i&gt;<\/p>$/);
 	// trial 6's N05 (closed by reuse in the trial) is no run and not in the trial's list
