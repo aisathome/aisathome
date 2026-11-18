@@ -131,7 +131,8 @@ jobs:
 
   browser:
     # e2e/browser: the node's local setup page in headless Chromium (Playwright), served by
-    # e2e/cmd/setup-harness against stand-ins (no GPU, engine or gateway). The runner's own
+    # e2e/cmd/setup-harness against stand-ins (no GPU, engine or gateway), and the website's
+    # prove2me pages (site/dist, built here) against fixed gateway answers. The runner's own
     # Python 3.12 with the pinned packages in a venv, and Playwright's headless Chromium only:
     # the image already has its system libraries (--with-deps took 3.5 min, mostly fonts).
     runs-on: ubuntu-24.04
@@ -149,6 +150,11 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q -r e2e/browser/requirements.txt
           "$RUNNER_TEMP/venv/bin/python" -m playwright install --only-shell chromium
+      - name: build the website (site/dist, for the site's browser tests)
+        # the same Node image as the site job
+        run: |
+          docker run --rm -e ASTRO_TELEMETRY_DISABLED=1 -e HOME=/tmp -u "$(id -u):$(id -g)" \
+            -v "$PWD/site":/w -w /w node:22-bookworm-slim sh -c 'npm ci --no-audit --no-fund && npm run build'
       - name: browser tests
         working-directory: e2e/browser
         run: '"$RUNNER_TEMP/venv/bin/python" -m pytest -v'
