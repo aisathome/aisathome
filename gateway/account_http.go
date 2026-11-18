@@ -676,13 +676,16 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 	if n := len(ways); n > 1 {
 		d.Separate = strings.Join(ways[:n-1], ", ") + " and " + ways[n-1]
 	}
-	d.shell = shell{Title: "Your account", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account", Notice: g.noticeFor(r)}
+	d.shell = shell{Title: "Your account", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account"}
+	if d.NewKey == "" && d.NewNode == "" { // no button that leaves a secret's only showing
+		d.Notice = g.noticeFor(r)
+	}
 	if d.Next {
 		d.Back = "/account?next=chat"
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
-	csp := pageCSP + "; form-action 'self'" + g.providerOrigins() + "; frame-ancestors 'none'"
+	csp := pageCSP + "; form-action 'self'" + g.formTargets() + "; frame-ancestors 'none'"
 	if d.NewKey != "" || d.NewNode != "" {
 		csp += secretScriptSrc // the Copy button; every other account page runs no script
 	}
@@ -694,14 +697,16 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 	}
 }
 
-// providerOrigins are the sign-in providers' origins, which the sign-in form redirects to
-// (CSP form-action also covers redirects after a form's post).
-func (g *Gateway) providerOrigins() string {
+// formTargets are the other origins a sign-in form's post may end at: the providers, and the
+// chat that a finished sign-in with next=chat lands on (browsers apply CSP form-action to the
+// whole redirect chain after a post, and a provider that remembers the user redirects straight
+// back).
+func (g *Gateway) formTargets() string {
 	var out string
 	for _, on := range []struct {
 		on  bool
 		url string
-	}{{g.acfg.githubOn(), g.acfg.GitHubAuthURL}, {g.acfg.googleOn(), g.acfg.GoogleAuthURL}} {
+	}{{g.acfg.githubOn(), g.acfg.GitHubAuthURL}, {g.acfg.googleOn(), g.acfg.GoogleAuthURL}, {g.acfg.ChatURL != "", g.acfg.ChatURL}} {
 		if u, err := url.Parse(on.url); on.on && err == nil && u.Host != "" {
 			out += " " + u.Scheme + "://" + u.Host
 		}

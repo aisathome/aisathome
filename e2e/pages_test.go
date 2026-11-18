@@ -44,17 +44,21 @@ func TestPagesLoadNothingFromOtherOrigins(t *testing.T) {
 		if !strings.HasPrefix(csp, "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self'") {
 			t.Fatalf("%s: CSP %q", p.path, csp)
 		}
-		// Other origins only as form targets: the sign-in providers (here the fakes, on loopback).
+		// Other origins only as form targets: the sign-in providers (here the fakes, on
+		// loopback), and the chat a sign-in form's redirects end at.
 		for _, d := range strings.Split(csp, ";") {
 			if f := strings.Fields(d); len(f) > 0 && f[0] != "form-action" && strings.Contains(d, "//") {
 				t.Fatalf("%s: CSP %q names another origin outside form-action", p.path, csp)
 			} else if len(f) > 0 && f[0] == "form-action" {
 				for _, src := range f[1:] {
-					if src != "'self'" && !regexp.MustCompile(`^http://127\.0\.0\.1:\d+$`).MatchString(src) {
+					if src != "'self'" && src != "https://chat.site.test" && !regexp.MustCompile(`^http://127\.0\.0\.1:\d+$`).MatchString(src) {
 						t.Fatalf("%s: form-action allows %q", p.path, src)
 					}
 				}
 			}
+		}
+		if p.path != "/account/email" && !strings.Contains(csp, " https://chat.site.test;") {
+			t.Fatalf("%s: a sign-in that ends in the chat is blocked by form-action: %q", p.path, csp)
 		}
 		found := 0
 		for _, m := range resourceRe.FindAllStringSubmatch(page, -1) {
