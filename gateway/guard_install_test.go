@@ -205,13 +205,22 @@ func TestGuardInstallSourceIsLinear(t *testing.T) {
 		{"distinct registry hosts", `{"command":"pip install ` + distinct("https://h%d.pypi.org/x ") + `"}`},
 		{"distinct named hosts", `{"command":"pip install ` + distinct("https://h%d.a.example/x ") + `"}`},
 	} {
+		// The bound is relative to linear passes over the same text on the same machine (a race
+		// build in CI runs everything several times slower): decoding it, splitting it into
+		// commands and words, and collecting the request's host words.
+		start := time.Now()
+		for _, seg := range installSeps.Split(commandText("bash", c.args), -1) {
+			installWords(seg)
+		}
+		requestHosts(req)
+		limit := 20*time.Since(start) + time.Second
 		done := make(chan time.Duration, 1)
 		go func() { start := time.Now(); installSourceHit("bash", c.args, req, known); done <- time.Since(start) }()
 		select {
 		case d := <-done:
-			t.Logf("%s: %s", c.name, d)
-		case <-time.After(5 * time.Second):
-			t.Fatalf("%s: the install-source check of %d bytes took longer than 5 s", c.name, len(c.args))
+			t.Logf("%s: %s (limit %s)", c.name, d, limit)
+		case <-time.After(limit):
+			t.Fatalf("%s: the install-source check of %d bytes took longer than %s", c.name, len(c.args), limit)
 		}
 	}
 }
