@@ -8,17 +8,20 @@
 //
 // The rule reads shell commands and scripts as commandRules do (commandText), and the text a write
 // or edit tool puts into a package manager's own source file (.npmrc, pip.conf, requirements.txt,
-// ...). In a command it reads only installs: a word "pip install" or "npm add" in an echo, a
-// comment or a commit message is not one, nor is an address that is not given to an installer.
-// Like the other rules it is a tripwire: a variable for the address, a here-document or Python's
-// subprocess list get past it.
+// ...). In a command it reads only installs and the variables installers read (PIP_INDEX_URL=…): a
+// word "pip install" or "npm add" in an echo, a comment or a commit message is not one, nor is an
+// assignment printed or commented out, nor an address that is not given to an installer. Like the
+// other rules it is a tripwire: a variable for the address, a here-document or Python's subprocess
+// list get past it.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
 
 import (
+	"encoding/json"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -80,11 +83,6 @@ var installEnv = map[string]bool{
 	"UV_INDEX_URL": true, "UV_EXTRA_INDEX_URL": true, "UV_INDEX": true, "UV_DEFAULT_INDEX": true, "UV_FIND_LINKS": true,
 	"NPM_CONFIG_REGISTRY": true, "YARN_REGISTRY": true, "YARN_NPM_REGISTRY_SERVER": true,
 }
-
-// installEnvRe finds an assignment of an install-source variable anywhere in shell text, its value
-// whole even when quoted: GOPROXY="https://a|https://b" holds a '|' that installSeps would split
-// (code review, 2026-11-18). Also PowerShell's $env:GOPROXY="…".
-var installEnvRe = regexp.MustCompile(`(?i)\b(GOPROXY|PIP_INDEX_URL|PIP_EXTRA_INDEX_URL|PIP_FIND_LINKS|UV_INDEX_URL|UV_EXTRA_INDEX_URL|UV_INDEX|UV_DEFAULT_INDEX|UV_FIND_LINKS|NPM_CONFIG_REGISTRY|YARN_REGISTRY|YARN_NPM_REGISTRY_SERVER|CARGO_REGISTRIES_\w+_INDEX)\s*=\s*("[^"]*"|'[^']*'|[^\s;&|()]+)`)
 
 // envSources: the sources an assignment of name sets. Go adds "https://" to a GOPROXY entry
 // without a scheme.
@@ -173,12 +171,26 @@ func hasWord(args []string, set map[string]bool) bool {
 	return false
 }
 
-// installSources returns the install sources a simple command names (words from installWords):
-// environment assignments before it or exported, and the sources of a package manager's install.
-func installSources(w []string) []string {
+// installSources returns the install sources a simple command names (words from installWords or
+// shellCommands): environment assignments before it or exported, and the sources of a package
+// manager's install.
+func installSources(w []string) []string { return installSourcesIn(w, 0) }
+
+// maxShellDepth bounds how deep "sh -c" scripts are read inside each other: each level reads the
+// script again.
+const maxShellDepth = 4
+
+func installSourcesIn(w []string, depth int) []string {
 	var out []string
 	export := false
 	for len(w) > 0 {
+		if a, n := psAssign(w); n > 0 {
+			if m := assignRe.FindStringSubmatch(a); m != nil {
+				out = append(out, envSources(m[1], m[2])...)
+			}
+			w = w[n:]
+			continue
+		}
 		if m := assignRe.FindStringSubmatch(w[0]); m != nil {
 			out = append(out, envSources(m[1], m[2])...)
 			w = w[1:]
@@ -214,6 +226,15 @@ func installSources(w []string) []string {
 				i++
 			}
 			if i < len(w) && w[i] == "-c" {
+				// One word holding the whole script (shellCommands): read it as shell text.
+				if i+1 < len(w) && strings.ContainsAny(w[i+1], " \t\n;&|(){}`") {
+					if depth < maxShellDepth {
+						for _, c := range shellCommands(w[i+1]) {
+							out = append(out, installSourcesIn(c.words, depth+1)...)
+						}
+					}
+					return out
+				}
 				w = w[i+1:]
 				continue
 			}
@@ -229,10 +250,10 @@ func installSources(w []string) []string {
 	case pythonName.MatchString(name):
 		for i, a := range args {
 			if a == "-mpip" {
-				return append(out, installSources(append([]string{"pip"}, args[i+1:]...))...)
+				return append(out, installSourcesIn(append([]string{"pip"}, args[i+1:]...), depth)...)
 			}
 			if a == "-m" && i+1 < len(args) && args[i+1] == "pip" {
-				return append(out, installSources(append([]string{"pip"}, args[i+2:]...))...)
+				return append(out, installSourcesIn(append([]string{"pip"}, args[i+2:]...), depth)...)
 			}
 		}
 	case pipName.MatchString(name), name == "pipx":
@@ -241,23 +262,23 @@ func installSources(w []string) []string {
 		}
 		out = append(out, flagValues(args, pipFlags)...)
 	case name == "uv" || name == "uvx":
-		verb, rest := firstVerb(args)
+		verb, rest := subcommand(args, uvCmds)
 		switch {
 		case name == "uv" && verb == "pip":
-			return append(out, installSources(append([]string{"pip"}, rest...))...)
+			return append(out, installSourcesIn(append([]string{"pip"}, rest...), depth)...)
 		case name == "uv" && uvVerbs[verb]:
 			return urls()
 		case name == "uv" && verb == "tool":
-			if v, _ := firstVerb(rest); uvVerbs[v] {
+			if v, _ := subcommand(rest, uvCmds); uvVerbs[v] {
 				return urls()
 			}
 		}
 		out = append(out, flagValues(args, uvRunFlags)...)
 	case npmNames[name]:
 		out = append(out, flagValues(args, []string{"--registry"})...)
-		verb, rest := npmVerb(args)
+		verb, rest := subcommand(args, npmCmds)
 		if verb == "workspace" && len(rest) > 1 { // yarn workspace <name> add …
-			verb, rest = npmVerb(rest[1:])
+			verb, rest = subcommand(rest[1:], npmCmds)
 		}
 		if npmVerbs[verb] {
 			return urls()
@@ -272,7 +293,7 @@ func installSources(w []string) []string {
 	case name == "npx" || name == "pnpx" || name == "bunx":
 		return append(out, flagValues(args, npxFlags)...)
 	case name == "cargo":
-		if v, _ := firstVerb(args); cargoVerbs[v] { // not "cargo run -- install …"
+		if v, _ := subcommand(args, cargoCmds); cargoVerbs[v] { // not "cargo run -- install …"
 			return urls()
 		}
 		out = append(out, flagValues(args, []string{"--index"})...)
@@ -283,49 +304,71 @@ func installSources(w []string) []string {
 			}
 		}
 	case name == "gem":
-		if v, _ := firstVerb(args); gemVerbs[v] {
+		if v, _ := subcommand(args, gemCmds); gemVerbs[v] {
 			return urls()
 		}
 	case condaNames[name]:
-		if v, _ := firstVerb(args); condaVerbs[v] {
+		if v, _ := subcommand(args, condaCmds); condaVerbs[v] {
 			return urls()
 		}
 		out = append(out, flagValues(args, []string{"-c", "--channel"})...)
 	}
 	// "uv run pip install …", "poetry run pip install …": the command after run.
-	if v, _ := firstVerb(args); runNames[name] && v == "run" {
-		for i := 1; i < len(args); i++ {
-			if n := commandName(args[i]); pipName.MatchString(n) || pythonName.MatchString(n) || npmNames[n] {
-				return append(out, installSources(args[i:])...)
+	if v, rest := subcommand(args, runCmds[name]); runNames[name] && v == "run" {
+		for i := range rest {
+			if n := commandName(rest[i]); pipName.MatchString(n) || pythonName.MatchString(n) || npmNames[n] {
+				return append(out, installSourcesIn(rest[i:], depth)...)
 			}
 		}
 	}
 	return out
 }
 
-// npmValueFlags take the next word as their value when given without "=".
-var npmValueFlags = wordSet("--registry", "--prefix", "-C", "--workspace", "-w", "--userconfig", "--cache", "--loglevel", "--filter", "-F", "--dir", "--cwd")
-
-// npmVerb is npm's, pnpm's, yarn's or bun's subcommand: the first word that is neither a flag nor
-// a flag's value (not "update" in "npm run update -- …"), lower case, and the words after it.
-func npmVerb(args []string) (string, []string) {
-	for i := 0; i < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
-			if npmValueFlags[args[i]] {
-				i++
-			}
-			continue
+// Subcommands of the package managers, install or not: a word that follows a flag is the flag's
+// value unless it is one of them (subcommand).
+var (
+	npmCmds = func() map[string]bool {
+		m := wordSet("run", "run-script", "rum", "urn", "exec", "x", "dlx", "test", "t", "tst", "start", "stop", "restart",
+			"pkg", "config", "c", "set", "get", "workspace", "workspaces", "why", "ls", "list", "view", "info", "publish",
+			"pack", "init", "create", "audit", "outdated", "remove", "rm", "uninstall", "un", "unlink", "link", "cache",
+			"dedupe", "prune", "rebuild", "help", "version")
+		for v := range npmVerbs {
+			m[v] = true
 		}
-		return strings.ToLower(args[i]), args[i+1:]
-	}
-	return "", nil
-}
+		return m
+	}()
+	uvCmds = wordSet("pip", "add", "sync", "lock", "install", "upgrade", "tool", "run", "remove", "venv", "python",
+		"init", "export", "tree", "build", "publish", "cache", "self", "version", "help", "format")
+	cargoCmds = wordSet("install", "add", "run", "r", "build", "b", "check", "c", "test", "t", "bench", "fetch", "update",
+		"publish", "search", "new", "init", "clean", "doc", "d", "tree", "remove", "rm", "vendor", "metadata", "fmt",
+		"clippy", "help", "login", "owner", "yank", "package", "generate-lockfile", "fix", "uninstall", "version")
+	gemCmds = wordSet("install", "i", "update", "sources", "uninstall", "list", "build", "push", "fetch", "help", "query",
+		"search", "info", "cleanup", "env", "contents", "pristine", "specification", "which", "owner", "outdated")
+	condaCmds = wordSet("install", "create", "update", "upgrade", "config", "env", "run", "remove", "uninstall", "list",
+		"activate", "deactivate", "info", "search", "clean", "init", "compare", "doctor", "export", "notices", "package", "rename")
+	runCmds = map[string]map[string]bool{"uv": uvCmds, "conda": condaCmds, "mamba": condaCmds, "micromamba": condaCmds}
+)
 
-// firstVerb is the first word of args that is not a flag, and the words after it.
-func firstVerb(args []string) (string, []string) {
+// subcommand is a command's subcommand in args, lower case, and the words after it: the first word
+// that is not a flag (nor a Rustup "+toolchain"). A word right after a flag given without "=" may be
+// that flag's value ("npm --tag beta install …", "uv --directory app add …"): it is the subcommand
+// only if it is one of cmds, else the next such word is (code review, 2026-11-18). So "npm run
+// update -- …" is "run".
+func subcommand(args []string, cmds map[string]bool) (string, []string) {
+	if cmds == nil {
+		cmds = wordSet("run")
+	}
+	afterFlag := false
 	for i, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			return a, args[i+1:]
+		switch {
+		case strings.HasPrefix(a, "+"):
+			afterFlag = false
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			afterFlag = a != "--" && !strings.Contains(a, "=")
+		case afterFlag && !cmds[strings.ToLower(a)]:
+			afterFlag = false
+		default:
+			return strings.ToLower(a), args[i+1:]
 		}
 	}
 	return "", nil
@@ -333,9 +376,10 @@ func firstVerb(args []string) (string, []string) {
 
 // Kinds of package source files (installConfigFile).
 const (
-	configNone  = iota
-	configLines // every address outside comments is a source (.npmrc, pip.conf, requirements.txt)
-	configJSON  // npm's package files: every "key": "value" address but the project's own links
+	configNone    = iota
+	configLines   // every address outside comments is a source (.npmrc, pip.conf, requirements.txt)
+	configPackage // package.json: every address but the project's own links at the top level
+	configLock    // package-lock.json: every address but package metadata (packageLockSources)
 )
 
 // installConfigFile: how a package manager reads install sources from the file at p.
@@ -346,8 +390,10 @@ func installConfigFile(p string) int {
 	case ".npmrc", "npmrc", ".yarnrc", ".yarnrc.yml", "pip.conf", "pip.ini", ".condarc", "condarc", ".gemrc", "uv.toml",
 		"yarn.lock", "pnpm-lock.yaml":
 		return configLines
-	case "package.json", "package-lock.json", "npm-shrinkwrap.json":
-		return configJSON
+	case "package.json":
+		return configPackage
+	case "package-lock.json", "npm-shrinkwrap.json":
+		return configLock
 	}
 	if strings.HasSuffix(p, ".cargo/config") || strings.HasSuffix(p, ".cargo/config.toml") {
 		return configLines
@@ -380,19 +426,267 @@ func configSources(text string) []string {
 	return out
 }
 
-// jsonPairRe is a "key": "value" pair of JSON text, a whole file or an edit's piece of one.
-var jsonPairRe = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+// unescapeText decodes the escapes of JSON, TOML and YAML strings anywhere in text (\/, \\, \",
+// \uXXXX, \UXXXXXXXX, \xXX); other backslashes stay. A client decodes "https:\/\/…" or "\u002f" in
+// a quoted value to an address the raw text hides (code review, 2026-11-18), so the rule reads a
+// source file's text both raw and decoded.
+func unescapeText(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 == len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		switch c := s[i+1]; c {
+		case '/', '\\', '"':
+			b.WriteByte(c)
+			i++
+			continue
+		case 'u', 'U', 'x':
+			n := map[byte]int{'u': 4, 'U': 8, 'x': 2}[c]
+			if i+2+n <= len(s) {
+				if r, err := strconv.ParseUint(s[i+2:i+2+n], 16, 32); err == nil {
+					b.WriteRune(rune(r))
+					i += 1 + n
+					continue
+				}
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
 
-// npmLinkKeys hold the project's own links in npm's package files, which npm never installs from.
-var npmLinkKeys = wordSet("homepage", "url", "funding", "$schema", "bugs", "repository", "author", "email", "web")
+// The keys of npm's package files that npm never installs from (code review, 2026-11-18: they
+// count only where npm reads them as such, never inside a dependency map, where a package may be
+// named "url" or "repository"). pkgMetaKeys: the top level of package.json, the project's own
+// description and links. lockTopKeys and lockEntryKeys: the top level of a lock file and a
+// package's entry in it ("funding" links of every package; "resolved" and "version" are read).
+var (
+	pkgMetaKeys = wordSet("name", "version", "description", "keywords", "homepage", "bugs", "license", "licenses",
+		"author", "contributors", "maintainers", "funding", "repository", "$schema", "readme", "private")
+	lockTopKeys   = wordSet("name", "version", "lockfileVersion", "requires")
+	lockEntryKeys = wordSet("name", "license", "funding", "engines", "bin", "integrity", "deprecated", "cpu", "os",
+		"libc", "dev", "optional", "devOptional", "peer", "inBundle", "extraneous", "hasInstallScript", "hasShrinkwrap")
+)
 
-// jsonSources are the values of npm package-file text that npm can install from: dependency specs
-// ("x": "https://…/x.tgz", "git+https://…"), "resolved" and "version" addresses of a lock file.
-func jsonSources(text string) []string {
+// packageJSONSources are the strings of a whole package.json (decoded JSON) npm can install from:
+// all but those of pkgMetaKeys at its top level. Dependency maps, overrides, resolutions and
+// everything else are read whole.
+func packageJSONSources(v any) []string {
+	top, ok := v.(map[string]any)
+	if !ok {
+		return stringsIn(v)
+	}
 	var out []string
-	for _, m := range jsonPairRe.FindAllStringSubmatch(text, -1) {
-		if !npmLinkKeys[strings.ToLower(m[1])] {
-			out = append(out, m[2])
+	for k, x := range top {
+		if !pkgMetaKeys[k] {
+			out = appendStrings(out, x)
+		}
+	}
+	return out
+}
+
+// packageLockSources are the strings of a whole package-lock.json or npm-shrinkwrap.json (decoded
+// JSON) npm can install from: every string but those of lockTopKeys at the top level and of
+// lockEntryKeys in a package's entry ("packages", and "dependencies" of lock version 1, which
+// nests).
+func packageLockSources(v any) []string {
+	top, ok := v.(map[string]any)
+	if !ok {
+		return stringsIn(v)
+	}
+	var out []string
+	for k, x := range top {
+		switch {
+		case k == "packages" || k == "dependencies":
+			out = append(out, lockDeps(x)...)
+		case !lockTopKeys[k]:
+			out = appendStrings(out, x)
+		}
+	}
+	return out
+}
+
+// lockDeps reads a map of a lock file: an object value is a package's entry, any other value a
+// dependency spec.
+func lockDeps(v any) []string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return stringsIn(v)
+	}
+	var out []string
+	for _, x := range m {
+		e, ok := x.(map[string]any)
+		if !ok {
+			out = appendStrings(out, x)
+			continue
+		}
+		for k, y := range e {
+			switch {
+			case k == "dependencies":
+				out = append(out, lockDeps(y)...)
+			case !lockEntryKeys[k]:
+				out = appendStrings(out, y)
+			}
+		}
+	}
+	return out
+}
+
+// shellCommand is a simple command of shell text: its words as the shell makes them, and whether
+// its output goes into a pipe.
+type shellCommand struct {
+	words []string
+	piped bool
+}
+
+// shellCommands splits shell text into simple commands as the shell does, unlike installSeps:
+// quotes and backslashes join a word, separators (a line end, ; & | ( ) { } and a backtick) end a
+// command only outside quotes, and '#' at the start of a word comments out the rest of the line.
+// So GOPROXY="https://a|https://b" is one word, and an assignment in a comment none.
+func shellCommands(s string) []shellCommand {
+	var (
+		out   []shellCommand
+		words []string
+		w     strings.Builder
+		inW   bool
+	)
+	endWord := func() {
+		if inW {
+			words = append(words, w.String())
+			w.Reset()
+			inW = false
+		}
+	}
+	endCmd := func(piped bool) {
+		endWord()
+		if len(words) > 0 {
+			out = append(out, shellCommand{words, piped})
+			words = nil
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\' && i+1 < len(s):
+			i++
+			w.WriteByte(s[i])
+			inW = true
+		case c == '\'':
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				j = len(s) - i - 1
+			}
+			w.WriteString(s[i+1 : i+1+j])
+			i += j + 1
+			inW = true
+		case c == '"':
+			for i++; i < len(s) && s[i] != '"'; i++ {
+				if s[i] == '\\' && i+1 < len(s) && strings.IndexByte("\"\\$`", s[i+1]) >= 0 {
+					i++
+				}
+				w.WriteByte(s[i])
+			}
+			inW = true
+		case c == '#' && !inW:
+			if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+				i += j - 1
+			} else {
+				i = len(s)
+			}
+		case c == ' ' || c == '\t' || c == '\r':
+			endWord()
+		case c == '|' && !(i+1 < len(s) && s[i+1] == '|') && !(i > 0 && s[i-1] == '|'):
+			endCmd(true)
+		case strings.IndexByte("\n;&|(){}`", c) >= 0:
+			endCmd(false)
+		default:
+			w.WriteByte(c)
+			inW = true
+		}
+	}
+	endCmd(false)
+	return out
+}
+
+// psAssign reads PowerShell's $env:NAME=value at the start of w, also with spaces around '=': the
+// assignment as NAME=value and how many words it took (0: none).
+func psAssign(w []string) (string, int) {
+	if len(w) == 0 || !strings.HasPrefix(strings.ToLower(w[0]), "$env:") {
+		return "", 0
+	}
+	a, n := w[0][len("$env:"):], 1
+	if !strings.Contains(a, "=") && n < len(w) && strings.HasPrefix(w[n], "=") {
+		a += w[n]
+		n++
+	}
+	if strings.HasSuffix(a, "=") && n < len(w) {
+		a += w[n]
+		n++
+	}
+	return a, n
+}
+
+// envAssigned are the install sources set by assignment words anywhere in a command (shell words
+// from shellCommands): before it, exported, or passed on ("make PIP_INDEX_URL=… install", "env",
+// "docker run -e", "--env=PIP_INDEX_URL=…"). Not in a comment, and not printed: an echo or printf only counts when its
+// output goes to a file or a pipe ("echo 'export PIP_INDEX_URL=…' >> ~/.bashrc"), and then its
+// words are read as shell text (code review, 2026-11-18: printing an unfamiliar PIP_INDEX_URL held
+// a node).
+func envAssigned(c shellCommand, depth int) []string {
+	w := c.words
+	if n := commandName(w[0]); n == "echo" || n == "printf" {
+		redirected := c.piped
+		for _, x := range w[1:] {
+			redirected = redirected || strings.Contains(x, ">")
+		}
+		var out []string
+		if redirected && depth < maxShellDepth {
+			for _, sc := range shellCommands(strings.Join(w[1:], " ")) {
+				out = append(out, envAssigned(sc, depth+1)...)
+			}
+		}
+		return out
+	}
+	var out []string
+	for i := 0; i < len(w); i++ {
+		if a, n := psAssign(w[i:]); n > 0 {
+			if m := assignRe.FindStringSubmatch(a); m != nil {
+				out = append(out, envSources(m[1], m[2])...)
+			}
+			i += n - 1
+			continue
+		}
+		a := w[i]
+		if _, v, ok := strings.Cut(a, "="); ok && strings.HasPrefix(a, "-") {
+			a = v
+		}
+		if m := assignRe.FindStringSubmatch(a); m != nil {
+			out = append(out, envSources(m[1], m[2])...)
+		}
+	}
+	return out
+}
+
+// editTexts are the new texts of a call's edits: "newString", "new_string", and those of an
+// "edits" list (a multi-edit tool).
+func editTexts(args string, vals map[string][]string) []string {
+	out := append(vals["newString"][:len(vals["newString"]):len(vals["newString"])], vals["new_string"]...)
+	if len(vals["edits"]) == 0 {
+		return out
+	}
+	var v struct {
+		Edits []map[string]any `json:"edits"`
+	}
+	if json.Unmarshal([]byte(args), &v) != nil {
+		return append(out, vals["edits"]...) // every string, the old ones too
+	}
+	for _, e := range v.Edits {
+		for _, k := range []string{"newString", "new_string"} {
+			out = appendStrings(out, e[k])
 		}
 	}
 	return out
@@ -403,6 +697,14 @@ func jsonSources(text string) []string {
 // is checked as unknownHost checks an address, whatever the scheme (git+https, sparse+https). All
 // sources go to one unknownHost call, which looks each host up in the request once: the check
 // stays linear in the call's size however many sources it names.
+//
+// Shell text is read twice: split at every separator, quoted or not (installSeps: "sh -c" and
+// Python's os.system strings hold commands), and as the shell splits it (shellCommands: a quoted
+// value may hold a separator). A package source file's text is read raw and with its escapes
+// decoded (unescapeText). A whole package.json or lock file that is valid JSON is decoded and read
+// by its structure; any other text of these files, such as an edit's new text, has no context
+// that shows it is a project's own link, so every address in it counts (code review, 2026-11-18:
+// an edit of a dependency's address alone holds no key).
 func installSourceHit(name, args, req string, known knownAddrs) bool {
 	var srcs strings.Builder
 	add := func(words []string) {
@@ -418,29 +720,57 @@ func installSourceHit(name, args, req string, known knownAddrs) bool {
 	for _, seg := range installSeps.Split(cmds, -1) {
 		add(installSources(installWords(seg)))
 	}
-	for _, m := range installEnvRe.FindAllStringSubmatch(cmds, -1) {
-		add(envSources(m[1], unquote.Replace(m[2])))
+	for _, c := range shellCommands(cmds) {
+		add(installSources(c.words))
+		add(envAssigned(c, 0))
 	}
 	if vals, ok := argValues(args); ok {
-		lines, js := false, false
+		var lines, pkg, lock bool
 		for _, k := range []string{"filePath", "path", "file_path"} {
 			for _, p := range vals[k] {
 				switch installConfigFile(p) {
 				case configLines:
 					lines = true
-				case configJSON:
-					js = true
+				case configPackage:
+					pkg = true
+				case configLock:
+					lock = true
 				}
 			}
 		}
-		for _, k := range []string{"content", "newString", "new_string"} {
-			for _, c := range vals[k] {
-				if lines {
-					add(configSources(c))
+		read := func(c string, whole bool) {
+			texts := []string{c}
+			if u := unescapeText(c); u != c {
+				texts = append(texts, u)
+			}
+			if lines {
+				for _, t := range texts {
+					add(configSources(t))
 				}
-				if js {
-					add(jsonSources(c))
+			}
+			if !pkg && !lock {
+				return
+			}
+			var v any
+			if whole && json.Unmarshal([]byte(c), &v) == nil {
+				if pkg {
+					add(packageJSONSources(v))
 				}
+				if lock {
+					add(packageLockSources(v))
+				}
+				return
+			}
+			for _, t := range texts {
+				add(strings.Fields(t))
+			}
+		}
+		if lines || pkg || lock {
+			for _, c := range vals["content"] {
+				read(c, true)
+			}
+			for _, c := range editTexts(args, vals) {
+				read(c, false)
 			}
 		}
 	}
