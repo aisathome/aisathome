@@ -365,12 +365,34 @@ func hostNamed(h string, named map[string]bool) bool {
 	}
 }
 
-// requestText is all text of a request a node sees, lowercased, for the address check.
+// requestText is the text of a request that the client wrote, lowercased, for the address
+// check: every field a node sees (bodyTextFields), but of the messages only those in a role the
+// client writes (clientRoles). An earlier assistant message, its content, reasoning and tool-call
+// arguments, came from a node: a host a node planted in its answer must not count as named by
+// the user in the next request (code review, 2026-11-18). Tool results stay: the client's own
+// tool runs produced them. A message in any other role, or no role, names nothing.
 func requestText(body map[string]any) string {
+	client := make(map[string]any, len(bodyTextFields))
+	for _, k := range bodyTextFields {
+		client[k] = body[k]
+	}
+	var kept []any
+	msgs, _ := body["messages"].([]any)
+	for _, m := range msgs {
+		if mm, ok := m.(map[string]any); ok {
+			if r, _ := mm["role"].(string); clientRoles[r] {
+				kept = append(kept, mm)
+			}
+		}
+	}
+	client["messages"] = kept
 	var b strings.Builder
-	eachText(body, func(s string) { b.WriteString(strings.ToLower(s)); b.WriteByte('\n') })
+	eachText(client, func(s string) { b.WriteString(strings.ToLower(s)); b.WriteByte('\n') })
 	return b.String()
 }
+
+// clientRoles are the message roles whose text the client wrote or its own tools produced.
+var clientRoles = map[string]bool{"system": true, "developer": true, "user": true, "tool": true, "function": true}
 
 // guardHit is what stopped an answer: the rule and, for the operator's hold record, why it
 // fired, in fixed words that name the pattern (guardRules) and hold nothing of the call or the
