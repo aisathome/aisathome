@@ -11,6 +11,11 @@ into each container, the same lock files): `flock` on <state>/slots/slot.<i>, an
 while the machine has at least `build_min_free_gb` GB of available memory. Sessions themselves are not
 limited here; how many run at once is the caller's (a queue's) decision.
 
+Waiting is first come, first served (a turnstile, 2026-11-18): a waiter first takes <state>/slots/turnstile (a
+blocking `flock`), then polls for a slot, and lets the turnstile go once it has one. Without it a holder that
+releases its slot and asks again at once (a pre-pass's back-to-back compiles) took it again before a waiter's next
+poll, so with one slot another session's build could wait for many minutes.
+
 `Host.sized()` sizes the limits from the machine; every field can be set instead (an adapter's config).
 Standard library only.
 """
@@ -40,6 +45,9 @@ def _open_slot(path: Path, create: bool = False) -> int:
         os.close(fd)
         raise OSError(f"build slot {path} is not a regular file")
     return fd
+
+
+TURNSTILE = "turnstile"
 
 
 def mem_available_gb() -> float:
@@ -95,6 +103,7 @@ class Host:
         d.mkdir(parents=True, exist_ok=True)
         for i in range(1, self.slots + 1):
             os.close(_open_slot(d / f"slot.{i}", create=True))
+        os.close(_open_slot(d / TURNSTILE, create=True))
         return d
 
     def limits(self) -> dict:
@@ -102,8 +111,10 @@ class Host:
 
     @contextmanager
     def slot(self, log: Path | None = None, sleep=time.sleep):
-        """Hold one build slot (waiting for a free one and for enough available memory)."""
+        """Hold one build slot (waiting, first come first served, for a free one and for enough available memory)."""
         d, t0 = self.slot_dir, int(time.time())
+        turn = os.fdopen(_open_slot(d / TURNSTILE), "rb")
+        fcntl.flock(turn, fcntl.LOCK_EX)                 # in line behind the waiters before us
         while True:
             if mem_available_gb() >= self.build_min_free_gb:
                 for i in range(1, self.slots + 1):
@@ -113,6 +124,7 @@ class Host:
                     except BlockingIOError:
                         fh.close()
                         continue
+                    turn.close()                         # the next waiter's turn
                     try:
                         if log:
                             with open(log, "a") as lf:

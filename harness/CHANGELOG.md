@@ -7,6 +7,13 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+### Fixed
+
+- Build slots are first come, first served: a waiter takes `<state>/slots/turnstile` before it polls for a slot
+  (`Host.slot` and `buildslot.sh` alike), so a holder that asks again right after its build no longer takes the slot
+  back before a waiting session. With one slot, a pre-pass's back-to-back compiles kept another session's build
+  waiting (measured on a 2-vCPU runner, 2026-11-18).
+
 ## [0.3.0] - unreleased
 
 The execution side of a stateless queue worker, taken out of prove2me's worker (which now uses it, with the
