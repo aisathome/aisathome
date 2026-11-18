@@ -657,3 +657,63 @@ def test_home_and_science_overview_read_the_records(pages, site, records):
     page.goto(site + "/")
     page.wait_for_timeout(1500)
     expect(page.locator("[data-home-prove2me]")).to_have_attribute("data-source", "build")
+
+
+# ---- the status block at the top: the current trial's tasks as one bar, the numbers, a few lines
+
+STATS = {"updated": "2026-11-18T14:58:00Z", "nodes": {"online": 2, "busy": 1, "slots": 2, "held": 0, "paused": 0},
+         "today": {"requests": 10, "projects": {"prove2me": {"requests": 4}}},
+         "total": {"requests": 100, "projects": {"prove2me": {"requests": 40, "prompt_tokens": 1000, "cached_tokens": 100,
+                                                             "completion_tokens": 50, "node_seconds": 3600}}}}
+
+
+@pytest.mark.parametrize("width,theme", ((1280, "dark"), (390, "light"), (390, "dark")))
+def test_the_status_block_shows_the_queue_and_the_network(pages, site, records, width, theme):
+    """With the records (as on 2026-11-18) and /v1/stats: trial 8 running on scaffold v9; its 46 tasks as one bar, each
+    part also in words (14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting; no percentage); 2 nodes online,
+    1 of 2 slots busy, 2 of 6 leaves proved, 8 of 8 proofs accepted. At 390 px nothing scrolls sideways."""
+    page = _page(pages, width=width, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": records["results"]})
+    _serve(page, "**/v1/stats", STATS)
+    page.clock.set_fixed_time("2026-11-18T15:00:00Z")  # the fixtures' time: their data is fresh
+    page.goto(site + PAGE)
+    page.evaluate("t => { document.documentElement.dataset.theme = t }", theme)
+    box = page.locator("[data-p2m-status][data-source=live][data-trial=t8]")
+    expect(box).to_be_visible()
+    expect(box.locator("[data-st=head]")).to_have_text("Trial 8 is running since 16 Nov, scaffold v9")
+    legend = box.locator("[data-st-legend]")
+    expect(legend).to_have_attribute("aria-label", "46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting.")
+    expect(legend.locator("li:visible")).to_have_count(5)
+    assert [" ".join(li.text_content().split()) for li in legend.locator("li").all()] == ["14 proved", "18 ended otherwise", "3 stopped", "2 running", "9 waiting"]
+    bar = box.locator("[data-st-bar]")
+    expect(bar).to_be_visible()
+    expect(bar).to_have_attribute("aria-hidden", "true")
+    widths = {p: bar.locator(f"[data-part={p}]").bounding_box()["width"] for p in ("proved", "ended", "queued")}
+    assert widths["ended"] > widths["proved"] > widths["queued"], widths
+    expect(box.locator("[data-st=elsewhere]")).to_be_hidden()
+    expect(box.locator("[data-num=nodes] dd")).to_have_text("2")
+    expect(box.locator("[data-num=slots] dd")).to_have_text("1 of 2")
+    expect(box.locator("[data-num=leaves] dd")).to_have_text("2 of 6")
+    expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
+    expect(box.get_by_role("link", name="Run a node")).to_have_attribute("href", "/node/")
+    expect(box.locator("[data-st=updated]")).to_contain_text("updated 14:58 UTC")
+    assert "%" not in box.inner_text()
+    assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
+    b = box.bounding_box()
+    assert b["x"] >= 0 and b["x"] + b["width"] <= width, b
+
+
+def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, site, data):
+    """The gateway down (every /v1 request fails), and without JavaScript: the build's trial and proofs, no bar, no
+    nodes, and a line that says so."""
+    for js in (True, False):
+        page = _page(pages, js=js)
+        page.goto(site + PAGE)
+        page.wait_for_timeout(1500 if js else 0)
+        box = page.locator("[data-p2m-status]")
+        expect(box).to_have_attribute("data-source", "build")
+        expect(box.locator("[data-st=head]")).to_have_text(re.compile(r"^(Trial \d+ is (running|being prepared)|No trial is running)"))
+        expect(box.locator("[data-st-bar]")).to_be_hidden()
+        expect(box.locator("[data-num=nodes]")).to_be_hidden()
+        accepted = sum(1 for s in data["submissions"] if s["verdict"] == "accepted")
+        expect(box.locator("[data-num=accepted] dd")).to_have_text(f"{accepted} of {len(data['submissions'])}")
+        expect(box.locator("[data-st=updated]")).to_contain_text("As of the site’s last build")
