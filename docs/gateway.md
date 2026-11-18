@@ -118,6 +118,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `daily_tokens` | The project's budget in weighted tokens per UTC day, shared by all its keys; `0` = no limit. Accounts' budgets never apply to it. Over it, requests get 429 with `Retry-After`. |
 | `max_node_share` | At most this share of the nodes that may serve a request work for the project at once (rounded down, at least one node, so a small network still does science when people leave it idle); `0` = no cap. |
 | `agent_ok` | The project's requests with tools (agents) may go to volunteer nodes past their probation, as an account key with consent may; without it they go to trusted nodes only. Requests that look like personal data still go only to trusted nodes, and secrets are redacted, as for everyone. |
+| `pilot_probation_ok` | With `agent_ok`: the project's agents may also use connector pilots (below) whose account is still in probation (decision 0020: science, where every proof is checked). Standalone nodes in probation stay excluded. |
 | `min_trust` | `"trusted"` keeps all its requests on trusted nodes. |
 | `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
 | `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
@@ -183,7 +184,7 @@ gate nothing.
 `project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,
 hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens,
 uncached_prompt_tokens, tokens_computed, tokens_with_cache, created_at, started_at, finished_at,
-updated_at, node_classes, live` (`node_classes`: the classes, trusted or volunteer, of the nodes that
+updated_at, node_classes, live` (`node_classes`: the classes, trusted, volunteer or pilot (a connector's pilot, below), of the nodes that
 served the requests that named the task; `live`: below). A field a task does not have is `null`.
 Query `project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500, default 100) and `after`
 (the answer's `next`); newest first.
@@ -483,6 +484,146 @@ forgets the hold. More than 1024 unrecorded holds hold every node until a restar
 
 Beyond `max_nodes` the page says "the network is full for now" (there is no waitlist for
 nodes).
+
+## Connectors and pilots
+
+A **connector** is an outside system that brings machines in bounded serving sessions, **pilots**
+(decision 0020). The BOINC project's bridge is the first: a BOINC work unit is one pilot, a run of
+`aisathome-node pilot` that serves for up to 4 hours. The gateway is the source of truth: it mints
+the pilot, decides what it may serve, meters it and decides its credit; the connector only creates
+work items with the pilot's name, says who runs each, and reports when it is done. Nothing in the
+gateway is BOINC-specific beyond the configuration.
+
+```json
+"connectors": [{
+  "id": "boinc",
+  "key_sha256": ["<64 hex characters>"],
+  "allow_from": ["203.0.113.7"],
+  "max_pilots": 10,
+  "mint_per_hour": 120,
+  "pilots_chat_enabled": false,
+  "no_chat_users": ["<Science United's BOINC user id>"],
+  "trusted_users": ["<the maintainer's own BOINC user id>"],
+  "chat_headroom": 0,
+  "sessions_per_slot": 2,
+  "unsent_buffer": 2,
+  "max_credit_per_pilot": 150000,
+  "max_credit_per_account_day": 1800000
+}]
+```
+
+| Field | What |
+|---|---|
+| `id` | Lower-case letters, digits and dashes: the `{id}` in its endpoints. |
+| `key_sha256` | SHA-256 of its keys (make one with `aisathome-gateway project-key <file>`). A connector key opens only that connector's endpoints: no API, project or account call. It must differ from every project key. |
+| `allow_from` | Optional: addresses or prefixes its calls must come from (behind a local reverse proxy, the last `X-Forwarded-For` hop). Others get 403. Also restrict the path at the reverse proxy. |
+| `max_pilots` | Its pilots that have not ended, at most (0: none can be created). |
+| `mint_per_hour` | Pilots created per hour, at most (default 120). |
+| `max_deadline_hours` | A pilot's deadline at most this far ahead (default 336). |
+| `pilots_chat_enabled` | Off by default: its pilots serve **science only**. See below. |
+| `no_chat_users` | Its users (connector ids) whose pilots serve science only, whatever else says: Science United's account, whose hosts cannot reach a person's switch. |
+| `trusted_users` | Its users whose pilots are the maintainer's own machines (rented test hosts): they count as trusted nodes, like a config token with `"trust": "trusted"`, and serve chat even while `pilots_chat_enabled` is off. Never list anyone else. |
+| `chat_headroom` | Pilots to keep for people's requests in the demand number, counted only while `pilots_chat_enabled`. |
+| `sessions_per_slot` | Science sessions one GPU slot keeps busy (default 2: a session alternates model calls with its own tools). |
+| `unsent_buffer` | Created pilots no machine has taken yet, at most (default 2). |
+| `max_credit_per_pilot`, `max_credit_per_account_day` | Credit caps (default 150,000 and 1,800,000; `-1`: none). See `docs/credit.md`. |
+
+Connectors need accounts (a pilot serves as an account's node) and work best with a `state_dir`
+(the records are in `state_dir/science.db`; without one they are in memory).
+
+### The connector API
+
+All with `Authorization: Bearer <connector key>`, JSON bodies (`application/json`, unknown fields
+refused):
+
+| Call | What |
+|---|---|
+| `GET /v1/connectors/{id}/demand` | How many pilots to create now (`pilots_wanted`), how many unsent ones to cancel (`cancel_unsent`), the `unsent_buffer`, and the numbers behind them (below) |
+| `POST /v1/connectors/{id}/pilots` `{"deadline": "<RFC 3339>"}` | Create a pilot: `{"pilot": {...}, "credential": "pc-…"}`, 201. The credential is shown only here; only its SHA-256 is stored. 409 at `max_pilots`, 429 over `mint_per_hour` |
+| `GET /v1/connectors/{id}/pilots?state=&limit=` | Its pilots, newest first (`limit` 1-500, default 100) |
+| `GET /v1/connectors/{id}/pilots/{pid}` | One pilot: state, deadline, user/host/team, `account` (`linked` or `unclaimed`, never which), times, `close_reason`, `end_reason`, `connections`, `served_seconds`, `requests` (answers that went to the client, whole or in part), `failed` (the others), `self_served`, `tokens`, `metered_credit`, `credit`, `withheld`, `agent` |
+| `POST /v1/connectors/{id}/pilots/{pid}/bind` `{"user", "host", "team"}` | Who runs it: the connector's own ids (1-64 letters, digits, `.`, `_`, `:` or `-`; never an address). Binding again with the same ids changes nothing; other ids, or an ended pilot, get 409 |
+| `POST /v1/connectors/{id}/pilots/{pid}/reported` `{"outcome": "success\|error\|cancelled\|expired"}` | Its work item is done (or was cancelled): the pilot ends (`end_reason` `reported: <outcome>`) and its connection, if any, is closed. Idempotent |
+| `GET /v1/connectors/{id}/pilots/{pid}/credit` | `{"pilot", "state", "final", "final_at", "credit", "withheld"}`: `credit` only once `final`; until then `final_at` says when (null while the pilot has not ended) |
+
+A pilot's **credential** is `pc-<12 hex>.<secret>`; its id is `p-` and the same 12 hex digits, and
+the node agent takes its node id from the credential as it does from an account's node token. It
+connects over the ordinary node WebSocket (`/v1/node/connect`, protocol 2) and works:
+
+- only after the bind (before it, the connection is refused with 409 "pilot not bound yet" and
+  the agent retries within seconds);
+- for **one connection at a time** (a second one is closed: "this pilot is already connected");
+- until the pilot ends or its deadline passes (then 401 "this pilot has ended");
+- while its account may run pilots (a banned account's pilots are refused and dropped).
+
+**States**: `created`, `bound`, `connected`, `disconnected` (it may come back), `ended`. A pilot
+ends when it closes with `pilot: time`, `pilot: idle` or `pilot: engine`, when the connector reports
+it, or when its deadline passes (`end_reason` `deadline`). `pilot: sigterm` (BOINC suspended the
+task) and a lost connection leave it `disconnected`; when the task resumes, the same credential
+continues **the same record**: `connections`, `served_seconds`, requests, tokens and credit add up
+over every run of the work unit. A gateway restart counts a connected pilot's serve time up to the
+last minute it was seen (`close_reason` `gateway restart`).
+
+### Which account a pilot serves
+
+At the bind the connector's user maps to an account: the one **linked** to that user, or, if none,
+a new **unclaimed** account (`cx:<32 hex>`, not derived from the user id) linked to it. Every pilot
+of that user lands there; its probation clock starts with its first pilot. An unclaimed account has
+no sign-in, keys or node tokens and does not count against `max_active`. Claiming it from the
+account page comes later (map PR 4b); until then the operator links by hand:
+
+```bash
+aisathome-gateway accounts link gh:12345 boinc 678      # this account is BOINC user 678
+aisathome-gateway accounts unlink gh:12345 boinc 678
+aisathome-gateway accounts chat-on-pilots gh:12345 off  # this account's pilots: science only
+```
+
+An account's own API key reads and sets the switch too: `GET` and `PATCH /v1/account/settings`
+with `{"chat_on_pilots": false}`.
+
+### What a pilot may serve
+
+A bound pilot is an **untrusted account node** under decision 0007 and every rule in "Volunteer
+nodes" above: personal data only to trusted nodes, the share cap per operator (the account's
+pseudonym), the guards and holds, requests with tools only with the requester's consent and past
+the account's probation, except that a project with `pilot_probation_ok` may use pilots during
+it. On top of that it serves **science only** (requests with a project's key), not chat, agents or
+API calls, when any of these holds:
+
+| Rule | Why |
+|---|---|
+| its user is in `no_chat_users` | Science United's hosts: their owners cannot reach a switch |
+| its account's "chat on pilots" is off | the person's choice (on by default, also for unclaimed accounts) |
+| `pilots_chat_enabled` is false (the default) and its user is not in `trusted_users` | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (BACKLOG 10 and 12; decision 0020's follow-up makes them M3 work done before outside hosts join). Until the owner turns this on at launch, only science (which carries no user data) reaches pilots; the maintainer's own test pilots go in `trusted_users` |
+
+Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
+seconds. Nothing here makes a pilot confidential: whoever runs the machine can read what it serves
+("hardened, not confidential"). Public task views name a pilot's class as `pilot`.
+
+### Pilots wanted
+
+`GET …/demand` computes:
+
+```
+science sessions = Σ over projects with agent_ok (not min_trust trusted):
+                   min(open tasks, runner workers active in the last 5 minutes)
+have             = sessions_per_slot × GPU slots online that those projects may use
+                   (held and paused nodes and this connector's own pilots left out)
+science pilots   = ceil(max(0, science sessions − have) / sessions_per_slot)
+chat pilots      = chat_headroom while pilots_chat_enabled, else 0
+target           = min(science pilots + chat pilots, max_pilots, spend cap if set)
+outstanding      = its pilots not ended (created, bound, connected, disconnected)
+pilots_wanted    = min(max(0, target − outstanding), unsent_buffer − unsent, mint_per_hour left)
+cancel_unsent    = min(unsent, max(0, outstanding − target))
+```
+
+Open tasks are queued or leased; a runner worker counts once it claims (a task or none) or renews a
+lease, and the distinct workers holding leases count after a restart. The answer shows each part
+(`science`, `chat`, `pilots` by state, `capped_by`). The spend cap is a hook for the monthly cap on
+feeding pilots with science (BACKLOG 7v); none is set yet. The science part counts the same open
+tasks and slots as runner autoscaling's demand, seen from the other side: there runners are
+bounded by GPU slots, here pilots by runners, so neither grows the other from nothing; the runner
+pool's minimum size seeds both.
 
 ### Email sign-in (one-time code and link)
 

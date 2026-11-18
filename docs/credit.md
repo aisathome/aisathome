@@ -59,6 +59,28 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   ids, labels, account ids and pseudonyms never appear; hosts have numeric ids. No CPIDs yet.
   The reverse proxy must route `/stats/*` to the gateway (like `/account*` and `/v1/*`).
 
+**Pilots** (connector pilots such as BOINC work units, `docs/gateway.md` "Connectors and pilots"):
+
+- **Same formula, other ledger.** Each answer a pilot serves is metered exactly as above (counted
+  by the gateway, cache decided by it, nothing for self-served, failed, blocked or undelivered
+  answers) into **the pilot's record** in `state_dir/science.db`, not into the ledger behind
+  `/v1/stats/credit` and `/stats/`: pilot credit is granted through the connector (BOINC grants it
+  and exports it in its own statistics), so it is counted once. The record keeps `metered_credit`
+  (the formula) and `credit` (after the caps), with the requests, failed and self-served answers
+  and tokens, over every run of the work unit.
+- **Caps.** Per pilot `max_credit_per_pilot` (default 150,000) and per account and UTC day
+  `max_credit_per_account_day` (default 1,800,000, over all its pilots), set per connector; `-1`
+  turns one off. The defaults are about 1.3 times what a pilot busy for its whole 4 hours, and two
+  such GPUs all day, earn at the rate measured on a 3090 on our science traffic (about 28,750 an
+  hour, launch plan 2026-11-18, one measurement); they are to be tuned with B1-B2 measurements.
+- **Final after a hold.** A pilot's credit becomes final 24 hours after its last disconnect, once
+  it has ended (`GET /v1/connectors/{id}/pilots/{pid}/credit` says `final` and `final_at`; the
+  connector passes the final number on). Until then it can still be withheld.
+- **Withheld.** If a guard holds the pilot, its credit is withheld (`withheld: "guard: <rule>"`)
+  and its final credit is 0. The gateway-side model check (BACKLOG 11) will withhold it the same
+  way when it is built.
+- **Idle earns nothing**: credit comes only from metered answers.
+
 **The tokenizer file.** Qwen3.8's `tokenizer.json` (12.8 MB, not in the repo):
 
 ```bash
