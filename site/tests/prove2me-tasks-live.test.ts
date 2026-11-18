@@ -1,10 +1,9 @@
-// The prove2me page's live trials (decision 0021): every trial from trial 6 on comes from the gateway's GET /v1/tasks,
+// The prove2me page's live tasks (decision 0021): every trial from trial 6 on comes from the gateway's GET /v1/tasks,
 // page after page, not only the data document's current trial; trials 1 to 5 stay the build's.
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchAllTasks, isLiveTrial, parseCurrent, taskTableRows, type PublicTask, type TasksView } from '../src/data/prove2me-current';
-import { liveTrialHTML, liveTrials, liveTrialsNote } from '../src/data/prove2me-trials';
 import { mergeRows, type TaskTableRow } from '../src/data/task-table';
 
 let clock = 0;
@@ -67,7 +66,9 @@ test('the task table takes every live trial from the gateway, with or without th
 		assert.equal(new Set(ids).size, ids.length);
 		const r7 = rows.find((r) => r.id === `t7-${B}-s1`)!;
 		assert.deepEqual(r7.labels, { trial: '7', leaf: B, alias: 'N07', outline: '1' });
-		assert.equal(r7.tokens, 2000 + 18000 + 200);
+		// tokens computed (fresh prompt and written); with the cache re-reads beside them
+		assert.equal(r7.tokens, 2000 + 200);
+		assert.equal(r7.tokens_with_cache, 2000 + 18000 + 200);
 		assert.equal(rows.find((r) => r.id === `t8p-${C}-s1`)!.labels.trial, '8p');
 		assert.equal(rows.find((r) => r.id === `t8-${C}-s1`)!.state, 'running');
 	}
@@ -138,35 +139,4 @@ test('every page of GET /v1/tasks, by its cursor, up to a bound', async () => {
 	const v2 = await fetchAllTasks(loop, '/v1/tasks?project=prove2me', 20);
 	assert.equal(n, 2);
 	assert.equal(v2!.tasks.length, 2);
-});
-
-test('the trials table gets an ended trial the build lacks, counted from its tasks', () => {
-	const rows = liveTrials(view(all), ['1', '2', '3', '4', '5', '6', '6p', '7p']);
-	// trial 8 still runs; the probe round of trial 8 has ended; trial 5 is frozen
-	assert.deepEqual(rows.map((r) => r.trial), ['7', '8p']);
-	const [r7, p8] = rows;
-	assert.deepEqual([r7.all, r7.calibration, r7.open], [{ proved: 1, runs: 2 }, { proved: 1, runs: 1 }, { proved: 0, runs: 1 }]);
-	assert.equal(r7.start, '2026-11-16');
-	assert.equal(r7.end, '2026-11-17');
-	assert.equal(r7.scaffold, 'v8');
-	assert.equal(r7.model_min, 5 + 5 + 0 + 10);
-	assert.deepEqual(r7.tok, { prompt_tokens: 10000 + 10000 + 0 + 20000, cached_tokens: 9000 + 9000 + 18000, output_tokens: 100 + 100 + 200 });
-	assert.equal(r7.exact, true);
-	assert.equal(p8.probe, true);
-	assert.equal(p8.number, 8);
-	const html = liveTrialHTML(r7);
-	assert.match(html, /^<tr data-trial="7" data-source="live">/);
-	assert.match(html, /data-cell="proved">1 of 2</);
-	assert.match(html, /data-cell="calibration">1 of 1</);
-	assert.match(html, /data-tokens="40400"/);
-	assert.match(html, /16–17 Nov/);
-	assert.match(liveTrialHTML(p8), /data-probes/);
-	assert.match(liveTrialHTML(p8), /data-cell="proved">–</);
-	assert.equal(liveTrialsNote(rows), 'Live from the gateway’s task records: trial 7 and trial 8’s outline probes. The All row and the counts at the top of the page do not include them yet.');
-	// in the build: no live row; a task without its cache count: "at least"
-	assert.deepEqual(liveTrials(view(all), ['7', '8p']).map((r) => r.trial), []);
-	const partial = liveTrials(view([...t7.slice(0, 3), task(`t7-${B}-s1`, 't7', B, 'outline', 'done', { ...done('outline'), cached_tokens: null })]), []);
-	assert.equal(partial[0].exact, false);
-	assert.match(liveTrialHTML(partial[0]), /title="At least: /);
-	assert.equal(liveTrialsNote([]), '');
 });

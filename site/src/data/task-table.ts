@@ -29,8 +29,10 @@ export interface TaskTableRow {
 	closed_by?: string | null;
 	steps: number | null;
 	model_min: number | null;
-	/** Everything the model read (cache re-reads included) and wrote; null: unknown. */
+	/** Tokens computed: what the model read without the cache, plus what it wrote; null: unknown. */
 	tokens: number | null;
+	/** With the cache re-reads (shown on hover only); null or absent: unknown. */
+	tokens_with_cache?: number | null;
 	started_at: string | null;
 	finished_at: string | null;
 	/** The project's own fields, as text (prove2me: trial, leaf, alias, outline, hole, holes). */
@@ -115,7 +117,7 @@ export function taskRowHTML(r: TaskTableRow, o: TaskTableOptions, byId: Map<stri
 			: '–';
 	const work = workText(r);
 	return `<tr ${attrs.join(' ')}>
-<td class="tt-group" data-cell="group">${g.html}</td><th scope="row" data-cell="task"><span class="tt-task" title="${esc(r.id)}">${esc(lab.text)}</span>${lab.noteHTML ? `<span class="tt-note">${lab.noteHTML}</span>` : ''}</th><td data-cell="result" class="tt-r tt-r-${res.show}">${esc(res.text)}</td><td data-cell="work" class="tt-work"${r.tokens !== null ? ` title="${exact(r.tokens)} Qwen tokens"` : ''}>${esc(work)}</td><td data-cell="finished" class="tt-time">${fin}</td>
+<td class="tt-group" data-cell="group">${g.html}</td><th scope="row" data-cell="task"><span class="tt-task" title="${esc(r.id)}">${esc(lab.text)}</span>${lab.noteHTML ? `<span class="tt-note">${lab.noteHTML}</span>` : ''}</th><td data-cell="result" class="tt-r tt-r-${res.show}">${esc(res.text)}</td><td data-cell="work" class="tt-work"${r.tokens !== null ? ` title="${exact(r.tokens)} tokens computed${r.tokens_with_cache ? `; ${exact(r.tokens_with_cache)} with cache re-reads` : ''}"` : ''}>${esc(work)}</td><td data-cell="finished" class="tt-time">${fin}</td>
 </tr>`;
 }
 
