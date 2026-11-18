@@ -15,6 +15,7 @@ import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 import { taskTableHTML as allTasksHTML } from '../../data/task-table';
 import { mdLightHTML } from '../../data/prove2me-current';
 import { p2mTaskOptions } from '../../data/prove2me-tasks';
+import { BAR_LABEL, BAR_PARTS, builtStatus, statusTexts } from '../../data/prove2me-status';
 
 const t = p2m.totals;
 const cur = p2m.current;
@@ -46,6 +47,9 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 const hist = historyOf(p2m);
 const view = scienceView(hist, null);
 const kp = kpisHTML(view.kpis);
+// The status block's build copy: the trial and the submissions; the browser adds the queue and the network.
+const st = builtStatus(hist);
+const stx = statusTexts(st, new Date(hist.generated_at));
 const frozenTrials = trials.filter((tr) => tr.trial <= FROZEN_THROUGH);
 const builtDetails = p2m.trials.filter((tr) => tr.trial > FROZEN_THROUGH).map((tr) => builtDetail(p2m, hist, tr.trial)).filter((d): d is TrialDetail => !!d);
 // A finished v5 trial keeps each leaf's tasks: the same table as "Working on now", collapsed.
@@ -122,6 +126,7 @@ const leafCols = [
 		description: `Leaves of prove2me, research theorems stated in Lean 4, that ${p2m.model}, an open model on the AIs@home network, tried to prove, and the proofs we submitted. Every run counts.`,
 	}}
 	headings={[
+		{ depth: 2, slug: 'status', text: 'Status' },
 		{ depth: 2, slug: 'results', text: 'Results so far' },
 		{ depth: 2, slug: 'submissions', text: 'Submitted to prove2me' },
 		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
@@ -132,6 +137,33 @@ const leafCols = [
 		{ depth: 2, slug: 'next', text: 'What comes next' },
 	]}
 >
+	{/* The status block: the build's trial and submissions; the browser draws the queue bar and the numbers from the
+	    gateway's records and /v1/stats every minute (prove2me-status.ts). */}
+	<section class="p2m-status not-content" data-p2m-status data-source="build" aria-labelledby="status">
+		<h2 id="status">Status</h2>
+		<p class="p2m-st-head" data-st="head">{stx.head}</p>
+		<div class="p2m-bar" data-st-bar aria-hidden="true" hidden>
+			{BAR_PARTS.map((p) => <span class={`seg seg-${p}`} data-part={p} />)}
+		</div>
+		<ul class="p2m-legend" data-st-legend hidden>
+			{BAR_PARTS.map((p) => <li data-part={p}><span class={`sw seg-${p}`} aria-hidden="true" /><b data-count>0</b> {BAR_LABEL[p]}</li>)}
+		</ul>
+		<p class="p2m-st-more" data-st="elsewhere" hidden />
+		<dl class="p2m-st-nums">
+			<div data-num="nodes" hidden><dt>nodes online (whole network)</dt><dd /></div>
+			<div data-num="slots" hidden><dt>GPU slots busy now</dt><dd /></div>
+			<div data-num="leaves" hidden><dt>leaves proved in this trial</dt><dd /></div>
+			<div data-num="accepted"><dt>proofs accepted by prove2me, of submitted</dt><dd>{stx.nums.accepted}</dd></div>
+		</dl>
+		<ul class="p2m-st-lines">
+			<li>{p2m.model}, an open-weight model, works on every task on the AIs@home network’s GPUs.</li>
+			<li>A proof is submitted only after our own full Lean check passes it; prove2me’s check then decides.</li>
+			<li>Each task is one attempt: an outline of a leaf, one of its holes, or putting the pieces together.</li>
+			<li>Have an NVIDIA GPU with 16 GB or more? <a href="/node/">Run a node</a>. It earns <a href="/node/credit/">credit</a> in BOINC’s unit, not money.</li>
+		</ul>
+		<p class="p2m-st-updated" data-st="updated">{stx.updated}</p>
+	</section>
+
 	<p>
 		<a href={p2m.project_url} data-p2m-link="home">prove2me</a> collects theorems from mathematical research papers, stated in Lean 4
 		and split into small pieces called leaves. Anyone, a person or an agent, may submit a proof of an open leaf, and prove2me’s own
@@ -546,6 +578,7 @@ const leafCols = [
 	import { kpisHTML, plainHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialRowHTML, trialsFootHTML } from '../../data/prove2me-view';
 	import { walkPages } from '../../data/prove2me-current';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
+	import { BAR_PARTS, builtStatus, parseNodes, statusTexts, statusView, type Nodes } from '../../data/prove2me-status';
 
 	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
 	// replaces or joins them (trials 1 to 5 stay the build's).
@@ -690,6 +723,48 @@ const leafCols = [
 			return null;
 		}
 	})();
+	// The status block: the build's trial and submissions until the gateway's records answer; the queue bar from the
+	// records, the nodes from /v1/stats (each loader keeps its own newest answer and draws the block again).
+	const statusBox = document.querySelector<HTMLElement>('[data-p2m-status]');
+	let stLive: Records | null = null;
+	let stNodes: Nodes | null = null;
+	const showStatus = () => {
+		if (!statusBox) return;
+		const v = statusView(stLive, stNodes, recordsKnown ? builtStatus(recordsKnown.history) : null);
+		if (!v) return;
+		const tx = statusTexts(v);
+		const set = (k: string, text: string) => {
+			const e = statusBox.querySelector<HTMLElement>(`[data-st="${k}"]`);
+			if (!e) return;
+			e.textContent = text;
+			e.hidden = !text;
+		};
+		set('head', tx.head);
+		set('elsewhere', tx.elsewhere);
+		set('updated', tx.updated);
+		const bar = statusBox.querySelector<HTMLElement>('[data-st-bar]')!;
+		const legend = statusBox.querySelector<HTMLElement>('[data-st-legend]')!;
+		const b = v.bar;
+		bar.hidden = legend.hidden = !b || b.total === 0;
+		for (const p of BAR_PARTS) {
+			const n = b?.[p] ?? 0;
+			const seg = bar.querySelector<HTMLElement>(`[data-part="${p}"]`)!;
+			seg.style.flexGrow = String(n);
+			seg.hidden = n === 0;
+			const li = legend.querySelector<HTMLElement>(`[data-part="${p}"]`)!;
+			li.querySelector('[data-count]')!.textContent = String(n);
+			li.hidden = n === 0;
+		}
+		legend.setAttribute('aria-label', tx.barWords);
+		for (const [k, val] of Object.entries(tx.nums)) {
+			const d = statusBox.querySelector<HTMLElement>(`[data-num="${k}"]`);
+			if (!d) continue;
+			d.querySelector('dd')!.textContent = val;
+			d.hidden = !val;
+		}
+		statusBox.dataset.source = v.source === 'live' ? 'live' : stNodes ? 'nodes' : 'build';
+		statusBox.dataset.trial = v.trial?.label ?? '';
+	};
 	const showRecords = (live: Records) => {
 		if (!recordsKnown) return;
 		const h = recordsKnown.history;
@@ -818,9 +893,21 @@ const leafCols = [
 		const ok = <T,>(r: PromiseSettledResult<T>) => (r.status === 'fulfilled' ? r.value : null);
 		const doc = d.status === 'fulfilled' ? parseCurrent(d.value) : null;
 		const tasks = ok(ts);
-		if (!tasks) return; // keep what the page shows
+		if (!tasks) {
+			// keep what the page shows; the status block says when its data stopped refreshing
+			try {
+				showStatus();
+			} catch {}
+			return;
+		}
 		const [camps, results] = [ok(cs), ok(rs)];
 		const live: Records | null = camps && results ? { updated: tasks.updated, campaigns: camps.items, results: results.items, tasks } : null;
+		if (live) stLive = live;
+		try {
+			showStatus();
+		} catch {
+			// keep what the block shows
+		}
 		try {
 			showTasks(doc, tasks);
 		} catch {
@@ -867,6 +954,13 @@ const leafCols = [
 			clearTimeout(timer);
 			if (!res.ok) throw new Error(String(res.status));
 			const d = await res.json();
+			const nodes = parseNodes(d);
+			if (nodes) {
+				stNodes = nodes;
+				try {
+					showStatus();
+				} catch {}
+			}
 			const all = d?.total?.projects?.prove2me;
 			const today = d?.today?.projects?.prove2me ?? { requests: 0 };
 			const todayAll = d?.today?.requests;
@@ -958,6 +1052,33 @@ const leafCols = [
 </script>
 
 <style is:global>
+	/* The status block at the top: the current trial's tasks as one bar (each part also as words in the legend), the
+	   numbers and a few lines. */
+	.p2m-status { margin: 0 0 1.5rem; padding: 1rem 1.25rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+	.p2m-status h2 { margin: 0; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+	.p2m-status p { margin: 0.4rem 0 0; }
+	.p2m-status [hidden] { display: none !important; }
+	.p2m-st-head { font-weight: 600; color: var(--sl-color-white); }
+	.p2m-bar { display: flex; gap: 2px; height: 1.1rem; margin: 0.6rem 0 0; border-radius: 0.25rem; overflow: hidden; background: var(--sl-color-gray-6, transparent); }
+	.p2m-bar .seg { flex: 0 1 0; min-width: 4px; }
+	.p2m-status .seg-proved { background: var(--sl-color-accent); }
+	.p2m-status .seg-ended { background: var(--sl-color-gray-4); }
+	.p2m-status .seg-stopped { background: repeating-linear-gradient(135deg, var(--sl-color-gray-4) 0 2px, transparent 2px 5px); }
+	.p2m-status .seg-running { background: repeating-linear-gradient(135deg, var(--sl-color-accent-high) 0 4px, var(--sl-color-accent) 4px 8px); }
+	.p2m-status .seg-queued { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sl-color-gray-3); }
+	.p2m-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin: 0.45rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.p2m-legend li { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; }
+	.p2m-legend b { font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+	.p2m-legend .sw { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 0.15rem; }
+	.p2m-st-more { font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.p2m-st-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem 1rem; margin: 0.8rem 0 0; }
+	.p2m-st-nums div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+	.p2m-st-nums dd { margin: 0; font: 700 1.25rem/1.2 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+	.p2m-st-nums dt { font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+	.p2m-st-lines { margin: 0.8rem 0 0; padding: 0 0 0 1.1rem; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.p2m-st-lines li { margin: 0.15rem 0 0; }
+	.p2m-st-lines a { color: var(--sl-color-accent-high); }
+	.p2m-st-updated { font-size: 0.8rem; color: var(--sl-color-gray-3); }
 	/* Global: the build and the browser draw parts of the page as HTML (prove2me-view.ts, prove2me-live.ts), which
 	   scoped styles would miss; every class here is the page's own (p2m-, tt-) or under main. */
 	.p2m-updated, .p2m-note, main :is(.caps, .sub, .meta) { color: var(--sl-color-gray-3); }
