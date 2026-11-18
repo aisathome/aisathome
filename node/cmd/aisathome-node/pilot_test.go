@@ -25,23 +25,37 @@ import (
 	"github.com/aisathome/aisathome/protocol"
 )
 
-// The pilot as BOINC's wrapper runs it: a process in a task folder that also holds
-// init_data.xml with the volunteer's account key. It starts its engine (this test binary as a
-// fake llama-server), connects, serves a request that never ends, and on SIGTERM leaves with
-// "pilot: sigterm" and exits 0 within the wrapper's 10 s, taking the engine with it. The account
-// key appears nowhere it could leave the machine: the gateway's frames and headers, the log
-// (stderr, which BOINC uploads and shows on the result page) or the output file; the credential
-// appears only in the Authorization header.
+// The pilot as BOINC's wrapper runs it, from boinc/job.xml and the work unit's command line in
+// boinc/README.md: in a slot folder whose files are BOINC soft links into the project folder,
+// with only job.xml's environment, and with the engine unpacked from the bundle (a llama-server
+// script that runs this test binary as a fake). The slot also holds init_data.xml with the
+// volunteer's account key. The pilot connects, serves a request that never ends, and on SIGTERM
+// leaves with "pilot: sigterm" and exits 0 within the wrapper's 10 s, taking the engine with it.
+// The account key appears nowhere it could leave the machine: the gateway's frames and headers,
+// the wrapper's and the pilot's log (stderr, which BOINC uploads and shows on the result page) or
+// the output file; the credential appears only in the Authorization header, and its physical
+// file name (its download URL) nowhere.
 func TestPilotProcessSigterm(t *testing.T) {
 	const key = "fedcba9876543210fedcba9876543210"
 	const cred = "nt-n-0000cafe.pilotsecretvalue"
-	slot, fake := t.TempDir(), t.TempDir()
+	const credPhys = "pc-p-test-20261117-0123456789abcdef0123456789abcdef"
+	base, fake := t.TempDir(), t.TempDir()
+	slot := filepath.Join(base, "slots", "0")
+	projectDir := filepath.Join(base, "projects", "example.org_aisathome")
+	os.MkdirAll(slot, 0o755)
+	os.MkdirAll(projectDir, 0o755)
+	bundle := "aisathome-node-bundle-linux-amd64_0123456789ab.tar.xz"
+	writeBundle(t, filepath.Join(projectDir, bundle), "#!/bin/sh\nFAKE_LLAMA_SERVER='"+fake+"' exec '"+os.Args[0]+"' \"$@\"\n")
+	for logical, phys := range map[string]string{"model.gguf": "js_0123456789abcdef", "credential": credPhys,
+		"engine.tar.xz": bundle, "summary.json": "p-test-20261117_0_r0_0"} {
+		os.WriteFile(filepath.Join(slot, logical), []byte("<soft_link>../../projects/example.org_aisathome/"+phys+"</soft_link>\n"), 0o644)
+	}
 	for name, content := range map[string]string{
-		"init_data.xml": "<app_init_data>\n<authenticator>" + key + "</authenticator>\n</app_init_data>\n",
-		"credential":    cred + "\n",
-		"model.gguf":    "GGUF",
+		filepath.Join(slot, "init_data.xml"):             "<app_init_data>\n<authenticator>" + key + "</authenticator>\n</app_init_data>\n",
+		filepath.Join(projectDir, credPhys):              cred + "\n",
+		filepath.Join(projectDir, "js_0123456789abcdef"): "GGUF",
 	} {
-		if err := os.WriteFile(filepath.Join(slot, name), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -99,12 +113,20 @@ func TestPilotProcessSigterm(t *testing.T) {
 	}))
 	defer gw.Close()
 
+	gateway := "ws" + strings.TrimPrefix(gw.URL, "http") + "/v1/node/connect"
+	wuArgs := strings.Fields(wuCommandLine(t, gateway))
+	child, err := wrapperChildArgs(wuArgs)
+	if err != nil {
+		t.Fatalf("the wrapper refuses the documented work-unit command line %q: %v", wuArgs, err)
+	}
+	logged, args, env := taskCommand(t, child, projectDir, func(name string) string { return boincResolve(slot, name) })
+	if strings.Contains(logged, credPhys) {
+		t.Errorf("the wrapper's log line names the credential's physical file: %s", logged)
+	}
 	var stderr bytes.Buffer
-	cmd := exec.Command(os.Args[0], "--gateway", "ws"+strings.TrimPrefix(gw.URL, "http")+"/v1/node/connect",
-		"--credential-file", "credential", "--model", "model.gguf", "--llama-server", os.Args[0],
-		"--summary", "summary.json", "--checkpoint", "pilot_checkpoint", "--fraction-done", "pilot_fraction")
+	cmd := exec.Command(os.Args[0], args...)
 	cmd.Dir = slot
-	cmd.Env = append(os.Environ(), "AISATHOME_TEST_PILOT=1", "FAKE_LLAMA_SERVER="+fake)
+	cmd.Env = append(env, "AISATHOME_TEST_PILOT=1")
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -118,9 +140,14 @@ func TestPilotProcessSigterm(t *testing.T) {
 	enginePID, _ := strconv.Atoi(readFile(t, filepath.Join(fake, "pid")))
 	// BOINC's paths are relative to the task folder, and the engine runs in its own folder: it
 	// must get the model as an absolute path.
-	args := strings.Split(readFile(t, filepath.Join(fake, "args")), "\n")
-	if i := slices.Index(args, "-m"); i < 0 || i+1 >= len(args) || args[i+1] != filepath.Join(slot, "model.gguf") {
-		t.Errorf("engine arguments %q: want -m %s", args, filepath.Join(slot, "model.gguf"))
+	if _, err := os.Stat(filepath.Join(projectDir, "engine", strings.TrimSuffix(bundle, ".tar.xz"),
+		"aisathome-node-bundle-linux-amd64", "bin", "llama-server")); err != nil {
+		t.Errorf("the engine was not unpacked into the project folder: %v", err)
+	}
+	model := filepath.Join(projectDir, "js_0123456789abcdef")
+	engineArgs := strings.Split(readFile(t, filepath.Join(fake, "args")), "\n")
+	if i := slices.Index(engineArgs, "-m"); i < 0 || i+1 >= len(engineArgs) || engineArgs[i+1] != model {
+		t.Errorf("engine arguments %q: want -m %s", engineArgs, model)
 	}
 
 	start := time.Now()
@@ -157,16 +184,16 @@ func TestPilotProcessSigterm(t *testing.T) {
 		}
 	}
 
-	summary := readFile(t, filepath.Join(slot, "summary.json"))
+	summary := readFile(t, filepath.Join(projectDir, "p-test-20261117_0_r0_0"))
 	if !strings.Contains(summary, `"reason":"sigterm"`) {
 		t.Errorf("summary %s", summary)
 	}
-	for what, s := range map[string]string{"gateway": gotWire, "log": stderr.String(), "summary": summary} {
+	for what, s := range map[string]string{"gateway": gotWire, "log": logged + "\n" + stderr.String(), "summary": summary} {
 		if strings.Contains(s, key) {
 			t.Errorf("the account key appears in the %s", what)
 		}
-		if what != "gateway" && strings.Contains(s, "pilotsecretvalue") {
-			t.Errorf("the credential appears in the %s", what)
+		if what != "gateway" && (strings.Contains(s, "pilotsecretvalue") || strings.Contains(s, credPhys)) {
+			t.Errorf("the credential or its file name appears in the %s", what)
 		}
 	}
 	if !strings.Contains(gotWire, "Authorization: Bearer "+cred) {

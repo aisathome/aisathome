@@ -11,8 +11,9 @@ BOINC's stock `wrapper` is the app's main program. It reads `job.xml` and runs o
 `aisathome-node pilot` (package `node/pilot`), which:
 
 - unpacks the node's Linux bundle (llama-server and its CUDA libraries) once into the project
-  folder and starts llama-server itself with the node's standard settings for the big tier, on a
-  free local port and on the GPU the client assigned (`CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM`);
+  folder, in Go (no `tar` or `xz` program needed), and starts llama-server itself with the node's
+  standard settings for the big tier, on a free local port and on the GPU the client assigned
+  (`CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM`);
 - connects to the gateway over the node WebSocket with the credential the work unit carries;
 - ends after 4 hours (it pauses, lets requests in flight finish, then exits 0), after 30 minutes
   with no request routed to it (exit 0), or when the engine keeps failing (exit 1);
@@ -29,11 +30,19 @@ BOINC's stock `wrapper` is the app's main program. It reads `job.xml` and runs o
 neither that key nor the credential. A test runs the pilot in a task folder with an
 `init_data.xml` and checks that the key reaches neither the gateway nor the log nor the output.
 
-**The credential is a file, not a command-line argument.** The wrapper prints the task's command
+**The credential is a file, and its name stays private.** The wrapper prints the task's command
 line to stderr, and BOINC shows each result's stderr on the project's public result page. The
 work unit's command line carries only the gateway URL; the credential comes as a per-work-unit
-input file with an unguessable name. The pilot's own log (stderr) holds no secrets for the same
-reason; llama-server's output goes to `engine.log` in the task folder, which is not uploaded.
+input file with an unguessable name. Input files are plain HTTP downloads at a URL derived from
+that name, so the name must not appear either: `job.xml` passes the logical name (`credential`)
+rather than `boinc_resolve(credential)`, which the wrapper would print resolved, and the pilot
+follows BOINC's soft-link file itself and names no file in its errors. The pilot's own log
+(stderr) holds no secrets for the same reason; llama-server's output goes to `engine.log` in the
+task folder, which is not uploaded.
+
+**The task's environment is only `job.xml`'s `<setenv>` entries.** On Linux the wrapper starts
+the task with those variables instead of its own environment, so `job.xml` sets `PATH` next to
+`CUDA_VISIBLE_DEVICES`, and the pilot runs no helper program to unpack the bundle.
 
 ## Files
 
@@ -44,7 +53,9 @@ reason; llama-server's output goes to `engine.log` in the task folder, which is 
 | `templates/pilot_out.xml` | output template: the summary (`summary.json`, at most 64 KB) |
 | `app-version.sh` | lays out one app version for a project's `apps/` folder, unsigned |
 
-A work unit's command line is `--gateway wss://<gateway>/v1/node/connect`.
+A work unit's command line is `--passthrough_child --gateway wss://<gateway>/v1/node/connect`.
+The command line goes to the wrapper, which refuses options it does not know; it hands what
+follows `--passthrough_child` to the task (`<append_cmdline_args/>` in `job.xml`).
 
 ## Making an app version
 
@@ -72,4 +83,6 @@ match (`scripts/build-llama.sh`). The big tier needs about 22 GB of GPU memory.
 - The pilot starts a fresh 4-hour budget when the client restarts a task it quit.
 - The client's RAM accounting with the memory-mapped model and the prompt cache is not measured.
 - The credential becomes a single-use per-pilot credential minted by the gateway; until then a
-  test work unit carries an ordinary node token.
+  test work unit carries an ordinary node token. The project keeps the credential file in its
+  download folder until the work unit is done and the file deleter removes it; only the
+  single-use credential makes that copy worthless.

@@ -18,19 +18,24 @@
 package pilot
 
 import (
+	"archive/tar"
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ulikunitz/xz"
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/engine"
@@ -48,8 +53,10 @@ const (
 
 // Options is one pilot's command line.
 type Options struct {
-	Gateway        string // ws(s)://host/v1/node/connect
-	CredentialFile string // a file holding the node credential (never the command line: see boinc/README.md)
+	Gateway string // ws(s)://host/v1/node/connect
+	// CredentialFile holds the node credential (never the command line: see boinc/README.md). It
+	// may be BOINC's soft-link file for the credential; the pilot follows the link itself.
+	CredentialFile string
 	Model          string // the GGUF file (the wrapper resolves BOINC's soft link: boinc_resolve(model.gguf))
 	Tier           string // the engine settings' tier; default "big"
 	// The engine: EngineArchive, the node's Linux bundle (.tar.xz with bin/llama-server and
@@ -172,7 +179,14 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	}
 	exe, libDir := o.LlamaServer, ""
 	if exe == "" {
-		if exe, libDir, err = Unpack(o.EngineArchive, o.EngineDir); err != nil {
+		if exe, libDir, err = Unpack(ctx, o.EngineArchive, o.EngineDir); err != nil {
+			if ctx.Err() != nil {
+				// SIGTERM during the first unpack: nothing runs yet, and the partial unpack is gone.
+				log.Info("pilot ended while unpacking the engine", "reason", ReasonSigterm)
+				writeSummary(o.Summary, Summary{Agent: node.AgentVersion(), Reason: ReasonSigterm,
+					ServedSeconds: int64(d.Now().Sub(start) / time.Second)}, log)
+				return Result{Reason: ReasonSigterm}
+			}
 			return fail(err)
 		}
 	}
@@ -388,27 +402,63 @@ func waitIdle(ctx context.Context, a *node.Agent, d, poll time.Duration) bool {
 	return true
 }
 
-// readCredential reads the node credential from its file: one line, no spaces.
+// readCredential reads the node credential from its file: one line, no spaces. The file may be
+// BOINC's soft-link file in the slot folder (`<soft_link>../../projects/…/name</soft_link>`, or
+// a symlink): the pilot follows it itself rather than through the wrapper's boinc_resolve(),
+// which would print the credential's physical name (also its download URL) into the stderr that
+// BOINC shows on the public result page. For the same reason no error names a file.
 func readCredential(path string) (string, error) {
 	if path == "" {
 		return "", errors.New("--credential-file is required")
 	}
-	b, err := os.ReadFile(path)
+	b, err := readFile(path)
 	if err != nil {
 		return "", fmt.Errorf("credential file: %w", err)
 	}
+	if link, ok := softLink(b); ok {
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(path), link)
+		}
+		if b, err = readFile(link); err != nil {
+			return "", fmt.Errorf("credential file (soft link): %w", err)
+		}
+	}
 	c := strings.TrimSpace(string(b))
-	if c == "" || strings.ContainsAny(c, " \t\r\n") || len(c) > 512 {
+	if c == "" || strings.ContainsAny(c, " \t\r\n<>") || len(c) > 512 {
 		return "", errors.New("credential file: must hold one credential on one line")
 	}
 	return c, nil
 }
 
+// softLink returns the target of a BOINC soft-link file: its first line is
+// <soft_link>path</soft_link> (client/app_start.cpp, make_soft_link), relative to the slot folder.
+func softLink(b []byte) (string, bool) {
+	line, _, _ := bytes.Cut(b, []byte("\n"))
+	rest, ok := strings.CutPrefix(strings.TrimSpace(string(line)), "<soft_link>")
+	if !ok {
+		return "", false
+	}
+	p, ok := strings.CutSuffix(rest, "</soft_link>")
+	return p, ok && p != ""
+}
+
+// readFile is os.ReadFile with an error that does not name the file.
+func readFile(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if pe := (*fs.PathError)(nil); errors.As(err, &pe) {
+		err = fmt.Errorf("%s: %w", pe.Op, pe.Err)
+	}
+	return b, err
+}
+
 // Unpack unpacks the node's Linux bundle (a .tar.xz holding <dir>/bin/llama-server and
 // <dir>/lib) once into a folder under dir named after the archive, and returns its llama-server
 // and lib folder. A folder already unpacked is reused; pilots that unpack at the same time each
-// use their own temporary folder and the first rename wins.
-func Unpack(archive, dir string) (exe, lib string, err error) {
+// use their own temporary folder and the first rename wins. It runs no tar or xz program: the
+// wrapper starts the pilot with only job.xml's <setenv> variables (no PATH unless job.xml sets
+// one), and a volunteer's machine or container may have no xz. When ctx ends (SIGTERM) it stops
+// and removes the partial unpack.
+func Unpack(ctx context.Context, archive, dir string) (exe, lib string, err error) {
 	if archive == "" || dir == "" {
 		return "", "", errors.New("--engine-archive and --engine-dir (or --llama-server) are required")
 	}
@@ -425,10 +475,8 @@ func Unpack(archive, dir string) (exe, lib string, err error) {
 		return "", "", fmt.Errorf("engine folder: %w", err)
 	}
 	defer os.RemoveAll(tmp)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	if out, err := exec.CommandContext(ctx, "tar", "-xJf", archive, "-C", tmp, "--no-same-owner").CombinedOutput(); err != nil {
-		return "", "", fmt.Errorf("unpacking the engine: %v: %s", err, strings.TrimSpace(string(out)))
+	if err := extract(ctx, archive, tmp); err != nil {
+		return "", "", fmt.Errorf("unpacking the engine: %w", err)
 	}
 	if _, _, err := findEngine(tmp); err != nil {
 		return "", "", fmt.Errorf("the engine archive: %w", err)
@@ -441,6 +489,107 @@ func Unpack(archive, dir string) (exe, lib string, err error) {
 		return "", "", fmt.Errorf("engine folder: %w", err)
 	}
 	return findEngine(dest)
+}
+
+// openArchive opens the engine archive (a variable so that tests can make it slow).
+var openArchive = func(path string) (io.ReadCloser, error) { return os.Open(path) }
+
+// extract unpacks the .tar.xz archive into dest. Everything is written through an os.Root, so no
+// entry, symlink or hard link can reach outside dest; symlinks must point inside it too (the
+// bundle's lib/ has library symlinks). It checks ctx between reads.
+func extract(ctx context.Context, archive, dest string) error {
+	f, err := openArchive(archive)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	xr, err := xz.NewReader(ctxReader{ctx, bufio.NewReaderSize(f, 1<<20)})
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	tr := tar.NewReader(ctxReader{ctx, xr})
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := filepath.FromSlash(h.Name)
+		if !filepath.IsLocal(name) {
+			return fmt.Errorf("%q: not a relative path inside the archive", h.Name)
+		}
+		name = filepath.Clean(name)
+		switch h.Typeflag {
+		case tar.TypeDir:
+			err = root.MkdirAll(name, 0o755)
+		case tar.TypeReg:
+			err = writeEntry(root, name, h.FileInfo().Mode().Perm()&0o755, tr)
+		case tar.TypeSymlink:
+			target := filepath.FromSlash(h.Linkname)
+			if filepath.IsAbs(target) || !filepath.IsLocal(filepath.Join(filepath.Dir(name), target)) {
+				return fmt.Errorf("%q: symlink out of the archive", h.Name)
+			}
+			if err = mkParent(root, name); err == nil {
+				err = root.Symlink(target, name)
+			}
+		case tar.TypeLink:
+			old := filepath.FromSlash(h.Linkname)
+			if !filepath.IsLocal(old) {
+				return fmt.Errorf("%q: hard link out of the archive", h.Name)
+			}
+			if err = mkParent(root, name); err == nil {
+				err = root.Link(filepath.Clean(old), name)
+			}
+		case tar.TypeXGlobalHeader:
+		default:
+			return fmt.Errorf("%q: unsupported entry type %q", h.Name, h.Typeflag)
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func writeEntry(root *os.Root, name string, mode fs.FileMode, r io.Reader) error {
+	if err := mkParent(root, name); err != nil {
+		return err
+	}
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(f, r)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+func mkParent(root *os.Root, name string) error {
+	if d := filepath.Dir(name); d != "." {
+		return root.MkdirAll(d, 0o755)
+	}
+	return nil
+}
+
+// ctxReader fails its reads once ctx has ended.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // findEngine finds bin/llama-server in root or in its one top-level folder (the bundle's).

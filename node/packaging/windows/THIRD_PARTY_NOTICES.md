@@ -1,7 +1,8 @@
 # Third-party software in the AIs@home node for Windows
 
 `aisathome-node.exe` is AIs@home code under the Apache License 2.0 (`LICENSE.txt`). It is
-written in Go and contains the Go standard library and `golang.org/x/sys` (BSD 3-Clause) and
+written in Go and contains the Go standard library, `golang.org/x/sys` (BSD 3-Clause),
+`github.com/ulikunitz/xz` (BSD 3-Clause, "Copyright (c) 2014-2022 Ulrich Kunitz") and
 `github.com/coder/websocket` (ISC). `aisathome-tray.exe`, the notification-area icon, is
 AIs@home code under the same licence; besides those it contains
 [`fyne.io/systray`](https://github.com/fyne-io/systray) v1.12.2 (Apache-2.0, "Copyright 2014

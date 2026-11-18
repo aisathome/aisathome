@@ -2,8 +2,10 @@
 package pilot
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/ulikunitz/xz"
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/engine"
@@ -577,6 +580,49 @@ func TestCredentialFile(t *testing.T) {
 	}
 }
 
+// In a BOINC slot the credential is a soft-link file (or a symlink) to its physical file in the
+// project folder. The pilot follows it itself, and the physical name, which is also the file's
+// download URL, appears neither in its log nor in its summary, even when the file is missing.
+func TestCredentialSoftLink(t *testing.T) {
+	const phys = "pc-p-test-0123456789abcdef0123456789abcdef"
+	for _, kind := range []string{"soft link", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "symlink" {
+				linuxBundle(t) // BOINC makes symlinks on Unix only
+			}
+			r := newRig(t)
+			project := filepath.Join(filepath.Dir(r.slot), "projects", "example.org_x")
+			os.MkdirAll(project, 0o755)
+			rel, _ := filepath.Rel(r.slot, filepath.Join(project, phys))
+			link := filepath.Join(r.slot, "credential")
+			os.Remove(link)
+			if kind == "symlink" {
+				os.Symlink(rel, link)
+			} else {
+				os.WriteFile(link, []byte("<soft_link>"+rel+"</soft_link>\n"), 0o644)
+			}
+			os.WriteFile(filepath.Join(project, phys), []byte("nt-n-0000beef.linkedsecret\n"), 0o600)
+			r.o.IdleExit = 500 * time.Millisecond
+			ch := r.run(context.Background())
+			connected(t, r.gw)
+			wait(t, ch, 10*time.Second)
+			if !strings.Contains(r.gw.wire(), "Authorization: Bearer nt-n-0000beef.linkedsecret\n") {
+				t.Errorf("the pilot did not authenticate with the linked credential:\n%s", r.gw.wire())
+			}
+			os.Remove(filepath.Join(project, phys)) // deleted, or not downloaded
+			if res := wait(t, r.run(context.Background()), 5*time.Second); res.Code != 1 {
+				t.Errorf("missing linked file: %+v", res)
+			}
+			summary, _ := os.ReadFile(r.o.Summary)
+			for what, s := range map[string]string{"log": r.logs(), "summary": string(summary)} {
+				if strings.Contains(s, phys) || strings.Contains(s, "linkedsecret") {
+					t.Errorf("the credential's physical name or value appears in the %s:\n%s", what, s)
+				}
+			}
+		})
+	}
+}
+
 // A pilot that cannot start (no credential) exits 1 with an error summary, before any engine.
 func TestStartErrors(t *testing.T) {
 	r := newRig(t)
@@ -595,30 +641,90 @@ func TestStartErrors(t *testing.T) {
 	}
 }
 
-// The bundle is unpacked once and reused; an archive without llama-server is refused.
-func TestUnpack(t *testing.T) {
-	if _, err := exec.LookPath("xz"); err != nil || runtime.GOOS == "windows" {
-		t.Skip("needs xz, and the bundle is Linux's")
-	}
-	src, dir := t.TempDir(), t.TempDir()
-	b := filepath.Join(src, "aisathome-node-bundle-linux-amd64")
-	os.MkdirAll(filepath.Join(b, "bin"), 0o755)
-	os.MkdirAll(filepath.Join(b, "lib"), 0o755)
-	os.WriteFile(filepath.Join(b, "bin", "llama-server"), []byte("#!/bin/sh\n"), 0o755)
-	archive := filepath.Join(src, "bundle_abc123.tar.xz")
-	if out, err := exec.Command("tar", "-cJf", archive, "-C", src, "aisathome-node-bundle-linux-amd64").CombinedOutput(); err != nil {
-		t.Fatalf("tar: %v %s", err, out)
-	}
-	exe, lib, err := Unpack(archive, dir)
+// entry is one file of a test archive: a regular file, or a symlink when link is set.
+type entry struct {
+	name, body, link string
+	mode             int64
+}
+
+// writeArchive writes a .tar.xz of entries in Go, so that the tests need no tar or xz program.
+func writeArchive(t *testing.T, path string, entries []entry) {
+	t.Helper()
+	f, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "bundle_abc123", "aisathome-node-bundle-linux-amd64")
+	defer f.Close()
+	xw, err := xz.NewWriter(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw := tar.NewWriter(xw)
+	for _, e := range entries {
+		h := &tar.Header{Name: e.name, Mode: e.mode, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
+		if e.link != "" {
+			h.Typeflag, h.Linkname, h.Size = tar.TypeSymlink, e.link, 0
+		}
+		if h.Mode == 0 {
+			h.Mode = 0o644
+		}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := xw.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const bundleDir = "aisathome-node-bundle-linux-amd64"
+
+func bundleEntries() []entry {
+	return []entry{
+		{name: bundleDir + "/bin/llama-server", body: "#!/bin/sh\n", mode: 0o755},
+		{name: bundleDir + "/lib/libggml-cuda.so", body: "ELF"},
+		{name: bundleDir + "/lib/libggml-cuda.so.0", link: "libggml-cuda.so"},
+	}
+}
+
+// linuxBundle skips a test of the engine bundle, which is Linux's (with library symlinks).
+func linuxBundle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the engine bundle is Linux's")
+	}
+}
+
+// The bundle is unpacked once and reused, with its modes and library symlinks, and without any
+// program from PATH: BOINC's wrapper starts the pilot with only job.xml's variables. An archive
+// without llama-server, or with a path or link out of the archive, is refused.
+func TestUnpack(t *testing.T) {
+	linuxBundle(t)
+	src, dir := t.TempDir(), t.TempDir()
+	archive := filepath.Join(src, "bundle_abc123.tar.xz")
+	writeArchive(t, archive, bundleEntries())
+	t.Setenv("PATH", "")
+	exe, lib, err := Unpack(context.Background(), archive, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "bundle_abc123", bundleDir)
 	if exe != filepath.Join(want, "bin", "llama-server") || lib != filepath.Join(want, "lib") {
 		t.Fatalf("exe %s lib %s", exe, lib)
 	}
+	if fi, err := os.Stat(exe); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("llama-server: %v %v, want mode 0755", fi, err)
+	}
+	if target, err := os.Readlink(filepath.Join(lib, "libggml-cuda.so.0")); err != nil || target != "libggml-cuda.so" {
+		t.Errorf("library symlink: %q %v", target, err)
+	}
 	os.Remove(archive) // the second pilot must not need it
-	if exe2, _, err := Unpack(archive, dir); err != nil || exe2 != exe {
+	if exe2, _, err := Unpack(context.Background(), archive, dir); err != nil || exe2 != exe {
 		t.Fatalf("reuse: %s %v", exe2, err)
 	}
 	ents, _ := os.ReadDir(dir)
@@ -626,10 +732,126 @@ func TestUnpack(t *testing.T) {
 		t.Errorf("left behind: %v", ents)
 	}
 
-	bad := filepath.Join(src, "bad.tar.xz")
-	os.WriteFile(filepath.Join(src, "x"), []byte("x"), 0o644)
-	exec.Command("tar", "-cJf", bad, "-C", src, "x").Run()
-	if _, _, err := Unpack(bad, dir); err == nil {
-		t.Error("an archive without llama-server was accepted")
+	for name, entries := range map[string][]entry{
+		"no llama-server":  {{name: "x", body: "x"}},
+		"parent path":      append(bundleEntries(), entry{name: "../escaped", body: "x"}),
+		"absolute path":    append(bundleEntries(), entry{name: "/tmp/escaped", body: "x"}),
+		"absolute symlink": append(bundleEntries(), entry{name: bundleDir + "/lib/evil.so", link: "/etc/passwd"}),
+		"symlink out":      append(bundleEntries(), entry{name: bundleDir + "/lib/evil.so", link: "../../../escaped"}),
+		"through symlink": append(bundleEntries(), entry{name: "out", link: "."},
+			entry{name: "up", link: "out/.."}, entry{name: "up/escaped", body: "x"}),
+	} {
+		bad := filepath.Join(src, strings.ReplaceAll(name, " ", "-")+".tar.xz")
+		writeArchive(t, bad, entries)
+		if _, _, err := Unpack(context.Background(), bad, dir); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escaped")); err == nil {
+		t.Error("an entry was written outside the engine folder")
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 1 {
+		t.Errorf("refused archives left behind: %v", ents)
+	}
+}
+
+// The release's bundle comes from GNU tar and multi-threaded xz -9 (scripts/build-release.sh):
+// several xz blocks, owner 0/0, the library symlinks. Unpack reads such an archive too.
+func TestUnpackReleaseArchive(t *testing.T) {
+	if _, err := exec.LookPath("xz"); err != nil || runtime.GOOS != "linux" {
+		t.Skip("needs GNU tar and xz")
+	}
+	src, dir := t.TempDir(), t.TempDir()
+	b := filepath.Join(src, bundleDir)
+	os.MkdirAll(filepath.Join(b, "bin"), 0o755)
+	os.MkdirAll(filepath.Join(b, "lib"), 0o755)
+	os.WriteFile(filepath.Join(b, "bin", "llama-server"), []byte("#!/bin/sh\n"), 0o755)
+	os.WriteFile(filepath.Join(b, "lib", "big.so"), bytes.Repeat([]byte("0123456789abcdef"), 1<<16), 0o644)
+	os.Symlink("big.so", filepath.Join(b, "lib", "big.so.0"))
+	archive := filepath.Join(src, "bundle.tar.xz")
+	sh := `tar --sort=name --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' -C "$1" -cf - "$2" | xz -T2 -9 --block-size=64KiB > "$3"`
+	if out, err := exec.Command("sh", "-c", sh, "sh", src, bundleDir, archive).CombinedOutput(); err != nil {
+		t.Fatalf("packing: %v %s", err, out)
+	}
+	exe, lib, err := Unpack(context.Background(), archive, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(lib, "big.so.0")); err != nil || len(got) != 16<<16 {
+		t.Errorf("library through its symlink: %d bytes, %v", len(got), err)
+	}
+	if fi, err := os.Stat(exe); err != nil || fi.Mode()&0o111 == 0 {
+		t.Errorf("llama-server not executable: %v %v", fi, err)
+	}
+}
+
+// slowReader hands out a few bytes at a time, slowly: an unpack that takes minutes.
+type slowReader struct{ f io.ReadCloser }
+
+func (s slowReader) Read(p []byte) (int, error) {
+	time.Sleep(20 * time.Millisecond)
+	return s.f.Read(p[:min(len(p), 256)])
+}
+func (s slowReader) Close() error { return s.f.Close() }
+
+// A SIGTERM during a slow first unpack ends the pilot within its stop budget: it writes its
+// summary, and leaves no partial unpack behind.
+func TestSigtermDuringUnpack(t *testing.T) {
+	linuxBundle(t)
+	r := newRig(t)
+	random := make([]byte, 1<<20) // does not compress: about 80 s at the slow reader's pace
+	crand.Read(random)
+	archive := filepath.Join(r.slot, "bundle_slow.tar.xz")
+	writeArchive(t, archive, append([]entry{{name: bundleDir + "/lib/big.so", body: string(random)}}, bundleEntries()...))
+	r.o.LlamaServer, r.o.EngineArchive, r.o.EngineDir = "", archive, filepath.Join(r.slot, "engine")
+	orig := openArchive
+	openArchive = func(p string) (io.ReadCloser, error) {
+		f, err := os.Open(p)
+		return slowReader{f}, err
+	}
+	t.Cleanup(func() { openArchive = orig })
+	ctx, sigterm := context.WithCancel(context.Background())
+	ch := r.run(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if m, _ := filepath.Glob(filepath.Join(r.o.EngineDir, ".unpack-*")); len(m) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pilot never started unpacking")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	sigterm()
+	res := wait(t, ch, 10*time.Second)
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("stop took %s", took)
+	}
+	if res.Reason != ReasonSigterm || res.Code != 0 {
+		t.Errorf("result %+v, want sigterm, 0", res)
+	}
+	if s := r.summary(); s.Reason != ReasonSigterm {
+		t.Errorf("summary %+v", s)
+	}
+	if ents, _ := os.ReadDir(r.o.EngineDir); len(ents) != 0 {
+		t.Errorf("left behind: %v", ents)
+	}
+}
+
+// A pilot that unpacks its engine needs no PATH (the wrapper gives it only job.xml's variables).
+func TestPilotUnpacksWithoutPath(t *testing.T) {
+	linuxBundle(t)
+	r := newRig(t)
+	archive := filepath.Join(r.slot, "bundle_abc123.tar.xz")
+	writeArchive(t, archive, bundleEntries())
+	r.o.LlamaServer, r.o.EngineArchive, r.o.EngineDir = "", archive, filepath.Join(r.slot, "engine")
+	r.o.IdleExit = 500 * time.Millisecond
+	t.Setenv("PATH", "")
+	ch := r.run(context.Background())
+	connected(t, r.gw)
+	if res := wait(t, ch, 10*time.Second); res.Reason != ReasonIdle {
+		t.Errorf("result %+v; log:\n%s", res, r.logs())
 	}
 }
