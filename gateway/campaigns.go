@@ -40,6 +40,7 @@
 package gateway
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -47,6 +48,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -107,6 +109,18 @@ var (
 
 // errScience: the science database failed; the call may be repeated.
 var errScience = &taskErr{code: http.StatusServiceUnavailable, msg: "science records unavailable, try again"}
+
+// fail logs a database error with its operation, project and cause, never a record's content, and
+// returns errScience: the client gets the generic answer, the operator sees a full disk or a
+// damaged file in the log.
+func (s *scienceDB) fail(op, project string, err error) error {
+	log := s.log
+	if log == nil {
+		log = slog.Default()
+	}
+	log.Error("science database failed", "op", op, "project", project, "err", err)
+	return errScience
+}
 
 // CampaignItem is one thing a campaign works on.
 type CampaignItem struct {
@@ -505,7 +519,7 @@ func (s *scienceDB) campaign(project, id string) (*Campaign, error) {
 	defer cancel()
 	c, err := getCampaign(ctx, s.db, project, id)
 	if err != nil {
-		return nil, errScience
+		return nil, s.fail("read campaign", project, err)
 	}
 	return c, nil
 }
@@ -546,19 +560,19 @@ func (s *scienceDB) campaigns(project string, limit int, after string) ([]*Campa
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, nil, errScience
+		return nil, nil, s.fail("list campaigns", project, err)
 	}
 	var out []*Campaign
 	for rows.Next() {
 		c, err := scanCampaign(project, rows)
 		if err != nil {
 			rows.Close()
-			return nil, nil, errScience
+			return nil, nil, s.fail("list campaigns: scan", project, err)
 		}
 		out = append(out, c)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, nil, errScience
+		return nil, nil, s.fail("list campaigns: rows", project, err)
 	}
 	var next *string
 	if len(out) > limit {
@@ -567,7 +581,7 @@ func (s *scienceDB) campaigns(project string, limit int, after string) ([]*Campa
 		next = &cur
 	}
 	if err := fillCampaigns(ctx, s.db, project, out); err != nil {
-		return nil, nil, errScience
+		return nil, nil, s.fail("list campaigns: items", project, err)
 	}
 	if out == nil {
 		out = []*Campaign{}
@@ -582,12 +596,12 @@ func (s *scienceDB) putCampaign(c *Campaign, links []string, now time.Time, patc
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put campaign: begin", c.Project, err)
 	}
 	defer tx.Rollback()
 	old, err := getCampaign(ctx, tx, c.Project, c.ID)
 	if err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put campaign: read", c.Project, err)
 	}
 	if patch != nil {
 		if old == nil {
@@ -605,7 +619,7 @@ func (s *scienceDB) putCampaign(c *Campaign, links []string, now time.Time, patc
 	if old == nil {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaigns WHERE project = ?`, c.Project).Scan(&n); err != nil {
-			return nil, false, errScience
+			return nil, false, s.fail("put campaign: count", c.Project, err)
 		}
 		if n >= maxCampaignsPerProj {
 			return nil, false, &taskErr{code: http.StatusConflict, msg: fmt.Sprintf("at most %d campaigns per project", maxCampaignsPerProj)}
@@ -622,23 +636,23 @@ func (s *scienceDB) putCampaign(c *Campaign, links []string, now time.Time, patc
 		c.Project, c.ID, c.Title, c.Status, fmtTimePtr(c.StartedAt), fmtTimePtr(c.EndedAt), labelsJSON(c.Labels), c.Text,
 		fmtTime(c.CreatedAt), fmtTime(c.UpdatedAt))
 	if err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put campaign: write", c.Project, err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM campaign_items WHERE project = ? AND campaign = ?`, c.Project, c.ID); err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put campaign: clear items", c.Project, err)
 	}
 	for i, it := range c.Items {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO campaign_items (project, campaign, pos, id, title, url, role, labels) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.Project, c.ID, i, it.ID, it.Title, it.URL, it.Role, labelsJSON(it.Labels)); err != nil {
-			return nil, false, errScience
+			return nil, false, s.fail("put campaign: write item", c.Project, err)
 		}
 	}
 	stored, err := getCampaign(ctx, tx, c.Project, c.ID)
 	if err != nil || stored == nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put campaign: read back", c.Project, cmp.Or(err, errors.New("not found after the write")))
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put campaign: commit", c.Project, err)
 	}
 	return stored, old == nil, nil
 }
@@ -681,25 +695,25 @@ func (s *scienceDB) deleteCampaign(project, id string) error {
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errScience
+		return s.fail("delete campaign: begin", project, err)
 	}
 	defer tx.Rollback()
 	var n int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM results WHERE project = ? AND campaign = ?`, project, id).Scan(&n); err != nil {
-		return errScience
+		return s.fail("delete campaign: count results", project, err)
 	}
 	if n > 0 {
 		return &taskErr{code: http.StatusConflict, msg: fmt.Sprintf("%d results refer to this campaign: delete or move them first", n)}
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM campaigns WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
-		return errScience
+		return s.fail("delete campaign: write", project, err)
 	}
 	if k, _ := res.RowsAffected(); k == 0 {
 		return &taskErr{code: http.StatusNotFound, msg: "no such campaign"}
 	}
 	if err := tx.Commit(); err != nil {
-		return errScience
+		return s.fail("delete campaign: commit", project, err)
 	}
 	return nil
 }
@@ -799,7 +813,7 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put result: begin", project, err)
 	}
 	defer tx.Rollback()
 	old, err := scanResult(project, tx.QueryRowContext(ctx, `SELECT `+resultCols+` FROM results WHERE project = ? AND source = ? AND external_id = ?`,
@@ -808,7 +822,7 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 		old, err = nil, nil
 	}
 	if err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put result: read", project, err)
 	}
 	if old != nil {
 		if old.State != ResultPending && r.State == ResultPending {
@@ -823,7 +837,7 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 	} else {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM results WHERE project = ?`, project).Scan(&n); err != nil {
-			return nil, false, errScience
+			return nil, false, s.fail("put result: count", project, err)
 		}
 		if n >= maxResultsPerProj {
 			return nil, false, &taskErr{code: http.StatusConflict, msg: fmt.Sprintf("at most %d results per project", maxResultsPerProj)}
@@ -836,14 +850,14 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 			return nil, false, &taskErr{code: http.StatusBadRequest, msg: "campaign: no such campaign in this project (create it first)"}
 		}
 		if err != nil {
-			return nil, false, errScience
+			return nil, false, s.fail("put result: campaign", project, err)
 		}
 	}
 	r.CreatedAt, r.UpdatedAt = now, now
 	if old != nil {
 		r.CreatedAt = old.CreatedAt
 		if old.ID != r.ID { // cannot happen: the id is a hash of the key
-			return nil, false, errScience
+			return nil, false, s.fail("put result: id", project, errors.New("stored id differs"))
 		}
 	}
 	var camp any
@@ -858,10 +872,10 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 		project, r.ID, r.Source, r.ExternalID, camp, in.Item, in.Task, in.URL, r.State, r.Verdict, labelsJSON(r.Labels),
 		fmtTime(r.SubmittedAt), fmtTimePtr(r.VerdictAt), fmtTime(r.CreatedAt), fmtTime(r.UpdatedAt))
 	if err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put result: write", project, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, false, errScience
+		return nil, false, s.fail("put result: commit", project, err)
 	}
 	return r, old == nil, nil
 }
@@ -872,7 +886,7 @@ func (s *scienceDB) deleteResult(project, id string) error {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM results WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
-		return errScience
+		return s.fail("delete result", project, err)
 	}
 	if k, _ := res.RowsAffected(); k == 0 {
 		return &taskErr{code: http.StatusNotFound, msg: "no such result"}
@@ -912,19 +926,19 @@ func (s *scienceDB) results(project string, f resultFilter, limit int, after str
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM results`+where+` GROUP BY state`, args...)
 	if err != nil {
-		return nil, nil, nil, errScience
+		return nil, nil, nil, s.fail("list results: counts", project, err)
 	}
 	for rows.Next() {
 		var st string
 		var n int
 		if err := rows.Scan(&st, &n); err != nil {
 			rows.Close()
-			return nil, nil, nil, errScience
+			return nil, nil, nil, s.fail("list results: scan counts", project, err)
 		}
 		counts[st] = n
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, nil, nil, errScience
+		return nil, nil, nil, s.fail("list results: rows", project, err)
 	}
 	q := `SELECT ` + resultCols + ` FROM results` + where
 	if len(f.states) > 0 {
@@ -942,19 +956,19 @@ func (s *scienceDB) results(project string, f resultFilter, limit int, after str
 	args = append(args, limit+1)
 	rows, err = s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, nil, nil, errScience
+		return nil, nil, nil, s.fail("list results", project, err)
 	}
 	defer rows.Close()
 	out := []Result{}
 	for rows.Next() {
 		r, err := scanResult(project, rows)
 		if err != nil {
-			return nil, nil, nil, errScience
+			return nil, nil, nil, s.fail("list results: scan", project, err)
 		}
 		out = append(out, r.Result)
 	}
 	if rows.Err() != nil {
-		return nil, nil, nil, errScience
+		return nil, nil, nil, s.fail("list results: rows", project, rows.Err())
 	}
 	var next *string
 	if len(out) > limit {

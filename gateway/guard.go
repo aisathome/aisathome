@@ -8,7 +8,7 @@
 // in tool calls as in plain text: honest coding agents write such addresses all the time
 // (package indexes, documentation, git clones), and holding a node for one stopped all chat
 // for hours (2026-11-18). An address used to download and run something still blocks, through
-// download-and-execute.
+// download-and-execute, and so does a package install from an unknown index (guard_install.go).
 //
 // These are tripwires for crude attacks, not a proof that an answer is honest: a careful
 // attacker writes a harmful command that matches no pattern. Answer checking comes later.
@@ -372,6 +372,9 @@ func checkToolCall(name, args, req string, known knownAddrs) guardHit {
 			return guardHit{r.rule, r.why}
 		}
 	}
+	if installSourceHit(name, args, req, known) {
+		return guardHit{ruleInstallSource, whyInstallSource}
+	}
 	if unknownHost(text, req, known) != "" {
 		return guardHit{ruleUnknownURL, whyUnknownURL}
 	}
@@ -407,29 +410,34 @@ func stringsIn(v any) []string {
 	return nil
 }
 
+// argValues maps each key of a JSON object of arguments to its strings (stringsIn), every value
+// of a key given twice; ok is false if args is not a JSON object.
+func argValues(args string) (vals map[string][]string, ok bool) {
+	vals = map[string][]string{}
+	d := json.NewDecoder(strings.NewReader(args))
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	for d.More() {
+		k, err := d.Token()
+		var raw json.RawMessage
+		if err != nil || d.Decode(&raw) != nil {
+			return nil, false
+		}
+		var v any
+		if key, isKey := k.(string); isKey && json.Unmarshal(raw, &v) == nil {
+			vals[key] = append(vals[key], stringsIn(v)...)
+		}
+	}
+	return vals, true
+}
+
 // commandText is what commandRules read: the call's "command", "cmd" and "script" strings, and
 // the text of a file written as a shell script (a ".sh", ".bash", ".zsh" or ".ps1" path, or a "#!"
 // first line), one per line. Every value of a key given twice counts, whichever one a client
 // takes. Arguments that are not a JSON object are read whole, as they came.
 func commandText(name, args string) string {
-	vals := map[string][]string{}
-	d := json.NewDecoder(strings.NewReader(args))
-	ok := false
-	if t, err := d.Token(); err == nil && t == json.Delim('{') {
-		ok = true
-		for d.More() {
-			k, err := d.Token()
-			var raw json.RawMessage
-			if err != nil || d.Decode(&raw) != nil {
-				ok = false
-				break
-			}
-			var v any
-			if key, isKey := k.(string); isKey && json.Unmarshal(raw, &v) == nil {
-				vals[key] = append(vals[key], stringsIn(v)...)
-			}
-		}
-	}
+	vals, ok := argValues(args)
 	if !ok {
 		return cmdLines.Replace(strings.ReplaceAll(args, `\n`, "\n"))
 	}

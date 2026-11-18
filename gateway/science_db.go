@@ -27,6 +27,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -104,7 +105,8 @@ var scienceMigrations = []string{
 // scienceDB is the open database.
 type scienceDB struct {
 	db   *sql.DB
-	path string // "" in memory
+	path string       // "" in memory
+	log  *slog.Logger // for errors the client sees only as errScience; nil: slog's default
 }
 
 // openScienceDB opens (or creates) dir/science.db and brings its schema up to date; dir "" opens

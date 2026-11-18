@@ -193,6 +193,7 @@ func TestTaskTypedFields(t *testing.T) {
 		"long label":        {"labels": map[string]string{"trial": strings.Repeat("x", maxTaskLabelValue+1)}},
 		"control in label":  {"labels": map[string]string{"trial": "t6\n"}},
 		"key in a label":    {"labels": map[string]string{"note": "ak-" + strings.Repeat("a", 20)}},
+		"node token label":  {"labels": map[string]string{"note": fakeNodeToken}},
 		"e-mail in a label": {"labels": map[string]string{"by": "someone@example.org"}},
 		"too many labels": {"labels": func() map[string]string {
 			m := map[string]string{}

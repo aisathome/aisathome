@@ -2,9 +2,12 @@
 package gateway
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -45,6 +48,9 @@ func trialBody() map[string]any {
 }
 
 const extID = "0f6c1d2e-1111-4a2b-9c3d-00000000a001" // a service's own id: never public
+
+// fakeNodeToken has a node token's shape (nodes.go): "nt-n-<8 hex>.<secret>". Not a real token.
+const fakeNodeToken = "nt-n-0000feed.FAKE_not_a_real_node_token_xxxxxxxxxxxxxxxxxx"
 
 func resultBody(state string) map[string]any {
 	return map[string]any{"source": "prove2me", "external_id": extID, "campaign": "t8", "item": "p2m-754bbc",
@@ -177,6 +183,10 @@ func TestCampaignValidation(t *testing.T) {
 		"item id":          item("id", "bad id"),
 		"item key":         item("id", "ak-AbC_dEf-GhIjKlMnOpQrStUvWxYz0123456789abcde"),
 		"text key dash":    mod(func(b map[string]any) { b["text"] = "ak-A_b-cdefghij" }),
+		"text node token":  mod(func(b map[string]any) { b["text"] = "the node used " + fakeNodeToken }),
+		"title node token": mod(func(b map[string]any) { b["title"] = fakeNodeToken }),
+		"label node token": mod(func(b map[string]any) { b["labels"] = map[string]string{"node": fakeNodeToken} }),
+		"item node token":  item("id", fakeNodeToken[:40]),
 		"item twice":       mod(func(b map[string]any) { b["items"].([]map[string]any)[1]["id"] = "p2m-3ad60f" }),
 		"item role":        item("role", "Calibration!"),
 		"item other host":  item("url", "https://elsewhere.example/theorems/x"),
@@ -251,6 +261,9 @@ func TestCampaignValidation(t *testing.T) {
 		"item key":         res("item", "ak-AbC_dEf-GhIjKlMnOpQrStUvWxYz0123456789abcde"),
 		"task key":         res("task", "sk-proj_abcdefghijklmnop"),
 		"campaign key":     res("campaign", "ak-0123456789_abc"),
+		"verdict node":     res("verdict", "token "+fakeNodeToken),
+		"label node":       res("labels", map[string]string{"k": fakeNodeToken}),
+		"task node":        res("task", fakeNodeToken[:40]),
 		"future":           res("submitted_at", time.Now().Add(time.Hour).UTC().Format(time.RFC3339)),
 	} {
 		if w, _ := r.call("POST", resPath, testProjectKey, b); w.Code != 400 {
@@ -415,5 +428,70 @@ func TestProjectPublicLinks(t *testing.T) {
 	}
 	if _, err := newProjectTable([]Project{{ID: "p", KeySHA256: []string{keyHash("k-1234567890")}, PublicLinks: []string{itemLink, "https://x.example/"}}}); err != nil {
 		t.Error(err)
+	}
+}
+
+// lockedBuf is a log sink for tests: the gateway's goroutines may log at the same time.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// A failed database write or read answers with the generic 503, and the log says which operation
+// of which project failed and why (code review of 3c5d84a: a full disk or a damaged file left no
+// trace), without the record's content or the service's external id.
+func TestScienceErrorsAreLogged(t *testing.T) {
+	r := sciRig(t, t.TempDir())
+	logs := &lockedBuf{}
+	r.g.sci.log = slog.New(slog.NewTextHandler(logs, nil))
+	r.want(201, "PUT", campPath+"/t8", testProjectKey, trialBody())
+	for _, tr := range []string{
+		`CREATE TRIGGER fail_campaigns BEFORE INSERT ON campaigns BEGIN SELECT RAISE(ABORT, 'simulated disk failure'); END`,
+		`CREATE TRIGGER fail_results BEFORE INSERT ON results BEGIN SELECT RAISE(ABORT, 'simulated disk failure'); END`,
+	} {
+		if _, err := r.g.sci.db.Exec(tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := trialBody()
+	b["title"], b["text"] = "Trial 8 renamed", "Private-looking draft text"
+	if w, _ := r.call("PUT", campPath+"/t8", testProjectKey, b); w.Code != 503 || !strings.Contains(w.Body.String(), "science records unavailable") ||
+		strings.Contains(w.Body.String(), "simulated") {
+		t.Fatalf("a failed campaign write: HTTP %d %s", w.Code, w.Body)
+	}
+	if w, _ := r.call("POST", resPath, testProjectKey, resultBody("pending")); w.Code != 503 || strings.Contains(w.Body.String(), "simulated") {
+		t.Fatalf("a failed result write: HTTP %d %s", w.Code, w.Body)
+	}
+	if _, err := r.g.sci.db.Exec(`ALTER TABLE results RENAME TO results_gone`); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := r.call("GET", resPath, "", nil); w.Code != 503 {
+		t.Fatalf("a failed read: HTTP %d %s", w.Code, w.Body)
+	}
+	out := logs.String()
+	for _, want := range []string{
+		`op="put campaign: write" project=prove2me err=`, `op="put result: write" project=prove2me err=`,
+		`op="list results: counts" project=prove2me err=`, "simulated disk failure", "no such table",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the log lacks %q:\n%s", want, out)
+		}
+	}
+	for _, never := range []string{"renamed", "Private-looking", extID, testProjectKey} {
+		if strings.Contains(out, never) {
+			t.Errorf("the log holds %q:\n%s", never, out)
+		}
 	}
 }

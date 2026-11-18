@@ -16,7 +16,8 @@ import (
 var (
 	// publicSecret: key-shaped text (secretLike without its long-run rule: public text quotes long
 	// Lean names). A key's body may hold '_' and '-' (base64url), so they count after the prefix.
-	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9_-]{8})|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
+	// A node token is "nt-<node id>.<secret>" (nodes.go; a BOINC pilot's credential is one too).
+	publicSecret = regexp.MustCompile(`(?i:\b(?:ak|sk|ghp|gho|ghs|ghu|github_pat|xox[abp])[-_][a-z0-9_-]{8})|(?i:\bnt-[a-z0-9-]{1,32}\.[a-z0-9_-]{8})|\bAKIA[0-9A-Z]{16}\b|(?i:\bbearer\s)|-----BEGIN`)
 	// publicEmail: an e-mail address, which no public label carries.
 	publicEmail = regexp.MustCompile(`[^\s@]+@[^\s@]+\.[^\s@]+`)
 )

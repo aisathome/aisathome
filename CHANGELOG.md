@@ -110,6 +110,15 @@ and **(site)** are live on aisathome.org once deployed.
   flagged (usage log `guard: unknown-address`, outcome `ok`), as unknown addresses in plain text
   already were. Every other rule still stops the answer and holds the node, and a download piped
   into a shell is stopped whatever its address. (gateway)
+- **A package install from an unknown index stops the answer and holds the node again.** With
+  unknown addresses only flagged, a node could have an agent install from an index of its choosing
+  (`pip install --index-url …`, `npm install --registry …`, a direct `https://` package, `GOPROXY=…`,
+  a written `.npmrc` or `requirements.txt`), whose build scripts run on the client. The guard's new
+  rule `install-source` stops such a call unless the request names the index, it is a known source
+  or one of the registries the tools use by default; other addresses stay flag-only. (gateway)
+- **Campaign and result text refuses node tokens** (`nt-…`) as it refuses API keys. (gateway)
+- **A failed science database read or write is logged with its cause** (operation, project, the
+  error), so a full disk or a damaged file shows; the client still gets the generic 503. (gateway)
 
 ### Fixed
 
