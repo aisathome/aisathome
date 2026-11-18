@@ -1,6 +1,7 @@
 // The gateway's science records store (decision 0021, point 7): an embedded SQLite database,
 // state_dir/science.db, for the records that are not tasks: campaigns and external results
-// (campaigns.go), and later others of the same kind. Tasks stay one JSON file each (tasks.go).
+// (campaigns.go), connector pilots and their credit (pilots.go), and later others of the same kind.
+// Tasks stay one JSON file each (tasks.go).
 //
 // The driver is pure Go (modernc.org/sqlite), so the gateway still builds without cgo for any
 // platform. One connection, so writes never meet SQLITE_BUSY inside the gateway; the database is in
@@ -100,6 +101,48 @@ var scienceMigrations = []string{
 	) WITHOUT ROWID;
 	CREATE INDEX results_by_time ON results (project, submitted_at, id);
 	CREATE INDEX results_by_campaign ON results (project, campaign);`,
+	// 2: connector pilots and their credit (pilots.go). Times are fixed-width RFC 3339 UTC text with
+	// milliseconds ("2026-11-18T15:31:54.000Z"), which sorts as it reads.
+	`CREATE TABLE pilots (
+		id                 TEXT NOT NULL PRIMARY KEY,
+		connector          TEXT NOT NULL,
+		cred_sha256        TEXT NOT NULL UNIQUE,
+		state              TEXT NOT NULL CHECK (state IN ('created', 'bound', 'connected', 'disconnected', 'ended')),
+		deadline           TEXT NOT NULL,
+		ext_user           TEXT NOT NULL DEFAULT '',
+		ext_host           TEXT NOT NULL DEFAULT '',
+		ext_team           TEXT NOT NULL DEFAULT '',
+		account            TEXT NOT NULL DEFAULT '',
+		created_at         TEXT NOT NULL,
+		bound_at           TEXT,
+		first_connected_at TEXT,
+		connected_at       TEXT,
+		disconnected_at    TEXT,
+		seen_at            TEXT,
+		ended_at           TEXT,
+		close_reason       TEXT NOT NULL DEFAULT '',
+		end_reason         TEXT NOT NULL DEFAULT '',
+		connections        INTEGER NOT NULL DEFAULT 0,
+		served_ms          INTEGER NOT NULL DEFAULT 0,
+		requests           INTEGER NOT NULL DEFAULT 0,
+		failed             INTEGER NOT NULL DEFAULT 0,
+		self_served        INTEGER NOT NULL DEFAULT 0,
+		prompt_tokens      INTEGER NOT NULL DEFAULT 0,
+		cached_tokens      INTEGER NOT NULL DEFAULT 0,
+		completion_tokens  INTEGER NOT NULL DEFAULT 0,
+		metered            REAL NOT NULL DEFAULT 0,
+		credit             REAL NOT NULL DEFAULT 0,
+		withheld           TEXT NOT NULL DEFAULT '',
+		agent              TEXT NOT NULL DEFAULT ''
+	) WITHOUT ROWID;
+	CREATE INDEX pilots_by_state ON pilots (connector, state, created_at);
+	CREATE INDEX pilots_by_account ON pilots (account);
+	CREATE TABLE pilot_credit_days (
+		account TEXT NOT NULL,
+		day     TEXT NOT NULL,
+		credit  REAL NOT NULL DEFAULT 0,
+		PRIMARY KEY (account, day)
+	) WITHOUT ROWID;`,
 }
 
 // scienceDB is the open database.

@@ -62,6 +62,9 @@ type Project struct {
 	// AgentOK lets the project's requests with tools (agents) reach volunteer nodes past their
 	// probation, as an account key with consent does. Without it they go to trusted nodes only.
 	AgentOK bool `json:"agent_ok,omitempty"`
+	// PilotProbationOK lets the project's agents (with AgentOK) use connector pilots whose account is
+	// still in probation (decision 0020 addendum: science only; Lean checks every proof).
+	PilotProbationOK bool `json:"pilot_probation_ok,omitempty"`
 	// MinTrust "trusted" keeps all of the project's requests on trusted nodes.
 	MinTrust string `json:"min_trust,omitempty"`
 	// RPM and Concurrent limit the project's requests (all keys together); 0 = unlimited.

@@ -339,3 +339,40 @@ func TestAccountsNotice(t *testing.T) {
 		t.Fatalf("after clear: %q", out)
 	}
 }
+
+// chat-on-pilots sets an account's switch; link and unlink tie it to a connector's user, once.
+func TestAccountsPilotCommands(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "accounts.json")
+	store, _ := gateway.OpenAccountStore(file)
+	store.Update(func(f *gateway.AccountsFile) error {
+		f.Accounts = append(f.Accounts, &gateway.Account{ID: "gh:1", Status: gateway.StatusActive},
+			&gateway.Account{ID: "gh:2", Status: gateway.StatusActive})
+		return nil
+	})
+	run := func(args ...string) error {
+		return runAccounts(append([]string{"-file", file}, args...), &bytes.Buffer{}, &bytes.Buffer{})
+	}
+	for _, ok := range [][]string{{"chat-on-pilots", "gh:1", "off"}, {"link", "gh:1", "boinc", "678"}, {"link", "gh:1", "boinc", "678"}} {
+		if err := run(ok...); err != nil {
+			t.Fatalf("%v: %v", ok, err)
+		}
+	}
+	for _, bad := range [][]string{{"chat-on-pilots", "gh:1", "maybe"}, {"chat-on-pilots", "gh:9", "on"}, {"link", "gh:2", "boinc", "678"},
+		{"link", "gh:2", "boinc", "a@b.org"}, {"link", "gh:2", "BOINC", "1"}, {"unlink", "gh:2", "boinc", "678"}} {
+		if err := run(bad...); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+	store.Refresh()
+	snap := store.Snapshot()
+	a := snap.Find("gh:1")
+	if !a.PilotChatOff || len(a.Links) != 1 || a.Links[0].Connector != "boinc" || a.Links[0].User != "678" {
+		t.Fatalf("gh:1: %+v", a)
+	}
+	if err := run("unlink", "gh:1", "boinc", "678"); err != nil {
+		t.Fatal(err)
+	}
+	if err := run("link", "gh:2", "boinc", "678"); err != nil {
+		t.Fatalf("link after unlink: %v", err)
+	}
+}

@@ -54,6 +54,13 @@ func (g *Gateway) loadKeysLocked(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	connectors, err := newConnectorTable(cfg.Connectors, projects)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Connectors) > 0 && g.accounts == nil {
+		return errors.New("connectors need accounts: a pilot serves as a node of an account")
+	}
 	var hashed map[string]KeyInfo
 	var sum [32]byte
 	if cfg.KeysFile != "" {
@@ -72,6 +79,7 @@ func (g *Gateway) loadKeysLocked(cfg Config) error {
 		}
 	}
 	g.projects.Store(projects)
+	g.connCfgs.Store(connectors)
 	if _, builtin := g.keys.Load().KeyStore.(*configKeys); builtin {
 		g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg), hashed: hashed}})
 	}

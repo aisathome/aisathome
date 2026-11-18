@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,7 +28,8 @@ func tables(t *testing.T, db *sql.DB) []string {
 	return out
 }
 
-var wantTables = []string{"campaign_items", "campaigns", "results", "results_by_campaign", "results_by_time"}
+var wantTables = []string{"campaign_items", "campaigns", "pilot_credit_days", "pilots", "pilots_by_account", "pilots_by_state",
+	"results", "results_by_campaign", "results_by_time"}
 
 // A fresh database gets every migration; reopening applies none and keeps the data; a database
 // from before the store (user_version 0) is migrated; one from a newer gateway, or a damaged file,
@@ -123,17 +125,18 @@ func TestScienceDBMigrationAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.close()
+	n := len(scienceMigrations)
 	scienceMigrations = append(slices.Clone(scienceMigrations), `CREATE TABLE half (x); CREATE TABLE broken (`)
-	if _, err := openScienceDB(dir); err == nil || !strings.Contains(err.Error(), "migration 2") {
+	if _, err := openScienceDB(dir); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("migration %d", n+1)) {
 		t.Fatalf("broken migration: %v", err)
 	}
-	scienceMigrations = scienceMigrations[:1]
+	scienceMigrations = scienceMigrations[:n]
 	s, err = openScienceDB(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.close()
-	if v, _ := s.schemaVersion(); v != 1 {
+	if v, _ := s.schemaVersion(); v != n {
 		t.Fatalf("version %d after a failed migration", v)
 	}
 	if got := tables(t, s.db); slices.Contains(got, "half") {

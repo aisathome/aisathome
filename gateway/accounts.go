@@ -134,6 +134,10 @@ const (
 	StatusActive     = "active"
 	StatusWaitlisted = "waitlisted"
 	StatusBanned     = "banned"
+	// StatusUnclaimed: an account a connector's pilot created for one of its users who has no
+	// account here yet (connector.go). It has no sign-in, keys or node tokens and does not count
+	// against max_active; its pilots serve under it, and its user claims it later.
+	StatusUnclaimed = "unclaimed"
 )
 
 // DefaultMaxActive is the limit a new accounts file starts with (owner, 2026-10-10).
@@ -177,6 +181,19 @@ type Account struct {
 	ContactEmail     string     `json:"contact_email,omitempty"`
 	ContactConsentAt *time.Time `json:"contact_consent_at,omitempty"`
 	ContactSource    string     `json:"contact_source,omitempty"` // ContactGoogle, ContactGitHub or ContactEmail
+	// Links are the connectors' users this account is (connector.go): a BOINC user id, never an
+	// address. At most one account holds a given connector and user.
+	Links []AccountLink `json:"links,omitempty"`
+	// PilotChatOff: the account's pilots serve science only (the "chat on pilots" switch, on by
+	// default).
+	PilotChatOff bool `json:"pilot_chat_off,omitempty"`
+}
+
+// AccountLink says that an account is user User of connector Connector.
+type AccountLink struct {
+	Connector string    `json:"connector"`
+	User      string    `json:"user"`
+	Linked    time.Time `json:"linked"`
 }
 
 // EmailMAC is an email address as HMAC-SHA256 (hex) under the email key with KeyID.

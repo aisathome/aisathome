@@ -74,6 +74,9 @@ type route struct {
 	class   string
 	project string
 	share   float64
+	// pilotProbationOK: the project's agents may use pilots of accounts still in probation
+	// (Project.PilotProbationOK).
+	pilotProbationOK bool
 }
 
 // usable reports whether n could serve rt now if it had a free slot: allowed, not paused,
@@ -161,6 +164,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	switch {
 	case rt.exclude[n] || n.held:
 		return false
+	case n.scienceOnly && rt.class != ClassScience: // a pilot without chat (connector.go)
+		return false
 	case rt.operator != "" && n.operator != rt.operator:
 		return false
 	case rt.onlySelf && n.operator != rt.self:
@@ -174,7 +179,7 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	case rt.trusted:
 		return false
 	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
-		return rt.consent && !now.Before(n.probEnd)
+		return rt.consent && (!now.Before(n.probEnd) || (n.pilot != "" && rt.pilotProbationOK))
 	}
 	return true
 }
