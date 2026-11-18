@@ -180,6 +180,7 @@ func (g *Gateway) setup(cfg Config) (err error) {
 	if g.sci, err = openScienceDB(cfg.StateDir); err != nil {
 		return err
 	}
+	g.sci.log = log
 	if cfg.StateDir != "" {
 		g.budget.path = filepath.Join(cfg.StateDir, BudgetsFile)
 		g.budget.load(time.Now(), log)
