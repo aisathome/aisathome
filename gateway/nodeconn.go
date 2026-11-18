@@ -306,6 +306,13 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	g.rememberLocked(n.models, now)
 	g.mu.Unlock()
+	if pl != nil {
+		// A report or the deadline may have ended it while it registered: dropPilot ran before the
+		// socket was here to close, so look again now that it is.
+		if p, err := g.sci.pilot("", n.pilot); err != nil || p.State != PilotConnected {
+			n.conn.Close(websocket.StatusPolicyViolation, "this pilot has ended")
+		}
+	}
 	if old != nil { // reconnect replaces the stale connection; its close handshake may stall
 		old.conn.Close(websocket.StatusGoingAway, "replaced by new connection")
 	}

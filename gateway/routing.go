@@ -168,7 +168,7 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 		return false // a pilot past its deadline, or without chat (connector.go)
 	case rt.operator != "" && n.operator != rt.operator:
 		return false
-	case rt.onlySelf && n.operator != rt.self:
+	case rt.onlySelf && (n.operator != rt.self || n.pilot != ""): // a pilot is not "my own" (the connector linked it)
 		return false
 	case n.trusted:
 		return true
