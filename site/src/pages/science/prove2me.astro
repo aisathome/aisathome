@@ -148,6 +148,7 @@ const leafCols = [
 		<ul class="p2m-legend" data-st-legend hidden>
 			{BAR_PARTS.map((p) => <li data-part={p}><span class={`sw seg-${p}`} aria-hidden="true" /><b data-count>0</b> {BAR_LABEL[p]}</li>)}
 		</ul>
+		<p class="p2m-st-more" data-st="empty" hidden />
 		<p class="p2m-st-more" data-st="elsewhere" hidden />
 		<dl class="p2m-st-nums">
 			<div data-num="nodes" hidden><dt>nodes online (whole network)</dt><dd /></div>
@@ -741,6 +742,7 @@ const leafCols = [
 		};
 		set('head', tx.head);
 		set('elsewhere', tx.elsewhere);
+		set('empty', v.bar && v.bar.total === 0 ? tx.barWords : '');
 		set('updated', tx.updated);
 		const bar = statusBox.querySelector<HTMLElement>('[data-st-bar]')!;
 		const legend = statusBox.querySelector<HTMLElement>('[data-st-legend]')!;
