@@ -503,7 +503,7 @@ func packageLockSources(v any) []string {
 	for k, x := range top {
 		switch {
 		case k == "packages" || k == "dependencies":
-			out = append(out, lockDeps(x)...)
+			out = lockDeps(out, x)
 		case !lockTopKeys[k]:
 			out = appendStrings(out, x)
 		}
@@ -511,14 +511,15 @@ func packageLockSources(v any) []string {
 	return out
 }
 
-// lockDeps reads a map of a lock file: an object value is a package's entry, any other value a
-// dependency spec.
-func lockDeps(v any) []string {
+// lockDeps appends what a map of a lock file holds to out: an object value is a package's entry,
+// any other value a dependency spec. One slice for all levels: a lock file of version 1 nests
+// entries as deep as JSON allows, and copying what each level found would cost the depth times the
+// file (code review, 2026-11-18).
+func lockDeps(out []string, v any) []string {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return stringsIn(v)
+		return appendStrings(out, v)
 	}
-	var out []string
 	for _, x := range m {
 		e, ok := x.(map[string]any)
 		if !ok {
@@ -528,7 +529,7 @@ func lockDeps(v any) []string {
 		for k, y := range e {
 			switch {
 			case k == "dependencies":
-				out = append(out, lockDeps(y)...)
+				out = lockDeps(out, y)
 			case !lockEntryKeys[k]:
 				out = appendStrings(out, y)
 			}
