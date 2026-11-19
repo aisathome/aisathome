@@ -285,8 +285,9 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	}
 
 	// Stop: no new requests, let those in flight finish (as long as the reason allows), leave
-	// with the reason, stop the engine.
-	now := d.Now()
+	// with the reason, stop the engine. The stop's deadlines are wall-clock time, like the
+	// wrapper's kill and the time.Until that measures them, not d.Now's.
+	now := time.Now()
 	deadline := now.Add(o.StopBudget)
 	drain := min(3*time.Second, o.StopBudget/2)
 	if reason == ReasonTime {
@@ -301,7 +302,7 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	}
 	if reason != ReasonEngine && !waitIdle(dctx, agent, drain, d.Tick/4+time.Millisecond) {
 		// SIGTERM during the drain at the time limit: the wrapper's 10 s count now.
-		reason, deadline = ReasonSigterm, d.Now().Add(o.StopBudget)
+		reason, deadline = ReasonSigterm, time.Now().Add(o.StopBudget)
 		log.Info("pilot stopping", "reason", reason)
 	}
 	agent.Leave("pilot: "+reason, min(2*time.Second, time.Until(deadline)))

@@ -228,6 +228,7 @@ type fakeEngine struct {
 	failRuns   int // call onExit this many times right away (an engine that keeps crashing)
 	onExit     func(error, time.Duration)
 	stopped    atomic.Bool
+	stuck      chan struct{} // when set, Run returns only once it is closed: an engine slow to stop
 }
 
 func (f *fakeEngine) Stop()    {}
@@ -271,6 +272,9 @@ func (f *fakeEngine) Run(ctx context.Context) error {
 	go srv.Serve(l)
 	<-ctx.Done()
 	srv.Close()
+	if f.stuck != nil {
+		<-f.stuck
+	}
 	f.stopped.Store(true)
 	return nil
 }
@@ -485,10 +489,13 @@ func TestSigtermStopsInTime(t *testing.T) {
 }
 
 // A SIGTERM during the drain at the time limit still stops the pilot within the stop budget,
-// not after the drain.
+// not after the drain, even with an engine slow to stop: the budget is wall-clock time, however
+// far the pilot's clock has moved on.
 func TestSigtermDuringDrain(t *testing.T) {
 	r := newRig(t)
 	r.eng.chunks, r.eng.chunkDelay = 100000, 50*time.Millisecond
+	r.eng.stuck = make(chan struct{})
+	t.Cleanup(func() { close(r.eng.stuck) })
 	r.o.DrainWait, r.o.StopBudget = time.Minute, 4*time.Second
 	ctx, sigterm := context.WithCancel(context.Background())
 	ch := r.run(ctx)
@@ -500,7 +507,8 @@ func TestSigtermDuringDrain(t *testing.T) {
 	start := time.Now()
 	sigterm()
 	res := wait(t, ch, 10*time.Second)
-	if took := time.Since(start); took > r.o.StopBudget {
+	// The pilot gives the stuck engine the whole budget, then writes its summary and returns.
+	if took := time.Since(start); took > r.o.StopBudget+time.Second {
 		t.Errorf("stop took %s, more than the %s budget", took, r.o.StopBudget)
 	}
 	if got := r.gw.closeReason(t); res.Reason != ReasonSigterm || got != "pilot: sigterm" {
