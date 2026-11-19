@@ -35,6 +35,13 @@ var messageFields = map[string]bool{
 	"role": true, "content": true, "tool_calls": true, "tool_call_id": true, "reasoning_content": true,
 }
 
+// templateKwargs are the chat_template_kwargs a node may see: the template switches the
+// gateway renders itself (argsOf). Other keys change nothing in the rendered prompt, so they
+// stay at the gateway like any other field a client adds.
+var templateKwargs = map[string]bool{
+	"enable_thinking": true, "preserve_thinking": true, "preserve_reasoning": true, "reasoning_effort": true,
+}
+
 // forNode returns a copy of the request body with only the fields a node may see.
 func forNode(body map[string]any) map[string]any {
 	out := make(map[string]any, len(body))
@@ -42,6 +49,15 @@ func forNode(body map[string]any) map[string]any {
 		if nodeParams[k] {
 			out[k] = v
 		}
+	}
+	if kw, ok := body["chat_template_kwargs"].(map[string]any); ok {
+		clean := make(map[string]any, len(kw))
+		for k, v := range kw {
+			if templateKwargs[k] {
+				clean[k] = v
+			}
+		}
+		out["chat_template_kwargs"] = clean
 	}
 	if msgs, ok := body["messages"].([]any); ok {
 		clean := make([]any, 0, len(msgs))
@@ -70,18 +86,41 @@ func forNode(body map[string]any) map[string]any {
 // Deliberately format-based (high precision): generic "password = ..." rules would also hit
 // ordinary code and degrade answers.
 var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`),
+	// PEM and OpenSSH private keys, and PGP private key blocks
+	regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`),
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),                                         // AWS access key id
 	regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b`), // GitHub
 	regexp.MustCompile(`\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}`),                               // OpenAI, Anthropic and similar
 	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}`),                                       // Slack
-	regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{16,}\b`),                                   // Stripe
+	regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b`),                          // Stripe
 	regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{35}\b`),                                            // Google API key
 	regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}\b`),                                               // Hugging Face
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`), // JWT
 	regexp.MustCompile(`\b(?:ak|nt)-[A-Za-z0-9_\-]{40,}`),                                       // AIs@home API keys and node tokens
 	regexp.MustCompile(`\bnt-n-[0-9a-f]{8}\.[A-Za-z0-9_\-]{40,}`),                               // AIs@home account node tokens
 	regexp.MustCompile(`\bpc-[0-9a-f]{12}\.[A-Za-z0-9_\-]{40,}`),                                // AIs@home pilot credentials
+	// Developer tokens that agents meet in .env files, CI configs and shell history. Each has a
+	// fixed marker and a long random part, so ordinary code does not match.
+	regexp.MustCompile(`\bgl(?:pat|dt|rt|ptt|soat)-[A-Za-z0-9_\-]{20,}` + // GitLab
+		`|\bnpm_[A-Za-z0-9]{36}\b` + // npm
+		`|\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,}` + // PyPI
+		`|\bgsk_[A-Za-z0-9]{48,}\b` + // Groq
+		`|\br8_[A-Za-z0-9]{37}\b` + // Replicate
+		`|\bxai-[A-Za-z0-9]{70,}\b` + // xAI
+		`|\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b` + // SendGrid
+		`|\bya29\.[A-Za-z0-9_\-]{30,}` + // Google OAuth access token
+		`|\bwhsec_[A-Za-z0-9]{32,}\b` + // Stripe webhook secret
+		`|\bdo[opr]_v1_[a-f0-9]{64}\b` + // DigitalOcean
+		`|\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b` + // Shopify
+		`|\bhv[sb]\.[A-Za-z0-9_\-]{24,}` + // HashiCorp Vault
+		`|\blin_api_[A-Za-z0-9]{40}\b` + // Linear
+		`|\bsbp_[a-f0-9]{40}\b` + // Supabase
+		`|\btskey-[a-z]+-[A-Za-z0-9]{6,}-[A-Za-z0-9]{16,}` + // Tailscale
+		`|\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b` + // age
+		`|\b\d{8,10}:AA[A-Za-z0-9_\-]{33}\b`), // Telegram bot
+	// Webhook URLs: whoever has one can post as the owner.
+	regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_\-]{20,}` +
+		`|https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_\-]{30,}`),
 }
 
 // redactor replaces secrets with per-request placeholders and restores them. Its mapping
@@ -117,7 +156,9 @@ func (r *redactor) restoring() bool { return r.restoreOn && r.active() }
 
 // typePrefixRe matches the fixed marker that names a secret's kind. The placeholder keeps
 // only this marker, never any of the random part.
-var typePrefixRe = regexp.MustCompile(`^(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA|ASIA|xox[abprs]-|[sr]k_live_|AIza|hf_|eyJ|ak-|nt-|pc-)`)
+var typePrefixRe = regexp.MustCompile(`^(?:sk-(?:proj-|ant-)?|gh[pousr]_|github_pat_|AKIA|ASIA|xox[abprs]-|[sr]k_(?:live|test)_|whsec_|AIza|hf_|eyJ|ak-|nt-|pc-` +
+	`|gl(?:pat|dt|rt|ptt|soat)-|npm_|pypi-|gsk_|r8_|xai-|SG\.|ya29\.|do[opr]_v1_|shp(?:at|ca|pa|ss)_|hv[sb]\.|lin_api_|sbp_|tskey-|AGE-SECRET-KEY-1` +
+	`|https://hooks\.slack\.com/[a-z]+/|https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/)`)
 
 // typePrefix is the part of a secret that names its kind ("sk-proj-", "ghp_", "AKIA").
 func typePrefix(s string) string { return typePrefixRe.FindString(s) }
