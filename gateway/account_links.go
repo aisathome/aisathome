@@ -146,7 +146,8 @@ var errClaimInactive = errors.New("only an active account can link a connector's
 //   - a user linked to target already keeps its link (with the new attach key);
 //   - a user linked to an unclaimed account moves, and that account is merged into target: all its
 //     links move, target's probation starts at the earlier of the two first-node times, its chat
-//     switch is off if either was off, and the unclaimed account is deleted. Its id is returned so
+//     switch is off if either was off, its operator terms carry over (mergeOperatorTerms), and the
+//     unclaimed account is deleted. Its id is returned so
 //     that the pilot records and their daily credit follow (scienceDB.completeRequest);
 //   - a user linked to any other account is not taken (errLinkTaken): the operator unlinks it first.
 //
@@ -193,6 +194,7 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 			t.FirstNode = &first
 		}
 		t.PilotChatOff = t.PilotChatOff || o.PilotChatOff
+		mergeOperatorTerms(t, o)
 		f.Accounts = slices.DeleteFunc(f.Accounts, func(a *Account) bool { return a == o })
 		from = o.ID
 		return nil
@@ -201,6 +203,26 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 		from = ""
 	}
 	return from, err
+}
+
+// mergeOperatorTerms carries an unclaimed account's operator terms (chatrules.go) into t, which claims
+// it: the newer acceptance, the later withdrawal, and no acceptance if a withdrawal came after it (the
+// latest event of the person's, on either account, stands); t's stated country if it has one, else o's.
+func mergeOperatorTerms(t, o *Account) {
+	if o.OperatorTerms != nil && (t.OperatorTerms == nil || o.OperatorTerms.At.After(t.OperatorTerms.At)) {
+		acc := *o.OperatorTerms
+		t.OperatorTerms = &acc
+	}
+	if o.TermsWithdrawn != nil && (t.TermsWithdrawn == nil || o.TermsWithdrawn.After(*t.TermsWithdrawn)) {
+		w := *o.TermsWithdrawn
+		t.TermsWithdrawn = &w
+	}
+	if t.OperatorTerms != nil && t.TermsWithdrawn != nil && !t.OperatorTerms.At.After(*t.TermsWithdrawn) {
+		t.OperatorTerms = nil
+	}
+	if t.OperatorCountry == "" {
+		t.OperatorCountry = o.OperatorCountry
+	}
 }
 
 // linkHolder returns the id and status of the account linked to connector's user, if any.

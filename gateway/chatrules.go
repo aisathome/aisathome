@@ -350,7 +350,9 @@ func (g *Gateway) handleConnectorTerms(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "country: an ISO 3166-1 alpha-2 code, \"other\" or empty")
 		return
 	}
+	g.linkMu.Lock() // like a bind, it may make the user's unclaimed account: not while a claim moves it
 	unclaimed, err := g.accounts.connectorTerms(c.ID, user, body.Version, country, body.AcceptedAt, now)
+	g.linkMu.Unlock()
 	if errors.Is(err, errNoOperator) {
 		apiError(w, http.StatusConflict, "that user's account is closed")
 		return

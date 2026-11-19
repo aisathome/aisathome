@@ -488,7 +488,6 @@ func (g *Gateway) accountData(id string) pageData {
 	if a.Status == StatusActive {
 		g.connectorData(&d, a)
 	}
-	d.Account.Links = nil // the cards show them; the attach keys only there
 	return d
 }
 
@@ -918,7 +917,8 @@ attach-only key, which looks like <code>123456_</code> and 32 letters and digits
 </div>{{end}}
 <div class="card" id="pilots"><div class="card-head"><h2>Your pilots</h2>{{if .Account.PilotChatOff}}<span class="badge off">Science only</span>{{else}}<span class="badge on">Chat on</span>{{end}}</div>
 <p>A pilot is a serving session that a connector such as BOINC runs on your machine. It always serves science, which carries no
-personal data. Unless you choose science only, it also serves people's chats, opencode and API requests, like any node.</p>
+personal data. Unless you choose science only, it also serves people's chats, opencode and API requests, like any node
+of yours: once you have accepted the operator terms.</p>
 <p>Whoever runs a machine can read what it serves. The network strips who asked and sends no personal data to volunteers' machines,
 but that is <strong>hardened, not confidential</strong>, and the <a href="/about/terms/">node-operator terms</a> apply: do not log or
 look at what passes through.</p>

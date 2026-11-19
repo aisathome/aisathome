@@ -716,7 +716,9 @@ When the connector says yes, the user is linked (`create_link` and `claim` alike
   the request waited);
 - a user linked to the same account keeps its link with the new key;
 - a user held by an **unclaimed** account is **merged**: all its links move, the account's probation
-  starts at the earlier first-node time, its chat switch is off if either was off, the pilot
+  starts at the earlier first-node time, its chat switch is off if either was off, its operator
+  terms carry over (the newer acceptance and the later withdrawal, an acceptance older than a
+  withdrawal dropped; the account's own stated country, else the unclaimed one's), the pilot
   records and their daily credit move to it, and the unclaimed account is deleted. That user's
   connected pilots are dropped and reconnect within seconds as the account's nodes (the same
   records continue). A bind that came before the answer (the user's first pilot) is merged the
