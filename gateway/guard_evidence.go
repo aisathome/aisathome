@@ -73,9 +73,26 @@ const (
 	redactReach = 64 << 10
 )
 
-// evidence is the hit's evidence: a fragment of the text the rule read, around the match.
+// evidence is the hit's evidence: a fragment of the text the rule read, around the match. Where
+// (a tool's name) and the host come from the node too: they are bounded, redacted and escaped like
+// the fragment (code review, 2026-11-19).
 func (h guardHit) evidence() GuardEvidence {
-	return GuardEvidence{Where: h.where, Host: h.host, Fragment: fragmentOf(h.text, h.at[0], h.at[1])}
+	return GuardEvidence{Where: cleanField(h.where), Host: cleanField(h.host), Fragment: fragmentOf(h.text, h.at[0], h.at[1])}
+}
+
+// maxField bounds where and the host: a tool's name or a host name is short.
+const maxField = 100
+
+// cleanField is a short field of the node's text, redacted and escaped as a fragment is, cut to
+// maxField bytes.
+func cleanField(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) > maxField {
+		s = strings.ToValidUTF8(s[:maxField], "") + "…"
+	}
+	return escapeFragment(redactWindow(s, 0, len(s)))
 }
 
 // fragmentOf is text[m0:m1] with the text around it, at most maxFragment bytes of text before

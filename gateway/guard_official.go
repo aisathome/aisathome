@@ -81,8 +81,13 @@ func officialInstall(text string, m0, m1 int, list knownAddrs) bool {
 			return false
 		}
 		rest := text[m1:]
-		if j := strings.IndexAny(rest, ")`\"|;&\n"); j >= 0 {
+		if j := strings.IndexAny(rest, ")`|;&\n"); j >= 0 {
 			rest = rest[:j]
+		}
+		// A quote inside the substitution could hide its end, or more words, from this reading; the
+		// installers' own commands have none (code review, 2026-11-19).
+		if strings.ContainsAny(rest, `"'\`) {
+			return false
 		}
 		seg = seg[w[0]:] + rest
 	}
