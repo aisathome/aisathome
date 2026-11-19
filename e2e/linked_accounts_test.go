@@ -63,15 +63,18 @@ func TestClaimEndToEnd(t *testing.T) {
 	if _, page := a.get(t, "/account", s); !strings.Contains(page, "Claim a BOINC account") {
 		t.Fatal("no claim form on the account page")
 	}
-	key := "5_" + strings.Repeat("0f", 16)
-	if resp, body := a.post(t, "/account/connectors/boinc/claim", s, url.Values{"key": {key}}.Encode()); resp.StatusCode != 303 {
+	acctKey, key := strings.Repeat("0f", 16), "5_"+strings.Repeat("ab", 16) // the account key, the weak key BOINC answers
+	if resp, _ := a.post(t, "/account/connectors/boinc/claim", s, url.Values{"key": {key}}.Encode()); resp.StatusCode != 400 {
+		t.Fatalf("a weak key claimed: %d", resp.StatusCode)
+	}
+	if resp, body := a.post(t, "/account/connectors/boinc/claim", s, url.Values{"key": {acctKey}}.Encode()); resp.StatusCode != 303 {
 		t.Fatalf("claim: %d %s", resp.StatusCode, body)
 	}
 	q := a.pendingRequest(t)
-	if q["kind"] != "claim" || q["user"] != "5" || q["key"] != key {
+	if q["kind"] != "claim" || q["account_key"] != acctKey || q["user"] != nil {
 		t.Fatalf("claim as the connector sees it: %v", q)
 	}
-	out := a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true})
+	out := a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true, "user": "5", "key": key})
 	if st := out["request"].(map[string]any)["state"]; st != "done" {
 		t.Fatalf("after the answer: %v", out)
 	}
@@ -119,9 +122,9 @@ func TestClaimEndToEnd(t *testing.T) {
 
 	// A second account cannot claim the same user, whatever the connector says.
 	s2, _ := a.signIn(t, 8)
-	a.post(t, "/account/connectors/boinc/claim", s2, url.Values{"key": {key}}.Encode())
+	a.post(t, "/account/connectors/boinc/claim", s2, url.Values{"key": {acctKey}}.Encode())
 	q = a.pendingRequest(t)
-	out = a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true})
+	out = a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true, "user": "5", "key": key})
 	if r := out["request"].(map[string]any); r["state"] != "failed" || !strings.Contains(r["error"].(string), "linked to another") {
 		t.Fatalf("second claim: %v", out)
 	}
@@ -194,12 +197,12 @@ func TestWaitlistedClaimEndToEnd(t *testing.T) {
 		_, page := a.get(t, "/account", s)
 		return strings.Contains(page, "You are on the waitlist") && strings.Contains(page, "Claim a BOINC account")
 	})
-	key := "6_" + strings.Repeat("1e", 16)
-	if resp, body := a.post(t, "/account/connectors/boinc/claim", s, url.Values{"key": {key}}.Encode()); resp.StatusCode != 303 {
+	acctKey := strings.Repeat("1e", 16)
+	if resp, body := a.post(t, "/account/connectors/boinc/claim", s, url.Values{"key": {acctKey}}.Encode()); resp.StatusCode != 303 {
 		t.Fatalf("claim: %d %s", resp.StatusCode, body)
 	}
 	q := a.pendingRequest(t)
-	if st := a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true})["request"].(map[string]any)["state"]; st != "done" {
+	if st := a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true, "user": "6", "key": "6_" + strings.Repeat("cd", 16)})["request"].(map[string]any)["state"]; st != "done" {
 		t.Fatalf("waitlisted claim: %v", st)
 	}
 	waitUntil(t, "the pilot to reconnect", func() bool {

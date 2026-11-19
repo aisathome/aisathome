@@ -62,7 +62,6 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/operator", smallForm(g.handleOperatorTerms))
 	mux.HandleFunc("POST /account/connectors/{id}/run", smallForm(g.handleConnectorRun))
 	mux.HandleFunc("POST /account/connectors/{id}/claim", smallForm(g.handleConnectorClaim))
-	mux.HandleFunc("POST /account/connectors/{id}/email", smallForm(g.handleConnectorEmail))
 	mux.HandleFunc("POST /account/pilots/chat", smallForm(g.handlePilotChatForm))
 	mux.HandleFunc("POST /account/notice/dismiss", smallForm(g.handleNoticeDismiss))
 	mux.HandleFunc("GET /account/notice/chat", g.handleNoticeChat)
@@ -872,16 +871,12 @@ Its pilots run as your nodes, with your settings below.</p>
 <p class="hint">The key can only attach machines to this {{$c.Name}} account, nothing else. Keep it to yourself anyway.</p>{{end}}
 {{if .Login}}<p>In BOINC Manager: Add project, <code>{{$c.AttachURL}}</code>, "existing account", and log in with
 <code data-login>{{.Login}}</code> and the password you chose here (without one, use the command above).</p>
-<form class="form" method="post" action="/account/connectors/{{$c.ID}}/email"><input type="hidden" name="user" value="{{.User}}">
-<div class="field"><label for="own-email-{{.User}}">Use my own email address at {{$c.Name}}</label>
-<div class="row"><input id="own-email-{{.User}}" type="email" name="email" required maxlength="254" autocomplete="email"><button class="btn secondary">Use it</button></div>
-<p class="hint">Needed for one cross-project id (and Gridcoin). We pass it to {{$c.Name}} and delete it here as soon as {{$c.Name}}
-has it; {{$c.Name}} then sends its own confirmation mail.</p></div></form>
+<p class="mut small" data-own-address>To use your own email address (one cross-project id, Gridcoin), log in on the {{$c.Name}} site with
+this login and your password and change it in your {{$c.Name}} account settings; {{$c.Name}} sends its own confirmation mail.</p>
 {{else if .Created}}<p class="mut small">This {{$c.Name}} account uses your own email address.</p>{{end}}</div>{{end}}
 {{with $c.Pending}}<p role="status" data-request-pending="{{.Kind}}"><span class="badge busy">Waiting</span> {{$c.Name}} is {{.What}} (asked {{.Since.Format "15:04 UTC"}}).
 Reload this page in a few seconds.</p>{{end}}
 {{with $c.Failed}}<p role="alert" data-request-failed="{{.Kind}}"><span class="badge off">Did not work</span> {{.What}}: {{.Error}}.</p>{{end}}
-{{with $c.Done}}{{if eq .Kind "set_email"}}<p role="status" data-request-done="{{.Kind}}">{{$c.Name}} has your address now, and we deleted it here.</p>{{end}}{{end}}
 {{if not $c.Pending}}{{if not $c.Links}}<form class="form" method="post" action="/account/connectors/{{$c.ID}}/run"><h3>Run on {{$c.Name}}</h3>
 <p>Crunch for AIs@home with the {{$c.Name}} client you may already run. We make a {{$c.Name}} account for you and show you how to
 attach your machine; its pilots then serve as your nodes and earn {{$c.Name}} credit.</p>
@@ -896,14 +891,16 @@ we pass it on and delete it here)</span></label>
 <div class="field"><label for="run-pw-{{$c.ID}}">Password for BOINC Manager and the {{$c.Name}} site (optional, 8 or more characters)</label>
 <input id="run-pw-{{$c.ID}}" type="password" name="password" maxlength="128" autocomplete="new-password">
 <p class="hint">Choose it now: changing it later means attaching your machines again. Only {{$c.Name}} keeps it, as a hash; we keep nothing.
-Without one, attach with the command line.</p></div>
+Without one, attach with the command line, and you cannot log in on the {{$c.Name}} site to change the address later.</p></div>
 <div class="actions"><button class="btn">Run on {{$c.Name}}</button></div></form>{{end}}
 <form class="form" method="post" action="/account/connectors/{{$c.ID}}/claim"><h3>Claim a {{$c.Name}} account</h3>
 <p>Already crunching for AIs@home on {{$c.Name}}? Your machines' work is kept under an unclaimed account until you claim it. Paste your
 {{$c.Name}} account key{{if $c.KeyURL}} from <a href="{{$c.KeyURL}}">this page</a> (signed in to {{$c.Name}}){{end}}: the
-attach-only key, which looks like <code>123456_</code> and 32 letters and digits.</p>
+account key at the top, 32 letters and digits, <strong>not</strong> the weak key below it, which can be shared. It proves the account
+is yours: {{$c.Name}} checks it, and we keep it only until then. Claiming again refreshes the attach steps after you change your
+{{$c.Name}} password or address.</p>
 <div class="field"><label for="claim-key-{{$c.ID}}">{{$c.Name}} account key</label>
-<div class="row"><input id="claim-key-{{$c.ID}}" name="key" required maxlength="200" autocomplete="off" spellcheck="false"><button class="btn secondary">Claim</button></div></div></form>{{end}}
+<div class="row"><input id="claim-key-{{$c.ID}}" type="password" name="key" required maxlength="64" autocomplete="off" spellcheck="false"><button class="btn secondary">Claim</button></div></div></form>{{end}}
 </div>{{end}}
 <div class="card" id="pilots"><div class="card-head"><h2>Your pilots</h2>{{if .Account.PilotChatOff}}<span class="badge off">Science only</span>{{else}}<span class="badge on">Chat on</span>{{end}}</div>
 <p>A pilot is a serving session that a connector such as BOINC runs on your machine. It always serves science, which carries no

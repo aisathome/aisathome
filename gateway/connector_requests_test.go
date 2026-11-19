@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -92,11 +93,23 @@ func (r *pilotRig) onlyPending() map[string]any {
 	return l[0]
 }
 
-func (r *pilotRig) claim(id, key string) {
+// claim posts account id's claim form with the account key of connector user user.
+func (r *pilotRig) claim(id, user string) {
 	r.t.Helper()
-	if w := r.form(id, "/account/connectors/boinc/claim", url.Values{"key": {key}}); w.Code != http.StatusSeeOther {
+	if w := r.form(id, "/account/connectors/boinc/claim", url.Values{"key": {acctKey(user)}}); w.Code != http.StatusSeeOther {
 		r.t.Fatalf("claim form: HTTP %d: %s", w.Code, w.Body)
 	}
+}
+
+// yes answers request rid as a connector that found the user its account key belongs to (a claim) does.
+func (r *pilotRig) yes(rid string) map[string]any {
+	r.t.Helper()
+	q, err := r.g.sci.request("boinc", rid)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	user := keyUsers[q.AttachKey]
+	return r.answer(rid, map[string]any{"ok": true, "user": user, "key": weakKey(user)})
 }
 
 func (r *pilotRig) answer(rid string, body map[string]any) map[string]any {
@@ -105,6 +118,17 @@ func (r *pilotRig) answer(rid string, body map[string]any) map[string]any {
 }
 
 func weakKey(user string) string { return user + "_" + strings.Repeat("ab12", 8) }
+
+// keyUsers: the test users of the account keys acctKey made.
+var keyUsers = map[string]string{}
+
+// acctKey is a test user's full account key: 32 hex digits, as BOINC's authenticator.
+func acctKey(user string) string {
+	sum := md5.Sum([]byte("account|" + user))
+	k := hex.EncodeToString(sum[:])
+	keyUsers[k] = user
+	return k
+}
 
 func (r *pilotRig) creditDay(account string) float64 {
 	r.t.Helper()
@@ -138,16 +162,16 @@ func TestClaimMergesUnclaimedAccount(t *testing.T) {
 	cxAcct, _, _ := r.g.accounts.Get(cx)
 	first := *cxAcct.FirstNode
 
-	r.claim("gh:42", weakKey("5"))
+	r.claim("gh:42", "5")
 	q := r.onlyPending()
-	if q["kind"] != reqClaim || q["user"] != "5" || q["key"] != weakKey("5") || statusText(q) != statusText(map[string]any{
-		"id": q["id"], "kind": "claim", "created_at": q["created_at"], "user": "5", "key": weakKey("5")}) {
+	if q["kind"] != reqClaim || q["account_key"] != acctKey("5") || statusText(q) != statusText(map[string]any{
+		"id": q["id"], "kind": "claim", "created_at": q["created_at"], "account_key": acctKey("5")}) {
 		t.Fatalf("the connector's view of a claim: %v", q)
 	}
 	if strings.Contains(statusText(q), "gh:42") {
 		t.Fatal("the connector sees which account asked")
 	}
-	if out := r.answer(q["id"].(string), map[string]any{"ok": true}); out["state"] != reqDone {
+	if out := r.yes(q["id"].(string)); out["state"] != reqDone {
 		t.Fatalf("after the answer: %v", out)
 	}
 
@@ -194,10 +218,14 @@ func TestClaimMergesUnclaimedAccount(t *testing.T) {
 	if key != "" {
 		t.Error("the request keeps the key")
 	}
-	// The same answer again changes nothing; another answer is a conflict.
-	r.answer(q["id"].(string), map[string]any{"ok": true})
-	if w, _ := r.call("POST", requestsPath+"/"+q["id"].(string), testConnectorKey, map[string]any{"ok": false, "error": "no"}, ""); w.Code != 409 {
-		t.Errorf("a different answer to a done request: HTTP %d", w.Code)
+	// The same answer again changes nothing; another answer is a conflict, also the same user with
+	// another key.
+	rid := q["id"].(string)
+	r.answer(rid, map[string]any{"ok": true, "user": "5", "key": weakKey("5")})
+	for _, body := range []map[string]any{{"ok": false, "error": "no"}, {"ok": true, "user": "5", "key": "5_" + strings.Repeat("cd34", 8)}} {
+		if w, _ := r.call("POST", requestsPath+"/"+rid, testConnectorKey, body, ""); w.Code != 409 {
+			t.Errorf("answer %v to a done request: HTTP %d", body, w.Code)
+		}
 	}
 }
 
@@ -215,9 +243,9 @@ func TestClaimCannotStealLink(t *testing.T) {
 		r.g.accounts.SetStatus(owner.id, owner.status)
 		thief := "gh:5" + owner.user
 		r.addAccount(thief, StatusActive)
-		r.claim(thief, weakKey(owner.user))
+		r.claim(thief, owner.user)
 		q := r.onlyPending()
-		if out := r.answer(q["id"].(string), map[string]any{"ok": true}); out["state"] != reqFailed ||
+		if out := r.yes(q["id"].(string)); out["state"] != reqFailed ||
 			!strings.Contains(out["error"].(string), "linked to another") {
 			t.Fatalf("claim of %s's user: %v", owner.status, out)
 		}
@@ -251,8 +279,8 @@ func TestClaimChatSetting(t *testing.T) {
 		r.g.accounts.SetPilotChat(p.account, !tc.unclaimedOff)
 		r.addAccount("gh:42", StatusActive)
 		r.g.accounts.SetPilotChat("gh:42", !tc.targetOff)
-		r.claim("gh:42", weakKey(user))
-		r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true})
+		r.claim("gh:42", user)
+		r.yes(r.onlyPending()["id"].(string))
 		a, _, _ := r.g.accounts.Get("gh:42")
 		pl, _, _ := r.g.authPilot(cred)
 		if a.PilotChatOff != tc.want || pl == nil || pl.scienceOnly != tc.want {
@@ -270,7 +298,7 @@ func TestBannedCannotClaim(t *testing.T) {
 	p, _ := r.g.sci.pilot("boinc", pid)
 	r.addAccount("gh:9", StatusBanned)
 	for _, path := range []string{"claim", "run"} {
-		if w := r.form("gh:9", "/account/connectors/boinc/"+path, url.Values{"key": {weakKey("5")}}); w.Code != http.StatusBadRequest {
+		if w := r.form("gh:9", "/account/connectors/boinc/"+path, url.Values{"key": {acctKey("5")}}); w.Code != http.StatusBadRequest {
 			t.Errorf("banned account's %s form: HTTP %d", path, w.Code)
 		}
 	}
@@ -281,10 +309,10 @@ func TestBannedCannotClaim(t *testing.T) {
 		t.Fatalf("requests from a banned account: %v", l)
 	}
 	r.addAccount("gh:44", StatusActive)
-	r.claim("gh:44", weakKey("5"))
+	r.claim("gh:44", "5")
 	q := r.onlyPending()
 	r.g.accounts.SetStatus("gh:44", StatusBanned)
-	if out := r.answer(q["id"].(string), map[string]any{"ok": true}); out["state"] != reqFailed {
+	if out := r.yes(q["id"].(string)); out["state"] != reqFailed {
 		t.Fatalf("a banned account's claim: %v", out)
 	}
 	if id, _ := r.g.accounts.linkHolder("boinc", "5"); id != p.account {
@@ -308,8 +336,8 @@ func TestWaitlistedCanLink(t *testing.T) {
 			t.Errorf("waitlist page lacks %q", want)
 		}
 	}
-	r.claim("gh:7", weakKey("5"))
-	if out := r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true}); out["state"] != reqDone {
+	r.claim("gh:7", "5")
+	if out := r.yes(r.onlyPending()["id"].(string)); out["state"] != reqDone {
 		t.Fatalf("waitlisted claim: %v", out)
 	}
 	if p, _ := r.g.sci.pilot("boinc", pid); p.account != "gh:7" {
@@ -364,7 +392,7 @@ func TestWaitlistedCanLink(t *testing.T) {
 
 // "Run on BOINC": the connector gets a pseudonymous address (derived, never stored), the display
 // name and the password's hash, and links the user it made; the page shows the attach command and
-// the login. An own address passes through the pending request only; set_email works the same way.
+// the login. An own address passes through the pending request only.
 // No address is kept anywhere once the requests are done.
 func TestRunOnConnector(t *testing.T) {
 	r := newLinkRig(t, nil)
@@ -395,7 +423,7 @@ func TestRunOnConnector(t *testing.T) {
 		t.Fatalf("link: %+v", a.Links)
 	}
 	page := r.page("gh:42")
-	for _, want := range []string{"boinccmd --project_attach https://boinc.test/proj/ " + weakKey("900"), addr, "Use my own email address at BOINC"} {
+	for _, want := range []string{"boinccmd --project_attach https://boinc.test/proj/ " + weakKey("900"), addr} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)
 		}
@@ -407,21 +435,12 @@ func TestRunOnConnector(t *testing.T) {
 		t.Errorf("run again: HTTP %d", w.Code)
 	}
 
-	// Own address for that user: set_email.
-	r.advance(time.Second)
-	if w := r.form("gh:42", "/account/connectors/boinc/email", url.Values{"user": {"900"}, "email": {"ada@example.org"}}); w.Code != http.StatusSeeOther {
-		t.Fatalf("email form: HTTP %d", w.Code)
+	if !strings.Contains(r.page("gh:42"), "change it in your BOINC account settings") {
+		t.Error("the page does not say how to use one's own address")
 	}
-	q = r.onlyPending()
-	if q["kind"] != reqSetEmail || q["user"] != "900" || q["email"] != "ada@example.org" {
-		t.Fatalf("set_email: %v", q)
-	}
-	r.answer(q["id"].(string), map[string]any{"ok": true})
-	if a, _, _ := r.g.accounts.Get("gh:42"); !a.Links[0].OwnEmail {
-		t.Error("the link does not record the own address")
-	}
-	if page := r.page("gh:42"); strings.Contains(page, addr) || !strings.Contains(page, "has your address now") {
-		t.Error("the page still shows the pseudonymous login, or no confirmation")
+	if w := r.form("gh:42", "/account/connectors/boinc/email", url.Values{"user": {"900"}, "email": {"ada@example.org"}}); w.Code != http.StatusNotFound &&
+		w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("the set_email form is still there: HTTP %d", w.Code)
 	}
 
 	// Another account with its own address from the start; the connector says no once, then yes.
@@ -447,7 +466,7 @@ func TestRunOnConnector(t *testing.T) {
 	if a, _, _ := r.g.accounts.Get("gh:43"); len(a.Links) != 1 || !a.Links[0].OwnEmail {
 		t.Fatalf("own-address link: %+v", a.Links)
 	}
-	if page := r.page("gh:43"); strings.Contains(page, "@nomail.test") || strings.Contains(page, "Use my own email") {
+	if page := r.page("gh:43"); strings.Contains(page, "@nomail.test") || strings.Contains(page, "data-own-address") {
 		t.Error("an own-address user is shown a pseudonymous login")
 	}
 
@@ -505,16 +524,17 @@ func TestConnectorRequestRules(t *testing.T) {
 		t.Errorf("unknown request: HTTP %d", w.Code)
 	}
 	// One open request per connector; a claim meanwhile is refused.
-	if w := r.form("gh:42", "/account/connectors/boinc/claim", url.Values{"key": {weakKey("5")}}); w.Code != 400 ||
+	if w := r.form("gh:42", "/account/connectors/boinc/claim", url.Values{"key": {acctKey("5")}}); w.Code != 400 ||
 		!strings.Contains(w.Body.String(), "already waiting") {
 		t.Errorf("second request: HTTP %d", w.Code)
 	}
-	for _, bad := range []string{"5", "5_short", "a@b_" + strings.Repeat("a", 32), "5_" + strings.Repeat("a", 32) + "!"} {
+	r.addAccount("gh:43", StatusActive)
+	for _, bad := range []string{"5", "5_short", weakKey("5"), strings.Repeat("a", 31), strings.Repeat("g", 32), acctKey("5") + "!"} {
 		if w := r.form("gh:43", "/account/connectors/boinc/claim", url.Values{"key": {bad}}); w.Code == http.StatusSeeOther {
 			t.Errorf("claim key %q accepted", bad)
 		}
 	}
-	if w := r.form("gh:42", "/account/connectors/nope/claim", url.Values{"key": {weakKey("5")}}); w.Code != 404 {
+	if w := r.form("gh:42", "/account/connectors/nope/claim", url.Values{"key": {acctKey("5")}}); w.Code != 404 {
 		t.Errorf("unknown connector: HTTP %d", w.Code)
 	}
 	// Unanswered for a day: failed, the address gone, no longer listed.
@@ -529,7 +549,7 @@ func TestConnectorRequestRules(t *testing.T) {
 	}
 	// Daily limit.
 	for i := 0; i <= connectorRequestsPerDay; i++ {
-		w := r.form("gh:42", "/account/connectors/boinc/claim", url.Values{"key": {weakKey("5")}})
+		w := r.form("gh:42", "/account/connectors/boinc/claim", url.Values{"key": {acctKey("5")}})
 		if i < connectorRequestsPerDay && w.Code != http.StatusSeeOther {
 			t.Fatalf("claim %d: HTTP %d", i, w.Code)
 		}
@@ -559,10 +579,10 @@ func TestConnectorRequestRecovery(t *testing.T) {
 	r.bind(pid, "5")
 	p, _ := r.g.sci.pilot("boinc", pid)
 	r.addAccount("gh:42", StatusActive)
-	r.claim("gh:42", weakKey("5"))
+	r.claim("gh:42", "5")
 	q := r.onlyPending()
 	// What handleRequestResult does, up to the crash.
-	if ok, err := r.g.sci.verifyRequest(q["id"].(string), "5", "", p.account, r.clock()); !ok || err != nil {
+	if ok, err := r.g.sci.verifyRequest(q["id"].(string), "5", weakKey("5"), p.account, r.clock()); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
 	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock()); err != nil {
@@ -645,7 +665,7 @@ func TestUnclaimedCannotSignInOrHoldKeys(t *testing.T) {
 	if strings.Contains(r.page(p.account), "Your account</h1>") {
 		t.Error("the account page opens for an unclaimed account")
 	}
-	if w := r.form(p.account, "/account/connectors/boinc/claim", url.Values{"key": {weakKey("6")}}); w.Code != 400 {
+	if w := r.form(p.account, "/account/connectors/boinc/claim", url.Values{"key": {acctKey("6")}}); w.Code != 400 {
 		t.Errorf("an unclaimed account's claim: HTTP %d", w.Code)
 	}
 }
@@ -721,10 +741,10 @@ func TestConnectorRequestAfterTheYes(t *testing.T) {
 	p, _ := r.g.sci.pilot("boinc", pid)
 	cx := p.account
 	r.addAccount("gh:42", StatusActive)
-	r.claim("gh:42", weakKey("5"))
+	r.claim("gh:42", "5")
 	q := r.onlyPending()
 	rid := q["id"].(string)
-	if ok, err := r.g.sci.verifyRequest(rid, "5", "", cx, r.clock()); !ok || err != nil {
+	if ok, err := r.g.sci.verifyRequest(rid, "5", weakKey("5"), cx, r.clock()); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
 	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock()); err != nil {
@@ -774,12 +794,15 @@ func TestScienceCopyScrubsRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	var email, hash string
-	if err := c.QueryRow(`SELECT email, passwd_hash FROM connector_requests WHERE id = ?`, q.ID).Scan(&email, &hash); err != nil {
+	var email, hash, state string
+	if err := c.QueryRow(`SELECT email, passwd_hash, state FROM connector_requests WHERE id = ?`, q.ID).Scan(&email, &hash, &state); err != nil {
 		t.Fatal(err)
 	}
 	if email != "" || hash != "" {
 		t.Errorf("the copy keeps %q %q", email, hash)
+	}
+	if state != reqFailed { // restored, it could not be carried out without them
+		t.Errorf("the copy's open request is %s", state)
 	}
 	if live, _ := s.request("", q.ID); live.Email != "ada@example.org" {
 		t.Error("the live request lost its address")
@@ -906,8 +929,8 @@ func TestClaimCarriesOperatorTerms(t *testing.T) {
 			}
 			return nil
 		})
-		r.claim("gh:42", weakKey(user))
-		r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true})
+		r.claim("gh:42", user)
+		r.yes(r.onlyPending()["id"].(string))
 		a, _, _ := r.g.accounts.Get("gh:42")
 		switch {
 		case tc.wantAt < 0 && a.OperatorTerms != nil, tc.wantAt >= 0 && (a.OperatorTerms == nil || !a.OperatorTerms.At.Equal(t0.Add(time.Duration(tc.wantAt)*time.Hour))):
@@ -921,5 +944,59 @@ func TestClaimCarriesOperatorTerms(t *testing.T) {
 		} else if tc.wantWithdrawn != "" {
 			t.Errorf("%s: withdrawal lost", tc.name)
 		}
+	}
+}
+
+// Review fixes (2026-11-19): the weak key no longer claims (BOINC means it to be shared), the account
+// key does; claiming a user linked already refreshes its attach key; a connector's error text keeps
+// nothing the person sent; the WAL is truncated after a request is blanked.
+func TestClaimNeedsTheAccountKey(t *testing.T) {
+	r := newLinkRig(t, nil)
+	pid, _ := r.create()
+	r.bind(pid, "5")
+	r.addAccount("gh:42", StatusActive)
+	w := r.form("gh:42", "/account/connectors/boinc/claim", url.Values{"key": {weakKey("5")}})
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "weak account key") {
+		t.Fatalf("a weak key: HTTP %d", w.Code)
+	}
+	if l := r.pending(); len(l) != 0 {
+		t.Fatalf("a weak key made a request: %v", l)
+	}
+	r.claim("gh:42", "5")
+	q := r.onlyPending()
+	if q["account_key"] != acctKey("5") || q["user"] != nil || q["key"] != nil {
+		t.Fatalf("claim as the connector sees it: %v", q)
+	}
+	r.yes(q["id"].(string))
+	if p, _ := r.g.sci.pilot("boinc", pid); p.account != "gh:42" {
+		t.Fatalf("the pilot belongs to %q", p.account)
+	}
+	// After a password change at BOINC the weak key changes: claiming again refreshes it.
+	r.advance(time.Second)
+	r.claim("gh:42", "5")
+	newKey := "5_" + strings.Repeat("cd34", 8)
+	r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true, "user": "5", "key": newKey})
+	if a, _, _ := r.g.accounts.Get("gh:42"); len(a.Links) != 1 || a.Links[0].AttachKey != newKey {
+		t.Errorf("links after a second claim: %+v", a.Links)
+	}
+	// The connector's error text keeps nothing the person sent.
+	r.advance(time.Second)
+	r.addAccount("gh:43", StatusActive)
+	r.form("gh:43", "/account/connectors/boinc/run", url.Values{"address": {"own"}, "email": {"bob@example.org"}, "password": {"a long password"}})
+	q = r.onlyPending()
+	msg := "address bob@example.org in use (hash " + q["passwd_hash"].(string) + ", other x@y.z, key " + strings.Repeat("ab", 16) + ")"
+	r.answer(q["id"].(string), map[string]any{"ok": false, "error": msg})
+	got, _ := r.g.sci.request("boinc", q["id"].(string))
+	for _, leak := range []string{"bob@example.org", q["passwd_hash"].(string), "x@y.z", strings.Repeat("ab", 16)} {
+		if strings.Contains(got.Error, leak) {
+			t.Errorf("the stored error keeps %q: %s", leak, got.Error)
+		}
+	}
+	if !strings.Contains(got.Error, "in use") {
+		t.Errorf("the reason went too: %s", got.Error)
+	}
+	// The WAL holds no older copy of a blanked request.
+	if fi, err := os.Stat(r.g.sci.path + "-wal"); err == nil && fi.Size() != 0 {
+		t.Errorf("the WAL has %d bytes after a request was blanked", fi.Size())
 	}
 }

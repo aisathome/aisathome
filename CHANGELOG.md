@@ -7,6 +7,16 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+### Changed
+
+- **A BOINC claim needs the full account key.** "Claim a BOINC account" takes the account key at the
+  top of BOINC's "Account keys" page; the weak account key, which BOINC means to be shared, no longer
+  claims. The connector finds the user by it and answers the user and its attach key; claiming again
+  refreshes that key. The own-address form for pseudonymous BOINC users is gone (stock BOINC's
+  `am_set_info.php` is disabled): the person changes it on BOINC's site. Connector error texts are
+  stored without addresses or keys, the science database's WAL is truncated after a request is
+  blanked, and the daily copies mark open requests failed. (gateway)
+
 ### Added
 
 - **Operator terms for chat on volunteers' nodes.** An untrusted node or pilot serves chat, agents

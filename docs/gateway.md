@@ -614,7 +614,7 @@ gateway is BOINC-specific beyond the configuration.
 | `sessions_per_slot` | Science sessions one GPU slot keeps busy (default 2: a session alternates model calls with its own tools). |
 | `unsent_buffer` | Created pilots no machine has taken yet, at most (default 2). |
 | `max_credit_per_pilot`, `max_credit_per_account_day` | Credit caps (default 150,000 and 1,800,000; `-1`: none). See `docs/credit.md`. |
-| `accounts` | Optional: people link their account to the connector's users from the account page ("Linked accounts" below). `name` as people know the connector; `attach_url` (https) what machines attach to; `attach_command` the one-line attach, `{url}` and `{key}` replaced; `key_url` (https) where people find the key to claim with; `address_domain` the domain of the pseudonymous addresses (mail to it should be dropped). |
+| `accounts` | Optional: people link their account to the connector's users from the account page ("Linked accounts" below). `name` as people know the connector; `attach_url` (https) what machines attach to; `attach_command` the one-line attach, `{url}` and `{key}` replaced; `key_url` (https) where people find the account key to claim with (BOINC: `weak_auth.php`, which shows both keys); `address_domain` the domain of the pseudonymous addresses (mail to it should be dropped). |
 
 Connectors need accounts (a pilot serves as an account's node) and work best with a `state_dir`
 (the records are in `state_dir/science.db`; without one they are in memory).
@@ -635,7 +635,7 @@ refused):
 | `POST /v1/connectors/{id}/users/{user}/operator-terms` `{"version", "accepted_at"}` | The connector's user accepted the operator terms (BOINC: the bridge, when BOINC records the user's ENROLL consent to `terms_of_use.txt`, which holds the operator terms). `version` the terms version accepted, `accepted_at` when (RFC 3339; up to 5 minutes ahead of the gateway's clock counts as now, more is refused). Recorded on the user's account, the linked one or a new unclaimed one; a record older than the account's acceptance or withdrawal changes nothing. Answer: `{"recorded", "current", "current_version", "account_kind"}`: `recorded` whether this call changed the record, `current` whether the account's pilots may serve chat now. The user's connected pilots follow within the call |
 | `GET /v1/connectors/{id}/pilots/{pid}/credit` | `{"pilot", "state", "final", "final_at", "credit", "withheld"}`: `credit` only once `final`; until then `final_at` says when (null while the pilot has not ended) |
 | `GET /v1/connectors/{id}/requests` | People's pending requests, oldest first (at most 50): `{"requests": [{"id", "kind", "created_at", …}]}`, see "Linked accounts" |
-| `POST /v1/connectors/{id}/requests/{rid}` | A request's result: `{"ok": true, "user", "key"}` (`create_link`), `{"ok": true}` (`claim`, `set_email`) or `{"ok": false, "error": "<short reason>"}`. The same answer again is accepted; another one after the first is 409 |
+| `POST /v1/connectors/{id}/requests/{rid}` | A request's result: `{"ok": true, "user", "key"}` (`create_link`: the user it made; `claim`: the user the account key belongs to; `key` its attach key, `<user>_<secret>`), `{"ok": true}` (`set_email`) or `{"ok": false, "error": "<short reason>"}` (stored without anything that looks like an address or a key). The same answer again is accepted; another one after the first, also another key for the same user, is 409 |
 
 A pilot's **credential** is `pc-<12 hex>.<secret>`; its id is `p-` and the same 12 hex digits, and
 the node agent takes its node id from the credential as it does from an account's node token. It
@@ -686,9 +686,16 @@ With `accounts` set on a connector, an active account's page offers, per connect
   `b<20 hex>@<address_domain>`, derived from the account with the session secret and never stored,
   so the page can show it as the Manager login; or the person's own (needed for one cross-project
   id and Gridcoin).
-- **Claim a BOINC account** (`claim`): the person pastes the attach-only key the connector shows them,
-  `<user>_<secret>` (BOINC's weak account key, `weak_auth.php`); the connector checks it.
-- **Use my own email address at BOINC** (`set_email`), for a user made here with a pseudonymous one.
+- **Claim a BOINC account** (`claim`): the person pastes their **full account key** (BOINC's
+  authenticator, 32 hex digits, at the top of BOINC's "Account keys" page, `weak_auth.php`). Not the
+  weak account key: BOINC means that one to be shared with whoever computes for the owner, so it
+  proves nothing. The connector finds the user by the account key (BOINC: `am_get_info.php`) and
+  answers its id and attach (weak) key. Claiming a user linked to the same account again refreshes
+  the stored attach key (BOINC changes the weak key with the password or the address).
+- A person with a pseudonymous user who wants their own address (one cross-project id, Gridcoin)
+  changes it on the connector's site, logged in with the shown login and their password. (Stock
+  BOINC's `am_set_info.php` is disabled, so the gateway has no `set_email` form; the request kind
+  stays in the schema, and one left from before is still listed to the connector.)
 - The linked users with their **attach command** (`attach_command` with the stored key) and, for a
   pseudonymous user made here, the Manager login; the **chat switch**; and the account's **pilots**
   (the newest 20: state, host, start, serve time, answers, credit and whether it is final).
@@ -696,8 +703,8 @@ With `accounts` set on a connector, an active account's page offers, per connect
 A request waits for the connector (`GET …/requests`), which carries it out and answers (`POST
 …/requests/{rid}`). What the connector sees per kind: `create_link` the `email`, `user_name`,
 `own_email` and `passwd_hash` (MD5 hex of the password followed by the lower-case address, BOINC's
-form; none: pick a random password); `claim` the `user` and the `key` to check; `set_email` the
-`user` and `email`. Never which account asked. An account has one open request per connector and
+form; none: pick a random password); `claim` the `account_key` to check; `set_email` (no longer
+made) the `user` and `email`. Never which account asked. An account has one open request per connector and
 at most 10 a day; a connector at most 200 pending. Unanswered requests fail after 24 hours;
 finished ones are deleted after 30 days. The page says while a request waits and why one failed
 (the connector's text).
@@ -723,11 +730,12 @@ When the connector says yes, the user is linked (`create_link` and `claim` alike
 Linking spans the accounts file and the science database; a crash between the two finishes on
 the next sweep (a minute). **Privacy:** the gateway never stores a connector user's address. A
 person's own address and the password hash live only in the pending request and are blanked once
-the connector answers (or the request fails); the claim key leaves the request when it is done or
-failed, and the link keeps the attach key (it can attach machines to that user and do nothing
-else). The records are in `science.db` (`connector_requests`, migration 3), backed up with it; the
+the connector answers (or the request fails); the account key of a claim is replaced by the
+answer's attach key then, which leaves the request when it is done or failed, and the link keeps
+the attach key (it can attach machines to that user and do nothing else). After each such write the
+WAL is checkpointed and truncated, so it keeps no older copy. The records are in `science.db` (`connector_requests`, migration 3), backed up with it; the
 database overwrites blanked values (`secure_delete`), and its daily copies blank the values of
-requests still open. Hardened, not airtight: the data volume's snapshots can still hold a request
+requests still open and mark those requests failed (a restored one could not be carried out). Hardened, not airtight: the data volume's snapshots can still hold a request
 that was open at that moment. The pseudonymous login shown on the page is derived from the session
 secret: rotating it changes what the page shows, not the login the connector holds.
 
