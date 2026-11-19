@@ -61,10 +61,10 @@ export function barChart(svg: SVGSVGElement, pts: Point[], key: string, fmt: (v:
 	});
 }
 
-/** One line per series, broken where a point has no value; a lone point is a dot. */
-export function lineChart(svg: SVGSVGElement, pts: Point[], series: string[], fmt: (v: number) => string, label: string) {
+/** One line per series, broken where a point has no value; a lone point is a dot. `top` fixes the axis (100% for shares). */
+export function lineChart(svg: SVGSVGElement, pts: Point[], series: string[], fmt: (v: number) => string, label: string, fixedTop?: number) {
 	const vals = pts.flatMap((p) => series.map((k) => p.values[k])).filter((v): v is number => v !== null);
-	const top = nice(Math.max(...vals, 0));
+	const top = fixedTop ?? nice(Math.max(...vals, 0));
 	const W = frame(svg, pts, top, fmt, label);
 	const step = (W - L - R) / pts.length;
 	const x = (i: number) => L + step * (i + 0.5);

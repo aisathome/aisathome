@@ -9,13 +9,39 @@ export const CLASS_LABEL: Record<Klass, string> = { chat: 'chat', agent: 'API an
 
 export interface Gauge { avg: number; peak: number }
 export interface Dur { count: number; p50: number; p95: number }
+/** The science runners' minute reports in a bucket (gateway pressure_runner.go): averages over runner-minutes. */
+export interface RunnerStats {
+	reports: number;
+	cpu: Gauge; // share 0..1
+	iowait: Gauge;
+	memTotalGb: number;
+	memPrivateGb: Gauge;
+	pageCacheGb: { avg: number; low: number };
+	refaultsS: Gauge; // evicted file pages read again, per second
+	diskReadMBs: Gauge;
+	diskWriteMBs: Gauge;
+	freeGbLow: number;
+	psiMemory: Gauge | null;
+	lean: { slots: number; busy: Gauge; waiting: Gauge; run: Dur | null; wait: Dur | null };
+	sessions: Gauge;
+	spotNotices: number;
+}
+/** How the nodes' answers spent their time (gateway pressure_node.go). */
+export interface NodeStats {
+	requests: number;
+	engineTimed: number;
+	prefillShare: number | null; // 0..1
+	prefillTokS: number | null;
+	decodeTokS: number | null;
+	cacheHit: number | null; // 0..1
+}
 export interface Bucket {
 	start: string; // "2026-11-18T13:00Z" (an hour) or "2026-11-18" (a day); "" for a sum
 	samples: number;
 	utilisation: number | null; // 0..1; null without slots online
 	slots: Gauge;
 	busy: Gauge;
-	queue: { people: Gauge; science: Gauge };
+	queue: { people: Gauge; science: Gauge; all: Gauge };
 	scienceSlots: Gauge;
 	openTasks: Gauge;
 	demand: Gauge;
@@ -23,13 +49,23 @@ export interface Bucket {
 	firstToken: Partial<Record<Klass, Dur>>;
 	outcomes: Record<string, number>;
 	holds: number;
+	runners: Gauge | null; // runners reporting (sampled)
+	runner: RunnerStats | null;
+	node: NodeStats | null;
 }
 export interface PressureView {
+	range: Range;
 	bucket: 'hour' | 'day';
 	buckets: Bucket[];
 	last24h: Bucket;
 	updated: Date;
 }
+
+/** The ranges the endpoint serves: hourly up to 14 days, daily beyond. */
+export const RANGES = ['24h', '48h', '7d', '14d', '30d', '90d'] as const;
+export type Range = (typeof RANGES)[number];
+export const DEFAULT_RANGE: Range = '7d';
+export const isRange = (v: unknown): v is Range => typeof v === 'string' && (RANGES as readonly string[]).includes(v);
 
 const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
@@ -48,6 +84,44 @@ function durs(v: unknown): Partial<Record<Klass, Dur>> {
 	return out;
 }
 
+function dur(v: unknown): Dur | null {
+	const d = obj(v);
+	return d && num(d.count) && d.count > 0 && num(d.p50) && num(d.p95) ? { count: d.count, p50: d.p50, p95: d.p95 } : null;
+}
+
+/** The runners' part of a bucket, or null when missing or malformed (the rest of the bucket stays). */
+export function parseRunner(v: unknown): RunnerStats | null {
+	const o = obj(v);
+	if (!o || !num(o.reports) || o.reports <= 0) return null;
+	const pc = obj(o.page_cache_gb), lean = obj(o.lean), psi = obj(o.psi);
+	const g = {
+		cpu: gauge(o.cpu), iowait: gauge(o.iowait), memPrivateGb: gauge(o.mem_private_gb), refaultsS: gauge(o.refaults_s),
+		diskReadMBs: gauge(o.disk_read_mb_s), diskWriteMBs: gauge(o.disk_write_mb_s), sessions: gauge(o.sessions),
+		busy: gauge(lean?.busy), waiting: gauge(lean?.waiting),
+	};
+	if (Object.values(g).some((x) => x === null) || !pc || !num(pc.avg) || !num(pc.low) || !num(o.mem_total_gb) ||
+		!num(o.free_gb_low) || !lean || !num(lean.slots)) return null;
+	return {
+		reports: o.reports, cpu: { avg: Math.min(g.cpu!.avg, 1), peak: Math.min(g.cpu!.peak, 1) }, iowait: g.iowait!,
+		memTotalGb: o.mem_total_gb, memPrivateGb: g.memPrivateGb!, pageCacheGb: { avg: pc.avg, low: pc.low }, refaultsS: g.refaultsS!,
+		diskReadMBs: g.diskReadMBs!, diskWriteMBs: g.diskWriteMBs!, freeGbLow: o.free_gb_low, psiMemory: gauge(psi?.memory),
+		lean: { slots: lean.slots, busy: g.busy!, waiting: g.waiting!, run: dur(lean.run_s), wait: dur(lean.wait_s) },
+		sessions: g.sessions!, spotNotices: num(o.spot_notices) ? o.spot_notices : 0,
+	};
+}
+
+/** The nodes' part of a bucket, or null. Shares stay within 0..1. */
+export function parseNode(v: unknown): NodeStats | null {
+	const o = obj(v);
+	if (!o || !num(o.requests) || o.requests <= 0) return null;
+	const share = (x: unknown) => (num(x) ? Math.min(x, 1) : null);
+	return {
+		requests: o.requests, engineTimed: num(o.engine_timed) ? o.engine_timed : 0, prefillShare: share(o.prefill_share),
+		prefillTokS: num(o.prefill_tok_s) ? o.prefill_tok_s : null, decodeTokS: num(o.decode_tok_s) ? o.decode_tok_s : null,
+		cacheHit: share(o.cache_hit),
+	};
+}
+
 /** One bucket (or a sum) of the answer, or null when its shape is wrong. */
 export function parseBucket(v: unknown): Bucket | null {
 	const o = obj(v);
@@ -61,13 +135,17 @@ export function parseBucket(v: unknown): Bucket | null {
 	const outcomes: Record<string, number> = {};
 	for (const [k, n] of Object.entries(obj(o.outcomes) ?? {})) if (num(n) && /^[a-z]+$/.test(k)) outcomes[k] = n;
 	const u = o.utilisation;
+	// Together: never less than either alone (a bucket from before the gateway kept the joint peak has 0 there).
+	const all = gauge(q?.all) ?? { avg: g.people!.avg + g.science!.avg, peak: 0 };
+	all.peak = Math.max(all.peak, g.people!.peak, g.science!.peak);
 	return {
 		start: typeof o.start === 'string' ? o.start : '',
 		samples: o.samples,
 		utilisation: num(u) ? Math.min(u, 1) : null,
-		slots: g.slots!, busy: g.busy!, queue: { people: g.people!, science: g.science! },
+		slots: g.slots!, busy: g.busy!, queue: { people: g.people!, science: g.science!, all },
 		scienceSlots: g.scienceSlots!, openTasks: g.openTasks!, demand: g.demand!,
 		wait: durs(o.wait_s), firstToken: durs(o.first_token_s), outcomes, holds: num(o.holds) ? o.holds : 0,
+		runners: gauge(o.runners), runner: parseRunner(o.runner), node: parseNode(o.node),
 	};
 }
 
@@ -83,7 +161,8 @@ export function parsePressure(raw: unknown): PressureView | null {
 	const re = o.bucket === 'hour' ? HOUR : DAY;
 	const buckets = o.buckets.map(parseBucket).filter((b): b is Bucket => b !== null && re.test(b.start) && b.samples > 0)
 		.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
-	return { bucket: o.bucket, buckets, last24h, updated };
+	const range = isRange(o.range) ? o.range : o.bucket === 'hour' ? DEFAULT_RANGE : '30d';
+	return { range, bucket: o.bucket, buckets, last24h, updated };
 }
 
 const startMs = (s: string) => Date.parse(s.length === 10 ? `${s}T00:00Z` : s);
@@ -119,6 +198,54 @@ export function fmtDuration(s: number): string {
 export const BUSY_LIMIT = 0.8;
 export const WAIT_LIMIT_S = 30;
 
+// The runners' limits, from the runner profile (research prove2me NOTES, "Runner profile" 2026-11-18, and
+// docs/reviews/2026-11-19-runner-scaling.md; a 7.6 GB runner with one Lean build slot):
+/** Runner memory: evicted file pages read again, per second, averaged over runner-minutes. A warm Lean start re-reads
+ * ~32k pages (about 530/s over a minute with one start a minute; ~1,200/s with 1 GB less page cache, still fine); two
+ * checks at once thrashed at ~3,800/s (p2m-check 8 s -> 38 s) and a start with 2 GB less re-read 2.7 M pages. 2,000/s
+ * lies between the fine minutes and the measured thrash. */
+export const RUNNER_REFAULTS_LIMIT = 2000;
+/** Runner CPU: share busy, averaged over runner-minutes. With one Lean slot a check keeps one of the two vCPUs busy; at
+ * 85% on average the other is saturated by the sessions too, so checks wait for CPU and not only for the slot. */
+export const RUNNER_CPU_LIMIT = 0.85;
+/** The Lean build slot: p95 wait for it. The profile's queue model puts the knee at ~0.9 slot utilisation, where the
+ * mean wait is ~25 s per call (6 sessions per runner); at 30 s p95 the slot holds the sessions back. */
+export const LEAN_WAIT_LIMIT_S = 30;
+/** Runner disk: free space at the lowest. The 50 GB volume holds the 10.6 GB Lean env, parts during extraction and the
+ * task trees; under 5 GB the next env or a large task tree fails. */
+export const RUNNER_FREE_LIMIT_GB = 5;
+
+export type RunnerLimit = 'memory' | 'cpu' | 'lean' | 'disk';
+
+/** What limits the runners, by the thresholds above; empty when nothing does. */
+export function runnerLimits(r: RunnerStats): RunnerLimit[] {
+	const out: RunnerLimit[] = [];
+	if (r.refaultsS.avg >= RUNNER_REFAULTS_LIMIT) out.push('memory');
+	if (r.cpu.avg >= RUNNER_CPU_LIMIT) out.push('cpu');
+	if (r.lean.wait && r.lean.wait.p95 >= LEAN_WAIT_LIMIT_S) out.push('lean');
+	if (r.freeGbLow < RUNNER_FREE_LIMIT_GB) out.push('disk');
+	return out;
+}
+
+const LIMIT_NAME: Record<RunnerLimit | 'gpu', [string, boolean]> = {
+	gpu: ['GPU slots', true], memory: ['runner memory', false], cpu: ['runner CPU', false], lean: ["the runners' Lean slots", true],
+	disk: ['runner disk', false],
+};
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+const gb = (v: number) => (v < 10 ? Math.round(v * 10) / 10 : Math.round(v)).toLocaleString('en');
+
+/** The runners' clause: CPU, the memory they lacked (when they did), the Lean slot's wait, low disk. */
+function runnerClause(r: RunnerStats, limits: RunnerLimit[]): string {
+	const bits = [`runners were ${Math.round(r.cpu.avg * 100)}% busy (CPU)`];
+	if (limits.includes('memory')) {
+		bits.push(`re-read ${gb((r.refaultsS.avg * 4) / 1024)} MB/s from disk that memory could not keep (${gb(r.pageCacheGb.avg)} GB of files cached on average)`);
+	}
+	if (r.lean.wait) bits.push(r.lean.wait.p95 > 0 ? `Lean checks waited p95 ${fmtDuration(r.lean.wait.p95)} for a slot` : 'no Lean check waited for a slot');
+	if (limits.includes('disk')) bits.push(`only ${gb(r.freeGbLow)} GB of disk free at the lowest`);
+	return bits.join(', ');
+}
+
 /** "What limits us now", in one plain sentence from the last 24 hours; null without samples. */
 export function limitLine(s: Bucket | null): string | null {
 	if (!s || s.samples <= 0) return null;
@@ -129,8 +256,8 @@ export function limitLine(s: Bucket | null): string | null {
 		const d = s.wait[k];
 		if (d && (!worst || d.p95 > worst.p95)) worst = { k, p95: d.p95 };
 	}
-	const limited = s.utilisation >= BUSY_LIMIT || (worst !== null && worst.p95 >= WAIT_LIMIT_S);
-	const parts = [`they were ${u}% busy in the last 24 h`];
+	const gpu = s.utilisation >= BUSY_LIMIT || (worst !== null && worst.p95 >= WAIT_LIMIT_S);
+	const parts = [s.runner ? `GPU slots were ${u}% busy in the last 24 h` : `they were ${u}% busy in the last 24 h`];
 	if (worst) {
 		parts.push(worst.p95 > 0 ? `${CLASS_LABEL[worst.k]} waited p95 ${fmtDuration(worst.p95)} for a slot` : 'no request waited for one');
 	}
@@ -139,7 +266,21 @@ export function limitLine(s: Bucket | null): string | null {
 		const all = Object.values(s.outcomes).reduce((a, b) => a + b, 0);
 		parts.push(`${refused.toLocaleString('en')} of ${all.toLocaleString('en')} request${all === 1 ? '' : 's'} found no node to take ${refused === 1 ? 'it' : 'them'}`);
 	}
-	return `${limited ? 'GPU slots are the limit now' : 'GPU slots are not the limit now'}: ${parts.join('; ')}.`;
+	if (!s.runner) return `${gpu ? 'GPU slots are the limit now' : 'GPU slots are not the limit now'}: ${parts.join('; ')}.`;
+	const rl = runnerLimits(s.runner);
+	const names = [...(gpu ? (['gpu'] as const) : []), ...rl].map((k) => LIMIT_NAME[k]);
+	const head = names.length === 0 ? 'Neither GPU slots nor runners are the limit now'
+		: `${cap(and(names.map(([n]) => n)))} ${names.length > 1 || names[0][1] ? 'are' : 'is'} the limit now`;
+	parts.push(runnerClause(s.runner, rl));
+	return `${head}: ${parts.join('; ')}.`;
+}
+
+/** The range in words for the section's note: "the last 48 hours", "the last 7 days" (hours beyond two days), "the last
+ * 30 days". */
+export function rangeWords(unit: 'hour' | 'day', n: number): string {
+	if (n <= 1) return 'so far';
+	if (unit === 'hour' && n > 48) return `the last ${Math.round(n / 24)} days`;
+	return `the last ${n} ${unit === 'hour' ? 'hours' : 'days'}`;
 }
 
 /** A bucket's label for a tooltip: "18 Nov 13:00 UTC" or "18 Nov". */
