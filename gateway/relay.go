@@ -557,7 +557,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	// Metered (and the conversation remembered for its node) before the client can see the
 	// end and send its next turn; logged and credited once the outcome is known.
 	rec := rl.meter("ok", u, false)
-	if !rl.firstText.IsZero() {
+	if !rl.firstText.IsZero() && rl.g.projectPublic(rl.req.project) { // a private project's timings stay private
 		rl.g.press.node(time.Duration(rec.Usage.DurationMs)*time.Millisecond, rl.firstText.Sub(rl.t0), rl.timings, rec.Usage, time.Now())
 	}
 	err := rl.deliverEnd(released, ans)

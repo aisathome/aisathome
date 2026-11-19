@@ -136,7 +136,7 @@ func (g *Gateway) Reload(cfg Config) error {
 				break
 			}
 		}
-		n.rules = g.rulesFor(n.trusted, "", g.tokens[n.token], n.ip) // its operator terms or country may have changed
+		n.rules = g.rulesFor(n.trusted, "", g.tokens[n.token]) // its operator terms may have changed
 	}
 	g.mu.Unlock()
 	g.signal() // a node may serve more requests now

@@ -207,7 +207,7 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 
 // mergeOperatorTerms carries an unclaimed account's operator terms (chatrules.go) into t, which claims
 // it: the newer acceptance, the later withdrawal, and no acceptance if a withdrawal came after it (the
-// latest event of the person's, on either account, stands); t's stated country if it has one, else o's.
+// latest event of the person's, on either account, stands).
 func mergeOperatorTerms(t, o *Account) {
 	if o.OperatorTerms != nil && (t.OperatorTerms == nil || o.OperatorTerms.At.After(t.OperatorTerms.At)) {
 		acc := *o.OperatorTerms
@@ -219,9 +219,6 @@ func mergeOperatorTerms(t, o *Account) {
 	}
 	if t.OperatorTerms != nil && t.TermsWithdrawn != nil && !t.OperatorTerms.At.After(*t.TermsWithdrawn) {
 		t.OperatorTerms = nil
-	}
-	if t.OperatorCountry == "" {
-		t.OperatorCountry = o.OperatorCountry
 	}
 }
 

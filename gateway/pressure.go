@@ -372,6 +372,9 @@ type pressureState struct {
 	Days    []*pressBucket `json:"days"`
 }
 
+// pressureVersion is the state file's format: 2 since private projects are left out of every count.
+const pressureVersion = 2
+
 // load reads the state file. A missing file is a first start; a corrupt one is logged and set
 // aside, as the history's is.
 func (p *pressure) load(log *slog.Logger, now time.Time) {
@@ -390,6 +393,13 @@ func (p *pressure) load(log *slog.Logger, now time.Time) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	for _, b := range append(st.Hours, st.Days...) {
+		if b != nil && st.Version < pressureVersion {
+			// Written before private projects were left out (version 1): their open tasks, demand and
+			// node timings may be in these numbers, which are public. Dropped, not republished.
+			b.OpenTasks, b.Demand, b.Node = gauge{}, gauge{}, nil
+		}
+	}
 	for _, b := range st.Hours {
 		if b != nil && b.Start != "" {
 			p.hours[b.Start] = b
@@ -421,7 +431,7 @@ func (p *pressure) save() error {
 		p.mu.Unlock()
 		return nil
 	}
-	raw, err := json.Marshal(pressureState{Version: 1, Hours: sortedBuckets(p.hours), Days: sortedBuckets(p.days)})
+	raw, err := json.Marshal(pressureState{Version: pressureVersion, Hours: sortedBuckets(p.hours), Days: sortedBuckets(p.days)})
 	p.dirty = false
 	p.mu.Unlock()
 	if err == nil {
@@ -667,4 +677,18 @@ func (g *Gateway) handlePressure(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	w.Write(c.body)
+}
+
+// projectPublic reports whether requests of project id may count in public statistics: no project
+// (people's requests), or a project that publishes its queue.
+func (g *Gateway) projectPublic(id string) bool {
+	if id == "" {
+		return true
+	}
+	pt := g.projects.Load()
+	if pt == nil {
+		return false
+	}
+	p := pt.byID[id]
+	return p != nil && p.PublicQueue
 }

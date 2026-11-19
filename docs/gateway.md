@@ -502,7 +502,7 @@ Routing and protections:
 | Requests with `tools` (agents) | trusted nodes and the requester's own, unless the API key was created with "allow volunteer nodes for agents" (`agents` on the key; `volunteer_agents` for config keys) **and** the node's account is past probation. The chat (Open WebUI) never carries consent |
 | Probation | `accounts.node_probation` (Go duration, default `0`: none) from the account's first node token; revoking and recreating does not reset it |
 | Share cap | no untrusted operator gets more than about a third of the conversations placed in the last 10 minutes while other nodes are free (soft: if only its nodes are free, they serve). A conversation counts once per window, however many turns go to the node that holds it |
-| Per address | at most 10 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from Caddy) |
+| Per address | at most 10 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from loopback or a `trusted_proxies` peer, i.e. Caddy) |
 | Own nodes | per account: "my own nodes first" (default), "only my own nodes" or "any node", for its chat and API requests; "only my own nodes" applies on top of a front-end key's `only_operator` (if they differ, no node serves) |
 | Cut-off | revoking a token, `accounts ban` or `accounts node-revoke` drops the node within ~2 s (no restart); requests in flight on it fail over to another node if no output was sent yet |
 | Guards | answers from untrusted nodes (not the requester's own): tool-call arguments are held back until the call is complete and their decoded values (not the JSON text, whose `\n` escapes made words such as `ncat` out of nothing) are checked for download-and-execute (`curl … \| sh`), credential paths (`~/.ssh`, `~/.aws`, `.env`, `id_rsa`; excused if the request names them), encoded commands and file uploads (`curl -F @…`, `scp`, netcat fed from a file, a here-document or a pipe: read only in shell commands and shell scripts, never in other files, so Lean's `have nc : a < b` passes); web addresses that appear nowhere in the request and are not a known source are only flagged (`guard_known_addresses`: agent clients compact long conversations into a summary, so an address the agent read from its own workspace hours before, such as Mathlib's git address in a lakefile, is gone from the request; a known source must be one plain shell word: a plain host name, and after it no quotes but closing ones, no backslashes, `$`, backticks or braces, which would join more text into the host, and at most 1,024 bytes; a path entry matches only a plain path, without `.` or `..` segments or percent-escapes). The stream itself must be well-formed: tool-call pieces after the calls were completed (`tool-call-after-finish`) or keys that differ from the stream's only in case (`malformed-chunk`) stop the answer as well, and non-streaming answers are checked again as assembled. A flagged call is never released: the request is retried on a free trusted node (keeping all of its restrictions: `only_operator`, only my own nodes) or fails with 502, the node is **held** (no requests until `accounts node-clear`) with its rule and a reason in the guard's own fixed words naming the pattern (e.g. "netcat sending a file to a host and port"), and the event is logged without content (usage log `outcome: blocked`, `guard: <rule>`). Unknown addresses are only flagged: the answer reaches the client, nothing is retried and the node is not held; the usage log records `guard: unknown-address` (in a tool call) or `guard: unknown-address-in-text` with outcome `ok`, and nothing of the address. Honest coding agents write such addresses all the time (package indexes, documentation, git clones), and the guard cannot tell them from one a node injected; a download piped into a shell is stopped whatever its address. A **package install from an unknown index** blocks and holds like the other rules (`install-source`, "a package install from an unknown index"): the index's build and install scripts would run on the client. It reads shell commands and shell scripts as above and, for an install only, every address with `://` in it: `pip`/`pip3`/`python -m pip`/`uv pip`/`pipx` install, download or wheel (`--index-url`, `-i`, `--extra-index-url`, `-f`/`--find-links`, a direct `https://` or `git+https://` requirement, `-r https://…`), `pip config set`, `uv add`/`sync`/`lock`/`tool install` and the index flags of `uv run`/`uvx`, `npm`/`pnpm`/`yarn`/`bun` installs (`--registry`, a URL or tarball spec) and `npm config set registry …`, `npx --registry`, `cargo install`/`add` (`--index`, `--git`), `GOPROXY=… go …` and `go env -w GOPROXY=…`, `gem install --source`/`gem sources --add`, `conda`/`mamba -c https://…`, the environment variables these tools read (`PIP_INDEX_URL`, `UV_INDEX_URL`, `npm_config_registry`, ...; assigned anywhere in a command, such as `make PIP_INDEX_URL=…`, and in `echo … >> file` or `echo … | tee`, but not printed or in a comment), and a package manager's own source file written by a write or edit tool (`.npmrc`, `.yarnrc.yml`, `pip.conf`, `uv.toml`, `.condarc`, `.gemrc`, `.cargo/config.toml`, `requirements*.txt`, `yarn.lock`, `pnpm-lock.yaml`; read raw and with JSON, TOML and YAML escapes such as `\/` and `\u002f` decoded; a whole `package.json` or `package-lock.json` that is valid JSON is decoded and read by its structure: every address but the project's own links at the top level of `package.json` (`homepage`, `repository`, `bugs`, `funding`, `description`, `author`, ...) and a package's metadata in a lock file (`funding`, `license`, ...), so dependency maps, `overrides`, `resolutions`, `resolved` and `version` always count; in an edit of these files, which shows no level, every address counts). An index is known if the request names its host (as a whole word: `github.com` does not name `hub.com`; punctuation such as curly quotes ends a word, an IPv6 address matches in any of its forms, and a host longer than DNS allows, 253 bytes, is never named; this holds for flagged addresses too), it is a `guard_known_addresses` source, a local or private address, or a registry the tools use by default (`pypi.org`, `files.pythonhosted.org`, `download.pytorch.org`, `registry.npmjs.org`, `registry.yarnpkg.com`, `proxy.golang.org`, `rubygems.org`, `crates.io`, `conda.anaconda.org`, `repo.anaconda.com`); such an install is at most flagged as an unknown address. A plain `pip install requests`, an address in an `echo`, a comment or a README, and arguments a run command passes to its package (`npx tool https://…`) are no install source. These are tripwires for crude attacks, not answer checking |
@@ -533,45 +533,37 @@ forgets the hold. More than 1024 unrecorded holds hold every node until a restar
 Beyond `max_nodes` the page says "the network is full for now" (there is no waitlist for
 nodes).
 
-## Chat rules: operator terms and countries
+## Chat rules: operator terms
 
 On top of the rules above, an untrusted node serves people's requests (chat, agents, API calls)
-only under two rules (GDPR decisions of 2026-11-19, D3 and D4 option B; `gateway/chatrules.go`).
-Science (a project's key) carries no personal data and is not affected. Trusted nodes and the
-requester's own nodes (not pilots) are outside both rules.
+only once its account has accepted the operator terms (GDPR decision D3 of 2026-11-19;
+`gateway/chatrules.go`). Where a node runs makes no difference (owner, 2026-11-19). Science (a
+project's key) carries no personal data and is not affected. Trusted nodes and the requester's own
+nodes (not pilots) are outside the rule.
 
-| Rule | |
-|---|---|
-| **Operator terms** | the node's account accepted the current operator terms (version and time are recorded in the accounts file, `operator_terms`). On the account page ("Operator terms": the text, a tick that also confirms 18 or older, the country the nodes run in; withdrawable) or, for a connector's user, through the connector (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below). A config node token counts as accepted if it is trusted or names the version (`"operator_terms": "<version>"`). A new terms version needs a new acceptance. Without one the node serves science only. A withdrawal is recorded with its time, and a connector's record of an acceptance from before it (or before the account's own acceptance) changes nothing. The text in the code is a **draft** (version `draft-…`) until the drafted terms are approved; the approved text comes with a new version, which no draft acceptance matches. Keep `pilots_chat_enabled` off while the version is a draft |
-| **Country** | a node's country is its connection address's in the GeoIP table (`geoip_country_file`), and only if its operator states the same country (account page, connector, or a config token's `"country"`); a mismatch, no stated country or an address the table does not know count as outside Europe. A request from a user who has not opted in goes only to nodes in the EEA or a country with an adequacy decision (`gateway/transfer_countries.txt`: EU, IS, LI, NO and the Commission's list of 2026-11-19; not the US, whose adequacy covers only DPF-certified organisations, nor Canada, commercial organisations only). With the opt-in it may go to any node with the operator terms |
+- **Accepting.** On the account page ("Operator terms": the text, section "Requests your node
+  answers" of the operator terms approved on 2026-11-19, and a tick that also confirms 18 or older;
+  withdrawable), or, for a connector's user, through the connector
+  (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below). A config node token counts as
+  accepted if it is trusted or names the version (`"operator_terms": "<version>"`). The version and
+  time are recorded in the accounts file (`operator_terms`). Without an acceptance the node serves
+  science only.
+- **Versions.** The current version is `2026-11-19`. A new version needs a new acceptance. A version
+  starting with `draft-` is accepted by nobody: while one is current, no untrusted node serves
+  people's requests.
+- **Withdrawal** is recorded with its time; a connector's record of an acceptance from before it (or
+  from before the account's own acceptance) changes nothing.
 
-**The opt-in** (`transfer_consent`, version and time) is per account, unticked by default: a box
-on the sign-in form next to the email-notice box (it travels with that one sign-in, like the
-contact box; the box carries the version of the text it showed, and a sign-in without the tick withdraws nothing) and a card on the account page ("Volunteers
-outside Europe", on and off). The account's API keys and its chat follow it; a withdrawal also
-applies to requests still waiting for a node. Requests without an
-account (config keys, a front end's anonymous users) have none.
-
-When the rules leave no node free, a request waits for one as any request does and is never sent
-elsewhere; after the queue time it gets a 503 that says why (`outside_europe`: "allow volunteers
-outside Europe on your account page"; `operator_terms`). The account page shows, per connected node,
-whether it serves chat and why not. The sign-in form states the age limit (18+, D12).
-
-```json
-{
-  "geoip_country_file": "/etc/aisathome/dbip-country-lite.csv.gz",
-  "chat_rules_off": false
-}
-```
+When the rule leaves no node free, a request waits for one as any request does and is never sent
+elsewhere; after the queue time it gets a 503 that says why (`operator_terms`). The account page
+shows, per connected node, whether it serves chat and why not. The sign-in page states the age
+limit (18+, D12) and the rule for people who chat (no personal data in chats); the account page
+repeats the rule.
 
 | Field | Meaning |
 |---|---|
-| `geoip_country_file` | DB-IP's "IP to Country Lite" CSV (`first,last,CC` per line, plain or `.gz`), monthly from <https://db-ip.com/db/download/ip-to-country-lite>, licence **CC BY 4.0**: pages that show its results credit "IP Geolocation by DB-IP" with a link (the account page does). Without it every untrusted node's country is unknown, so users without the opt-in get trusted nodes (and their own) only; the gateway logs a warning at start |
-| `chat_rules_off` | turns both rules off. On by default; off only for a gateway whose nodes are all the operator's own (as `examples/gateway.json`, one local node), and in tests |
-
-Trusted nodes must run in the EEA or an adequate country (D5); the gateway logs a warning when a
-trusted node connects from elsewhere. Countries from addresses are approximate: a VPN changes them,
-which is why the stated country must match.
+| `chat_rules_off` | turns the rule off. On by default; off only for a gateway whose nodes are all the operator's own (as `examples/gateway.json`, one local node), and in tests |
+| `trusted_proxies` | the reverse proxies whose `X-Forwarded-For` the gateway believes (addresses or prefixes), besides loopback, which it always believes. The client address counts for the per-address node limit, email sign-in's limits and connectors' `allow_from`; from any other peer the header is ignored (once, from a private address, with a warning in the log). Behind Caddy in a container network, list that network (`"10.89.0.0/24"`) |
 
 ## Connectors and pilots
 
@@ -611,7 +603,7 @@ gateway is BOINC-specific beyond the configuration.
 |---|---|
 | `id` | Lower-case letters, digits and dashes: the `{id}` in its endpoints. |
 | `key_sha256` | SHA-256 of its keys (make one with `aisathome-gateway project-key <file>`). A connector key opens only that connector's endpoints: no API, project or account call. It must differ from every project key. |
-| `allow_from` | Optional: addresses or prefixes its calls must come from (behind a local reverse proxy, the last `X-Forwarded-For` hop). Others get 403. Also restrict the path at the reverse proxy. |
+| `allow_from` | Optional: addresses or prefixes its calls must come from (behind a reverse proxy on loopback or in `trusted_proxies`, the last `X-Forwarded-For` hop). Others get 403. Also restrict the path at the reverse proxy. |
 | `max_pilots` | Its pilots that have not ended, at most (0: none can be created). |
 | `mint_per_hour` | Pilots created per hour, at most (default 120). |
 | `max_deadline_hours` | A pilot's deadline at most this far ahead (default 336). |
@@ -640,7 +632,7 @@ refused):
 | `GET /v1/connectors/{id}/pilots/{pid}` | One pilot: state, deadline, user/host/team, `account` (`linked` or `unclaimed`, never which), times, `close_reason`, `end_reason`, `connections`, `served_seconds`, `requests` (answers that went to the client, whole or in part), `failed` (the others), `self_served`, `tokens`, `metered_credit`, `credit`, `withheld`, `agent` |
 | `POST /v1/connectors/{id}/pilots/{pid}/bind` `{"user", "host", "team"}` | Who runs it: the connector's own ids (1-64 letters, digits, `.`, `_`, `:` or `-`; never an address). Binding again with the same ids changes nothing; other ids, or an ended pilot, get 409 |
 | `POST /v1/connectors/{id}/pilots/{pid}/reported` `{"outcome": "success\|error\|cancelled\|expired"}` | Its work item is done (or was cancelled): the pilot ends (`end_reason` `reported: <outcome>`) and its connection, if any, is closed. Idempotent |
-| `POST /v1/connectors/{id}/users/{user}/operator-terms` `{"version", "accepted_at", "country"}` | The connector's user accepted the operator terms (BOINC: the bridge, when BOINC records the user's ENROLL consent to `terms_of_use.txt`, which holds the operator terms). `version` the terms version accepted, `accepted_at` when (RFC 3339, not in the future), `country` optional: the ISO 3166-1 alpha-2 code the user states (or `other`). Recorded on the user's account, the linked one or a new unclaimed one; a later call with an older time does not replace it. Answer: `{"recorded", "current", "current_version", "account_kind"}`; `current` false means that version lets no pilot serve chat. The user's connected pilots follow within the call |
+| `POST /v1/connectors/{id}/users/{user}/operator-terms` `{"version", "accepted_at"}` | The connector's user accepted the operator terms (BOINC: the bridge, when BOINC records the user's ENROLL consent to `terms_of_use.txt`, which holds the operator terms). `version` the terms version accepted, `accepted_at` when (RFC 3339; up to 5 minutes ahead of the gateway's clock counts as now, more is refused). Recorded on the user's account, the linked one or a new unclaimed one; a record older than the account's acceptance or withdrawal changes nothing. Answer: `{"recorded", "current", "current_version", "account_kind"}`: `recorded` whether this call changed the record, `current` whether the account's pilots may serve chat now. The user's connected pilots follow within the call |
 | `GET /v1/connectors/{id}/pilots/{pid}/credit` | `{"pilot", "state", "final", "final_at", "credit", "withheld"}`: `credit` only once `final`; until then `final_at` says when (null while the pilot has not ended) |
 | `GET /v1/connectors/{id}/requests` | People's pending requests, oldest first (at most 50): `{"requests": [{"id", "kind", "created_at", …}]}`, see "Linked accounts" |
 | `POST /v1/connectors/{id}/requests/{rid}` | A request's result: `{"ok": true, "user", "key"}` (`create_link`), `{"ok": true}` (`claim`, `set_email`) or `{"ok": false, "error": "<short reason>"}`. The same answer again is accepted; another one after the first is 409 |
@@ -718,7 +710,7 @@ When the connector says yes, the user is linked (`create_link` and `claim` alike
 - a user held by an **unclaimed** account is **merged**: all its links move, the account's probation
   starts at the earlier first-node time, its chat switch is off if either was off, its operator
   terms carry over (the newer acceptance and the later withdrawal, an acceptance older than a
-  withdrawal dropped; the account's own stated country, else the unclaimed one's), the pilot
+  withdrawal dropped), the pilot
   records and their daily credit move to it, and the unclaimed account is deleted. That user's
   connected pilots are dropped and reconnect within seconds as the account's nodes (the same
   records continue). A bind that came before the answer (the user's first pilot) is merged the
@@ -756,8 +748,7 @@ API calls, when any of these holds:
 | `pilots_chat_enabled` is false (the default) and its user is not in `trusted_users` | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (decision 0020: they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots; the maintainer's own test pilots go in `trusted_users` |
 
 And it serves people's requests only under the chat rules above: its account accepted the operator
-terms, and for users without the opt-in, it connects from the EEA or an adequate country that its
-account states. Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
+terms. Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
 seconds. Nothing here makes a pilot confidential: whoever runs the machine can read what it serves
 ("hardened, not confidential"). Public task views name a pilot's class as `pilot`.
 
@@ -818,8 +809,8 @@ required:
   it never reaches a server log). The code or link works only in the browser that asked
   (the pending cookie), once, for 10 minutes; mail scanners opening the link change nothing.
 - **Limits** (in memory). Sends: per address 1/minute, 5/hour, 10/day; per client 10/hour,
-  30/day (rightmost `X-Forwarded-For` when the connection comes from Caddy on loopback or a
-  private network; IPv6 per /64); 300/day in all. Wrong codes: 5 end an attempt; 20 per
+  30/day (rightmost `X-Forwarded-For` when the connection comes from loopback or a
+  `trusted_proxies` peer; IPv6 per /64); 300/day in all. Wrong codes: 5 end an attempt; 20 per
   address in 24 h pause email sign-in for that address for an hour (a new code does not
   reset the count). Requests over a limit, for throwaway domains, or during a pause get the
   same answer and no mail.

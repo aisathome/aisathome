@@ -189,6 +189,28 @@ func TestPressureSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A state file from before private projects were left out (version 1): its open tasks, demand and node
+// time may hold private projects' numbers and are dropped; the rest is kept.
+func TestPressureDropsVersion1PrivateNumbers(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	start := now.UTC().Truncate(time.Hour).Format(time.RFC3339)
+	b := &pressBucket{Start: start, Samples: 1, Node: &nodeAgg{}}
+	b.Slots.add(4)
+	b.OpenTasks.add(7)
+	b.Demand.add(3)
+	raw, _ := json.Marshal(pressureState{Version: 1, Hours: []*pressBucket{b}})
+	os.WriteFile(filepath.Join(dir, pressureFile), raw, 0o600)
+	g := newTestGateway(t, Config{StateDir: dir, HistorySample: time.Hour})
+	defer g.Close()
+	g.press.mu.Lock()
+	got := g.press.hours[start]
+	g.press.mu.Unlock()
+	if got == nil || got.Slots != b.Slots || got.OpenTasks != (gauge{}) || got.Demand != (gauge{}) || got.Node != nil {
+		t.Fatalf("version 1 bucket after load: %+v", got)
+	}
+}
+
 // The sample: slots of nodes that serve (not held, not paused), the largest model's slots per node;
 // science's slots within its trust and share; demand = min(open tasks, science slots).
 func TestPressureNowDemand(t *testing.T) {
@@ -309,7 +331,8 @@ func TestPressureEndpoint(t *testing.T) {
 // and its outcome; one that finds no node counts as refused.
 func TestPressureCountsRequests(t *testing.T) {
 	g := newTestGateway(t, Config{Keys: map[string]KeyInfo{"user-key": {User: "alice", MinTrust: "any"}},
-		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", Trust: "trusted"}}, QueueTimeoutSec: 1})
+		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", Trust: "trusted"}}, QueueTimeoutSec: 1,
+		Projects: []Project{{ID: "quiet", KeySHA256: []string{keyHash(otherProjectKey)}}}}) // keeps its queue private
 	defer g.Close()
 	srv := httptest.NewServer(g.Handler())
 	defer srv.Close()
@@ -346,9 +369,9 @@ func TestPressureCountsRequests(t *testing.T) {
 			t.Fatal("the node did not connect")
 		}
 	}
-	chat := func(model string) int {
+	chatAs := func(key, model string) int {
 		req, _ := http.NewRequest("POST", srv.URL+"/v1/chat/completions", strings.NewReader(`{"model":"`+model+`","messages":[{"role":"user","content":"hi"}]}`))
-		req.Header.Set("Authorization", "Bearer user-key")
+		req.Header.Set("Authorization", "Bearer "+key)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -356,6 +379,7 @@ func TestPressureCountsRequests(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
+	chat := func(model string) int { return chatAs("user-key", model) }
 	if code := chat("deep"); code != http.StatusOK {
 		t.Fatalf("chat: HTTP %d", code)
 	}
@@ -373,6 +397,11 @@ func TestPressureCountsRequests(t *testing.T) {
 	if ft["count"] != int64(1) || ft["p50"].(float64) < 0.1 {
 		t.Fatalf("first token %v", ft)
 	}
+	// A private project's answer adds nothing to the public node time.
+	if code := chatAs(otherProjectKey, "deep"); code != http.StatusOK {
+		t.Fatalf("private project: HTTP %d", code)
+	}
+	v = g.press.view("24h", time.Now())["last_24h"].(map[string]any)
 	// The answer's node time, from the engine's timings: 20 ms prefill, 30 ms decode; 3 of 5 prompt
 	// tokens from the cache.
 	nd := v["node"].(map[string]any)

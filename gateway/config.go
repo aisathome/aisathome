@@ -80,15 +80,14 @@ type Config struct {
 	// Projects are operator-run workloads (science, decision 0011) with their own keys, quota
 	// and the lowest priority (project.go).
 	Projects []Project `json:"projects,omitempty"`
-	// ChatRulesOff turns off the chat rules for volunteers' nodes (chatrules.go: the operator terms
-	// and the country rule). They are on by default; off suits only a gateway whose nodes are all the
-	// operator's own, and tests.
+	// ChatRulesOff turns off the chat rule for volunteers' nodes (chatrules.go: the operator terms).
+	// It is on by default; off suits only a gateway whose nodes are all the operator's own, and tests.
 	ChatRulesOff bool `json:"chat_rules_off,omitempty"`
-	// GeoIPCountryFile is the country table that gives a node's country from its address (geoip.go:
-	// DB-IP's "IP to Country Lite" CSV, plain or .gz; CC BY 4.0). Without one every untrusted node's
-	// country is unknown: with the chat rules on, users who have not opted in to volunteers outside
-	// Europe are served by trusted nodes (and their own) only.
-	GeoIPCountryFile string `json:"geoip_country_file,omitempty"`
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For the gateway believes (addresses or
+	// prefixes, "10.89.0.0/24"), besides loopback, which it always believes. A client's address names it
+	// for the per-address node limit, email sign-in's limits and connectors' allow_from. Only a proxy
+	// that sets the header itself belongs here: any other peer could claim any address.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 	// Connectors bring machines as pilots (connector.go): BOINC's bridge is the first. They need
 	// accounts (pilots serve as accounts' nodes) and a state_dir for their records.
 	Connectors []Connector `json:"connectors,omitempty"`
@@ -114,10 +113,8 @@ type NodeToken struct {
 	// every node registered from the account page, are untrusted.
 	Trust string `json:"trust,omitempty"`
 	// OperatorTerms is the operator terms version its operator accepted outside the gateway (by mail,
-	// say), and Country the country the operator states (ISO 3166-1 alpha-2): the chat rules
-	// (chatrules.go). A trusted token needs neither.
+	// say): the chat rules (chatrules.go). A trusted token needs none.
 	OperatorTerms string `json:"operator_terms,omitempty"`
-	Country       string `json:"country,omitempty"`
 }
 
 // UnmarshalJSON accepts both the plain-string and the object form.
