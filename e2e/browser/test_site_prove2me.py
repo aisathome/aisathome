@@ -659,7 +659,7 @@ def test_home_and_science_overview_read_the_records(pages, site, records):
     expect(page.locator("[data-home-prove2me]")).to_have_attribute("data-source", "build")
 
 
-# ---- the status block at the top: the current trial's tasks as one bar, the numbers, a few lines
+# ---- the status block at the top: the whole queue as one bar in parts per trial, a line per open trial, the numbers
 
 STATS = {"updated": "2026-11-18T14:58:00Z", "nodes": {"online": 2, "busy": 1, "slots": 2, "held": 0, "paused": 0},
          "today": {"requests": 10, "projects": {"prove2me": {"requests": 4}}},
@@ -667,33 +667,54 @@ STATS = {"updated": "2026-11-18T14:58:00Z", "nodes": {"online": 2, "busy": 1, "s
                                                              "completion_tokens": 50, "node_seconds": 3600}}}}
 
 
-@pytest.mark.parametrize("width,theme", ((1280, "dark"), (390, "light"), (390, "dark")))
-def test_the_status_block_shows_the_queue_and_the_network(pages, site, records, width, theme):
-    """With the records (as on 2026-11-18) and /v1/stats: trial 8 running on scaffold v9; its 46 tasks as one bar, each
-    part also in words (14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting; no percentage); 2 nodes online,
-    1 of 2 slots busy, 2 of 6 leaves proved, 8 of 8 proofs accepted. At 390 px nothing scrolls sideways."""
+def _two_open(records):
+    """The records with trial 9 started beside trial 8 (as on 2026-11-19): 2 of its tasks done, 1 running, 4 waiting."""
+    rec = json.loads(json.dumps(records))
+    t8 = next(c for c in rec["campaigns"]["campaigns"] if c["id"] == "t8")
+    rec["campaigns"]["campaigns"].insert(0, dict(t8, id="t9", title="Trial 9", started_at="2026-11-18T20:46:49Z",
+                                                  labels={"kind": "trial", "scaffold": "v10"}))
+    base = next(t for t in rec["tasks"]["tasks"] if t["labels"].get("trial") == "t8")
+    for i, (state, outcome) in enumerate([("done", "outline"), ("done", "refused"), ("leased", None)] + [("queued", None)] * 4):
+        rec["tasks"]["tasks"].append(dict(base, id=f"t9-n{i}", state=state, outcome=outcome, labels=dict(base["labels"], trial="t9")))
+    return rec
+
+
+def _status_page(pages, site, records, width=None):
     page = _page(pages, width=width, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": records["results"]})
     _serve(page, "**/v1/stats", STATS)
     page.clock.set_fixed_time("2026-11-18T15:00:00Z")  # the fixtures' time: their data is fresh
     page.goto(site + PAGE)
+    return page
+
+
+@pytest.mark.parametrize("width,theme", ((1280, "dark"), (390, "light"), (390, "dark")))
+def test_the_status_block_shows_the_whole_queue(pages, site, records, width, theme):
+    """Trials 8 and 9 open: the head names both with their scaffolds; the bar is the whole queue, a part per trial named
+    under it (Trial 8 · 11, Trial 9 · 5), each part's running and waiting tasks; the sentence above says it in words; a
+    line per trial with every state and its leaves; 2 nodes online, 1 of 2 slots busy, 8 of 8 proofs accepted. No
+    percentage; at 390 px nothing scrolls sideways."""
+    page = _status_page(pages, site, _two_open(records), width)
     page.evaluate("t => { document.documentElement.dataset.theme = t }", theme)
-    box = page.locator("[data-p2m-status][data-source=live][data-trial=t8]")
+    box = page.locator("[data-p2m-status][data-source=live][data-trials='t8 t9']")
     expect(box).to_be_visible()
-    expect(box.locator("[data-st=head]")).to_have_text("Trial 8 is running since 16 Nov, scaffold v9")
-    legend = box.locator("[data-st-legend]")
-    expect(legend).to_have_attribute("aria-label", "46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting.")
-    expect(legend.locator("li:visible")).to_have_count(5)
-    assert [" ".join(li.text_content().split()) for li in legend.locator("li").all()] == ["14 proved", "18 ended otherwise", "3 stopped", "2 running", "9 waiting"]
-    bar = box.locator("[data-st-bar]")
-    expect(bar).to_be_visible()
-    expect(bar).to_have_attribute("aria-hidden", "true")
-    widths = {p: bar.locator(f"[data-part={p}]").bounding_box()["width"] for p in ("proved", "ended", "queued")}
-    assert widths["ended"] > widths["proved"] > widths["queued"], widths
-    expect(box.locator("[data-st=elsewhere]")).to_be_hidden()
-    expect(box.locator("[data-st=empty]")).to_be_hidden()
+    expect(box.locator("[data-st=head]")).to_have_text("Trials 8 (scaffold v9) and 9 (scaffold v10) are running.")
+    expect(box.locator("[data-st=queue]")).to_have_text(
+        "16 tasks in the queue: 3 running, 13 waiting (Trial 8: 2 running, 9 waiting; Trial 9: 1 running, 4 waiting).")
+    q = box.locator("[data-st-queue]")
+    expect(q).to_be_visible()
+    expect(q).to_have_attribute("aria-hidden", "true")
+    expect(q.locator("[data-st-bar] > .grp")).to_have_count(2)
+    assert [" ".join(x.text_content().split()) for x in q.locator("[data-st-qlabels] > span").all()] == ["Trial 8 · 11", "Trial 9 · 5"]
+    w8 = q.locator(".grp[data-trial=t8]").bounding_box()["width"]
+    w9 = q.locator(".grp[data-trial=t9]").bounding_box()["width"]
+    assert w8 > w9, (w8, w9)
+    expect(q.locator(".grp[data-trial=t9] [data-part]")).to_have_count(2)
+    lines = box.locator("[data-st-trials] li")
+    expect(lines).to_have_count(2)
+    expect(lines.nth(0)).to_have_text("Trial 8, 46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting; 2 of 6 leaves proved.")
+    expect(lines.nth(1)).to_have_text("Trial 9, 7 tasks: 2 ended otherwise, 1 running, 4 waiting; 0 of 6 leaves proved.")
     expect(box.locator("[data-num=nodes] dd")).to_have_text("2")
     expect(box.locator("[data-num=slots] dd")).to_have_text("1 of 2")
-    expect(box.locator("[data-num=leaves] dd")).to_have_text("2 of 6")
     expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
     expect(box.get_by_role("link", name="Run a node")).to_have_attribute("href", "/node/")
     expect(box.locator("[data-st=updated]")).to_contain_text("updated 14:58 UTC")
@@ -703,9 +724,33 @@ def test_the_status_block_shows_the_queue_and_the_network(pages, site, records, 
     assert b["x"] >= 0 and b["x"] + b["width"] <= width, b
 
 
+def test_the_status_block_with_one_trial_and_with_none(pages, site, records):
+    """One trial open (the fixtures): one part, one line. Then nothing open (trial 8 ended, its tasks closed): no bar,
+    "Nothing in the queue now.", the last trial that ended, no lines."""
+    page = _status_page(pages, site, records)
+    box = page.locator("[data-p2m-status][data-source=live][data-trials=t8]")
+    expect(box.locator("[data-st=head]")).to_have_text("Trial 8 is running, scaffold v9, since 16 Nov.")
+    expect(box.locator("[data-st=queue]")).to_have_text("11 tasks in the queue: 2 running, 9 waiting.")
+    expect(box.locator("[data-st-bar] > .grp")).to_have_count(1)
+    expect(box.locator("[data-st-trials] li")).to_have_count(1)
+    rec = json.loads(json.dumps(records))
+    for c in rec["campaigns"]["campaigns"]:
+        if c["id"] == "t8":
+            c.update(status="finished", ended_at="2026-11-18T12:00:00Z")
+    for t in rec["tasks"]["tasks"]:
+        if t["state"] in ("queued", "leased"):
+            t["state"] = "cancelled"
+    page = _status_page(pages, site, rec)
+    box = page.locator("[data-p2m-status][data-source=live][data-trials='']")
+    expect(box.locator("[data-st=head]")).to_have_text("No trial is running. Trial 8 ended on 18 Nov.")
+    expect(box.locator("[data-st=queue]")).to_have_text("Nothing in the queue now.")
+    expect(box.locator("[data-st-queue]")).to_be_hidden()
+    expect(box.locator("[data-st-trials]")).to_be_hidden()
+
+
 def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, site, data):
-    """The gateway down (every /v1 request fails), and without JavaScript: the build's trial and proofs, no bar, no
-    nodes, and a line that says so."""
+    """The gateway down (every /v1 request fails), and without JavaScript: the build's trial and proofs, no queue, no
+    trial lines, no nodes, and a line that says so."""
     for js in (True, False):
         page = _page(pages, js=js)
         page.goto(site + PAGE)
@@ -713,21 +758,10 @@ def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, si
         box = page.locator("[data-p2m-status]")
         expect(box).to_have_attribute("data-source", "build")
         expect(box.locator("[data-st=head]")).to_have_text(re.compile(r"^(Trial \d+ is (running|being prepared)|No trial is running)"))
-        expect(box.locator("[data-st-bar]")).to_be_hidden()
+        expect(box.locator("[data-st-queue]")).to_be_hidden()
+        expect(box.locator("[data-st=queue]")).to_be_hidden()
+        expect(box.locator("[data-st-trials]")).to_be_hidden()
         expect(box.locator("[data-num=nodes]")).to_be_hidden()
         accepted = sum(1 for s in data["submissions"] if s["verdict"] == "accepted")
         expect(box.locator("[data-num=accepted] dd")).to_have_text(f"{accepted} of {len(data['submissions'])}")
         expect(box.locator("[data-st=updated]")).to_contain_text("As of the site’s last build")
-
-
-def test_the_status_block_says_when_the_trial_has_no_tasks_yet(pages, site, records):
-    """Trial 8's campaign without any of its tasks: no bar, the words "No tasks yet.", 0 of 6 leaves proved."""
-    tasks = dict(records["tasks"], tasks=[t for t in records["tasks"]["tasks"] if t["labels"].get("trial") != "t8"])
-    page = _page(pages, live=(404, tasks), records={"campaigns": records["campaigns"], "results": records["results"]})
-    page.clock.set_fixed_time("2026-11-18T15:00:00Z")
-    page.goto(site + PAGE)
-    box = page.locator("[data-p2m-status][data-source=live][data-trial=t8]")
-    expect(box.locator("[data-st=empty]")).to_have_text("No tasks yet.")
-    expect(box.locator("[data-st-bar]")).to_be_hidden()
-    expect(box.locator("[data-st-legend]")).to_be_hidden()
-    expect(box.locator("[data-num=leaves] dd")).to_have_text("0 of 6")
