@@ -382,3 +382,85 @@ func TestRedactBudgetMessage(t *testing.T) {
 		t.Fatalf("budget message not redacted: %q", s)
 	}
 }
+
+// fakeSecrets are made-up values in each newer format, built at run time so that no scanner
+// takes the source for real keys.
+func fakeSecrets() map[string]string {
+	r := strings.Repeat
+	return map[string]string{
+		"GitLab":     "glpat-" + r("aB3d", 5),
+		"npm":        "npm_" + r("aB3d", 9),
+		"PyPI":       "pypi-AgEIcHlwaS5vcmc" + r("aB3d", 13),
+		"Groq":       "gsk_" + r("aB3d", 13),
+		"Replicate":  "r8_" + r("aB3d", 9) + "x",
+		"xAI":        "xai-" + r("aB3d", 20),
+		"SendGrid":   "SG." + r("aB3d", 5) + "xy." + r("aB3d", 10) + "xyz",
+		"Google":     "ya29." + r("aB3d", 10),
+		"webhook":    "whsec_" + r("aB3d", 8),
+		"Stripe":     "sk_test_" + r("aB3d", 6),
+		"DO":         "dop_v1_" + r("a1b2", 16),
+		"Shopify":    "shpat_" + r("a1B2", 8),
+		"Vault":      "hvs." + r("aB3d", 8),
+		"Linear":     "lin_api_" + r("aB3d", 10),
+		"Supabase":   "sbp_" + r("a1b2", 10),
+		"Tailscale":  "tskey-auth-" + r("aB3d", 3) + "-" + r("aB3d", 6),
+		"age":        "AGE-SECRET-KEY-1" + r("QPZR", 14) + "QP",
+		"Telegram":   "123456789:AA" + r("aB3d", 8) + "x",
+		"Slack hook": "https://hooks.slack.com/services/T" + r("A1", 5) + "/B" + r("A1", 5) + "/" + r("aB3d", 6),
+		"Discord":    "https://discord.com/api/webhooks/" + r("1", 18) + "/" + r("aB3d", 17),
+		"PGP": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF" + r("aB3d", 10) + "\n=abcd\n" +
+			"-----END PGP PRIVATE KEY BLOCK-----",
+	}
+}
+
+// Each newer format is replaced before a node sees it, and its placeholder keeps only the
+// format's marker.
+func TestNewerSecretFormatsRedacted(t *testing.T) {
+	for name, s := range fakeSecrets() {
+		r := newRedactor()
+		body := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "export TOKEN=" + s + " # ok"}}}
+		r.redactBody(body)
+		b, _ := json.Marshal(body)
+		if strings.Contains(string(b), s) || len(r.byPH) != 1 {
+			t.Errorf("%s: not redacted (%d placeholders): %s", name, len(r.byPH), b)
+			continue
+		}
+		ph := r.byValue[s]
+		if p := typePrefix(s); !strings.HasPrefix(ph, p) || (name != "Telegram" && name != "PGP" && p == "") {
+			t.Errorf("%s: placeholder %q lost the marker %q", name, ph, p)
+		}
+		if rnd := strings.TrimPrefix(s, typePrefix(s)); name != "PGP" && strings.Contains(ph, rnd[:6]) {
+			t.Errorf("%s: placeholder %q shows the random part", name, ph)
+		}
+	}
+}
+
+// Ordinary code and prose near those markers stays as it is.
+func TestNewerSecretFormatsLeaveCodeAlone(t *testing.T) {
+	for _, s := range []string{
+		"npm_config_cache=/tmp/npm", "SG.send(msg)", "sk_test_mode = True", "lin_api_url = base + '/graphql'",
+		"see https://hooks.slack.com/services/ for setup", "the time was 12:34:56, AA battery",
+		"-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n-----END PGP PUBLIC KEY BLOCK-----",
+		"tskey-auth is the prefix", "hvs.example", "gsk_short", "r8_ok",
+	} {
+		r := newRedactor()
+		if out := r.redactText(s); out != s {
+			t.Errorf("changed %q to %q", s, out)
+		}
+	}
+}
+
+// Only the template switches the gateway renders reach a node; the client's body keeps the rest.
+func TestForNodeKeepsOnlyTemplateSwitches(t *testing.T) {
+	kw := map[string]any{"enable_thinking": false, "preserve_thinking": true, "reasoning_effort": "low",
+		"preserve_reasoning": false, "user_name": "Alice", "session": "s-1"}
+	body := map[string]any{"messages": []any{}, "chat_template_kwargs": kw}
+	got := forNode(body)["chat_template_kwargs"].(map[string]any)
+	if len(got) != 4 || got["enable_thinking"] != false || got["preserve_thinking"] != true ||
+		got["reasoning_effort"] != "low" || got["preserve_reasoning"] != false {
+		t.Fatalf("template switches: %v", got)
+	}
+	if len(kw) != 6 {
+		t.Fatalf("forNode changed the request itself: %v", kw)
+	}
+}

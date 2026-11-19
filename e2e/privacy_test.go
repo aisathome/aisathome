@@ -466,3 +466,42 @@ func TestReasoningBudgetReachesNode(t *testing.T) {
 		t.Fatalf("an invalid request reached the node (%d requests)", len(seen))
 	}
 }
+
+// Newer credential formats (agents read them from .env files and CI configs) and template
+// arguments the gateway does not use never reach a node; the template switches it renders do.
+func TestNewerSecretsAndTemplateArgsNeverReachNode(t *testing.T) {
+	var seen []string
+	var mu sync.Mutex
+	r := newRig(t, echoEngine(t, &seen, &mu))
+	rep := strings.Repeat // made-up values, built at run time so that no scanner takes them for keys
+	secrets := []string{"glpat-" + rep("aB3d", 5), "npm_" + rep("aB3d", 9), "xai-" + rep("aB3d", 20),
+		"SG." + rep("aB3d", 5) + "xy." + rep("aB3d", 10) + "xyz", "dop_v1_" + rep("a1b2", 16),
+		"https://hooks.slack.com/services/T" + rep("A1", 5) + "/B" + rep("A1", 5) + "/" + rep("aB3d", 6),
+		"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF" + rep("aB3d", 10) + "\n-----END PGP PRIVATE KEY BLOCK-----"}
+	body, _ := json.Marshal(map[string]any{"model": "deep",
+		"messages":             []any{map[string]any{"role": "user", "content": "my .env:\n" + strings.Join(secrets, "\n")}},
+		"chat_template_kwargs": map[string]any{"enable_thinking": false, "user_name": "Alice Example"}})
+	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", string(body))
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("node saw %d requests", len(seen))
+	}
+	for _, s := range append(secrets, "Alice Example", "user_name") {
+		if strings.Contains(seen[0], s) || strings.Contains(seen[0], strings.ReplaceAll(s, "\n", `\n`)) {
+			t.Errorf("node saw %q", s)
+		}
+	}
+	var got struct {
+		Kwargs map[string]any `json:"chat_template_kwargs"`
+	}
+	json.Unmarshal([]byte(seen[0]), &got)
+	if v, ok := got.Kwargs["enable_thinking"]; !ok || v != false {
+		t.Errorf("the thinking switch did not reach the node: %v", got.Kwargs)
+	}
+}
