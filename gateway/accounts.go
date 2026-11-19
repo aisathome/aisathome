@@ -187,6 +187,12 @@ type Account struct {
 	// PilotChatOff: the account's pilots serve science only (the "chat on pilots" switch, on by
 	// default).
 	PilotChatOff bool `json:"pilot_chat_off,omitempty"`
+	// The chat rules (chatrules.go). OperatorTerms: the account accepted the operator terms (its nodes
+	// and pilots may serve people's requests); OperatorCountry: the country it states its nodes run in
+	// (ISO code, or "other"); TransferConsent: it allows its requests to go to volunteers outside Europe.
+	OperatorTerms   *Acceptance `json:"operator_terms,omitempty"`
+	OperatorCountry string      `json:"operator_country,omitempty"`
+	TransferConsent *Acceptance `json:"transfer_consent,omitempty"`
 }
 
 // AccountLink says that an account is user User of connector Connector.

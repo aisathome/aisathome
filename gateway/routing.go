@@ -77,6 +77,10 @@ type route struct {
 	// pilotProbationOK: the project's agents may use pilots of accounts still in probation
 	// (Project.PilotProbationOK).
 	pilotProbationOK bool
+	// The chat rules (chatrules.go): rules is set when they apply to this gateway, transfer when the
+	// requester opted in to volunteers outside Europe.
+	rules    bool
+	transfer bool
 }
 
 // usable reports whether n could serve rt now if it had a free slot: allowed, not paused,
@@ -180,6 +184,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 		return true
 	case rt.trusted:
 		return false
+	case rt.gatedBy(n) != "":
+		return false // the chat rules (chatrules.go): operator terms, and the country without the opt-in
 	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
 		return rt.consent && (!now.Before(n.probEnd) || (n.pilot != "" && rt.pilotProbationOK))
 	}
@@ -648,6 +654,17 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				return
 			case rt.trusted && rt.why != "":
 				because = rt.why
+			case g.rulesBlocked(&loose) != "":
+				// The chat rules (chatrules.go) left no node: say which, and what the user can do.
+				if g.rulesBlocked(&loose) == "country" {
+					reason = "outside_europe"
+					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node serving %q in Europe or a country the EU "+
+						"recognises as protecting personal data is online right now, and your requests go only to such nodes. "+
+						"Try again later, or allow volunteers outside Europe on your account page", want))
+					return
+				}
+				reason = "operator_terms"
+				which, because = "node", "only nodes whose operators accepted the operator terms serve people's requests"
 			case rt.tools && !rt.trusted:
 				// Name the actual reason: the account's own node being offline is not a key problem.
 				// (Its own node online but busy is counted above and gets the busy answer.)
@@ -675,6 +692,28 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 		w.Header().Set("Retry-After", "10")
 		apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("all nodes serving %q are busy; try again shortly", want))
 	}
+}
+
+// rulesBlocked says whether the chat rules alone keep rt from every connected node: "country" when
+// nodes are there that the user's opt-in to volunteers outside Europe would allow, "terms" when only
+// nodes whose operators have not accepted the operator terms are, "" when the rules are not the reason.
+func (g *Gateway) rulesBlocked(rt *route) string {
+	if !rt.rules || rt.class == ClassScience {
+		return ""
+	}
+	off := *rt
+	off.rules = false
+	if g.servesFor(&off) == 0 {
+		return ""
+	}
+	if !rt.transfer {
+		opted := *rt
+		opted.transfer = true
+		if g.servesFor(&opted) > 0 {
+			return "country"
+		}
+	}
+	return "terms"
 }
 
 // ownNodesOffline reports whether the requesting account has registered nodes and none of

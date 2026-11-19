@@ -136,8 +136,10 @@ func (g *Gateway) Reload(cfg Config) error {
 				break
 			}
 		}
+		n.rules = g.rulesFor(n.trusted, "", g.tokens[n.token], n.ip) // its operator terms or country may have changed
 	}
 	g.mu.Unlock()
+	g.signal() // a node may serve more requests now
 	for _, n := range revoked {
 		g.log.Info("node token revoked, disconnecting", "node", n.id)
 		n.conn.Close(websocket.StatusPolicyViolation, "node token revoked")

@@ -259,6 +259,7 @@ func (g *Gateway) connectorRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/connectors/{id}/pilots/{pid}/bind", g.handlePilotBind)
 	mux.HandleFunc("POST /v1/connectors/{id}/pilots/{pid}/reported", g.handlePilotReported)
 	mux.HandleFunc("GET /v1/connectors/{id}/pilots/{pid}/credit", g.handlePilotCredit)
+	mux.HandleFunc("POST /v1/connectors/{id}/users/{user}/operator-terms", g.handleConnectorTerms) // chatrules.go
 }
 
 const maxConnectorBody = 4 << 10
