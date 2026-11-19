@@ -283,6 +283,9 @@ func (s *scienceDB) dropWAL() {
 	}
 }
 
+// legacyClaimError is what a person sees for a claim made with a weak key before the account-key change.
+const legacyClaimError = "claims now need your full account key (not the weak key); please claim again"
+
 // failOldClaims fails the pending claims made before a claim needed the full account key (they hold a
 // weak key and a user id): no connector can check them as an account key.
 func (s *scienceDB) failOldClaims(now time.Time) error {
@@ -290,7 +293,7 @@ func (s *scienceDB) failOldClaims(now time.Time) error {
 	defer cancel()
 	res, err := s.db.ExecContext(ctx, `UPDATE connector_requests SET state = 'failed', error = ?, attach_key = '', updated_at = ?
 		WHERE kind = 'claim' AND state = 'pending' AND ext_user != ''`,
-		"claims now need your full account key (not the weak key); please claim again", ptime(now))
+		legacyClaimError, ptime(now))
 	if err != nil {
 		return s.fail("request old claims", "", err)
 	}
@@ -530,6 +533,16 @@ func (g *Gateway) handleRequestResult(w http.ResponseWriter, r *http.Request) {
 		g.answerRequest(w, c, q.ID, err, failed || q.State == reqFailed, "failed")
 		return
 	}
+	if q.Kind == reqClaim && q.User != "" && q.State == reqPending {
+		// A claim from before the account-key change (a weak key and a user id): no reply may verify it,
+		// also one already in flight when the listing or the sweep would have failed it.
+		_, err := g.sci.failRequest(q.ID, legacyClaimError, now, reqPending)
+		if err == nil {
+			err = &taskErr{code: http.StatusConflict, msg: "this claim was made with a weak key; it is failed, the person claims again"}
+		}
+		taskError(w, err)
+		return
+	}
 	user, key := q.User, ""
 	switch q.Kind {
 	case reqCreateLink, reqClaim:
@@ -599,16 +612,20 @@ func (g *Gateway) finishRequest(q *connRequest) {
 		if q.Kind == reqCreateLink {
 			link.Via, link.OwnEmail = LinkCreated, q.OwnEmail
 		}
-		// Save the unclaimed account the merge will delete before it does (linkMu: no bind changes the
-		// holder meanwhile), so a crash after the merge still leaves the sweep its id.
-		if id, st := g.accounts.linkHolder(q.Connector, q.User); st == StatusUnclaimed && id != q.From {
+		// The unclaimed account the merge deletes is saved on the request first, inside the accounts
+		// file's lock (the file as it is then, operator changes included), so a crash after the merge
+		// still leaves the sweep its id.
+		keep := func(id string) error {
+			if id == q.From {
+				return nil
+			}
 			if err := g.sci.setRequestFrom(q.ID, id); err != nil {
-				g.log.Error("connector request: merged account not recorded; the sweep retries", "request", q.ID, "err", err)
-				return
+				return err
 			}
 			q.From = id
+			return nil
 		}
-		from, err := g.accounts.claimLink(q.Account, q.Connector, q.User, link, now)
+		from, err := g.accounts.claimLink(q.Account, q.Connector, q.User, link, now, keep)
 		var refused string
 		switch {
 		case errors.Is(err, errLinkTaken):

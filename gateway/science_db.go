@@ -23,7 +23,10 @@
 // like a crash. Besides that, once a UTC day the gateway writes a clean copy beside it with VACUUM
 // INTO (science-YYYY-MM-DD.db) and keeps the newest scienceBackupsKept copies, so every snapshot
 // also holds a consistent file that opens on its own. To restore: stop the gateway, replace
-// science.db with a copy (and delete science.db-wal and science.db-shm), start it.
+// science.db with a copy (and delete science.db-wal and science.db-shm), start it. Restore the accounts
+// file from the same snapshot with it: a connector request the copy holds as verified is finished
+// against the accounts file at start (connector_requests.go), and a newer accounts file could have a
+// link the operator removed since put back, or a newer attach key replaced by the copy's.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -226,7 +229,11 @@ func openScienceDB(dir string) (_ *scienceDB, err error) {
 	if err := migrateScience(ctx, db); err != nil {
 		return nil, fmt.Errorf("science database %s: %w", path, err)
 	}
-	return &scienceDB{db: db, path: path}, nil
+	s := &scienceDB{db: db, path: path}
+	// A truncation a reader blocked before a restart (walDirty is not kept): the WAL may still hold a
+	// blanked request's values, so truncate it now; a busy one sets walDirty and the sweep retries.
+	s.dropWAL()
+	return s, nil
 }
 
 // migrateScience applies the migrations the database has not had yet.

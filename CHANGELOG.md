@@ -22,6 +22,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **Connector review fixes, third round.** A reply already on its way can no longer verify a claim
+  made with a weak key before the account-key change; the unclaimed account a claim merges is recorded
+  from the accounts file under its lock; the science database truncates a WAL left by a stop when it
+  opens; restoring `science.db` is documented together with the accounts file. (gateway)
+
 - **Connector review fixes.** A second withdrawal of the operator terms never moves the first one back
   (a replayed acceptance stays withdrawn); a WAL truncation a reader blocks is retried; claims made
   with a weak key before the account-key change fail with a message instead of reaching the connector;

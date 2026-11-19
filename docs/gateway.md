@@ -314,7 +314,8 @@ data volume's snapshots hold it like any file (SQLite recovers its write-ahead l
 crash), and once a UTC day the gateway writes a clean copy beside it, `science-YYYY-MM-DD.db`
 (`VACUUM INTO`), keeping the two newest, so every snapshot also holds a consistent copy that opens
 on its own. To restore one: stop the gateway, replace `science.db` with the copy, delete
-`science.db-wal` and `science.db-shm`, start it. Tasks are not in it: they stay one JSON file each. A
+`science.db-wal` and `science.db-shm`, restore the accounts file from the same snapshot (a connector
+request the copy holds as verified is finished against it at start), start it. Tasks are not in it: they stay one JSON file each. A
 failed read or write answers 503 "science records unavailable, try again" and logs `science
 database failed` with the operation, the project and the cause (a full disk, a damaged file), never
 a record's content.

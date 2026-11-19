@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -586,7 +587,7 @@ func TestConnectorRequestRecovery(t *testing.T) {
 	if ok, err := r.g.sci.verifyRequest(q["id"].(string), "5", weakKey("5"), p.account, r.clock()); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
-	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock()); err != nil {
+	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if p, _ := r.g.sci.pilot("boinc", pid); p.account == "gh:42" {
@@ -748,7 +749,7 @@ func TestConnectorRequestAfterTheYes(t *testing.T) {
 	if ok, err := r.g.sci.verifyRequest(rid, "5", weakKey("5"), cx, r.clock()); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
-	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock()); err != nil {
+	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if w, _ := r.call("POST", requestsPath+"/"+rid, testConnectorKey, map[string]any{"ok": false, "error": "changed my mind"}, ""); w.Code != 409 {
@@ -1112,15 +1113,17 @@ func TestConnectorReview2(t *testing.T) {
 	// The unclaimed account the merge will delete is saved before the accounts file changes: with the
 	// accounts file unwritable the request stays verified and names it.
 	p, _ := r.g.sci.pilot("boinc", pid)
-	dir := filepath.Dir(r.g.acfg.File)
-	os.Chmod(dir, 0o500)
-	q, _ := r.g.sci.request("boinc", rid)
-	r.g.linkMu.Lock()
-	r.g.finishRequest(q)
-	r.g.linkMu.Unlock()
-	os.Chmod(dir, 0o700)
-	if got, _ := r.g.sci.request("boinc", rid); got.State != reqVerified || got.From != p.account {
-		t.Fatalf("after a failed merge: %s from %q, want verified from %q", got.State, got.From, p.account)
+	if os.Geteuid() != 0 { // root writes through a 0500 directory
+		dir := filepath.Dir(r.g.acfg.File)
+		os.Chmod(dir, 0o500)
+		q, _ := r.g.sci.request("boinc", rid)
+		r.g.linkMu.Lock()
+		r.g.finishRequest(q)
+		r.g.linkMu.Unlock()
+		os.Chmod(dir, 0o700)
+		if got, _ := r.g.sci.request("boinc", rid); got.State != reqVerified || got.From != p.account {
+			t.Fatalf("after a failed merge: %s from %q, want verified from %q", got.State, got.From, p.account)
+		}
 	}
 	r.g.sweepRequests()
 	if p, _ := r.g.sci.pilot("boinc", pid); p.account != "gh:42" {
@@ -1170,5 +1173,99 @@ func TestRequestWALRetry(t *testing.T) {
 	}
 	if fi, err := os.Stat(r.g.sci.path + "-wal"); err == nil && fi.Size() != 0 {
 		t.Errorf("WAL %d bytes after the retry", fi.Size())
+	}
+}
+
+// Third gate review (2026-11-19): a reply already in flight cannot verify a claim made with a weak key
+// before the account-key change; the account a merge deletes is the one in the accounts file at that
+// moment (not the cached copy), saved through keep before it goes, and a failing keep stops the merge.
+func TestConnectorReview3(t *testing.T) {
+	r := newLinkRig(t, nil)
+	r.addAccount("gh:41", StatusActive)
+	old := &connRequest{Connector: "boinc", Kind: reqClaim, Account: "gh:41", User: "5", AttachKey: weakKey("5")}
+	if err := r.g.sci.addRequest(old, r.clock()); err != nil {
+		t.Fatal(err)
+	}
+	// The reply comes before any listing or sweep.
+	if w, _ := r.call("POST", requestsPath+"/"+old.ID, testConnectorKey, map[string]any{"ok": true, "user": "5", "key": weakKey("5")}, ""); w.Code != 409 {
+		t.Errorf("a reply to a weak-key claim: HTTP %d", w.Code)
+	}
+	if got, _ := r.g.sci.request("boinc", old.ID); got.State != reqFailed || !strings.Contains(got.Error, "full account key") {
+		t.Fatalf("weak-key claim after the reply: %+v", got)
+	}
+	if a, _, _ := r.g.accounts.Get("gh:41"); len(a.Links) != 0 {
+		t.Fatalf("a weak-key claim linked: %+v", a.Links)
+	}
+
+	// Another writer (the operator's CLI) gives user 9 an unclaimed account the gateway's cache has not
+	// seen yet: keep gets that id from the file, and an error from keep leaves everything as it was.
+	cli, err := OpenAccountStore(r.g.acfg.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.Update(func(f *AccountsFile) error {
+		f.Accounts = append(f.Accounts, &Account{ID: "cx:" + strings.Repeat("9", 32), Status: StatusUnclaimed, Created: r.clock(),
+			Links: []AccountLink{{Connector: "boinc", User: "9", Linked: r.clock()}}})
+		return nil
+	})
+	if id, _ := r.g.accounts.linkHolder("boinc", "9"); id != "" {
+		t.Fatal("the cache already knows the CLI's change; the test needs a stale cache")
+	}
+	r.addAccount("gh:42", StatusActive)
+	var kept string
+	stop := errors.New("database down")
+	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "9", AccountLink{Via: LinkClaimed}, r.clock(), func(id string) error {
+		kept = id
+		return stop
+	}); !errors.Is(err, stop) {
+		t.Fatalf("claimLink with a failing keep: %v", err)
+	}
+	if kept != "cx:"+strings.Repeat("9", 32) {
+		t.Fatalf("keep got %q", kept)
+	}
+	if id, _ := r.g.accounts.linkHolder("boinc", "9"); id != kept {
+		t.Fatalf("the failed merge moved the user to %q", id)
+	}
+}
+
+// A gateway that stopped with frames left in the WAL (a truncation a reader blocked, then a crash)
+// truncates it when it opens the database again.
+func TestScienceDBTruncatesWALAtOpen(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	s, err := openScienceDB(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	reader, _ := sql.Open("sqlite", s.path)
+	defer reader.Close()
+	tx, _ := reader.Begin()
+	var n int
+	tx.QueryRow(`SELECT COUNT(*) FROM connector_requests`).Scan(&n) // keeps the frames in the WAL
+	q := &connRequest{Connector: "boinc", Kind: reqCreateLink, Account: "gh:1", Email: "ada@example.org"}
+	if err := s.addRequest(q, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{ScienceDBFile, ScienceDBFile + "-wal"} { // the files as a crash leaves them
+		raw, err := os.ReadFile(filepath.Join(src, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dst, name), raw, 0o600)
+	}
+	tx.Rollback()
+	if fi, _ := os.Stat(filepath.Join(dst, ScienceDBFile+"-wal")); fi == nil || fi.Size() == 0 {
+		t.Fatal("the test needs frames in the WAL")
+	}
+	s2, err := openScienceDB(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.close()
+	if fi, err := os.Stat(filepath.Join(dst, ScienceDBFile+"-wal")); err == nil && fi.Size() != 0 {
+		t.Errorf("the WAL has %d bytes after the open", fi.Size())
+	}
+	if got, err := s2.request("", q.ID); err != nil || got.Email != "ada@example.org" {
+		t.Fatalf("the request after the open: %+v %v", got, err)
 	}
 }
