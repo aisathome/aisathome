@@ -94,6 +94,8 @@ type opsHold struct {
 	Node, Rule, Reason, Since, Ago string
 	At                             string // the hold's time exactly, for the clear form
 	Connected, Recorded            bool   // Recorded: in the accounts file, so it can be cleared
+	Req                            string // the request whose answer was stopped
+	Evidence                       *GuardEvidence
 }
 
 type opsData struct {
@@ -338,7 +340,8 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 	}
 	for _, p := range g.holds() {
 		d.Holds = append(d.Holds, opsHold{Node: p.Node, Rule: p.Rule, Reason: p.Reason, Since: p.At.UTC().Format("01-02 15:04"),
-			Ago: ago(now.Sub(p.At)), At: p.At.UTC().Format(time.RFC3339Nano), Connected: connected[p.Node], Recorded: recorded[p.Node]})
+			Ago: ago(now.Sub(p.At)), At: p.At.UTC().Format(time.RFC3339Nano), Connected: connected[p.Node], Recorded: recorded[p.Node],
+			Req: p.Req, Evidence: p.CurrentEvidence(now)})
 	}
 	g.opsTasks(&d, project, now)
 	return d
@@ -434,6 +437,8 @@ const opsHead template.HTML = `<style>
 .warn-list{margin:0;padding-left:1.2rem}.warn-list li{margin:.3rem 0}
 tr.warn td:first-child{box-shadow:inset 3px 0 var(--warn);padding-left:.6rem}
 .kvs{display:flex;flex-wrap:wrap;gap:.25rem 1.5rem;margin:.5rem 0}
+.ev{min-width:0;max-width:32rem;text-align:left}
+code.frag{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:.2rem}
 @media (max-width:40rem){
 .ops table,.ops tbody,.ops tr,.ops td{display:block;width:100%}
 .ops tr:first-child:has(th){display:none}
@@ -471,9 +476,10 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{if .Warnings}}<div class="card err" role="alert" id="warnings"><h2>Warnings</h2><ul class="warn-list">{{range .Warnings}}<li data-rule="{{.Rule}}">{{.Text}}</li>{{end}}</ul></div>
 {{else}}<div class="card ok" id="warnings"><p>No warnings.</p></div>{{end}}
 {{if .Holds}}<div class="card" id="holds"><h2>Held nodes ({{len .Holds}})</h2>
-<p class="mut small">A guard stopped their answers: they serve nothing until cleared, here after reading the rule, or with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>.</p>
-<div class="table-wrap"><table><tr><th>Node</th><th>Rule</th><th>Held since</th><th></th></tr>
+<p class="mut small">A guard stopped their answers: they serve nothing until cleared, here after reading the rule and what it matched, or with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>. What matched is a piece of the node's answer, secrets redacted, kept 14 days (<code>accounts guard-log</code> lists recent stops and flags).</p>
+<div class="table-wrap"><table><tr><th>Node</th><th>Rule</th><th>What matched</th><th>Held since</th><th></th></tr>
 {{range .Holds}}<tr data-hold="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if not .Connected}} <span class="badge offline">offline</span>{{end}}</td><td data-label="Rule">{{.Rule}}{{if .Reason}}<br><span class="mut small" data-reason>{{.Reason}}</span>{{end}}</td>
+<td data-label="What matched"><div class="ev">{{with .Evidence}}{{with .Fragment}}<code class="frag" data-fragment>{{.}}</code>{{end}}<span class="mut small">{{.Where}}{{with .Host}} · host <code data-host>{{.}}</code>{{end}}</span>{{else}}<span class="mut small">not kept (older than 14 days, or held before evidence was kept)</span>{{end}}{{with .Req}}<br><span class="mut small">request <code data-req>{{.}}</code></span>{{end}}</div></td>
 <td data-label="Held since">{{.Since}} UTC, {{.Ago}}</td>
 <td data-label="Clear">{{if .Recorded}}<form method="post" action="/account/ops/clear"><input type="hidden" name="node" value="{{.Node}}"><input type="hidden" name="at" value="{{.At}}"><button class="btn ghost" aria-label="Clear the {{.Rule}} hold of {{.Node}}">Clear hold</button></form>{{else}}<span class="mut small">not recorded yet</span>{{end}}</td></tr>{{end}}</table></div></div>{{end}}
 {{with .Status}}

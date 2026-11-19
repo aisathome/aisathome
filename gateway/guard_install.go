@@ -706,7 +706,9 @@ func editTexts(args string, vals map[string][]string) []string {
 // by its structure; any other text of these files, such as an edit's new text, has no context
 // that shows it is a project's own link, so every address in it counts (code review, 2026-11-18:
 // an edit of a dependency's address alone holds no key).
-func installSourceHit(name, args, req string, known knownAddrs) bool {
+//
+// It returns the unknown host and the source that names it ("" if none), for the evidence.
+func installSourceHit(name, args, req string, known knownAddrs) (host, src string) {
 	var srcs strings.Builder
 	add := func(words []string) {
 		for _, w := range words {
@@ -776,7 +778,14 @@ func installSourceHit(name, args, req string, known knownAddrs) bool {
 		}
 	}
 	if srcs.Len() == 0 {
-		return false
+		return "", ""
 	}
-	return unknownHost(srcs.String(), req, append(known[:len(known):len(known)], registryAddrs...)) != ""
+	all := srcs.String()
+	host, at := unknownAddr(all, req, append(known[:len(known):len(known)], registryAddrs...))
+	if host == "" {
+		return "", ""
+	}
+	start := strings.LastIndexByte(all[:at[0]], ' ') + 1 // the source's word in all
+	end := at[1] + strings.IndexByte(all[at[1]:], ' ')   // every source ends with a space
+	return host, all[start:end]
 }

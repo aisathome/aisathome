@@ -50,6 +50,9 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
                        at most n node tokens per account (default 10)
   node-revoke <node>   delete a node token (e.g. n-1a2b3c4d); the node is dropped
   node-clear <node>    let a node that a guard held serve again
+  guard-log [node]     the guards' recent stops, holds and flags (at most 200, of the past 14
+                       days) with what matched: a piece of the node's answer, secrets redacted;
+                       as of the gateway's last save (every 5 s; needs -config with state_dir)
   routing trusted-only | any
                        emergency switch: send every request to trusted nodes only, or back
 
@@ -158,7 +161,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		return nil
 	case "nodes":
 		if len(a) == 1 || a[1] == "list" {
-			return listNodes(out, store.Snapshot())
+			return listNodes(out, store.Snapshot(), time.Now())
 		}
 		switch a[1] {
 		case "close", "open":
@@ -195,6 +198,23 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return err
 		}
 		return store.RevokeNode("", a[1])
+	case "guard-log":
+		if len(a) > 2 {
+			fs.Usage()
+			return errors.New("guard-log takes at most one argument, a node")
+		}
+		if cfg == nil || cfg.StateDir == "" {
+			return errors.New("guard-log needs -config with a state_dir: the gateway keeps the log there")
+		}
+		node := ""
+		if len(a) == 2 {
+			node = a[1]
+		}
+		es, err := gateway.ReadGuardLog(cfg.StateDir, time.Now())
+		if err != nil {
+			return err
+		}
+		return printGuardLog(out, es, node)
 	case "node-clear":
 		if err := need(1); err != nil {
 			return err
@@ -319,8 +339,48 @@ func holdLine(q gateway.NodeHold) string {
 	return s
 }
 
-// listNodes prints every account's node tokens, the held nodes and the node settings.
-func listNodes(out io.Writer, f gateway.AccountsFile) error {
+// evidenceLines are a hold's or event's evidence, indented under its row: where and the host, then
+// the fragment quoted (Go syntax: anything unprintable shows as an escape).
+func evidenceLines(e *gateway.GuardEvidence, req string) string {
+	var head []string
+	if req != "" {
+		head = append(head, "request "+req)
+	}
+	if e != nil && e.Where != "" {
+		head = append(head, e.Where)
+	}
+	if e != nil && e.Host != "" {
+		head = append(head, "host "+e.Host)
+	}
+	s := "    " + strings.Join(head, ", ") + "\n"
+	if e == nil || e.Fragment == "" {
+		return s + "    (nothing kept: older than 14 days, or held before evidence was kept)\n"
+	}
+	return s + "    " + strconv.Quote(e.Fragment) + "\n"
+}
+
+// printGuardLog prints the guard events, of one node if node is set, oldest first.
+func printGuardLog(out io.Writer, es []gateway.GuardEvent, node string) error {
+	n := 0
+	for _, e := range es {
+		if node != "" && e.Node != node {
+			continue
+		}
+		n++
+		fmt.Fprintf(out, "%s  %s  %s  %s", e.At.UTC().Format("2006-01-02 15:04:05"), e.Node, e.Action, e.Rule)
+		if e.Reason != "" {
+			fmt.Fprintf(out, " (%s)", e.Reason)
+		}
+		fmt.Fprintln(out)
+		fmt.Fprint(out, evidenceLines(&e.GuardEvidence, e.Req))
+	}
+	fmt.Fprintf(out, "\n%d guard event(s) of the past 14 days (UTC); what matched is a piece of the node's answer, secrets redacted\n", n)
+	return nil
+}
+
+// listNodes prints every account's node tokens, the held nodes, what their guard matched and the
+// node settings.
+func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 	held := map[string]gateway.NodeHold{}
 	for _, p := range f.NodeHolds {
 		held[p.Node] = p
@@ -345,6 +405,13 @@ func listNodes(out io.Writer, f gateway.AccountsFile) error {
 		}
 	}
 	tw.Flush()
+	if len(f.NodeHolds) > 0 {
+		fmt.Fprintln(out, "\nWhat the guards matched (a piece of the node's answer, secrets redacted, kept 14 days):")
+		for _, q := range f.NodeHolds {
+			fmt.Fprintf(out, "  %s  %s\n", q.Node, q.Rule)
+			fmt.Fprint(out, evidenceLines(q.CurrentEvidence(now), q.Req))
+		}
+	}
 	state, routing := "open", "any"
 	if f.Settings.NodesClosed {
 		state = "closed"

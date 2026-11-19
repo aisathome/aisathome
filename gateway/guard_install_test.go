@@ -369,8 +369,8 @@ func TestGuardInstallSourceIsLinear(t *testing.T) {
 		done := make(chan result, 1)
 		go func() {
 			start := time.Now()
-			hit := installSourceHit("bash", c.args, req, known)
-			done <- result{hit, time.Since(start)}
+			host, _ := installSourceHit("bash", c.args, req, known)
+			done <- result{host != "", time.Since(start)}
 		}()
 		select {
 		case r := <-done:

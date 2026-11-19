@@ -409,25 +409,34 @@ func (rl *relay) delivered(data []byte) {
 }
 
 // block stops an answer a guard flagged: nothing more of it reaches the client, and the
-// node gets no requests until the operator clears it. Unlike fail it records the attempt
-// even without output, as blocked and with the rule.
+// node gets no requests until the operator clears it, unless the hit is an official installer
+// (guard_official.go), which stops the answer only. Unlike fail it records the attempt even
+// without output, as blocked and with the rule.
 func (rl *relay) block(hit guardHit) error {
 	rl.stop()
 	rl.flag = hit.rule
 	rl.record(outcomeBlocked, protocol.Usage{CompletionTokens: rl.relayed}, true)
-	rl.g.holdNode(rl.n, hit, rl.reqID)
+	if hit.official {
+		rl.g.log.Warn("guard stopped a node's answer running an official installer; node not held", "node", rl.n.id,
+			"operator", rl.n.operator, "rule", hit.rule, "reason", hit.why, "req", rl.reqID)
+		rl.g.glog.add(guardEvent(rl.n, hit, rl.reqID, GuardStopped, time.Now().UTC()))
+	} else {
+		rl.g.holdNode(rl.n, hit, rl.reqID)
+	}
 	rl.sseError(map[string]any{"message": "the answer was stopped by a safety check"})
 	return &guardError{hit.rule}
 }
 
 // noteFlag keeps a flag-only rule (an unknown address, in tool calls or text: logged, not
-// stopped) for the usage record and logs it, once per attempt; the first one noted stays.
-func (rl *relay) noteFlag(rule string) {
-	if rule == "" || rl.flag != "" {
+// stopped) for the usage record, logs it and keeps its evidence in the guard log, once per
+// attempt; the first one noted stays.
+func (rl *relay) noteFlag(hit guardHit) {
+	if hit.rule == "" || rl.flag != "" {
 		return
 	}
-	rl.flag = rule
-	rl.g.log.Warn("guard flagged a node's answer", "node", rl.n.id, "operator", rl.n.operator, "rule", rule, "req", rl.reqID)
+	rl.flag = hit.rule
+	rl.g.log.Warn("guard flagged a node's answer", "node", rl.n.id, "operator", rl.n.operator, "rule", hit.rule, "req", rl.reqID)
+	rl.g.glog.add(guardEvent(rl.n, hit, rl.reqID, GuardFlagged, time.Now().UTC()))
 }
 
 // onChunk meters and relays (or collects) one piece of the answer. A non-nil error ends
@@ -475,7 +484,7 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		var big bool
 		outs, big = gd.filter(data)
 		if gd.violation != "" {
-			return rl.block(streamHit(gd.violation))
+			return rl.block(gd.violationHit())
 		}
 		if big {
 			return rl.fail("failed", "the node sent more output than requested", errTooMuchOutput)
@@ -534,11 +543,11 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	if !rl.req.clientStream {
 		ans = assemble(rl.reqID, rl.model, rl.collected, u, rl.req.logprobs)
 		if rl.gd != nil { // what the client gets, not the pieces the guard saw
-			hit, flag := checkAssembled(ans, rl.gd.req, rl.gd.known)
+			hit, flag := checkAssembled(ans, rl.gd.req, rl.gd.known, rl.gd.installers)
 			if hit.rule != "" {
 				return rl.block(hit)
 			}
-			if rl.gd.flag == "" {
+			if rl.gd.flag.rule == "" {
 				rl.gd.flag = flag
 			}
 		}

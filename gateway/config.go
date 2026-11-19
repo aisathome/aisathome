@@ -77,6 +77,12 @@ type Config struct {
 	// built-in list of Lean and Mathlib sources (defaultKnownAddrs); [] turns it off; a list
 	// replaces it.
 	GuardKnownAddresses []string `json:"guard_known_addresses"`
+	// GuardOfficialInstallers are install scripts (guard_official.go) whose download piped into a
+	// shell still stops an untrusted node's answer but does not hold the node: "host" (and its
+	// subdomains) or "host/path" (that path and below), https only, as guard_known_addresses.
+	// Absent or null: the built-in list (rustup, uv, ruff, nvm, Deno, Bun, Homebrew, elan, Poetry);
+	// [] turns it off (every such answer holds its node again); a list replaces it.
+	GuardOfficialInstallers []string `json:"guard_official_installers"`
 	// Projects are operator-run workloads (science, decision 0011) with their own keys, quota
 	// and the lowest priority (project.go).
 	Projects []Project `json:"projects,omitempty"`
