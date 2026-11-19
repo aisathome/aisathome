@@ -1,11 +1,12 @@
 // The status block at the top of /science/prove2me/: where the work stands now, from the gateway's public records.
 //
-//  - the queue bar: the current trial's tasks by state (proved, ended otherwise, stopped, running, waiting), from
-//    GET /v1/tasks?project=prove2me; the trial from GET /v1/projects/prove2me/campaigns; tasks waiting or running in
-//    other trials (an outline probe round beside a trial) as one more count;
+//  - the queue: every prove2me task running or waiting now, whatever trial it belongs to (owner, 2026-11-19: a new trial
+//    can start while the last one still has tasks), as one bar in parts per trial, from GET /v1/tasks?project=prove2me;
+//  - one line per open trial (a trial or probe-round campaign that is running or being prepared, or a trial label with
+//    open tasks and no campaign yet): its tasks by state (proved, ended otherwise, stopped, running, waiting) and, for a
+//    trial, its leaves proved (a run that proved its leaf, as the trials table counts it), from the campaigns and tasks;
 //  - the numbers: the network's nodes online and GPU slots busy (GET /v1/stats `nodes`: the whole network, not only
-//    prove2me), the trial's leaves proved (a run that proved its leaf, as the trials table counts it) and the proofs
-//    submitted and accepted (GET /v1/projects/prove2me/results).
+//    prove2me) and the proofs submitted and accepted (GET /v1/projects/prove2me/results).
 //
 // There is no fixed total of work (a trial's leaves are chosen when it is prepared, and a leaf's tasks grow with its
 // outlines), so the block shows counts, never a percentage of a whole. Pure functions; the page draws them.
@@ -22,7 +23,7 @@ export interface Nodes {
 	updated: string;
 }
 
-/** The queue bar's parts, in the bar's order. */
+/** A trial's tasks by state, in this order. */
 export const BAR_PARTS = ['proved', 'ended', 'stopped', 'running', 'queued'] as const;
 export type BarPart = (typeof BAR_PARTS)[number];
 export const BAR_LABEL: Record<BarPart, string> = {
@@ -32,21 +33,33 @@ export const BAR_LABEL: Record<BarPart, string> = {
 	running: 'running',
 	queued: 'waiting',
 };
+export type Counts = Record<BarPart, number> & { total: number };
+
+/** One open trial: its campaign's facts, its tasks by state and (a trial, not a probe round) its leaves. */
+export interface OpenTrial {
+	label: string;
+	number: number;
+	probe: boolean;
+	status: 'preparing' | 'running';
+	scaffold: string;
+	start: string | null;
+	counts: Counts;
+	/** Leaves proved by a run, of those it tries (leaves closed by reuse left out); null for a probe round or a trial
+	 * with no campaign yet. */
+	leaves: { proved: number; of: number } | null;
+}
 
 export interface StatusView {
 	source: 'build' | 'live';
 	/** The newest time of the data shown (ISO). */
 	updated: string;
-	/** The trial the bar shows, or null when none is open. */
-	trial: { label: string; number: number; probe: boolean; status: 'preparing' | 'running' | 'finished'; scaffold: string; start: string | null } | null;
+	/** Every open trial, oldest first; empty when none is open. */
+	trials: OpenTrial[];
 	/** The newest trial that has ended, when no trial is open. */
 	lastEnded: { number: number; end: string | null } | null;
-	/** The current trial's tasks by state; null without the gateway's task list. */
-	bar: (Record<BarPart, number> & { total: number }) | null;
-	/** The current trial's leaves: proved by a run, of those it tries (leaves closed by reuse left out). */
-	leaves: { proved: number; of: number } | null;
-	/** Tasks waiting or running in other trials than the bar's, and in how many trials. */
-	elsewhere: { tasks: number; trials: number };
+	/** The whole queue now: tasks running and waiting per trial (every trial with any), oldest trial first; null without
+	 * the gateway's task list. */
+	queue: { label: string; running: number; queued: number }[] | null;
 	submissions: { submitted: number; accepted: number; pending: number };
 	nodes: Nodes | null;
 }
@@ -62,7 +75,7 @@ export function parseNodes(d: unknown): Nodes | null {
 	return { online: n.online as number, busy: Math.min(n.busy as number, n.slots as number), slots: n.slots as number, updated: v.updated };
 }
 
-/** A task's part of the bar. */
+/** A task's state as the block counts it. */
 export function barPart(t: Pick<PublicTask, 'state' | 'outcome'>): BarPart {
 	if (t.state === 'queued') return 'queued';
 	if (t.state === 'leased') return 'running';
@@ -70,64 +83,60 @@ export function barPart(t: Pick<PublicTask, 'state' | 'outcome'>): BarPart {
 	return 'stopped'; // failed or cancelled
 }
 
-const open = (t: PublicTask) => t.state === 'queued' || t.state === 'leased';
-const statusRank = { running: 0, preparing: 1, finished: 2 } as const;
+const isOpen = (t: PublicTask) => t.state === 'queued' || t.state === 'leased';
+/** Trials in order: by number, a probe round before the trial it chose leaves for. */
+const order = (a: { number: number; probe: boolean }, b: { number: number; probe: boolean }) => a.number - b.number || Number(b.probe) - Number(a.probe);
 
-/** The trial the bar shows: an open trial campaign (running before preparing, a trial before its probe round, the
- * newest first), else the newest trial with tasks waiting or running that has no campaign yet; null when none. */
-function currentTrial(campaigns: Campaign[], tasks: PublicTask[]): StatusView['trial'] {
-	const camps = campaigns
-		.filter((c) => isLiveTrial(c.id) && c.status !== 'finished')
-		.map((c) => ({ c, t: trialOf(c.id)! }))
-		.sort((a, b) => statusRank[a.c.status] - statusRank[b.c.status] || Number(a.t.probe) - Number(b.t.probe) || b.t.number - a.t.number);
-	const pick = camps[0];
-	if (pick) return { label: pick.c.id, number: pick.t.number, probe: pick.t.probe, status: pick.c.status, scaffold: pick.c.labels.scaffold ?? '', start: pick.c.started_at };
-	const known = new Set(campaigns.map((c) => c.id));
-	const labels = [...new Set(tasks.filter((t) => open(t) && isLiveTrial(t.labels.trial) && !known.has(t.labels.trial)).map((t) => t.labels.trial))];
-	const newest = labels.map((l) => ({ l, t: trialOf(l)! })).sort((a, b) => Number(a.t.probe) - Number(b.t.probe) || b.t.number - a.t.number)[0];
-	return newest ? { label: newest.l, number: newest.t.number, probe: newest.t.probe, status: 'running', scaffold: '', start: null } : null;
+function countsOf(tasks: PublicTask[]): Counts {
+	const c = { proved: 0, ended: 0, stopped: 0, running: 0, queued: 0, total: tasks.length };
+	for (const t of tasks) c[barPart(t)]++;
+	return c;
 }
 
 /** The block from the gateway's records (campaigns, results, tasks) and its nodes; either may be missing. Without the
- * records, the trial and submissions stay `fallback`'s (the build's). Null with neither: the page keeps what it shows. */
+ * records, the trials and submissions stay `fallback`'s (the build's). Null with neither: the page keeps what it shows. */
 export function statusView(live: Records | null, nodes: Nodes | null, fallback: StatusView | null = null): StatusView | null {
 	if (!live && !nodes) return null;
 	const updated = [live?.updated, nodes?.updated].filter((x): x is string => !!x).sort().at(-1)!;
 	if (!live) {
-		const none = { source: 'build' as const, updated, trial: null, lastEnded: null, bar: null, leaves: null, elsewhere: { tasks: 0, trials: 0 }, submissions: { submitted: 0, accepted: 0, pending: 0 } };
+		const none: StatusView = { source: 'build', updated, trials: [], lastEnded: null, queue: null, submissions: { submitted: 0, accepted: 0, pending: 0 } , nodes: null };
 		return { ...(fallback ?? none), nodes };
 	}
-	const tasks = live.tasks.tasks;
-	const trial = currentTrial(live.campaigns, tasks);
-	let bar: StatusView['bar'] = null;
-	let leaves: StatusView['leaves'] = null;
-	if (trial) {
-		const mine = tasks.filter((t) => t.labels.trial === trial.label);
-		const b = { proved: 0, ended: 0, stopped: 0, running: 0, queued: 0, total: mine.length };
-		for (const t of mine) b[barPart(t)]++;
-		bar = b;
-		const camp = live.campaigns.find((c) => c.id === trial.label);
-		if (camp && !trial.probe) {
-			const reused = new Set(live.results.filter((r) => r.campaign === camp.id && r.labels.kind === 'reuse' && r.item).map((r) => r.item));
-			const runs = campaignRuns(camp, tasks, live.results);
-			leaves = { proved: runs.filter((r) => r.proved).length, of: camp.items.filter((i) => !reused.has(i.id)).length };
-		}
-	}
-	const others = tasks.filter((t) => open(t) && isLiveTrial(t.labels.trial) && t.labels.trial !== trial?.label);
-	const ended = trial
+	const tasks = live.tasks.tasks.filter((t) => isLiveTrial(t.labels.trial)); // a test's tasks are no trial's
+	const byTrial = new Map<string, PublicTask[]>();
+	for (const t of tasks) byTrial.set(t.labels.trial, [...(byTrial.get(t.labels.trial) ?? []), t]);
+	const camps = new Map(live.campaigns.filter((c) => isLiveTrial(c.id)).map((c) => [c.id, c]));
+	// open: a campaign running or being prepared, or a label with open tasks (its campaign finished, or none yet)
+	const labels = new Set([...camps.values()].filter((c) => c.status !== 'finished').map((c) => c.id));
+	for (const t of tasks) if (isOpen(t)) labels.add(t.labels.trial);
+	const trials: OpenTrial[] = [...labels]
+		.map((label) => {
+			const n = trialOf(label)!;
+			const c: Campaign | undefined = camps.get(label);
+			let leaves: OpenTrial['leaves'] = null;
+			if (c && !n.probe) {
+				const reused = new Set(live.results.filter((r) => r.campaign === c.id && r.labels.kind === 'reuse' && r.item).map((r) => r.item));
+				leaves = { proved: campaignRuns(c, tasks, live.results).filter((r) => r.proved).length, of: c.items.filter((i) => !reused.has(i.id)).length };
+			}
+			return {
+				label, number: n.number, probe: n.probe, status: c?.status === 'preparing' ? 'preparing' : 'running', scaffold: c?.labels.scaffold ?? '',
+				start: c?.started_at ?? null, counts: countsOf(byTrial.get(label) ?? []), leaves,
+			} as OpenTrial;
+		})
+		.sort(order);
+	const queue = trials
+		.map((t) => ({ label: t.label, running: t.counts.running, queued: t.counts.queued }))
+		.filter((q) => q.running + q.queued > 0);
+	const ended = trials.length
 		? null
-		: live.campaigns
-				.filter((c) => isLiveTrial(c.id) && !trialOf(c.id)!.probe && c.status === 'finished')
-				.sort((a, b) => trialOf(b.id)!.number - trialOf(a.id)!.number)[0];
+		: [...camps.values()].filter((c) => !trialOf(c.id)!.probe && c.status === 'finished').sort((a, b) => trialOf(b.id)!.number - trialOf(a.id)!.number)[0];
 	const rs = live.results;
 	return {
 		source: 'live',
 		updated,
-		trial,
+		trials,
 		lastEnded: ended ? { number: trialOf(ended.id)!.number, end: ended.ended_at } : null,
-		bar,
-		leaves,
-		elsewhere: { tasks: others.length, trials: new Set(others.map((t) => t.labels.trial)).size },
+		queue,
 		submissions: { submitted: rs.length, accepted: rs.filter((r) => r.state === 'accepted').length, pending: rs.filter((r) => r.state === 'pending').length },
 		nodes,
 	};
@@ -138,14 +147,13 @@ export function builtStatus(h: History): StatusView {
 	const c = h.current;
 	const last = h.trials.filter((t) => !t.probe && t.status === 'finished').sort((a, b) => b.number - a.number)[0];
 	const subs = h.submissions;
+	const none = { proved: 0, ended: 0, stopped: 0, running: 0, queued: 0, total: 0 };
 	return {
 		source: 'build',
 		updated: h.generated_at,
-		trial: c ? { label: `t${c.number}`, number: c.number, probe: false, status: c.status, scaffold: c.scaffold, start: c.start } : null,
+		trials: c ? [{ label: `t${c.number}`, number: c.number, probe: false, status: c.status, scaffold: c.scaffold, start: c.start, counts: none, leaves: null }] : [],
 		lastEnded: c || !last ? null : { number: last.number, end: last.end },
-		bar: null,
-		leaves: null,
-		elsewhere: { tasks: 0, trials: 0 },
+		queue: null,
 		submissions: { submitted: subs.length, accepted: subs.filter((s) => s.verdict === 'accepted').length, pending: subs.filter((s) => s.verdict === 'pending').length },
 		nodes: null,
 	};
@@ -157,33 +165,67 @@ const shortDay = (iso: string) => {
 	return `${d.getUTCDate()} ${months[d.getUTCMonth()]}`;
 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
-/** The block's texts: the trial's line, the bar's words (its text equivalent), the other trials' line, the numbers. */
+/** A trial's name: "Trial 9", or "Outline probes for trial 10". */
+export const trialName = (t: { number: number; probe: boolean }) => (t.probe ? `Outline probes for trial ${t.number}` : `Trial ${t.number}`);
+/** The short name a queue part carries: "Trial 9", "Probes 10". */
+export const shortName = (label: string) => {
+	const t = trialOf(label);
+	return t ? (t.probe ? `Probes ${t.number}` : `Trial ${t.number}`) : label;
+};
+const facts = (t: OpenTrial) => [t.scaffold ? `scaffold ${t.scaffold}` : '', t.start ? `since ${shortDay(t.start)}` : ''].filter(Boolean).join(', ');
+
+/** The head line: every open trial, with its scaffold and start. */
+function headText(v: StatusView): string {
+	if (!v.trials.length) {
+		const e = v.lastEnded;
+		return e ? `No trial is running. Trial ${e.number} ended${e.end ? ` on ${shortDay(e.end)}` : ''}.` : 'No trial is running.';
+	}
+	const part = (ts: OpenTrial[], verb: [string, string]) => {
+		if (!ts.length) return '';
+		if (ts.length === 1) {
+			const f = facts(ts[0]);
+			return `${trialName(ts[0])} ${ts[0].probe ? verb[1] : verb[0]}${f ? `, ${f}` : ''}`;
+		}
+		const names = ts.map((t) => `${trialName(t)}${t.scaffold ? ` (scaffold ${t.scaffold})` : ''}`);
+		// "Trials 8 (scaffold v9) and 9 (scaffold v10)" when every one is a trial
+		const plain = ts.every((t) => !t.probe)
+			? `Trials ${and(ts.map((t) => `${t.number}${t.scaffold ? ` (scaffold ${t.scaffold})` : ''}`))}`
+			: and(names.map((n, i) => (i ? n.replace(/^Trial/, 'trial').replace(/^Outline/, 'outline') : n)));
+		return `${plain} ${verb[1]}`;
+	};
+	const running = part(v.trials.filter((t) => t.status === 'running'), ['is running', 'are running']);
+	const preparing = part(v.trials.filter((t) => t.status === 'preparing'), ['is being prepared', 'are being prepared']);
+	return [running, preparing].filter(Boolean).join('; ') + '.';
+}
+
+/** One open trial's line: its tasks by state and its leaves. */
+export function trialLine(t: OpenTrial): string {
+	const c = t.counts;
+	const tasks = c.total === 0 ? 'no tasks yet' : `${plural(c.total, 'task')}: ` + BAR_PARTS.filter((p) => c[p] > 0).map((p) => `${c[p]} ${BAR_LABEL[p]}`).join(', ');
+	const leaves = t.leaves ? `; ${t.leaves.proved} of ${plural(t.leaves.of, 'leaf', 'leaves')} proved` : '';
+	return `${trialName(t)}, ${tasks}${leaves}.`;
+}
+
+/** The block's texts: the head line, the queue in words (the bar's text equivalent), each open trial's line, the
+ * numbers and the time. */
 export function statusTexts(v: StatusView, now: Date = new Date()) {
-	const t = v.trial;
-	const trialName = t ? (t.probe ? `Outline probes for trial ${t.number}` : `Trial ${t.number}`) : '';
-	const scaffold = t?.scaffold ? `, scaffold ${t.scaffold}` : '';
-	const head = t
-		? t.status === 'preparing'
-			? `${trialName} ${t.probe ? 'are' : 'is'} being prepared${scaffold}`
-			: `${trialName} ${t.probe ? 'are' : 'is'} running${t.start ? ` since ${shortDay(t.start)}` : ''}${scaffold}`
-		: v.lastEnded
-			? `No trial is running. Trial ${v.lastEnded.number} ended${v.lastEnded.end ? ` on ${shortDay(v.lastEnded.end)}` : ''}.`
-			: 'No trial is running.';
-	const b = v.bar;
-	const barWords = b
-		? b.total === 0
-			? 'No tasks yet.'
-			: `${plural(b.total, 'task')}: ` + BAR_PARTS.filter((p) => b[p] > 0).map((p) => `${b[p]} ${BAR_LABEL[p]}`).join(', ') + '.'
-		: '';
-	const e = v.elsewhere;
-	const elsewhere = e.tasks > 0 ? `${plural(e.tasks, 'more task')} waiting or running in ${e.trials === 1 ? 'another trial' : `${e.trials} other trials`}.` : '';
+	const q = v.queue;
+	const running = q ? q.reduce((a, x) => a + x.running, 0) : 0;
+	const queued = q ? q.reduce((a, x) => a + x.queued, 0) : 0;
+	const queue = !q
+		? ''
+		: running + queued === 0
+			? 'Nothing in the queue now.'
+			: `${plural(running + queued, 'task')} in the queue: ${running} running, ${queued} waiting` +
+				(q.length > 1 ? ` (${q.map((x) => `${shortName(x.label)}: ${x.running} running, ${x.queued} waiting`).join('; ')})` : '') + '.';
 	const age = (now.getTime() - Date.parse(v.updated)) / 60000;
 	const hm = `${v.updated.slice(11, 16)} UTC`;
 	const updated =
 		v.source === 'build'
 			? v.nodes
-				? `Trial and proofs as of the site’s last build, ${shortDay(v.updated)}, ${hm}; nodes live from the gateway, updated ${v.nodes.updated.slice(11, 16)} UTC.`
+				? `Trials and proofs as of the site’s last build, ${shortDay(v.updated)}, ${hm}; nodes live from the gateway, updated ${v.nodes.updated.slice(11, 16)} UTC.`
 				: `As of the site’s last build, ${shortDay(v.updated)}, ${hm}. The queue and the network show when the page can reach the gateway.`
 			: age > 10
 				? `Updated ${shortDay(v.updated)}, ${hm}; the gateway has not answered since.`
@@ -192,8 +234,7 @@ export function statusTexts(v: StatusView, now: Date = new Date()) {
 	const nums: Record<string, string> = {
 		nodes: v.nodes ? String(v.nodes.online) : '',
 		slots: v.nodes ? `${v.nodes.busy} of ${v.nodes.slots}` : '',
-		leaves: v.leaves ? `${v.leaves.proved} of ${v.leaves.of}` : '',
 		accepted: `${s.accepted} of ${s.submitted}`,
 	};
-	return { head, barWords, elsewhere, updated, nums };
+	return { head: headText(v), queue, lines: v.source === 'live' ? v.trials.map(trialLine) : [], updated, nums };
 }

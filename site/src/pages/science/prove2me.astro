@@ -15,7 +15,7 @@ import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 import { taskTableHTML as allTasksHTML } from '../../data/task-table';
 import { mdLightHTML } from '../../data/prove2me-current';
 import { p2mTaskOptions } from '../../data/prove2me-tasks';
-import { BAR_LABEL, BAR_PARTS, builtStatus, statusTexts } from '../../data/prove2me-status';
+import { builtStatus, statusTexts } from '../../data/prove2me-status';
 
 const t = p2m.totals;
 const cur = p2m.current;
@@ -47,7 +47,7 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 const hist = historyOf(p2m);
 const view = scienceView(hist, null);
 const kp = kpisHTML(view.kpis);
-// The status block's build copy: the trial and the submissions; the browser adds the queue and the network.
+// The status block's build copy: the trial and the submissions; the browser adds the queue, the trials and the network.
 const st = builtStatus(hist);
 const stx = statusTexts(st, new Date(hist.generated_at));
 const frozenTrials = trials.filter((tr) => tr.trial <= FROZEN_THROUGH);
@@ -142,18 +142,19 @@ const leafCols = [
 	<section class="p2m-status not-content" data-p2m-status data-source="build" aria-labelledby="status">
 		<h2 id="status">Status</h2>
 		<p class="p2m-st-head" data-st="head">{stx.head}</p>
-		<div class="p2m-bar" data-st-bar aria-hidden="true" hidden>
-			{BAR_PARTS.map((p) => <span class={`seg seg-${p}`} data-part={p} />)}
+		<p class="p2m-st-queue" data-st="queue" hidden />
+		<div class="p2m-queue" data-st-queue aria-hidden="true" hidden>
+			<div class="p2m-bar" data-st-bar />
+			<div class="p2m-qlabels" data-st-qlabels />
+			<ul class="p2m-legend">
+				<li><span class="sw q-running" />running</li>
+				<li><span class="sw q-queued" />waiting</li>
+			</ul>
 		</div>
-		<ul class="p2m-legend" data-st-legend hidden>
-			{BAR_PARTS.map((p) => <li data-part={p}><span class={`sw seg-${p}`} aria-hidden="true" /><b data-count>0</b> {BAR_LABEL[p]}</li>)}
-		</ul>
-		<p class="p2m-st-more" data-st="empty" hidden />
-		<p class="p2m-st-more" data-st="elsewhere" hidden />
+		<ul class="p2m-st-trials" data-st-trials hidden />
 		<dl class="p2m-st-nums">
 			<div data-num="nodes" hidden><dt>nodes online (whole network)</dt><dd /></div>
 			<div data-num="slots" hidden><dt>GPU slots busy now</dt><dd /></div>
-			<div data-num="leaves" hidden><dt>leaves proved in this trial</dt><dd /></div>
 			<div data-num="accepted"><dt>proofs accepted by prove2me, of submitted</dt><dd>{stx.nums.accepted}</dd></div>
 		</dl>
 		<ul class="p2m-st-lines">
@@ -579,7 +580,7 @@ const leafCols = [
 	import { kpisHTML, plainHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialRowHTML, trialsFootHTML } from '../../data/prove2me-view';
 	import { walkPages } from '../../data/prove2me-current';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
-	import { BAR_PARTS, builtStatus, parseNodes, statusTexts, statusView, type Nodes } from '../../data/prove2me-status';
+	import { builtStatus, parseNodes, shortName, statusTexts, statusView, type Nodes } from '../../data/prove2me-status';
 
 	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
 	// replaces or joins them (trials 1 to 5 stay the build's).
@@ -741,23 +742,44 @@ const leafCols = [
 			e.hidden = !text;
 		};
 		set('head', tx.head);
-		set('elsewhere', tx.elsewhere);
-		set('empty', v.bar && v.bar.total === 0 ? tx.barWords : '');
+		set('queue', tx.queue);
 		set('updated', tx.updated);
-		const bar = statusBox.querySelector<HTMLElement>('[data-st-bar]')!;
-		const legend = statusBox.querySelector<HTMLElement>('[data-st-legend]')!;
-		const b = v.bar;
-		bar.hidden = legend.hidden = !b || b.total === 0;
-		for (const p of BAR_PARTS) {
-			const n = b?.[p] ?? 0;
-			const seg = bar.querySelector<HTMLElement>(`[data-part="${p}"]`)!;
-			seg.style.flexGrow = String(n);
-			seg.hidden = n === 0;
-			const li = legend.querySelector<HTMLElement>(`[data-part="${p}"]`)!;
-			li.querySelector('[data-count]')!.textContent = String(n);
-			li.hidden = n === 0;
-		}
-		legend.setAttribute('aria-label', tx.barWords);
+		// the whole queue: a part per trial (its running tasks, then its waiting ones), its name under it
+		const qbox = statusBox.querySelector<HTMLElement>('[data-st-queue]')!;
+		const q = (v.queue ?? []).filter((x) => x.running + x.queued > 0);
+		qbox.hidden = !q.length;
+		statusBox.querySelector('[data-st-bar]')!.replaceChildren(
+			...q.map((x, i) => {
+				const g = el('span', `grp grp-${i % 2}`);
+				g.dataset.trial = x.label;
+				g.style.flexGrow = String(x.running + x.queued);
+				for (const [k, n] of [['running', x.running], ['queued', x.queued]] as const) {
+					if (!n) continue;
+					const seg = el('span', `seg q-${k}`);
+					seg.dataset.part = k;
+					seg.style.flexGrow = String(n);
+					g.append(seg);
+				}
+				return g;
+			}),
+		);
+		statusBox.querySelector('[data-st-qlabels]')!.replaceChildren(
+			...q.map((x) => {
+				const l = el('span', '', `${shortName(x.label)} · ${x.running + x.queued}`);
+				l.dataset.trial = x.label;
+				l.style.flexGrow = String(x.running + x.queued);
+				return l;
+			}),
+		);
+		const lines = statusBox.querySelector<HTMLElement>('[data-st-trials]')!;
+		lines.replaceChildren(
+			...tx.lines.map((t, i) => {
+				const li = el('li', '', t);
+				li.dataset.trial = v.trials[i].label;
+				return li;
+			}),
+		);
+		lines.hidden = !tx.lines.length;
 		for (const [k, val] of Object.entries(tx.nums)) {
 			const d = statusBox.querySelector<HTMLElement>(`[data-num="${k}"]`);
 			if (!d) continue;
@@ -765,7 +787,7 @@ const leafCols = [
 			d.hidden = !val;
 		}
 		statusBox.dataset.source = v.source === 'live' ? 'live' : stNodes ? 'nodes' : 'build';
-		statusBox.dataset.trial = v.trial?.label ?? '';
+		statusBox.dataset.trials = v.trials.map((t) => t.label).join(' ');
 	};
 	const showRecords = (live: Records) => {
 		if (!recordsKnown) return;
@@ -1061,18 +1083,25 @@ const leafCols = [
 	.p2m-status p { margin: 0.4rem 0 0; }
 	.p2m-status [hidden] { display: none !important; }
 	.p2m-st-head { font-weight: 600; color: var(--sl-color-white); }
-	.p2m-bar { display: flex; gap: 2px; height: 1.1rem; margin: 0.6rem 0 0; border-radius: 0.25rem; overflow: hidden; background: var(--sl-color-gray-6, transparent); }
-	.p2m-bar .seg { flex: 0 1 0; min-width: 4px; }
-	.p2m-status .seg-proved { background: var(--sl-color-accent); }
-	.p2m-status .seg-ended { background: var(--sl-color-gray-4); }
-	.p2m-status .seg-stopped { background: repeating-linear-gradient(135deg, var(--sl-color-gray-4) 0 2px, transparent 2px 5px); }
-	.p2m-status .seg-running { background: repeating-linear-gradient(135deg, var(--sl-color-accent-high) 0 4px, var(--sl-color-accent) 4px 8px); }
-	.p2m-status .seg-queued { background: transparent; box-shadow: inset 0 0 0 1.5px var(--sl-color-gray-3); }
-	.p2m-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin: 0.45rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	/* The whole queue: one part per trial (the parts alternate in tone and are named under the bar), each with its
+	   running tasks hatched and its waiting ones outlined; the sentence above says it all in words. */
+	.p2m-st-queue { font-size: 0.9rem; color: var(--sl-color-gray-2); }
+	.p2m-queue { margin: 0.5rem 0 0; }
+	.p2m-bar, .p2m-qlabels { display: flex; gap: 4px; }
+	.p2m-bar { height: 1.25rem; }
+	.p2m-bar .grp, .p2m-qlabels > span { flex: 1 1 0; min-width: 4.5rem; }
+	.p2m-bar .grp { display: flex; gap: 2px; --q: var(--sl-color-accent); }
+	.p2m-bar .grp-1 { --q: var(--sl-color-gray-2); }
+	.p2m-bar .seg { flex: 1 1 0; min-width: 6px; border-radius: 0.2rem; }
+	.p2m-status .q-running { background: repeating-linear-gradient(135deg, var(--q, var(--sl-color-gray-2)) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
+	.p2m-status .q-queued { background: transparent; box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
+	.p2m-qlabels { margin-top: 0.2rem; font-size: 0.75rem; color: var(--sl-color-gray-2); }
+	.p2m-qlabels > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-top: 1px solid var(--sl-color-gray-4); padding-top: 0.1rem; }
+	.p2m-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin: 0.35rem 0 0; padding: 0; list-style: none; font-size: 0.8rem; color: var(--sl-color-gray-2); }
 	.p2m-legend li { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; }
-	.p2m-legend b { font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
-	.p2m-legend .sw { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 0.15rem; }
-	.p2m-st-more { font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.p2m-legend .sw { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 0.15rem; }
+	.p2m-st-trials { margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.p2m-st-trials li { margin: 0.15rem 0 0; padding-left: 0.6rem; border-left: 3px solid var(--sl-color-gray-5); }
 	.p2m-st-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem 1rem; margin: 0.8rem 0 0; }
 	.p2m-st-nums div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
 	.p2m-st-nums dd { margin: 0; font: 700 1.25rem/1.2 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
