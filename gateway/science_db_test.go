@@ -28,7 +28,8 @@ func tables(t *testing.T, db *sql.DB) []string {
 	return out
 }
 
-var wantTables = []string{"campaign_items", "campaigns", "pilot_credit_days", "pilots", "pilots_by_account", "pilots_by_state",
+var wantTables = []string{"campaign_items", "campaigns", "connector_requests", "connector_requests_by_account",
+	"connector_requests_by_state", "pilot_credit_days", "pilots", "pilots_by_account", "pilots_by_state",
 	"results", "results_by_campaign", "results_by_time"}
 
 // A fresh database gets every migration; reopening applies none and keeps the data; a database

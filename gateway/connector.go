@@ -10,6 +10,8 @@
 //	POST /v1/connectors/{id}/pilots/{pid}/bind       {"user", "host", "team"}: who runs it
 //	POST /v1/connectors/{id}/pilots/{pid}/reported   {"outcome"}: the work item is done; the pilot ends
 //	GET  /v1/connectors/{id}/pilots/{pid}/credit     its final credit, or not yet
+//	GET  /v1/connectors/{id}/requests                people's pending requests (connector_requests.go)
+//	POST /v1/connectors/{id}/requests/{rid}          a request's result
 //
 // Pilots as nodes (decision 0007): a bound pilot is a node of the account its connector user maps to
 // (account_links.go), untrusted, under the same rules as any account node: personal data only to
@@ -32,11 +34,14 @@ package gateway
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"math"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -78,6 +83,27 @@ type Connector struct {
 	// MaxCreditPerPilot and MaxCreditPerAccountDay cap pilot credit (0: the defaults below; -1: none).
 	MaxCreditPerPilot      float64 `json:"max_credit_per_pilot,omitempty"`
 	MaxCreditPerAccountDay float64 `json:"max_credit_per_account_day,omitempty"`
+	// Accounts, if set, lets people link their account to this connector's users from the account
+	// page (connector_requests.go): create a user, claim one, attach machines. Nil: only the
+	// operator links (`accounts link`).
+	Accounts *ConnectorAccounts `json:"accounts,omitempty"`
+}
+
+// ConnectorAccounts is what the account page offers for a connector's users. Nothing in it is
+// specific to BOINC: the BOINC project's values are in docs/gateway.md.
+type ConnectorAccounts struct {
+	// Name is the connector as people know it ("BOINC"): "Run on BOINC".
+	Name string `json:"name"`
+	// AttachURL is what people attach their machines to (BOINC's master URL), https.
+	AttachURL string `json:"attach_url"`
+	// AttachCommand, if set, is the one-line attach shown with the key: "{url}" and "{key}" are
+	// replaced ("boinccmd --project_attach {url} {key}").
+	AttachCommand string `json:"attach_command,omitempty"`
+	// KeyURL, if set, is the page where people find the key to claim a user with (https).
+	KeyURL string `json:"key_url,omitempty"`
+	// AddressDomain: a user the connector creates for a person gets a pseudonymous address at this
+	// domain unless they give their own ("nomail.aisathome.org"; mail to it should be dropped).
+	AddressDomain string `json:"address_domain"`
 }
 
 // Defaults of a connector's limits. The credit caps are about 1.3 times what a pilot serving all
@@ -185,9 +211,38 @@ func newConnectorTable(cs []Connector, projects *projectTable) (*connectorTable,
 				list.set[u] = true
 			}
 		}
+		if a := c.Accounts; a != nil {
+			if err := a.check(); err != nil {
+				return nil, fmt.Errorf("connector %q: accounts: %w", c.ID, err)
+			}
+		}
 		t.byID[c.ID] = cc
 	}
 	return t, nil
+}
+
+var addressDomainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
+
+func (a *ConnectorAccounts) check() error {
+	if n := strings.TrimSpace(a.Name); n == "" || len(n) > 40 || n != a.Name {
+		return errors.New("name: 1-40 characters")
+	}
+	for _, u := range []struct{ field, v string }{{"attach_url", a.AttachURL}, {"key_url", a.KeyURL}} {
+		if u.v == "" && u.field == "key_url" {
+			continue
+		}
+		p, err := url.Parse(u.v)
+		if err != nil || p.Scheme != "https" || p.Host == "" || p.User != nil {
+			return fmt.Errorf("%s: an https URL", u.field)
+		}
+	}
+	if len(a.AttachCommand) > 200 || strings.ContainsAny(a.AttachCommand, "\n\r") {
+		return errors.New("attach_command: one line, at most 200 characters")
+	}
+	if !addressDomainRe.MatchString(a.AddressDomain) {
+		return errors.New("address_domain: a lower-case domain name")
+	}
+	return nil
 }
 
 // connector returns connector id of the current config, or nil.
@@ -260,6 +315,8 @@ func (g *Gateway) connectorRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/connectors/{id}/pilots/{pid}/reported", g.handlePilotReported)
 	mux.HandleFunc("GET /v1/connectors/{id}/pilots/{pid}/credit", g.handlePilotCredit)
 	mux.HandleFunc("POST /v1/connectors/{id}/users/{user}/operator-terms", g.handleConnectorTerms) // chatrules.go
+	mux.HandleFunc("GET /v1/connectors/{id}/requests", g.handleRequestList)
+	mux.HandleFunc("POST /v1/connectors/{id}/requests/{rid}", g.handleRequestResult)
 }
 
 const maxConnectorBody = 4 << 10
@@ -377,6 +434,8 @@ func (g *Gateway) handlePilotBind(w http.ResponseWriter, r *http.Request) {
 	}
 	now := g.pilotNow()
 	account := p.account
+	g.linkMu.Lock() // no claim moves the user's link between the mapping and the bind
+	defer g.linkMu.Unlock()
 	if p.State == PilotCreated { // map the user to its account only for a bind that can succeed
 		var aerr error
 		if account, _, aerr = g.accounts.pilotAccount(c.ID, body.User, now); aerr != nil {

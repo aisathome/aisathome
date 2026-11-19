@@ -61,6 +61,10 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/contact/off", smallForm(g.handleContactOff))
 	mux.HandleFunc("POST /account/operator", smallForm(g.handleOperatorTerms))
 	mux.HandleFunc("POST /account/transfer", smallForm(g.handleTransferConsent))
+	mux.HandleFunc("POST /account/connectors/{id}/run", smallForm(g.handleConnectorRun))
+	mux.HandleFunc("POST /account/connectors/{id}/claim", smallForm(g.handleConnectorClaim))
+	mux.HandleFunc("POST /account/connectors/{id}/email", smallForm(g.handleConnectorEmail))
+	mux.HandleFunc("POST /account/pilots/chat", smallForm(g.handlePilotChatForm))
 	mux.HandleFunc("POST /account/notice/dismiss", smallForm(g.handleNoticeDismiss))
 	mux.HandleFunc("GET /account/notice/chat", g.handleNoticeChat)
 	mux.HandleFunc("GET /account/auth", g.handleForwardAuth)
@@ -446,7 +450,7 @@ func (g *Gateway) handleAccount(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) accountData(id string) pageData {
 	a, pos, ok := g.accounts.Get(id)
-	if !ok {
+	if !ok || a.Status == StatusUnclaimed { // no sign-in makes such a session; treat one as none
 		return pageData{}
 	}
 	used := g.budget.used1(accountBudgetKey(id), time.Now())
@@ -481,6 +485,10 @@ func (g *Gateway) accountData(id string) pageData {
 	d.MaxNodes = st.MaxNodesPerAccountOrDefault()
 	d.NodesClosed = st.NodesClosed
 	d.NetworkFull = g.accounts.nodeTotal() >= st.MaxNodesOrDefault()
+	if a.Status == StatusActive {
+		g.connectorData(&d, a)
+	}
+	d.Account.Links = nil // the cards show them; the attach keys only there
 	return d
 }
 
@@ -637,6 +645,12 @@ type pageData struct {
 	ContactNone   string    // after a sign-in that asked for an address and got none: says so
 
 	chatRulesPage // operator terms and the opt-in to volunteers outside Europe (chatrules.go)
+
+	// Connectors with accounts (account_connectors.go): a card each, the account's pilots, and
+	// whether any of them lets pilots serve chat at all yet.
+	Connectors []connectorCard
+	Pilots     []pilotRow
+	PilotsChat bool
 }
 
 type nodeRow struct {
@@ -841,6 +855,7 @@ requests only, never what they asked.</p>
 <button class="btn ghost">Save</button></div></div></form>{{end}}
 <p class="mut small">See <a href="/node/">Run a node</a>.</p></div>
 {{template "operator" .}}
+{{if or .Connectors .Pilots}}{{template "connectors" .}}{{end}}
 {{end}}
 {{if or .NewKey .NewNode}}<script>`+secretScript+`</script>
 {{else if .SignedIn}}<form method="post" action="/account/logout"><button class="btn ghost">Sign out</button></form>{{end}}
@@ -859,6 +874,64 @@ You agreed on {{day .ContactSince}}{{with .ContactFrom}} (the address is from {{
 {{else}}<p class="mut">Not available for this account.</p>{{end}}{{end}}
 <p class="mut small">Never shown publicly and never sent to nodes. Turning it off deletes the address at once.
 See <a href="/about/privacy/">Privacy</a>.</p></div>{{end}}
+{{define "connectors"}}{{range $c := .Connectors}}<div class="card" id="connector-{{$c.ID}}"><h2>{{$c.Name}}</h2>
+{{range $c.Links}}<div class="link" data-link-user="{{.User}}"><p>Linked to {{$c.Name}} user <strong>{{.User}}</strong>{{if .Claimed}} (claimed){{end}}.
+Its pilots run as your nodes, with your settings below.</p>
+{{if .Key}}{{if .Command}}<p>To attach a machine with BOINC installed, run:</p>
+<code class="key" data-attach-command>{{.Command}}</code>{{else}}<p>To attach a machine, add the project <code>{{$c.AttachURL}}</code> with this key:</p>
+<code class="key" data-attach-key>{{.Key}}</code>{{end}}
+<p class="hint">The key can only attach machines to this {{$c.Name}} account, nothing else. Keep it to yourself anyway.</p>{{end}}
+{{if .Login}}<p>In BOINC Manager: Add project, <code>{{$c.AttachURL}}</code>, "existing account", and log in with
+<code data-login>{{.Login}}</code> and the password you chose here (without one, use the command above).</p>
+<form class="form" method="post" action="/account/connectors/{{$c.ID}}/email"><input type="hidden" name="user" value="{{.User}}">
+<div class="field"><label for="own-email-{{.User}}">Use my own email address at {{$c.Name}}</label>
+<div class="row"><input id="own-email-{{.User}}" type="email" name="email" required maxlength="254" autocomplete="email"><button class="btn secondary">Use it</button></div>
+<p class="hint">Needed for one cross-project id (and Gridcoin). We pass it to {{$c.Name}} and delete it here as soon as {{$c.Name}}
+has it; {{$c.Name}} then sends its own confirmation mail.</p></div></form>
+{{else if .Created}}<p class="mut small">This {{$c.Name}} account uses your own email address.</p>{{end}}</div>{{end}}
+{{with $c.Pending}}<p role="status" data-request-pending="{{.Kind}}"><span class="badge busy">Waiting</span> {{$c.Name}} is {{.What}} (asked {{.Since.Format "15:04 UTC"}}).
+Reload this page in a few seconds.</p>{{end}}
+{{with $c.Failed}}<p role="alert" data-request-failed="{{.Kind}}"><span class="badge off">Did not work</span> {{.What}}: {{.Error}}.</p>{{end}}
+{{with $c.Done}}{{if eq .Kind "set_email"}}<p role="status" data-request-done="{{.Kind}}">{{$c.Name}} has your address now, and we deleted it here.</p>{{end}}{{end}}
+{{if not $c.Pending}}{{if not $c.Links}}<form class="form" method="post" action="/account/connectors/{{$c.ID}}/run"><h3>Run on {{$c.Name}}</h3>
+<p>Crunch for AIs@home with the {{$c.Name}} client you may already run. We make a {{$c.Name}} account for you and show you how to
+attach your machine; its pilots then serve as your nodes and earn {{$c.Name}} credit.</p>
+<fieldset class="field"><legend>Email address at {{$c.Name}}</legend>
+<label class="check"><input type="radio" name="address" value="pseudonymous" checked><span>A made-up address, so {{$c.Name}} never
+learns yours (we do not store it either)</span></label>
+<label class="check"><input type="radio" name="address" value="own"><span>My own address (needed for one cross-project id and Gridcoin;
+we pass it on and delete it here)</span></label>
+<input type="email" name="email" maxlength="254" autocomplete="email" aria-label="Your own email address"></fieldset>
+<div class="field"><label for="run-name-{{$c.ID}}">Display name (public in {{$c.Name}}'s statistics; empty: a made-up one)</label>
+<input id="run-name-{{$c.ID}}" name="name" maxlength="40"></div>
+<div class="field"><label for="run-pw-{{$c.ID}}">Password for BOINC Manager and the {{$c.Name}} site (optional, 8 or more characters)</label>
+<input id="run-pw-{{$c.ID}}" type="password" name="password" maxlength="128" autocomplete="new-password">
+<p class="hint">Choose it now: changing it later means attaching your machines again. Only {{$c.Name}} keeps it, as a hash; we keep nothing.
+Without one, attach with the command line.</p></div>
+<div class="actions"><button class="btn">Run on {{$c.Name}}</button></div></form>{{end}}
+<form class="form" method="post" action="/account/connectors/{{$c.ID}}/claim"><h3>Claim a {{$c.Name}} account</h3>
+<p>Already crunching for AIs@home on {{$c.Name}}? Your machines' work is kept under an unclaimed account until you claim it. Paste your
+{{$c.Name}} account key{{if $c.KeyURL}} from <a href="{{$c.KeyURL}}">this page</a> (signed in to {{$c.Name}}){{end}}: the
+attach-only key, which looks like <code>123456_</code> and 32 letters and digits.</p>
+<div class="field"><label for="claim-key-{{$c.ID}}">{{$c.Name}} account key</label>
+<div class="row"><input id="claim-key-{{$c.ID}}" name="key" required maxlength="200" autocomplete="off" spellcheck="false"><button class="btn secondary">Claim</button></div></div></form>{{end}}
+</div>{{end}}
+<div class="card" id="pilots"><div class="card-head"><h2>Your pilots</h2>{{if .Account.PilotChatOff}}<span class="badge off">Science only</span>{{else}}<span class="badge on">Chat on</span>{{end}}</div>
+<p>A pilot is a serving session that a connector such as BOINC runs on your machine. It always serves science, which carries no
+personal data. Unless you choose science only, it also serves people's chats, opencode and API requests, like any node.</p>
+<p>Whoever runs a machine can read what it serves. The network strips who asked and sends no personal data to volunteers' machines,
+but that is <strong>hardened, not confidential</strong>, and the <a href="/about/terms/">node-operator terms</a> apply: do not log or
+look at what passes through.</p>
+{{if not .PilotsChat}}<p class="mut" data-pilots-science-only>For now every pilot serves science only, whatever you choose here: people's chats reach
+volunteers' machines only once the anti-retention measures and the privacy notice for them are in place.</p>{{end}}
+<form method="post" action="/account/pilots/chat">{{if .Account.PilotChatOff}}<input type="hidden" name="chat" value="on"><button class="btn secondary">Allow chat on my pilots</button>
+{{else}}<input type="hidden" name="chat" value="off"><button class="btn secondary">Science only on my pilots</button>{{end}}</form>
+{{if .Pilots}}<div class="table-wrap"><table><tr><th>Pilot</th><th>State</th><th>Host</th><th>Started</th><th class="num">Served</th><th class="num">Answers</th><th class="num">Credit</th></tr>
+{{range .Pilots}}<tr data-pilot-id="{{.ID}}"><td><code>{{.ID}}</code></td><td><span class="badge">{{.State}}</span></td><td class="mut">{{.Host}}</td>
+<td class="mut">{{.Started.Format "2006-01-02 15:04"}}</td><td class="num">{{.Served}}</td><td class="num">{{.Requests}}</td>
+<td class="num">{{.Credit}}{{if not .Final}} <span class="mut small">pending</span>{{end}}</td></tr>{{end}}</table></div>
+<p class="hint">Pilot credit is granted through the connector (BOINC's own statistics), 24 hours after a pilot ends; it is not in the
+credit above.</p>{{else}}<p class="mut">No pilots yet.</p>{{end}}</div>{{end}}
 {{define "secret"}}<h1 id="secret-title">{{.Title}}</h1>
 <div class="card accent"><p><strong>You will not see this again.</strong> Copy it now and keep it somewhere safe: only a hash
 of it is stored, so nobody can show it to you later.</p>
