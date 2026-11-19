@@ -345,7 +345,7 @@ func (s *scienceDB) backup(now time.Time) (bool, error) {
 
 // scrubCopy blanks what a copy must not keep: the addresses, password hashes and keys of connector
 // requests still open when it was made (connector_requests.go keeps them only while a step needs
-// them). secure_delete overwrites the old values in the file rather than leaving them in free pages.
+// them). Those requests are failed in the copy: restored, they could not be carried out without them. secure_delete overwrites the old values in the file rather than leaving them in free pages.
 func scrubCopy(path string) error {
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=secure_delete(1)")
 	if err != nil {
@@ -355,8 +355,10 @@ func scrubCopy(path string) error {
 	db.SetMaxOpenConns(1)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_, err = db.ExecContext(ctx, `UPDATE connector_requests SET email = '', passwd_hash = '', attach_key = ''
-		WHERE email != '' OR passwd_hash != '' OR attach_key != ''`)
+	_, err = db.ExecContext(ctx, `UPDATE connector_requests SET email = '', passwd_hash = '', attach_key = '',
+		state = CASE WHEN state IN ('pending', 'verified') THEN 'failed' ELSE state END,
+		error = CASE WHEN state IN ('pending', 'verified') THEN 'interrupted by a restore; please try again' ELSE error END
+		WHERE email != '' OR passwd_hash != '' OR attach_key != '' OR state IN ('pending', 'verified')`)
 	return err
 }
 

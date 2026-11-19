@@ -230,6 +230,23 @@ func mergeOperatorTerms(t, o *Account) {
 	}
 }
 
+// linkedWithKey reports whether account id holds connector's user with attach key key (a repeated
+// answer to a request that linked it).
+func (s *AccountStore) linkedWithKey(id, connector, user, key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.f.linkOwner(connector, user)
+	if a == nil || a.ID != id {
+		return false
+	}
+	for _, l := range a.Links {
+		if l.Connector == connector && l.User == user {
+			return key == "" || l.AttachKey == key
+		}
+	}
+	return false
+}
+
 // linkHolder returns the id and status of the account linked to connector's user, if any.
 func (s *AccountStore) linkHolder(connector, user string) (id, status string) {
 	s.mu.Lock()

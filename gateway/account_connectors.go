@@ -1,5 +1,5 @@
 // The account page's side of connectors (connector_requests.go): "Run on BOINC", "Claim a BOINC
-// account", the attach steps of a linked user, the own-address change, the "chat on my pilots" switch
+// account", the attach steps of a linked user, the "chat on my pilots" switch
 // and the list of the account's pilots. Forms like the rest of the page: no script.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/mail"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -30,7 +31,6 @@ type connectorCard struct {
 	Links                       []linkRow
 	Pending                     *requestRow // a request waiting for the connector
 	Failed                      *requestRow // the newest request, if it failed in the last day
-	Done                        *requestRow // the newest request, if it finished in the last 10 minutes
 }
 
 type linkRow struct {
@@ -122,8 +122,6 @@ func (g *Gateway) connectorData(d *pageData, a Account) {
 				card.Pending = row
 			case newest && q.State == reqFailed && now.Sub(q.Updated) < 24*time.Hour:
 				card.Failed = row
-			case newest && q.State == reqDone && now.Sub(q.Updated) < 10*time.Minute:
-				card.Done = row
 			}
 			newest = false
 		}
@@ -250,52 +248,31 @@ func (g *Gateway) handleConnectorRun(w http.ResponseWriter, r *http.Request) {
 	g.connectorDone(w, r, c)
 }
 
-// handleConnectorClaim is "Claim a BOINC account": a claim request with the pasted key.
+// accountKeyRe: a full account key (BOINC's authenticator: 16 random bytes in hex).
+var accountKeyRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// handleConnectorClaim is "Claim a BOINC account": a claim request with the pasted account key. Not
+// the weak key: BOINC means that one to be shared with whoever computes for the owner.
 func (g *Gateway) handleConnectorClaim(w http.ResponseWriter, r *http.Request) {
 	id, c, ok := g.connectorForm(w, r)
 	if !ok {
 		return
 	}
-	key := strings.TrimSpace(r.FormValue("key"))
-	m := claimKeyRe.FindStringSubmatch(key)
-	if m == nil {
-		g.formError(w, r, id, fmt.Errorf("that is not a %s account key: it looks like 123456_ followed by 32 letters and digits", c.Accounts.Name))
+	key := strings.ToLower(strings.TrimSpace(r.FormValue("key")))
+	if !accountKeyRe.MatchString(key) {
+		msg := "that is not a %s account key: it is 32 letters and digits, at the top of %s's Account keys page"
+		if claimKeyRe.MatchString(key) {
+			msg = "that is the weak account key, which can be shared: paste the account key at the top of %s's Account keys page instead (it proves the account is yours; %s checks it, we do not keep it)"
+			g.formError(w, r, id, fmt.Errorf(msg, c.Accounts.Name, c.Accounts.Name))
+			return
+		}
+		g.formError(w, r, id, fmt.Errorf(msg, c.Accounts.Name, c.Accounts.Name))
 		return
 	}
-	a, _, _ := g.accounts.Get(id)
-	if slices.ContainsFunc(a.Links, func(l AccountLink) bool { return l.Connector == c.ID && l.User == m[1] }) {
-		g.formError(w, r, id, fmt.Errorf("this %s account is linked to your account already", c.Accounts.Name))
-		return
-	}
-	q := &connRequest{Connector: c.ID, Kind: reqClaim, Account: id, User: m[1], AttachKey: key}
-	if err := g.sci.addRequest(q, g.pilotNow()); err != nil {
-		g.formError(w, r, id, err)
-		return
-	}
-	g.log.Info("connector request", "connector", c.ID, "request", q.ID, "kind", q.Kind)
-	g.connectorDone(w, r, c)
-}
-
-// handleConnectorEmail gives a user made here with a pseudonymous address the person's own.
-func (g *Gateway) handleConnectorEmail(w http.ResponseWriter, r *http.Request) {
-	id, c, ok := g.connectorForm(w, r)
-	if !ok {
-		return
-	}
-	user := r.FormValue("user")
-	a, _, _ := g.accounts.Get(id)
-	if !slices.ContainsFunc(a.Links, func(l AccountLink) bool {
-		return l.Connector == c.ID && l.User == user && l.Via == LinkCreated && !l.OwnEmail
-	}) {
-		g.formError(w, r, id, fmt.Errorf("only a %s account made here with a pseudonymous address can switch to your own", c.Accounts.Name))
-		return
-	}
-	addr, err := ownAddress(r.FormValue("email"))
-	if err != nil {
-		g.formError(w, r, id, err)
-		return
-	}
-	q := &connRequest{Connector: c.ID, Kind: reqSetEmail, Account: id, User: user, Email: addr, OwnEmail: true}
+	// The user is the account key's, which only the connector knows: it answers with it. Linked to this
+	// account already, the claim refreshes the attach key (a password or address change at BOINC
+	// changes it).
+	q := &connRequest{Connector: c.ID, Kind: reqClaim, Account: id, AttachKey: key}
 	if err := g.sci.addRequest(q, g.pilotNow()); err != nil {
 		g.formError(w, r, id, err)
 		return

@@ -6,12 +6,13 @@
 //	             person's display name, a pseudonymous address (or their own) and, if they chose one,
 //	             their password's hash, and answers with the user id and its attach-only key; the
 //	             account is linked to that user.
-//	claim        "Claim a BOINC account": the person pastes the attach-only key the connector shows
-//	             them ("<user>_<secret>": BOINC's weak account key); the connector checks it against
-//	             its own records and the user is linked to the account, merging the unclaimed account
-//	             that user's pilots made (claimLink).
-//	set_email    the person's own address for a user created with a pseudonymous one (BOINC:
-//	             am_set_info.php).
+//	claim        "Claim a BOINC account": the person pastes their full account key (BOINC's
+//	             authenticator: it logs in to the account, unlike the weak key, which BOINC means to be
+//	             shared); the connector looks the user up by it (BOINC: am_get_info.php) and answers the
+//	             user id and its attach-only key, and the user is linked to the account, merging the
+//	             unclaimed account that user's pilots made (claimLink).
+//	set_email    no longer made (stock BOINC's am_set_info.php is disabled); a request left from before
+//	             is still carried out if the connector can.
 //
 // States: pending (the connector has not answered), verified (it said yes; the gateway is linking),
 // done, and failed (it said no, the link was refused, or it did not answer within
@@ -90,7 +91,7 @@ type connRequest struct {
 	UserName                            string // create_link: the display name
 	Email                               string // create_link, set_email: the address, while pending
 	PasswdHash                          string // create_link: the password's hash, while pending ("" = none chosen)
-	AttachKey                           string // claim: the key to check; create_link: the answer's key; until done
+	AttachKey                           string // claim: the account key to check, then the answer's attach key; create_link: the answer's; until done
 	OwnEmail                            bool
 	From                                string // the unclaimed account merged (verified, done)
 	Error                               string
@@ -227,6 +228,9 @@ func (s *scienceDB) verifyRequest(id, user, key, from string, now time.Time) (bo
 		return false, s.fail("request verify", "", err)
 	}
 	n, _ := res.RowsAffected()
+	if n == 1 {
+		s.dropWAL()
+	}
 	return n == 1, nil
 }
 
@@ -242,7 +246,34 @@ func (s *scienceDB) failRequest(id, msg string, now time.Time, states ...string)
 		return false, s.fail("request fail", "", err)
 	}
 	n, _ := res.RowsAffected()
+	if n == 1 {
+		s.dropWAL()
+	}
 	return n == 1, nil
+}
+
+// setRequestFrom records the unclaimed account a verified request merged.
+func (s *scienceDB) setRequestFrom(id, from string) error {
+	ctx, cancel := pilotCtx()
+	defer cancel()
+	if _, err := s.db.ExecContext(ctx, `UPDATE connector_requests SET from_account = ? WHERE id = ? AND state = 'verified'`, from, id); err != nil {
+		return s.fail("request from", "", err)
+	}
+	return nil
+}
+
+// dropWAL checkpoints the WAL and truncates it after a write that blanked a request's address, hash
+// or key: secure_delete overwrites the database file's pages, but older copies of them stay in the WAL
+// until it is truncated.
+func (s *scienceDB) dropWAL() {
+	if s.path == "" {
+		return
+	}
+	ctx, cancel := pilotCtx()
+	defer cancel()
+	if _, err := s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil && s.log != nil {
+		s.log.Warn("science database: WAL not truncated after blanking a request", "err", err)
+	}
 }
 
 // completeRequest ends a verified request: the pilot records and daily credit of the merged account
@@ -276,6 +307,7 @@ func (s *scienceDB) completeRequest(id, from, to string, now time.Time) error {
 	if err := tx.Commit(); err != nil {
 		return s.fail("request complete", "", err)
 	}
+	s.dropWAL()
 	return nil
 }
 
@@ -284,14 +316,19 @@ func (s *scienceDB) completeRequest(id, from, to string, now time.Time) error {
 func (s *scienceDB) expireRequests(now time.Time) error {
 	ctx, cancel := pilotCtx()
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx, `UPDATE connector_requests SET state = 'failed', error = ?, email = '', passwd_hash = '',
+	res, err := s.db.ExecContext(ctx, `UPDATE connector_requests SET state = 'failed', error = ?, email = '', passwd_hash = '',
 		attach_key = '', updated_at = ? WHERE state = 'pending' AND created_at <= ?`,
-		"no answer in time; please try again", ptime(now), ptime(now.Add(-connectorRequestTTL))); err != nil {
+		"no answer in time; please try again", ptime(now), ptime(now.Add(-connectorRequestTTL)))
+	if err != nil {
 		return s.fail("request expire", "", err)
 	}
+	expired, _ := res.RowsAffected()
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM connector_requests WHERE state IN ('done', 'failed') AND updated_at <= ?`,
 		ptime(now.Add(-connectorRequestKeep))); err != nil {
 		return s.fail("request expire", "", err)
+	}
+	if expired > 0 {
+		s.dropWAL()
 	}
 	return nil
 }
@@ -341,13 +378,14 @@ func (s *scienceDB) accountPilots(account string, limit int) ([]*Pilot, error) {
 // requestView is a pending request as its connector sees it: what it needs to carry it out, never
 // the account that asked.
 type requestView struct {
-	ID       string    `json:"id"`
-	Kind     string    `json:"kind"`
-	Created  time.Time `json:"created_at"`
-	User     string    `json:"user,omitempty"`      // claim, set_email: the connector's user
-	Key      string    `json:"key,omitempty"`       // claim: the key to check for that user
-	UserName string    `json:"user_name,omitempty"` // create_link: the display name
-	Email    string    `json:"email,omitempty"`     // create_link, set_email: the address to give the user
+	ID      string    `json:"id"`
+	Kind    string    `json:"kind"`
+	Created time.Time `json:"created_at"`
+	User    string    `json:"user,omitempty"` // set_email: the connector's user
+	// AccountKey (claim): the full account key the person gave; the connector finds the user by it.
+	AccountKey string `json:"account_key,omitempty"`
+	UserName   string `json:"user_name,omitempty"` // create_link: the display name
+	Email      string `json:"email,omitempty"`     // create_link, set_email: the address to give the user
 	// PasswdHash (create_link): MD5 hex of the person's password followed by the lower-case address
 	// (BOINC's passwd_hash), or none: then the connector picks a random password.
 	PasswdHash string `json:"passwd_hash,omitempty"`
@@ -360,7 +398,7 @@ func (q *connRequest) view() requestView {
 	case reqCreateLink:
 		v.UserName, v.PasswdHash = q.UserName, q.PasswdHash
 	case reqClaim:
-		v.User, v.Key = q.User, q.AttachKey
+		v.AccountKey = q.AttachKey
 	case reqSetEmail:
 		v.User = q.User
 	}
@@ -384,6 +422,23 @@ func (g *Gateway) handleRequestList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"requests": out})
 }
 
+var (
+	emailLikeRe = regexp.MustCompile(`[^\s@]+@[^\s@]+`)
+	hexRunRe    = regexp.MustCompile(`[0-9A-Fa-f]{24,}`)
+)
+
+// redactRequestError takes out of a connector's error text what the person sent it (address, password
+// hash, keys) and anything that looks like an address or a key, so that the failed record keeps none.
+func redactRequestError(s string, q *connRequest) string {
+	for _, v := range []string{q.Email, q.PasswdHash, q.AttachKey} {
+		if len(v) >= 4 {
+			s = strings.ReplaceAll(s, v, "[redacted]")
+		}
+	}
+	s = emailLikeRe.ReplaceAllString(s, "[redacted]")
+	return hexRunRe.ReplaceAllString(s, "[redacted]")
+}
+
 // cleanRequestError keeps a connector's error text short, printable and on one line: the person sees it.
 func cleanRequestError(s string) string {
 	s = strings.Map(func(r rune) rune {
@@ -401,8 +456,9 @@ func cleanRequestError(s string) string {
 
 // handleRequestResult takes a connector's answer to a pending request:
 //
-//	{"ok": true, "user": "<id>", "key": "<user>_<secret>"}   create_link: the user it made and its attach key
-//	{"ok": true}                                             claim (the key matches), set_email (done)
+//	{"ok": true, "user": "<id>", "key": "<user>_<secret>"}   create_link: the user it made; claim: the user
+//	                                                         the account key belongs to; and its attach key
+//	{"ok": true}                                             set_email (done)
 //	{"ok": false, "error": "<short text>"}                   it could not: the person sees the text
 //
 // The same answer again is accepted (the request as it is now); a different one after the first is a
@@ -421,34 +477,34 @@ func (g *Gateway) handleRequestResult(w http.ResponseWriter, r *http.Request) {
 	if !decodeTaskBody(w, r, maxConnectorBody, &body) {
 		return
 	}
+	if body.OK == nil {
+		apiError(w, http.StatusBadRequest, "ok: true or false")
+		return
+	}
+	g.linkMu.Lock() // the request is read and changed in one step: concurrent retries see each other
+	defer g.linkMu.Unlock()
 	q, err := g.sci.request(c.ID, r.PathValue("rid"))
 	if err != nil {
 		taskError(w, err)
 		return
 	}
-	if body.OK == nil {
-		apiError(w, http.StatusBadRequest, "ok: true or false")
-		return
-	}
 	now := g.pilotNow()
 	if !*body.OK {
-		msg := cleanRequestError(body.Error)
+		msg := redactRequestError(cleanRequestError(body.Error), q)
 		if msg == "" {
 			apiError(w, http.StatusBadRequest, "error: say why, in a few words (the person sees it)")
 			return
 		}
-		g.linkMu.Lock()
 		failed, err := g.sci.failRequest(q.ID, msg, now, reqPending) // a yes already taken stands
-		g.linkMu.Unlock()
 		g.answerRequest(w, c, q.ID, err, failed || q.State == reqFailed, "failed")
 		return
 	}
 	user, key := q.User, ""
 	switch q.Kind {
-	case reqCreateLink:
+	case reqCreateLink, reqClaim:
 		m := claimKeyRe.FindStringSubmatch(body.Key)
 		if !extIDRe.MatchString(body.User) || m == nil || m[1] != body.User {
-			apiError(w, http.StatusBadRequest, "user (the id it made) and key (its attach key, \"<user>_<secret>\") are needed")
+			apiError(w, http.StatusBadRequest, "user (the id it made, or the account key's) and key (its attach key, \"<user>_<secret>\") are needed")
 			return
 		}
 		user, key = body.User, body.Key
@@ -458,8 +514,6 @@ func (g *Gateway) handleRequestResult(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	g.linkMu.Lock()
-	defer g.linkMu.Unlock()
 	from := ""
 	if q.Kind != reqSetEmail {
 		if id, st := g.accounts.linkHolder(c.ID, user); st == StatusUnclaimed {
@@ -473,7 +527,7 @@ func (g *Gateway) handleRequestResult(w http.ResponseWriter, r *http.Request) {
 			g.finishRequest(v)
 		}
 	}
-	same := q.State == reqVerified || (q.State == reqDone && (q.Kind != reqCreateLink || q.User == user))
+	same := q.State == reqVerified || (q.State == reqDone && (q.Kind == reqSetEmail || g.accounts.linkedWithKey(q.Account, c.ID, user, key)))
 	g.answerRequest(w, c, q.ID, err, verified || same, "ok")
 }
 
@@ -517,7 +571,7 @@ func (g *Gateway) finishRequest(q *connRequest) {
 		case errors.Is(err, errLinkTaken):
 			refused = "this " + name + " account is linked to another AIs@home account"
 		case errors.Is(err, errClaimInactive):
-			refused = "only an active account can link a " + name + " account"
+			refused = "a closed account cannot link a " + name + " account"
 		case err != nil:
 			g.log.Error("connector request: accounts file not written; the sweep retries", "request", q.ID, "err", err)
 			return
@@ -531,6 +585,11 @@ func (g *Gateway) finishRequest(q *connRequest) {
 		}
 		if from == "" {
 			from = q.From // merged before a crash: the records still follow
+		} else if from != q.From {
+			// Kept before the records move, so a retry after a failed move still knows it.
+			if err := g.sci.setRequestFrom(q.ID, from); err != nil {
+				g.log.Error("connector request: merged account not recorded; the sweep retries", "request", q.ID, "err", err)
+			}
 		}
 		if err := g.sci.completeRequest(q.ID, from, q.Account, now); err != nil {
 			g.log.Error("connector request: pilot records not moved; the sweep retries", "request", q.ID, "err", err)
