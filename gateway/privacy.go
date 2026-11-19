@@ -98,7 +98,7 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`), // JWT
 	regexp.MustCompile(`\b(?:ak|nt)-[A-Za-z0-9_\-]{40,}`),                                       // AIs@home API keys and node tokens
 	regexp.MustCompile(`\bnt-n-[0-9a-f]{8}\.[A-Za-z0-9_\-]{40,}`),                               // AIs@home account node tokens
-	regexp.MustCompile(`\bpc-[0-9a-f]{12}\.[A-Za-z0-9_\-]{40,}`),                                // AIs@home pilot credentials
+	regexp.MustCompile(`pc-[0-9a-f]{12}\.[A-Za-z0-9_\-]{40,}`),                                  // AIs@home pilot credentials, also glued to a word
 	// Developer tokens that agents meet in .env files, CI configs and shell history. Each has a
 	// fixed marker and a long random part, so ordinary code does not match.
 	regexp.MustCompile(`\bgl(?:pat|dt|rt|ptt|soat)-[A-Za-z0-9_\-]{20,}` + // GitLab

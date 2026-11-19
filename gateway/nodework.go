@@ -76,6 +76,13 @@ func (s *nodeSpeeds) add(node string, tokens int, ms int64) {
 
 // get returns a node's output tokens per second over its last answers, and how many answers that
 // is (0: none recorded).
+// forget drops a node's speeds (a pilot that ended: its id never comes back).
+func (s *nodeSpeeds) forget(node string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, node)
+}
+
 func (s *nodeSpeeds) get(node string) (float64, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

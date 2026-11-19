@@ -94,7 +94,7 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) demandScience {
 		}
 	}
 	g.mu.Unlock()
-	if gap := d.Sessions - d.SlotsOnline*d.SessionsPerSlot; gap > 0 {
+	if gap := d.Sessions - d.SlotsOnline*d.SessionsPerSlot; gap > 0 && !trustedOnly { // pilots are never trusted
 		d.Pilots = (gap + d.SessionsPerSlot - 1) / d.SessionsPerSlot
 	}
 	return d

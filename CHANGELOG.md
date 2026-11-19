@@ -158,6 +158,13 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **Pilots are never trusted, and a report always drops one.** A connector's `trusted_users` now only
+  lets those pilots serve chat before `pilots_chat_enabled`; they no longer receive personal data
+  (a credential copied on its way to a host must not). A ban, unlink or chat switch made while a
+  pilot connects applies when it registers, not at the next sweep. A reported pilot's connection is
+  closed even when its record cannot be written or read back. An account's own pilot gets no
+  "own node" preference and counts toward its operator's share; a pilot credential glued to a word
+  in a prompt is redacted too. (gateway)
 - **A gateway that fails to start leaves nothing running.** It used to start its mail worker and
   task sweeper before steps that can fail (the keys, the state directory); now every such step comes
   first, what they opened is closed on failure, and background work starts last. (gateway)
