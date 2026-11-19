@@ -271,9 +271,33 @@ func (s *scienceDB) dropWAL() {
 	}
 	ctx, cancel := pilotCtx()
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil && s.log != nil {
-		s.log.Warn("science database: WAL not truncated after blanking a request", "err", err)
+	var busy, logFrames, done int
+	err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &done)
+	if err == nil && busy == 0 {
+		s.walDirty.Store(false)
+		return
 	}
+	s.walDirty.Store(true) // the request sweep tries again
+	if s.log != nil {
+		s.log.Warn("science database: WAL not truncated after blanking a request; retrying at the next sweep", "busy", busy, "err", err)
+	}
+}
+
+// failOldClaims fails the pending claims made before a claim needed the full account key (they hold a
+// weak key and a user id): no connector can check them as an account key.
+func (s *scienceDB) failOldClaims(now time.Time) error {
+	ctx, cancel := pilotCtx()
+	defer cancel()
+	res, err := s.db.ExecContext(ctx, `UPDATE connector_requests SET state = 'failed', error = ?, attach_key = '', updated_at = ?
+		WHERE kind = 'claim' AND state = 'pending' AND ext_user != ''`,
+		"claims now need your full account key (not the weak key); please claim again", ptime(now))
+	if err != nil {
+		return s.fail("request old claims", "", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.dropWAL()
+	}
+	return nil
 }
 
 // completeRequest ends a verified request: the pilot records and daily credit of the merged account
@@ -410,6 +434,13 @@ func (g *Gateway) handleRequestList(w http.ResponseWriter, r *http.Request) {
 	if c == nil {
 		return
 	}
+	g.linkMu.Lock()
+	err := g.sci.failOldClaims(g.pilotNow()) // never listed as an account key
+	g.linkMu.Unlock()
+	if err != nil {
+		taskError(w, err)
+		return
+	}
 	qs, err := g.sci.requests(c.ID, reqPending, "", connectorRequestList)
 	if err != nil {
 		taskError(w, err)
@@ -527,7 +558,10 @@ func (g *Gateway) handleRequestResult(w http.ResponseWriter, r *http.Request) {
 			g.finishRequest(v)
 		}
 	}
-	same := q.State == reqVerified || (q.State == reqDone && (q.Kind == reqSetEmail || g.accounts.linkedWithKey(q.Account, c.ID, user, key)))
+	// The same answer again: a verified request against the answer it stored, a done one against the link
+	// that answer made.
+	same := (q.State == reqVerified && (q.Kind == reqSetEmail || (q.User == user && q.AttachKey == key))) ||
+		(q.State == reqDone && (q.Kind == reqSetEmail || g.accounts.linkedWithKey(q.Account, c.ID, user, key)))
 	g.answerRequest(w, c, q.ID, err, verified || same, "ok")
 }
 
@@ -565,6 +599,15 @@ func (g *Gateway) finishRequest(q *connRequest) {
 		if q.Kind == reqCreateLink {
 			link.Via, link.OwnEmail = LinkCreated, q.OwnEmail
 		}
+		// Save the unclaimed account the merge will delete before it does (linkMu: no bind changes the
+		// holder meanwhile), so a crash after the merge still leaves the sweep its id.
+		if id, st := g.accounts.linkHolder(q.Connector, q.User); st == StatusUnclaimed && id != q.From {
+			if err := g.sci.setRequestFrom(q.ID, id); err != nil {
+				g.log.Error("connector request: merged account not recorded; the sweep retries", "request", q.ID, "err", err)
+				return
+			}
+			q.From = id
+		}
 		from, err := g.accounts.claimLink(q.Account, q.Connector, q.User, link, now)
 		var refused string
 		switch {
@@ -585,11 +628,6 @@ func (g *Gateway) finishRequest(q *connRequest) {
 		}
 		if from == "" {
 			from = q.From // merged before a crash: the records still follow
-		} else if from != q.From {
-			// Kept before the records move, so a retry after a failed move still knows it.
-			if err := g.sci.setRequestFrom(q.ID, from); err != nil {
-				g.log.Error("connector request: merged account not recorded; the sweep retries", "request", q.ID, "err", err)
-			}
 		}
 		if err := g.sci.completeRequest(q.ID, from, q.Account, now); err != nil {
 			g.log.Error("connector request: pilot records not moved; the sweep retries", "request", q.ID, "err", err)
@@ -619,6 +657,10 @@ func (g *Gateway) sweepRequests() {
 	defer g.linkMu.Unlock()
 	if err := g.sci.expireRequests(g.pilotNow()); err != nil {
 		return
+	}
+	g.sci.failOldClaims(g.pilotNow())
+	if g.sci.walDirty.Load() {
+		g.sci.dropWAL()
 	}
 	qs, err := g.sci.verifiedRequests()
 	if err != nil {

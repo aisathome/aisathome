@@ -9,6 +9,13 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **Connector review fixes.** A second withdrawal of the operator terms never moves the first one back
+  (a replayed acceptance stays withdrawn); a WAL truncation a reader blocks is retried; claims made
+  with a weak key before the account-key change fail with a message instead of reaching the connector;
+  a verified request accepts only its own answer again; the unclaimed account a claim merges is
+  recorded before it is deleted; daily copies keep verified requests so a restore can finish them; a
+  reclaim stops showing the made-up BOINC login. (gateway)
+
 - **A BOINC claim needs the full account key.** "Claim a BOINC account" takes the account key at the
   top of BOINC's "Account keys" page; the weak account key, which BOINC means to be shared, no longer
   claims. The connector finds the user by it and answers the user and its attach key; claiming again

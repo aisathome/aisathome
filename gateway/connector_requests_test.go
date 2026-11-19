@@ -805,6 +805,21 @@ func TestScienceCopyScrubsRequests(t *testing.T) {
 	if state != reqFailed { // restored, it could not be carried out without them
 		t.Errorf("the copy's open request is %s", state)
 	}
+	// A verified request keeps its answer's attach key and state: restored, it can still finish.
+	v := &connRequest{Connector: "boinc", Kind: reqClaim, Account: "gh:2", AttachKey: acctKey("9")}
+	s.addRequest(v, time.Now())
+	s.verifyRequest(v.ID, "9", weakKey("9"), "", time.Now())
+	day2 := day.AddDate(0, 0, 1)
+	if _, err := s.backup(day2); err != nil {
+		t.Fatal(err)
+	}
+	c2, _ := sql.Open("sqlite", filepath.Join(dir, backupName(day2)))
+	defer c2.Close()
+	var vstate, vkey string
+	c2.QueryRow(`SELECT state, attach_key FROM connector_requests WHERE id = ?`, v.ID).Scan(&vstate, &vkey)
+	if vstate != reqVerified || vkey != weakKey("9") {
+		t.Errorf("the copy's verified request: %s %q", vstate, vkey)
+	}
 	if live, _ := s.request("", q.ID); live.Email != "ada@example.org" {
 		t.Error("the live request lost its address")
 	}
@@ -1044,5 +1059,116 @@ func TestConnectorTermsRetryAfterWithdrawal(t *testing.T) {
 	r.g.accounts.WithdrawOperatorTerms(id78)
 	if _, applied, terms, _ := r.g.accounts.connectorTerms("boinc", "78", OperatorTermsVersion, soon, real.Add(time.Second)); applied || terms {
 		t.Error("a retry of an acceptance from ahead of our clock undid the withdrawal")
+	}
+}
+
+// Second gate review (2026-11-19): withdrawals only move forward; a busy WAL checkpoint is retried;
+// claims made with a weak key before the upgrade fail cleanly; a verified request's retry must repeat
+// its answer; the account a merge deletes is saved first; a copy keeps verified requests; a reclaim
+// stops showing the made-up login.
+func TestConnectorReview2(t *testing.T) {
+	r := newLinkRig(t, nil)
+	// Withdrawals only move forward.
+	real := time.Now()
+	soon := real.Add(30 * time.Second)
+	r.g.accounts.connectorTerms("boinc", "70", OperatorTermsVersion, soon, real)
+	id70, _ := r.g.accounts.linkHolder("boinc", "70")
+	r.g.accounts.WithdrawOperatorTerms(id70)
+	r.g.accounts.WithdrawOperatorTerms(id70) // again, before soon
+	if a, _, _ := r.g.accounts.Get(id70); a.TermsWithdrawn == nil || a.TermsWithdrawn.Before(soon) {
+		t.Fatalf("the second withdrawal moved it back: %v", a.TermsWithdrawn)
+	}
+	if _, applied, _, _ := r.g.accounts.connectorTerms("boinc", "70", OperatorTermsVersion, soon, real.Add(time.Second)); applied {
+		t.Error("a replayed acceptance undid two withdrawals")
+	}
+
+	// A claim from before the upgrade (a weak key and a user id) is failed, never listed as an account key.
+	r.addAccount("gh:41", StatusActive)
+	old := &connRequest{Connector: "boinc", Kind: reqClaim, Account: "gh:41", User: "5", AttachKey: weakKey("5")}
+	if err := r.g.sci.addRequest(old, r.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if l := r.pending(); len(l) != 0 {
+		t.Fatalf("an old claim listed: %v", l)
+	}
+	if got, _ := r.g.sci.request("boinc", old.ID); got.State != reqFailed || got.AttachKey != "" || !strings.Contains(got.Error, "full account key") {
+		t.Fatalf("old claim: %+v", got)
+	}
+
+	// A verified request's retry must repeat its answer.
+	pid, _ := r.create()
+	r.bind(pid, "5")
+	r.addAccount("gh:42", StatusActive)
+	r.advance(time.Second)
+	r.claim("gh:42", "5")
+	rid := r.onlyPending()["id"].(string)
+	if ok, _ := r.g.sci.verifyRequest(rid, "5", weakKey("5"), "", r.clock()); !ok {
+		t.Fatal("not verified")
+	}
+	if w, _ := r.call("POST", requestsPath+"/"+rid, testConnectorKey, map[string]any{"ok": true, "user": "6", "key": weakKey("6")}, ""); w.Code != 409 {
+		t.Errorf("another answer to a verified request: HTTP %d", w.Code)
+	}
+
+	// The unclaimed account the merge will delete is saved before the accounts file changes: with the
+	// accounts file unwritable the request stays verified and names it.
+	p, _ := r.g.sci.pilot("boinc", pid)
+	dir := filepath.Dir(r.g.acfg.File)
+	os.Chmod(dir, 0o500)
+	q, _ := r.g.sci.request("boinc", rid)
+	r.g.linkMu.Lock()
+	r.g.finishRequest(q)
+	r.g.linkMu.Unlock()
+	os.Chmod(dir, 0o700)
+	if got, _ := r.g.sci.request("boinc", rid); got.State != reqVerified || got.From != p.account {
+		t.Fatalf("after a failed merge: %s from %q, want verified from %q", got.State, got.From, p.account)
+	}
+	r.g.sweepRequests()
+	if p, _ := r.g.sci.pilot("boinc", pid); p.account != "gh:42" {
+		t.Fatalf("the pilot belongs to %q after the sweep", p.account)
+	}
+
+	// A reclaim of a user made by Run on BOINC stops showing the made-up login.
+	r.addAccount("gh:43", StatusActive)
+	r.form("gh:43", "/account/connectors/boinc/run", nil)
+	r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true, "user": "430", "key": weakKey("430")})
+	if !strings.Contains(r.page("gh:43"), "data-login") {
+		t.Fatal("no login shown for a pseudonymous user")
+	}
+	r.advance(time.Second)
+	r.claim("gh:43", "430")
+	r.yes(r.onlyPending()["id"].(string))
+	if page := r.page("gh:43"); strings.Contains(page, "data-login") || !strings.Contains(page, "data-account-key-login") {
+		t.Error("after a reclaim the page still shows the made-up login")
+	}
+}
+
+// A WAL truncation a reader blocks is retried by the sweep.
+func TestRequestWALRetry(t *testing.T) {
+	r := newLinkRig(t, nil)
+	r.addAccount("gh:42", StatusActive)
+	r.form("gh:42", "/account/connectors/boinc/run", url.Values{"address": {"own"}, "email": {"ada@example.org"}})
+	rid := r.onlyPending()["id"].(string)
+	reader, err := sql.Open("sqlite", r.g.sci.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tx, err := reader.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	tx.QueryRow(`SELECT COUNT(*) FROM connector_requests`).Scan(&n) // holds a read snapshot of the WAL
+	r.answer(rid, map[string]any{"ok": false, "error": "no"})
+	if !r.g.sci.walDirty.Load() {
+		t.Fatal("a busy truncation was not noticed")
+	}
+	tx.Rollback()
+	r.g.sweepRequests()
+	if r.g.sci.walDirty.Load() {
+		t.Error("the sweep did not truncate the WAL")
+	}
+	if fi, err := os.Stat(r.g.sci.path + "-wal"); err == nil && fi.Size() != 0 {
+		t.Errorf("WAL %d bytes after the retry", fi.Size())
 	}
 }

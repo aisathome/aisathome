@@ -177,7 +177,9 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 					if link.AttachKey != "" {
 						l.AttachKey = link.AttachKey
 					}
-					if l.Via == "" {
+					if l.Via == "" || link.Via == LinkClaimed {
+						// A claim with the account key: the person manages that user at the connector
+						// now (maybe with their own address), so the page stops showing a made-up login.
 						l.Via, l.OwnEmail = link.Via, link.OwnEmail
 					}
 				}
