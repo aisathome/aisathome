@@ -122,6 +122,9 @@ func (s *AccountStore) WithdrawOperatorTerms(id string) error {
 			// after it, so a retry of that same record never undoes it.
 			t = a.OperatorTerms.At
 		}
+		if a.TermsWithdrawn != nil && a.TermsWithdrawn.After(t) {
+			t = *a.TermsWithdrawn // withdrawals only move forward: a second one never reopens the first's window
+		}
 		a.OperatorTerms, a.TermsWithdrawn = nil, &t
 		return nil
 	})

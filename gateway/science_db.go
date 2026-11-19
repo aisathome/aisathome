@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // the "sqlite" database/sql driver, pure Go
@@ -177,6 +178,9 @@ type scienceDB struct {
 	db   *sql.DB
 	path string       // "" in memory
 	log  *slog.Logger // for errors the client sees only as errScience; nil: slog's default
+	// walDirty: a WAL truncation after blanking a connector request did not complete (busy); the
+	// request sweep tries again (connector_requests.go, dropWAL).
+	walDirty atomic.Bool
 }
 
 // openScienceDB opens (or creates) dir/science.db and brings its schema up to date; dir "" opens
@@ -345,7 +349,7 @@ func (s *scienceDB) backup(now time.Time) (bool, error) {
 
 // scrubCopy blanks what a copy must not keep: the addresses, password hashes and keys of connector
 // requests still open when it was made (connector_requests.go keeps them only while a step needs
-// them). Those requests are failed in the copy: restored, they could not be carried out without them. secure_delete overwrites the old values in the file rather than leaving them in free pages.
+// them). Pending requests are failed in the copy: restored, they could not be carried out without them. secure_delete overwrites the old values in the file rather than leaving them in free pages.
 func scrubCopy(path string) error {
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=secure_delete(1)")
 	if err != nil {
@@ -355,10 +359,17 @@ func scrubCopy(path string) error {
 	db.SetMaxOpenConns(1)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	// Pending: what the connector needs goes, so the request fails. Verified: the connector has
+	// answered and the address and hash are gone already; the attach key it answered (attach-only) stays,
+	// so a restored copy can still finish the link and move the pilot records.
 	_, err = db.ExecContext(ctx, `UPDATE connector_requests SET email = '', passwd_hash = '', attach_key = '',
-		state = CASE WHEN state IN ('pending', 'verified') THEN 'failed' ELSE state END,
-		error = CASE WHEN state IN ('pending', 'verified') THEN 'interrupted by a restore; please try again' ELSE error END
-		WHERE email != '' OR passwd_hash != '' OR attach_key != '' OR state IN ('pending', 'verified')`)
+		state = 'failed', error = 'interrupted by a restore; please try again' WHERE state = 'pending'`)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `UPDATE connector_requests SET email = '', passwd_hash = '',
+		attach_key = CASE WHEN state = 'verified' THEN attach_key ELSE '' END
+		WHERE email != '' OR passwd_hash != '' OR (attach_key != '' AND state != 'verified')`)
 	return err
 }
 
