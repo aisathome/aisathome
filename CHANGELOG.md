@@ -36,6 +36,17 @@ and **(site)** are live on aisathome.org once deployed.
   withheld if a guard held it, and stays out of the public ledger and `/stats/`. Public task views
   name the node class `pilot`. See "Connectors and pilots" in `docs/gateway.md` and
   `docs/credit.md`. (gateway)
+- **Linked accounts.** A connector with `accounts` set lets people link their account to its users
+  from the account page: "Run on BOINC" (the connector makes a user with a pseudonymous address, or
+  the person's own, and an optional password; the page then shows the attach command and the
+  Manager login), "Claim a BOINC account" (paste BOINC's attach-only account key; the unclaimed
+  account the user's pilots made is merged in, with its pilots, daily credit and probation start,
+  and the pilots reconnect as the account's), and switching a pseudonymous user to the person's own
+  address. Requests wait for the connector at `GET /v1/connectors/{id}/requests` and are answered at
+  `POST …/requests/{rid}`; only active accounts get links, and a user linked to another account is
+  never taken. The page also has the "Science only on my pilots" switch and the account's pilots.
+  The gateway keeps no connector user's address: an own address and the password hash live only in
+  the pending request. See "Linked accounts" in `docs/gateway.md`. (gateway)
 - **The node takes its id from a pilot credential** (`pc-<hex>.<secret>` gives `p-<hex>`), as from
   an account's node token. (node)
 

@@ -1,8 +1,9 @@
 // Accounts and connectors (decision 0020, addendum 2026-11-17): every user a connector names (a BOINC
 // user id) maps to one account here. An account linked to that user serves its pilots; without one,
 // the first pilot of that user creates an unclaimed account keyed by a link to it, which its person
-// claims later (the claim and linking from the account page come with the account work;
-// the operator links by hand with `accounts link`). The link is an id, never an address.
+// claims later from the account page (connector_requests.go: claimLink merges the unclaimed account
+// into theirs). The operator can also link by hand with `accounts link`. The link is an id, never an
+// address.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -13,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 )
 
@@ -95,8 +97,9 @@ func (s *AccountStore) SetPilotChat(id string, on bool) error {
 
 var errLinkTaken = errors.New("that connector user is linked to another account")
 
-// Link links account id to connector's user (operator: until the claim flow exists). A user may be
-// linked to one account only; an unclaimed account holding it must be claimed instead.
+// Link links account id to connector's user (the operator, `accounts link`). A user may be
+// linked to one account only; an unclaimed account holding it is claimed from the account page instead
+// (claimLink merges it).
 func (s *AccountStore) Link(id, connector, user string, now time.Time) error {
 	if !extIDRe.MatchString(user) || !projectID.MatchString(connector) {
 		return errors.New("connector: lower-case letters, digits, dashes; user: 1-64 letters, digits, '.', '_', ':' or '-'")
@@ -134,8 +137,98 @@ func (s *AccountStore) Unlink(id, connector, user string) error {
 	})
 }
 
+var errClaimInactive = errors.New("only an active account can link a connector's user")
+
+// claimLink links connector's user to account target after the connector vouched for it (it made
+// the user for target, or target proved it with the attach key). The rules:
+//   - target must be active (not waitlisted, banned or unclaimed);
+//   - a user linked to target already keeps its link (with the new attach key);
+//   - a user linked to an unclaimed account moves, and that account is merged into target: all its
+//     links move, target's probation starts at the earlier of the two first-node times, its chat
+//     switch is off if either was off, and the unclaimed account is deleted. Its id is returned so
+//     that the pilot records and their daily credit follow (scienceDB.completeRequest);
+//   - a user linked to any other account is not taken (errLinkTaken): the operator unlinks it first.
+//
+// Moving the link stops that user's connected pilots (pilotAccountState: the user is no longer the
+// old account's); they reconnect as target's once their records point there.
+func (s *AccountStore) claimLink(target, connector, user string, link AccountLink, now time.Time) (from string, err error) {
+	err = s.Update(func(f *AccountsFile) error {
+		from = ""
+		t := f.find(target)
+		if t == nil || t.Status != StatusActive {
+			return errClaimInactive
+		}
+		link.Connector, link.User = connector, user
+		o := f.linkOwner(connector, user)
+		switch {
+		case o == t: // linked already: a fresh key; how it came stays
+			for i := range t.Links {
+				if l := &t.Links[i]; l.Connector == connector && l.User == user {
+					if link.AttachKey != "" {
+						l.AttachKey = link.AttachKey
+					}
+					if l.Via == "" {
+						l.Via, l.OwnEmail = link.Via, link.OwnEmail
+					}
+				}
+			}
+			return nil
+		case o == nil:
+			link.Linked = now.UTC()
+			t.Links = append(t.Links, link)
+			return nil
+		case o.Status != StatusUnclaimed:
+			return errLinkTaken
+		}
+		for _, l := range o.Links {
+			if l.Connector == connector && l.User == user {
+				link.Linked = now.UTC()
+				l = link
+			}
+			t.Links = append(t.Links, l)
+		}
+		if o.FirstNode != nil && (t.FirstNode == nil || o.FirstNode.Before(*t.FirstNode)) {
+			first := *o.FirstNode
+			t.FirstNode = &first
+		}
+		t.PilotChatOff = t.PilotChatOff || o.PilotChatOff
+		f.Accounts = slices.DeleteFunc(f.Accounts, func(a *Account) bool { return a == o })
+		from = o.ID
+		return nil
+	})
+	if err != nil {
+		from = ""
+	}
+	return from, err
+}
+
+// linkHolder returns the id and status of the account linked to connector's user, if any.
+func (s *AccountStore) linkHolder(connector, user string) (id, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.f.linkOwner(connector, user); a != nil {
+		return a.ID, a.Status
+	}
+	return "", ""
+}
+
+// setLinkOwnEmail records that account id's link to connector's user now has the person's own
+// address at the connector (a set_email request done). A link that is gone is no error.
+func (s *AccountStore) setLinkOwnEmail(id, connector, user string) error {
+	return s.Update(func(f *AccountsFile) error {
+		if a := f.find(id); a != nil {
+			for i := range a.Links {
+				if l := &a.Links[i]; l.Connector == connector && l.User == user {
+					l.OwnEmail = true
+				}
+			}
+		}
+		return nil
+	})
+}
+
 // handleAccountSettings serves GET and PATCH /v1/account/settings for an account's own API key:
-// {"chat_on_pilots": bool}, the switch for its connector pilots (the account page gets it later).
+// {"chat_on_pilots": bool}, the switch for its connector pilots (the account page has it too: handlePilotChatForm).
 func (g *Gateway) handleAccountSettings(w http.ResponseWriter, r *http.Request) {
 	_, acct, ok := g.authenticate(r)
 	if !ok || acct == "" {

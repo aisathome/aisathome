@@ -203,7 +203,23 @@ type AccountLink struct {
 	Connector string    `json:"connector"`
 	User      string    `json:"user"`
 	Linked    time.Time `json:"linked"`
+	// AttachKey is the connector's attach-only key for that user (BOINC's weak account key: it can
+	// attach machines to the user and nothing else), kept so that the account page can show the
+	// attach steps at any time (decision 0020, map decision 5). "" for a link the operator made.
+	AttachKey string `json:"attach_key,omitempty"`
+	// Via says how the link came: LinkCreated (the connector made the user from the account page),
+	// LinkClaimed (the person proved it with the attach key), or "" (the operator).
+	Via string `json:"via,omitempty"`
+	// OwnEmail: the connector's user has the person's own address (chosen at creation or later),
+	// not the pseudonymous one. Which address is never stored here.
+	OwnEmail bool `json:"own_email,omitempty"`
 }
+
+// How a link came (AccountLink.Via).
+const (
+	LinkCreated = "created"
+	LinkClaimed = "claimed"
+)
 
 // EmailMAC is an email address as HMAC-SHA256 (hex) under the email key with KeyID.
 type EmailMAC struct {

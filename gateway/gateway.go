@@ -76,6 +76,9 @@ type Gateway struct {
 
 	// connCfgs: the config's connectors (connector.go); replaced on reload.
 	connCfgs atomic.Pointer[connectorTable]
+	// linkMu orders the steps that map a connector's user to an account: pilot binds and finishing
+	// connector requests (connector_requests.go).
+	linkMu sync.Mutex
 	// spendCap, if set, caps a connector's pilots by spend (demand): the hook for the monthly cap on
 	// feeding pilots with science. ok false: no cap.
 	spendCap func(connector string) (pilots int, ok bool)
@@ -250,6 +253,7 @@ func (g *Gateway) startBackground() {
 	g.every(keysFileCheck, g.checkKeysFile)
 	g.every(taskSweepEvery, g.tasks.sweepAll) // expired leases go back to the queue without a call
 	g.every(pilotSeenEvery, g.sweepPilots)    // pilots past their deadline end; connected ones are seen
+	g.every(connectorRequestSweep, g.sweepRequests)
 	if g.cfg.StateDir != "" {
 		g.every(saveEvery, func() {
 			if err := g.budget.save(); err != nil {

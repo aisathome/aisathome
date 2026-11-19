@@ -1,6 +1,7 @@
 // The gateway's science records store (decision 0021, point 7): an embedded SQLite database,
 // state_dir/science.db, for the records that are not tasks: campaigns and external results
-// (campaigns.go), connector pilots and their credit (pilots.go), and later others of the same kind.
+// (campaigns.go), connector pilots and their credit (pilots.go), connector requests
+// (connector_requests.go), and later others of the same kind.
 // Tasks stay one JSON file each (tasks.go).
 //
 // The driver is pure Go (modernc.org/sqlite), so the gateway still builds without cgo for any
@@ -143,6 +144,28 @@ var scienceMigrations = []string{
 		credit  REAL NOT NULL DEFAULT 0,
 		PRIMARY KEY (account, day)
 	) WITHOUT ROWID;`,
+	// 3: connector requests (connector_requests.go): what a signed-in person asked a connector to do
+	// for their account. The address, password hash and key are kept only while a step needs them,
+	// then blanked; finished requests are deleted after connectorRequestKeep. Times as in 2.
+	`CREATE TABLE connector_requests (
+		id           TEXT NOT NULL PRIMARY KEY,
+		connector    TEXT NOT NULL,
+		kind         TEXT NOT NULL CHECK (kind IN ('create_link', 'claim', 'set_email')),
+		account      TEXT NOT NULL,
+		state        TEXT NOT NULL CHECK (state IN ('pending', 'verified', 'done', 'failed')),
+		ext_user     TEXT NOT NULL DEFAULT '',
+		user_name    TEXT NOT NULL DEFAULT '',
+		email        TEXT NOT NULL DEFAULT '',
+		passwd_hash  TEXT NOT NULL DEFAULT '',
+		attach_key   TEXT NOT NULL DEFAULT '',
+		own_email    INTEGER NOT NULL DEFAULT 0,
+		from_account TEXT NOT NULL DEFAULT '',
+		error        TEXT NOT NULL DEFAULT '',
+		created_at   TEXT NOT NULL,
+		updated_at   TEXT NOT NULL
+	) WITHOUT ROWID;
+	CREATE INDEX connector_requests_by_state ON connector_requests (connector, state, created_at);
+	CREATE INDEX connector_requests_by_account ON connector_requests (account, created_at);`,
 }
 
 // scienceDB is the open database.

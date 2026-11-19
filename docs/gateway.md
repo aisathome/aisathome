@@ -596,7 +596,14 @@ gateway is BOINC-specific beyond the configuration.
   "sessions_per_slot": 2,
   "unsent_buffer": 2,
   "max_credit_per_pilot": 150000,
-  "max_credit_per_account_day": 1800000
+  "max_credit_per_account_day": 1800000,
+  "accounts": {
+    "name": "BOINC",
+    "attach_url": "https://boinc.aisathome.org/aisathome/",
+    "attach_command": "boinccmd --project_attach {url} {key}",
+    "key_url": "https://boinc.aisathome.org/aisathome/weak_auth.php",
+    "address_domain": "nomail.aisathome.org"
+  }
 }]
 ```
 
@@ -615,6 +622,7 @@ gateway is BOINC-specific beyond the configuration.
 | `sessions_per_slot` | Science sessions one GPU slot keeps busy (default 2: a session alternates model calls with its own tools). |
 | `unsent_buffer` | Created pilots no machine has taken yet, at most (default 2). |
 | `max_credit_per_pilot`, `max_credit_per_account_day` | Credit caps (default 150,000 and 1,800,000; `-1`: none). See `docs/credit.md`. |
+| `accounts` | Optional: people link their account to the connector's users from the account page ("Linked accounts" below). `name` as people know the connector; `attach_url` (https) what machines attach to; `attach_command` the one-line attach, `{url}` and `{key}` replaced; `key_url` (https) where people find the key to claim with; `address_domain` the domain of the pseudonymous addresses (mail to it should be dropped). |
 
 Connectors need accounts (a pilot serves as an account's node) and work best with a `state_dir`
 (the records are in `state_dir/science.db`; without one they are in memory).
@@ -634,6 +642,8 @@ refused):
 | `POST /v1/connectors/{id}/pilots/{pid}/reported` `{"outcome": "success\|error\|cancelled\|expired"}` | Its work item is done (or was cancelled): the pilot ends (`end_reason` `reported: <outcome>`) and its connection, if any, is closed. Idempotent |
 | `POST /v1/connectors/{id}/users/{user}/operator-terms` `{"version", "accepted_at", "country"}` | The connector's user accepted the operator terms (BOINC: the bridge, when BOINC records the user's ENROLL consent to `terms_of_use.txt`, which holds the operator terms). `version` the terms version accepted, `accepted_at` when (RFC 3339, not in the future), `country` optional: the ISO 3166-1 alpha-2 code the user states (or `other`). Recorded on the user's account, the linked one or a new unclaimed one; a later call with an older time does not replace it. Answer: `{"recorded", "current", "current_version", "account_kind"}`; `current` false means that version lets no pilot serve chat. The user's connected pilots follow within the call |
 | `GET /v1/connectors/{id}/pilots/{pid}/credit` | `{"pilot", "state", "final", "final_at", "credit", "withheld"}`: `credit` only once `final`; until then `final_at` says when (null while the pilot has not ended) |
+| `GET /v1/connectors/{id}/requests` | People's pending requests, oldest first (at most 50): `{"requests": [{"id", "kind", "created_at", …}]}`, see "Linked accounts" |
+| `POST /v1/connectors/{id}/requests/{rid}` | A request's result: `{"ok": true, "user", "key"}` (`create_link`), `{"ok": true}` (`claim`, `set_email`) or `{"ok": false, "error": "<short reason>"}`. The same answer again is accepted; another one after the first is 409 |
 
 A pilot's **credential** is `pc-<12 hex>.<secret>`; its id is `p-` and the same 12 hex digits, and
 the node agent takes its node id from the credential as it does from an account's node token. It
@@ -661,8 +671,8 @@ dropped connection as `connection lost`.
 At the bind the connector's user maps to an account: the one **linked** to that user, or, if none,
 a new **unclaimed** account (`cx:<32 hex>`, not derived from the user id) linked to it. Every pilot
 of that user lands there; its probation clock starts with its first pilot. An unclaimed account has
-no sign-in, keys or node tokens and does not count against `max_active`. Claiming it from the
-account page comes later; until then the operator links by hand:
+no sign-in, keys or node tokens and does not count against `max_active`. Its person claims it from
+the account page ("Linked accounts" below); the operator can also link by hand:
 
 ```bash
 aisathome-gateway accounts link gh:12345 boinc 678      # this account is BOINC user 678
@@ -671,7 +681,55 @@ aisathome-gateway accounts chat-on-pilots gh:12345 off  # this account's pilots:
 ```
 
 An account's own API key reads and sets the switch too: `GET` and `PATCH /v1/account/settings`
-with `{"chat_on_pilots": false}`.
+with `{"chat_on_pilots": false}`; the account page has it as "Science only on my pilots".
+
+### Linked accounts
+
+With `accounts` set on a connector, an active account's page offers, per connector:
+
+- **Run on BOINC** (`create_link`): the connector makes a user for the person and the account is
+  linked to it. The person picks a display name (default `aisathome-<6 hex>`: BOINC publishes
+  names), an address and optionally a password (8+ characters, for BOINC Manager and BOINC's site;
+  it changes the attach key, so it is chosen now). The address is **pseudonymous** by default,
+  `b<20 hex>@<address_domain>`, derived from the account with the session secret and never stored,
+  so the page can show it as the Manager login; or the person's own (needed for one cross-project
+  id and Gridcoin).
+- **Claim a BOINC account** (`claim`): the person pastes the attach-only key the connector shows them,
+  `<user>_<secret>` (BOINC's weak account key, `weak_auth.php`); the connector checks it.
+- **Use my own email address at BOINC** (`set_email`), for a user made here with a pseudonymous one.
+- The linked users with their **attach command** (`attach_command` with the stored key) and, for a
+  pseudonymous user made here, the Manager login; the **chat switch**; and the account's **pilots**
+  (the newest 20: state, host, start, serve time, answers, credit and whether it is final).
+
+A request waits for the connector (`GET …/requests`), which carries it out and answers (`POST
+…/requests/{rid}`). What the connector sees per kind: `create_link` the `email`, `user_name`,
+`own_email` and `passwd_hash` (MD5 hex of the password followed by the lower-case address, BOINC's
+form; none: pick a random password); `claim` the `user` and the `key` to check; `set_email` the
+`user` and `email`. Never which account asked. An account has one open request per connector and
+at most 10 a day; a connector at most 200 pending. Unanswered requests fail after 24 hours;
+finished ones are deleted after 30 days. The page says while a request waits and why one failed
+(the connector's text).
+
+When the connector says yes, the user is linked (`create_link` and `claim` alike):
+
+- only to an **active** account (a banned or waitlisted one gets no link, also if it changed while
+  the request waited);
+- a user linked to the same account keeps its link with the new key;
+- a user held by an **unclaimed** account is **merged**: all its links move, the account's probation
+  starts at the earlier first-node time, its chat switch is off if either was off, the pilot
+  records and their daily credit move to it, and the unclaimed account is deleted. That user's
+  connected pilots are dropped and reconnect within seconds as the account's nodes (the same
+  records continue). A bind that came before the answer (the user's first pilot) is merged the
+  same way;
+- a user linked to **any other account** is not taken: the request fails ("linked to another
+  AIs@home account"); the operator unlinks first if that is wrong.
+
+Linking spans the accounts file and the science database; a crash between the two finishes on
+the next sweep (a minute). **Privacy:** the gateway never stores a connector user's address. A
+person's own address and the password hash live only in the pending request and are blanked once
+the connector answers (or the request fails); the claim key leaves the request when it is done or
+failed, and the link keeps the attach key (it can attach machines to that user and do nothing
+else). The records are in `science.db` (`connector_requests`, migration 3), backed up with it.
 
 ### What a pilot may serve
 
