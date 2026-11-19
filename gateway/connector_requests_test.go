@@ -2,14 +2,23 @@
 package gateway
 
 import (
+	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/aisathome/aisathome/protocol"
 )
 
 const requestsPath = "/v1/connectors/boinc/requests"
@@ -629,5 +638,163 @@ func TestConnectorAccountsConfigChecked(t *testing.T) {
 	cs[0].Accounts = &good
 	if _, err := newConnectorTable(cs, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Review fixes: a connector's no cannot undo a yes already taken; a link finished before a crash is
+// completed by the sweep even if the account was banned since; an answer metered after a claim
+// counts for the record's (new) account.
+func TestConnectorRequestAfterTheYes(t *testing.T) {
+	r := newLinkRig(t, nil)
+	pid, _ := r.create()
+	r.bind(pid, "5")
+	p, _ := r.g.sci.pilot("boinc", pid)
+	cx := p.account
+	r.addAccount("gh:42", StatusActive)
+	r.claim("gh:42", weakKey("5"))
+	q := r.onlyPending()
+	rid := q["id"].(string)
+	if ok, err := r.g.sci.verifyRequest(rid, "5", "", cx, r.clock()); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := r.call("POST", requestsPath+"/"+rid, testConnectorKey, map[string]any{"ok": false, "error": "changed my mind"}, ""); w.Code != 409 {
+		t.Errorf("a no after the yes: HTTP %d", w.Code)
+	}
+	r.g.accounts.SetStatus("gh:42", StatusBanned)
+	r.g.sweepRequests()
+	if got, _ := r.g.sci.request("boinc", rid); got.State != reqDone {
+		t.Errorf("after the sweep: %s %s", got.State, got.Error)
+	}
+	if p, _ := r.g.sci.pilot("boinc", pid); p.account != "gh:42" {
+		t.Errorf("the pilot stayed with %q", p.account)
+	}
+	// The connection still names the unclaimed account; its next answer counts for the record's.
+	if err := r.g.sci.meterPilot(pid, cx, pilotUse{ok: true, credit: 2}, 10, 15, r.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if c := r.creditDay(cx); c != 0 {
+		t.Errorf("credit for the merged account: %v", c)
+	}
+	if c := r.creditDay("gh:42"); c != 2 {
+		t.Errorf("credit for the account: %v", c)
+	}
+}
+
+// The daily copy of the science database keeps no open request's address, password hash or key.
+func TestScienceCopyScrubsRequests(t *testing.T) {
+	dir := t.TempDir()
+	s, err := openScienceDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	q := &connRequest{Connector: "boinc", Kind: reqCreateLink, Account: "gh:1", Email: "ada@example.org", PasswdHash: strings.Repeat("a", 32)}
+	if err := s.addRequest(q, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 11, 19, 3, 0, 0, 0, time.UTC)
+	if _, err := s.backup(day); err != nil {
+		t.Fatal(err)
+	}
+	c, err := sql.Open("sqlite", filepath.Join(dir, backupName(day)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var email, hash string
+	if err := c.QueryRow(`SELECT email, passwd_hash FROM connector_requests WHERE id = ?`, q.ID).Scan(&email, &hash); err != nil {
+		t.Fatal(err)
+	}
+	if email != "" || hash != "" {
+		t.Errorf("the copy keeps %q %q", email, hash)
+	}
+	if live, _ := s.request("", q.ID); live.Email != "ada@example.org" {
+		t.Error("the live request lost its address")
+	}
+}
+
+// A ban or a chat switch that comes while a pilot registers counts before it is routable.
+func TestPilotAccountChangeDuringRegistration(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(r *pilotRig, account string)
+		closed bool
+	}{
+		{"banned", func(r *pilotRig, a string) { r.g.accounts.SetStatus(a, StatusBanned) }, true},
+		{"chat off", func(r *pilotRig, a string) { r.g.accounts.SetPilotChat(a, false) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newPilotRig(t, func(c *Config) { c.Connectors[0].PilotsChatEnabled = true })
+			srv := httptest.NewServer(r.g.Handler())
+			defer srv.Close()
+			id, cred := r.create()
+			r.bind(id, "5")
+			p, _ := r.g.sci.pilot("boinc", id)
+			r.g.pilotRegistered = func(string) { tc.change(r, p.account) }
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/node/connect",
+				&websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.CloseNow()
+			hello, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion,
+				Models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: 1}}})
+			c.Write(ctx, websocket.MessageText, hello)
+			if tc.closed {
+				var routable atomic.Bool // the pilot became routable (not the sweep's job to stop it)
+				done := make(chan struct{})
+				go func() {
+					for {
+						select {
+						case <-done:
+							return
+						default:
+						}
+						r.g.mu.Lock()
+						if x := r.g.node[id]; x != nil && !x.registering {
+							routable.Store(true)
+						}
+						r.g.mu.Unlock()
+						time.Sleep(time.Millisecond)
+					}
+				}()
+				for {
+					if _, _, err = c.Read(ctx); err != nil {
+						break
+					}
+				}
+				close(done)
+				if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+					t.Fatalf("not closed: %v", err)
+				}
+				if routable.Load() {
+					t.Fatal("the banned account's pilot became routable")
+				}
+				return
+			}
+			var n *nodeConn
+			for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+				r.g.mu.Lock()
+				if x := r.g.node[id]; x != nil && !x.registering {
+					n = x
+				}
+				so := n != nil && n.scienceOnly
+				r.g.mu.Unlock()
+				if n != nil {
+					if !so {
+						t.Fatal("the switch turned off during registration did not count")
+					}
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("never routable")
+				}
+			}
+		})
 	}
 }

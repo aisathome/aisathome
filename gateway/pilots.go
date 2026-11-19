@@ -485,7 +485,8 @@ type pilotUse struct {
 }
 
 // meterPilot adds one answer to pilot id's totals and its credit, within maxPilot for the pilot and
-// maxDay for its account on now's UTC day (0: no cap).
+// maxDay for its account on now's UTC day (0: no cap). The account is the record's (account, the
+// connection's, only if the record has none).
 func (s *scienceDB) meterPilot(id, account string, u pilotUse, maxPilot, maxDay float64, now time.Time) error {
 	ctx, cancel := pilotCtx()
 	defer cancel()
@@ -495,8 +496,12 @@ func (s *scienceDB) meterPilot(id, account string, u pilotUse, maxPilot, maxDay 
 	}
 	defer tx.Rollback()
 	var have, today float64
-	if err := tx.QueryRowContext(ctx, `SELECT credit FROM pilots WHERE id = ?`, id).Scan(&have); err != nil {
+	var current string
+	if err := tx.QueryRowContext(ctx, `SELECT credit, account FROM pilots WHERE id = ?`, id).Scan(&have, &current); err != nil {
 		return s.fail("pilot meter", "", err)
+	}
+	if current != "" { // the record's account: a claim may have moved it while this answer ran
+		account = current
 	}
 	day := utcDay(now)
 	if err := tx.QueryRowContext(ctx, `SELECT credit FROM pilot_credit_days WHERE account = ? AND day = ?`, account, day).Scan(&today); err != nil && !errors.Is(err, sql.ErrNoRows) {
