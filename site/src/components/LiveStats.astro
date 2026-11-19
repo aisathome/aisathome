@@ -18,12 +18,13 @@ const { class: cls } = Astro.props;
 	<p class="live-updated">Updated <time data-stat="updated"></time> UTC</p>
 </section>
 
-<script is:inline>
+<script>
+	import { liveNumber } from '../data/live-stats';
+
 	(() => {
-		const boxes = document.querySelectorAll('[data-live-stats]');
+		const boxes = document.querySelectorAll<HTMLElement>('[data-live-stats]');
 		if (!boxes.length || !window.fetch) return;
-		const num = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
-		const ok = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+		const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 		const hide = () => boxes.forEach((b) => (b.hidden = true));
 		const load = async () => {
 			try {
@@ -37,10 +38,10 @@ const { class: cls } = Astro.props;
 				const at = new Date(d?.updated);
 				if (![nodes, req, tok].every(ok) || Number.isNaN(at.getTime())) return hide();
 				const hhmm = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
-				const vals = { nodes: num.format(nodes), requests: num.format(req), tokens: num.format(tok), updated: hhmm };
+				const vals: Record<string, string> = { nodes: liveNumber(nodes), requests: liveNumber(req), tokens: liveNumber(tok), updated: hhmm };
 				boxes.forEach((b) => {
-					b.querySelectorAll('[data-stat]').forEach((el) => (el.textContent = vals[el.dataset.stat]));
-					b.querySelector('time').dateTime = at.toISOString();
+					b.querySelectorAll<HTMLElement>('[data-stat]').forEach((el) => (el.textContent = vals[el.dataset.stat ?? '']));
+					b.querySelector('time')!.dateTime = at.toISOString();
 					b.hidden = false;
 				});
 			} catch {
