@@ -79,10 +79,19 @@ import LiveStats from '../components/LiveStats.astro';
 	<section class="history pressure not-content" data-pressure hidden aria-labelledby="pressure-title">
 		<h2 id="pressure-title">Pressure</h2>
 		<p class="limit-line" data-pressure-line></p>
+		<div class="range-picker" role="group" aria-label="Time range" data-pressure-ranges>
+			<button type="button" data-range="24h">24 h</button>
+			<button type="button" data-range="48h">48 h</button>
+			<button type="button" data-range="7d">7 days</button>
+			<button type="button" data-range="14d">14 days</button>
+			<button type="button" data-range="30d">30 days</button>
+			<button type="button" data-range="90d">90 days</button>
+		</div>
 		<p class="history-note">
-			Per UTC hour, <span data-pressure-range></span>, as the gateway sees it: GPU slots on the nodes that serve
-			(held and paused nodes left out), sampled every 10 seconds. Waits and times count from when a request reached
-			the gateway. Totals only, never a node or a person.
+			Per UTC <span data-pressure-unit>hour</span>, <span data-pressure-range></span>, as the gateway sees it: GPU
+			slots on the nodes that serve (held and paused nodes left out), sampled every 10 seconds; the science runners
+			report their machines every minute. Waits and times count from when a request reached the gateway. The line
+			above is always the last 24 hours. Totals only, never a node, a runner or a person.
 		</p>
 		<figure class="chart" data-pchart="util" hidden>
 			<figcaption>GPU slots busy</figcaption>
@@ -114,13 +123,38 @@ import LiveStats from '../components/LiveStats.astro';
 			</ul>
 			<svg role="img"></svg>
 		</figure>
+		<figure class="chart" data-pchart="runner" hidden>
+			<figcaption>Science runners: CPU and memory</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-peak)"></span>CPU busy</li>
+				<li><span class="swatch line" style="background: var(--h-avg)"></span>Memory used by programs</li>
+				<li><span class="swatch line" style="background: var(--h-science)"></span>Memory caching files (Lean's library)</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-pchart="lean" hidden>
+			<figcaption>Lean checks on the runners, p95</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-peak)"></span>Run time</li>
+				<li><span class="swatch line" style="background: var(--h-avg)"></span>Wait for a build slot</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
+		<figure class="chart" data-pchart="node" hidden>
+			<figcaption>Nodes: time reading prompts, and prompt-cache hits</figcaption>
+			<ul class="legend" aria-hidden="true">
+				<li><span class="swatch line" style="background: var(--h-avg)"></span>Share of node time reading the prompt</li>
+				<li><span class="swatch line" style="background: var(--h-science)"></span>Prompt tokens from the cache</li>
+			</ul>
+			<svg role="img"></svg>
+		</figure>
 		<details class="history-table" data-pressure-table hidden>
 			<summary>The numbers</summary>
 			<div class="board-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th scope="col">Hour (UTC)</th>
+							<th scope="col" data-pressure-th>Hour (UTC)</th>
 							<th scope="col" class="num">Slots</th>
 							<th scope="col" class="num">Busy</th>
 							<th scope="col" class="num">Waiting, peak</th>
@@ -129,6 +163,10 @@ import LiveStats from '../components/LiveStats.astro';
 							<th scope="col" class="num">Demand</th>
 							<th scope="col" class="num">Requests</th>
 							<th scope="col" class="num">Refused</th>
+							<th scope="col" class="num">Runner CPU</th>
+							<th scope="col" class="num">Files cached</th>
+							<th scope="col" class="num">Lean wait p95</th>
+							<th scope="col" class="num">Cache hits</th>
 						</tr>
 					</thead>
 					<tbody data-pressure-rows></tbody>
@@ -348,18 +386,28 @@ import LiveStats from '../components/LiveStats.astro';
 </script>
 
 <script>
-	// Pressure: how full the network was, per hour, from /v1/stats/pressure (gateway pressure.go), with one line on what
-	// limits it now. Hidden until real numbers arrive, and again on any failure, like the sections above.
-	import { CLASSES, CLASS_LABEL, bucketLabel, fmtDuration, limitLine, onGrid, parsePressure, type Bucket, type PressureView } from '../data/pressure';
+	// Pressure: how full the network was, per hour or day, from /v1/stats/pressure (gateway pressure.go), with one line
+	// on what limits it now (GPU slots or the science runners). Hidden until real numbers arrive, and again on any
+	// failure, like the sections above. The range buttons pick the endpoint's range (?range= in the address keeps it).
+	import {
+		CLASSES, CLASS_LABEL, DEFAULT_RANGE, bucketLabel, fmtDuration, isRange, limitLine, onGrid, parsePressure, rangeWords,
+		type Bucket, type PressureView, type Range,
+	} from '../data/pressure';
 	import { barChart, lineChart, type Point } from '../data/pressure-chart';
 
 	const box = document.querySelector<HTMLElement>('[data-pressure]');
-	const RANGE = '7d';
 	const full = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
 	const pct = (v: number) => `${Math.round(v * 100)}%`;
 	const secs = (v: number) => (v <= 0 ? '0' : v < 60 ? `${full.format(v)} s` : v < 3600 ? `${full.format(v / 60)} min` : `${full.format(v / 3600)} h`);
 	const hide = () => box && (box.hidden = true);
 	let last: PressureView | null = null;
+	let range: Range = DEFAULT_RANGE;
+	try {
+		const q = new URLSearchParams(location.search).get('range');
+		if (isRange(q)) range = q;
+	} catch {
+		// no address to read: the default range
+	}
 
 	const fig = (name: string) => box!.querySelector<HTMLElement>(`[data-pchart="${name}"]`)!;
 	const svgOf = (name: string) => fig(name).querySelector('svg') as SVGSVGElement;
@@ -372,14 +420,23 @@ import LiveStats from '../components/LiveStats.astro';
 		if (!line) return hide();
 		box.querySelector('[data-pressure-line]')!.textContent = line;
 		const grid = onGrid(v.buckets, v.bucket);
-		const hours = grid.length;
-		box.querySelector('[data-pressure-range]')!.textContent = hours > 1 ? `the last ${hours} hours` : 'so far';
+		const n = grid.length;
+		const unit = v.bucket;
+		box.querySelector('[data-pressure-unit]')!.textContent = unit;
+		box.querySelector('[data-pressure-range]')!.textContent = rangeWords(unit, n);
+		box.querySelector('[data-pressure-th]')!.textContent = unit === 'hour' ? 'Hour (UTC)' : 'Day (UTC)';
+		for (const btn of box.querySelectorAll<HTMLButtonElement>('[data-range]')) btn.setAttribute('aria-pressed', String(btn.dataset.range === v.range));
 		const t = box.querySelector<HTMLTimeElement>('[data-pressure-updated]')!;
 		t.textContent = `${String(v.updated.getUTCHours()).padStart(2, '0')}:${String(v.updated.getUTCMinutes()).padStart(2, '0')}`;
 		t.dateTime = v.updated.toISOString();
 		box.hidden = false; // shown before drawing: the charts are drawn at their width
-		const enough = hours >= 2; // a chart needs two hours; with less, the line says it all
+		const enough = n >= 2; // a chart needs two buckets; with less, the line says it all
 		const label = (s: string) => bucketLabel(s);
+		const per = `per ${unit}, ${rangeWords(unit, n)}`;
+		const show = (name: string, on: boolean) => {
+			fig(name).hidden = !on;
+			return on;
+		};
 
 		const util: Point[] = grid.map(({ start, b }) => ({
 			label: label(start), values: { util: b?.utilisation ?? null },
@@ -387,9 +444,7 @@ import LiveStats from '../components/LiveStats.astro';
 				? `${label(start)}: ${pct(b.utilisation)} busy (${full.format(b.busy.avg)} of ${full.format(b.slots.avg)} slots on average, peak ${b.busy.peak} busy); waiting, peak ${b.queue.people.peak} people's and ${b.queue.science.peak} science requests`
 				: `${label(start)}: no slots online`,
 		}));
-		const showUtil = enough && util.some((p) => p.values.util !== null);
-		fig('util').hidden = !showUtil;
-		if (showUtil) barChart(svgOf('util'), util, 'util', pct, `GPU slots busy per hour, ${hours} hours`, 1);
+		if (show('util', enough && util.some((p) => p.values.util !== null))) barChart(svgOf('util'), util, 'util', pct, `GPU slots busy ${per}`, 1);
 
 		const byClass = (kind: 'wait' | 'firstToken', what: string): Point[] => grid.map(({ start, b }) => {
 			const parts = CLASSES.filter((k) => p95(b, kind, k) !== null).map((k) => `${CLASS_LABEL[k]} ${fmtDuration(p95(b, kind, k)!)} (${b![kind][k]!.count})`);
@@ -400,9 +455,9 @@ import LiveStats from '../components/LiveStats.astro';
 		});
 		for (const [name, kind, what] of [['wait', 'wait', 'wait for a slot'], ['ttft', 'firstToken', 'first token']] as const) {
 			const pts = byClass(kind, what);
-			const on = enough && pts.some((p) => CLASSES.some((k) => p.values[k] !== null));
-			fig(name).hidden = !on;
-			if (on) lineChart(svgOf(name), pts, [...CLASSES], secs, `${what}, p95 per hour by class, ${hours} hours`);
+			if (show(name, enough && pts.some((p) => CLASSES.some((k) => p.values[k] !== null)))) {
+				lineChart(svgOf(name), pts, [...CLASSES], secs, `${what}, p95 by class ${per}`);
+			}
 		}
 
 		const dem: Point[] = grid.map(({ start, b }) => ({
@@ -410,9 +465,47 @@ import LiveStats from '../components/LiveStats.astro';
 			tip: b ? `${label(start)}: demand ${full.format(b.demand.avg)} on average (peak ${b.demand.peak}), ${full.format(b.openTasks.avg)} open tasks, ${full.format(b.scienceSlots.avg)} slots science may use`
 				: `${label(start)}: no data`,
 		}));
-		const showDem = enough && grid.some(({ b }) => b && (b.scienceSlots.peak > 0 || b.openTasks.peak > 0));
-		fig('demand').hidden = !showDem;
-		if (showDem) lineChart(svgOf('demand'), dem, ['demand', 'sslots'], (x) => full.format(x), `Science demand and slots per hour, ${hours} hours`);
+		if (show('demand', enough && grid.some(({ b }) => b && (b.scienceSlots.peak > 0 || b.openTasks.peak > 0)))) {
+			lineChart(svgOf('demand'), dem, ['demand', 'sslots'], (x) => full.format(x), `Science demand and slots ${per}`);
+		}
+
+		// The runners: CPU busy and memory as shares of the machine (programs' own memory, and files cached: Lean's
+		// library must stay cached for quick checks).
+		const run: Point[] = grid.map(({ start, b }) => {
+			const r = b?.runner;
+			const tot = r && r.memTotalGb > 0 ? r.memTotalGb : null;
+			return {
+				label: label(start),
+				values: { cpu: r ? r.cpu.avg : null, mem: r && tot ? Math.min(r.memPrivateGb.avg / tot, 1) : null, cache: r && tot ? Math.min(r.pageCacheGb.avg / tot, 1) : null },
+				tip: r ? `${label(start)}: CPU ${pct(r.cpu.avg)} busy (peak ${pct(r.cpu.peak)}); programs ${full.format(r.memPrivateGb.avg)} GB (peak ${full.format(r.memPrivateGb.peak)}), files cached ${full.format(r.pageCacheGb.avg)} GB (low ${full.format(r.pageCacheGb.low)}) of ${full.format(r.memTotalGb)} GB; ${full.format(r.refaultsS.avg)} pages/s re-read from disk; ${full.format(b!.runners?.avg ?? 0)} runners, ${full.format(r.sessions.avg)} sessions on average${r.spotNotices ? `; ${r.spotNotices} spot interruption${r.spotNotices === 1 ? '' : 's'}` : ''}`
+					: `${label(start)}: no runner reported`,
+			};
+		});
+		if (show('runner', enough && run.some((p) => p.values.cpu !== null))) lineChart(svgOf('runner'), run, ['cpu', 'mem', 'cache'], pct, `Science runners' CPU and memory ${per}`, 1);
+
+		const lean: Point[] = grid.map(({ start, b }) => {
+			const l = b?.runner?.lean;
+			return {
+				label: label(start), values: { leanrun: l?.run?.p95 ?? null, leanwait: l?.wait?.p95 ?? null },
+				tip: l ? `${label(start)}: Lean run p95 ${l.run ? fmtDuration(l.run.p95) : 'none'} (${l.run?.count ?? 0} runs), wait for a slot p95 ${l.wait ? fmtDuration(l.wait.p95) : 'none'}; ${full.format(l.busy.avg)} of ${full.format(l.slots)} slots busy on average, peak ${full.format(l.waiting.peak)} waiting`
+					: `${label(start)}: no runner reported`,
+			};
+		});
+		if (show('lean', enough && lean.some((p) => p.values.leanrun !== null || p.values.leanwait !== null))) {
+			lineChart(svgOf('lean'), lean, ['leanrun', 'leanwait'], secs, `Lean checks, run time and wait for a slot, p95 ${per}`);
+		}
+
+		const nodes: Point[] = grid.map(({ start, b }) => {
+			const nd = b?.node;
+			return {
+				label: label(start), values: { prefill: nd?.prefillShare ?? null, hits: nd?.cacheHit ?? null },
+				tip: nd ? `${label(start)}: ${nd.prefillShare === null ? '' : `${pct(nd.prefillShare)} of node time reading prompts, `}${nd.cacheHit === null ? '' : `${pct(nd.cacheHit)} of prompt tokens from the cache, `}${nd.decodeTokS === null ? '' : `${full.format(nd.decodeTokS)} tokens/s written per answer, `}${nd.requests.toLocaleString('en')} answers`
+					: `${label(start)}: no answers`,
+			};
+		});
+		if (show('node', enough && nodes.some((p) => p.values.prefill !== null || p.values.hits !== null))) {
+			lineChart(svgOf('node'), nodes, ['prefill', 'hits'], pct, `Nodes' prompt time and cache hits ${per}`, 1);
+		}
 
 		const rows = grid.filter((g) => g.b).reverse();
 		const table = box.querySelector<HTMLElement>('[data-pressure-table]')!;
@@ -423,9 +516,11 @@ import LiveStats from '../components/LiveStats.astro';
 		};
 		box.querySelector('[data-pressure-rows]')!.replaceChildren(...rows.map(({ start, b }) => {
 			const tr = document.createElement('tr');
+			const r = b!.runner, nd = b!.node;
 			const vals = [start.replace('T', ' ').replace(':00Z', ':00'), full.format(b!.slots.avg), b!.utilisation === null ? '' : pct(b!.utilisation),
-				String(b!.queue.people.peak + b!.queue.science.peak), worst(b!, 'wait'), worst(b!, 'firstToken'), full.format(b!.demand.avg),
-				String(requests(b!)), String(b!.outcomes.refused ?? 0)];
+				String(b!.queue.all.peak), worst(b!, 'wait'), worst(b!, 'firstToken'), full.format(b!.demand.avg),
+				String(requests(b!)), String(b!.outcomes.refused ?? 0), r ? pct(r.cpu.avg) : '', r ? `${full.format(r.pageCacheGb.avg)} GB` : '',
+				r?.lean.wait ? fmtDuration(r.lean.wait.p95) : '', nd?.cacheHit != null ? pct(nd.cacheHit) : ''];
 			vals.forEach((text, j) => {
 				const td = document.createElement(j === 0 ? 'th' : 'td');
 				if (j === 0) (td as HTMLTableCellElement).scope = 'row';
@@ -438,21 +533,40 @@ import LiveStats from '../components/LiveStats.astro';
 		last = v;
 	};
 
+	let loading = 0;
 	const load = async () => {
 		if (!box || !window.fetch) return;
+		const mine = ++loading; // a slower answer for an earlier range never replaces a newer one
 		try {
 			const ctl = new AbortController();
 			const timer = setTimeout(() => ctl.abort(), 8000);
-			const res = await fetch(`/v1/stats/pressure?range=${RANGE}`, { signal: ctl.signal, headers: { accept: 'application/json' } });
+			const res = await fetch(`/v1/stats/pressure?range=${range}`, { signal: ctl.signal, headers: { accept: 'application/json' } });
 			clearTimeout(timer);
+			if (mine !== loading) return;
 			if (!res.ok) return hide();
 			const v = parsePressure(await res.json());
+			if (mine !== loading) return;
 			if (!v) return hide();
 			draw(v);
 		} catch {
-			hide();
+			if (mine === loading) hide();
 		}
 	};
+	box?.querySelector('[data-pressure-ranges]')?.addEventListener('click', (e) => {
+		const btn = (e.target as Element).closest<HTMLButtonElement>('[data-range]');
+		if (!btn || !isRange(btn.dataset.range) || btn.dataset.range === range) return;
+		range = btn.dataset.range;
+		for (const b of box.querySelectorAll<HTMLButtonElement>('[data-range]')) b.setAttribute('aria-pressed', String(b === btn));
+		try {
+			const u = new URL(location.href);
+			if (range === DEFAULT_RANGE) u.searchParams.delete('range');
+			else u.searchParams.set('range', range);
+			history.replaceState(history.state, '', u);
+		} catch {
+			// the address stays as it was
+		}
+		load();
+	});
 	load();
 	setInterval(() => document.visibilityState === 'visible' && load(), 300000);
 	let resized: ReturnType<typeof setTimeout> | undefined;
@@ -580,6 +694,20 @@ import LiveStats from '../components/LiveStats.astro';
 	.chart :global(.line.s-agent) { stroke: var(--h-agent); }
 	.chart :global(.line.s-science) { stroke: var(--h-science); }
 	.chart :global(.line.s-demand) { stroke: var(--h-avg); }
+	.chart :global(.line:is(.s-cpu, .s-leanrun)) { stroke: var(--h-peak); }
+	.chart :global(.line:is(.s-mem, .s-leanwait, .s-prefill)) { stroke: var(--h-avg); }
+	.chart :global(.line:is(.s-cache, .s-hits)) { stroke: var(--h-science); }
+	.chart :global(:is(.dot, .point):is(.s-cpu, .s-leanrun)) { fill: var(--h-peak); }
+	.chart :global(:is(.dot, .point):is(.s-mem, .s-leanwait, .s-prefill)) { fill: var(--h-avg); }
+	.chart :global(:is(.dot, .point):is(.s-cache, .s-hits)) { fill: var(--h-science); }
+	.range-picker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.75rem; }
+	.range-picker button {
+		font: inherit; font-size: 0.85rem; padding: 0.3rem 0.7rem; border-radius: 999px; cursor: pointer;
+		border: 1px solid var(--sl-color-gray-4); background: transparent; color: var(--sl-color-gray-2);
+	}
+	.range-picker button:hover { border-color: var(--sl-color-gray-2); color: var(--sl-color-white); }
+	.range-picker button[aria-pressed='true'] { background: var(--sl-color-text-accent); border-color: var(--sl-color-text-accent); color: var(--sl-color-black); font-weight: 600; }
+	.range-picker button:focus-visible { outline: 2px solid var(--sl-color-text-accent); outline-offset: 2px; }
 	.chart :global(.line.s-sslots) { stroke: var(--h-peak); }
 	.chart :global(:is(.dot, .point).s-demand) { fill: var(--h-avg); }
 	.chart :global(:is(.dot, .point).s-sslots) { fill: var(--h-peak); }
