@@ -63,6 +63,8 @@ type relay struct {
 	maxTokens int
 	maxChunks int
 	t0        time.Time
+	firstText time.Time      // the first chunk with generated text (pressure_node.go)
+	timings   *engineTimings // the engine's own timings, when its chunks carry them
 
 	started bool // output reached the client: a retry is no longer possible
 	// relayed counts chunks carrying generated text, as seen by the gateway itself. It meters
@@ -432,8 +434,14 @@ func (rl *relay) noteFlag(rule string) {
 // the attempt.
 func (rl *relay) onChunk(m protocol.Msg) error {
 	g := rl.g
+	if et := chunkTimings(m.Data); et != nil {
+		rl.timings = et
+	}
 	if hasText(m.Data) {
 		rl.relayed++
+		if rl.firstText.IsZero() {
+			rl.firstText = time.Now()
+		}
 		if req := rl.req; !req.firstSeen && !req.arrived.IsZero() {
 			req.firstSeen = true
 			g.press.firstToken(req.class, time.Since(req.arrived), time.Now())
@@ -549,6 +557,9 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	// Metered (and the conversation remembered for its node) before the client can see the
 	// end and send its next turn; logged and credited once the outcome is known.
 	rec := rl.meter("ok", u, false)
+	if !rl.firstText.IsZero() {
+		rl.g.press.node(time.Duration(rec.Usage.DurationMs)*time.Millisecond, rl.firstText.Sub(rl.t0), rl.timings, rec.Usage, time.Now())
+	}
 	err := rl.deliverEnd(released, ans)
 	if err == nil {
 		// Writes into a closed connection can still succeed for a while: a client whose request

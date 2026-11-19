@@ -62,6 +62,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/stats/pressure", g.handlePressure)
 	mux.HandleFunc("POST /v1/projects/{id}/status", g.handleStatusPost)
 	mux.HandleFunc("GET /v1/projects/{id}/status", g.handleStatusGet)
+	mux.HandleFunc("POST /v1/projects/{id}/runner-metrics", g.handleRunnerMetrics)
 	mux.HandleFunc("GET /v1/projects/{id}/queue", g.handlePublicQueue)
 	g.taskRoutes(mux)
 	g.campaignRoutes(mux)

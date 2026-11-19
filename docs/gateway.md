@@ -338,21 +338,69 @@ operators):
   data left out; `total` sums the range and `last_24h` the last 24 hours; `now` is the current
   sample. Per bucket: `slots` and `busy` (GPU slots on nodes that serve: not held, not paused; a
   node's slots are its largest model's), `utilisation` (busy slot-time over slot-time online,
-  missing without slots), `queue.people` and `queue.science` (requests waiting for a slot),
+  missing without slots), `queue.people` and `queue.science` (requests waiting for a slot) and
+  `queue.all` (both together, so its peak is the most that waited at once),
   `held` (nodes held by a guard) and `holds` (new holds), `science_slots` (slots science may use:
   each project's trust and agent rules and its share of nodes), `open_tasks` (science tasks queued
-  or running) and `demand` = min(open tasks, science slots), per project then in all, the signal a
-  runner pool can be sized by. Each of these is sampled every 10 s and given as `avg` and `peak`
-  (the queue's peak also counts every request that starts to wait). `wait_s` (from arrival to a
+  or running) and `demand` = min(open tasks, science slots) per project, capped by the slots of
+  the nodes the projects with work may use (each node once), the signal a runner pool can be sized
+  by; `runners` (science runners that reported in the last 150 s). Each of these is sampled every
+  10 s and given as `avg` and `peak` (the queue's peak also counts every request that starts to
+  wait). `wait_s` (from arrival to a
   slot, or to giving up) and `first_token_s` (from arrival, once its body is read, to the first
   generated token the gateway receives) per class: `count`, `p50`, `p95`, in seconds, each the
   upper edge of a log-spaced bin (never more than the longest seen; 0 = no wait). `outcomes`: one
   per request, however many nodes it tried: `ok`, `failed`, `blocked` (a guard),
   `refused` (no node took it: busy until its time ran out, queue full, no node with the model or
   context), `preempted` (science given up for a person) and `cancelled` (the client left).
+  `node` (when an answer finished): `requests`, `prefill_share` (node time reading the prompt over
+  node time in all), `prefill_tok_s` (uncached prompt tokens per prefill second), `decode_tok_s`
+  (generated tokens per decode second, per answer), `cache_hit` (prompt tokens read from the
+  engine's cache over prompt tokens), `engine_timed` (answers timed by the engine itself:
+  llama-server's `timings`, used when they fit within the gateway's own measure; the others are
+  split at the first generated text the gateway receives, so their prefill includes the network).
+  `runner` (when a runner reported, below): averages over runner-minutes and peaks of `cpu`,
+  `iowait`, `steal` (shares 0-1), `mem_private_gb` (processes' own memory), `refaults_s` (file
+  pages read again after eviction: the page cache too small), `disk_read_mb_s`, `disk_write_mb_s`,
+  `sessions`; `mem_total_gb`; `page_cache_gb` (`avg`, `low`); `free_gb_low`; `psi` (`cpu`,
+  `memory`, `io` stall shares, where the kernel has them); `lean`: `slots`, `busy` and `waiting`
+  (builds holding and waiting for a slot), `run_s` and `wait_s` (`count`, `p50`, `p95`);
+  `spot_notices` (runners the cloud announced it would interrupt).
+  Only projects with `public_queue` count here (their tasks, slots, demand and runners): a project
+  that keeps its queue private would otherwise show its queue depth by subtraction.
   Answers are built at most every 15 s. Kept in `state_dir/pressure.json`, written every minute
   and at shutdown.
 - `GET /v1/stats/credit` and `/stats/`: credit (see [credit.md](credit.md)).
+
+### Runner metrics
+
+A science project's runners report their host once a minute to
+`POST /v1/projects/{id}/runner-metrics` with the project's key (another project's key: 403; none:
+401), as `application/json` of at most 16 KB with exactly these fields (others are refused):
+`schema` (1), `runner` (a random id of 16-32 lowercase hex characters the runner draws at boot:
+never an instance id, host name or address, which the pattern refuses), `at` (within 10 minutes of
+the gateway's clock), `period_s` (10-600), `cpus`, `cpu_busy`, `cpu_iowait`, `cpu_steal` (shares
+of the period), `mem_total_gb`, `mem_private_gb`, `mem_private_peak_gb` (anonymous memory),
+`page_cache_gb`, `page_cache_low_gb`, `refaults_s`, optional `psi` (`cpu`, `memory`, `io`: the
+"some" stall share), `disk_read_mb_s`, `disk_write_mb_s`, `free_gb` (the work volume),
+`lean_slots`, `lean_busy`, `lean_busy_peak`, `lean_waiting`, `lean_waiting_peak`, `lean_runs_s`
+and `lean_waits_s` (each Lean process and each wait for a build slot that ended in the period,
+seconds, at most 300 each), `sessions`, `sessions_peak` (agent sessions running) and
+`spot_notice` (the cloud announced the interruption). One report a minute per runner (429
+otherwise). The report goes into the hour's and the day's buckets of `GET /v1/stats/pressure`
+(`runner`, `runners`); the runner id is kept in memory only, to count runners and to rate-limit,
+and is never saved or served. A project without `public_queue` gets `{"counted": false}`. The
+ops repo's runner collector (`aihome-runner-metrics`) sends it.
+
+### Demand for autoscaling (design; item 7v builds it)
+
+The public `demand` counts only projects with `public_queue`. Runner autoscaling needs every
+project: the gateway will compute the same number over all projects in the same sample
+(`pressureNow`, one more sum: no new walk of the nodes), keep it out of every public answer, and
+serve it to the operator only, either as a field of the admin page's status or as a CloudWatch
+metric pushed by an ops timer that reads it with an admin-only key. The ASG then targets
+ceil(demand / workers per runner). Not built here: the IAM, the metric and the scaling policy
+are item 7v's.
 
 ## A chat front end (Open WebUI)
 
