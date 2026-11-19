@@ -292,12 +292,12 @@ func TestChatRulesCountry(t *testing.T) {
 func TestChatRulesSignInTick(t *testing.T) {
 	a, _ := rulesRig(t)
 	_, page := a.get(t, "/account", "")
-	for _, want := range []string{`name="transfer" value="1"`, html.EscapeString(gateway.TransferConsentText), "18 or older"} {
+	for _, want := range []string{`name="transfer" value="` + gateway.TransferConsentVersion + `"`, html.EscapeString(gateway.TransferConsentText), "18 or older"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("sign-in page lacks %q", want)
 		}
 	}
-	if strings.Contains(page, `name="transfer" value="1" checked`) {
+	if strings.Contains(page, `name="transfer" value="`+gateway.TransferConsentVersion+`" checked`) {
 		t.Error("the opt-in is ticked by default")
 	}
 	signIn := func(id int, form string) {
@@ -307,10 +307,13 @@ func TestChatRulesSignInTick(t *testing.T) {
 		}
 	}
 	signIn(5, "provider=github")
-	signIn(6, "provider=github&transfer=1")
+	signIn(7, "provider=github&transfer=1") // not the version the box carries: a stale or forged form
+	signIn(6, "provider=github&transfer="+url.QueryEscape(gateway.TransferConsentVersion))
 	a.store.Refresh()
-	if x := snap(a).Find("gh:5"); x.TransferConsent != nil {
-		t.Fatalf("unticked sign-in recorded an opt-in: %+v", x.TransferConsent)
+	for _, id := range []string{"gh:5", "gh:7"} {
+		if x := snap(a).Find(id); x.TransferConsent != nil {
+			t.Fatalf("%s: sign-in recorded an opt-in: %+v", id, x.TransferConsent)
+		}
 	}
 	x := snap(a).Find("gh:6")
 	if x.TransferConsent == nil || x.TransferConsent.Version != gateway.TransferConsentVersion || x.TransferConsent.Via != gateway.ViaSignIn {

@@ -494,13 +494,14 @@ requester's own nodes (not pilots) are outside both rules.
 
 | Rule | |
 |---|---|
-| **Operator terms** | the node's account accepted the current operator terms (version and time are recorded in the accounts file, `operator_terms`). On the account page ("Operator terms": the text, a tick that also confirms 18 or older, the country the nodes run in; withdrawable) or, for a connector's user, through the connector (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below). A config node token counts as accepted if it is trusted or names the version (`"operator_terms": "<version>"`). A new terms version needs a new acceptance. Without one the node serves science only |
+| **Operator terms** | the node's account accepted the current operator terms (version and time are recorded in the accounts file, `operator_terms`). On the account page ("Operator terms": the text, a tick that also confirms 18 or older, the country the nodes run in; withdrawable) or, for a connector's user, through the connector (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below). A config node token counts as accepted if it is trusted or names the version (`"operator_terms": "<version>"`). A new terms version needs a new acceptance. Without one the node serves science only. A withdrawal is recorded with its time, and a connector's record of an acceptance from before it (or before the account's own acceptance) changes nothing. The text in the code is a **draft** (version `draft-…`) until the drafted terms are approved; the approved text comes with a new version, which no draft acceptance matches. Keep `pilots_chat_enabled` off while the version is a draft |
 | **Country** | a node's country is its connection address's in the GeoIP table (`geoip_country_file`), and only if its operator states the same country (account page, connector, or a config token's `"country"`); a mismatch, no stated country or an address the table does not know count as outside Europe. A request from a user who has not opted in goes only to nodes in the EEA or a country with an adequacy decision (`gateway/transfer_countries.txt`: EU, IS, LI, NO and the Commission's list of 2026-11-19; not the US, whose adequacy covers only DPF-certified organisations, nor Canada, commercial organisations only). With the opt-in it may go to any node with the operator terms |
 
 **The opt-in** (`transfer_consent`, version and time) is per account, unticked by default: a box
 on the sign-in form next to the email-notice box (it travels with that one sign-in, like the
-contact box; a sign-in without the tick withdraws nothing) and a card on the account page ("Volunteers
-outside Europe", on and off). The account's API keys and its chat follow it. Requests without an
+contact box; the box carries the version of the text it showed, and a sign-in without the tick withdraws nothing) and a card on the account page ("Volunteers
+outside Europe", on and off). The account's API keys and its chat follow it; a withdrawal also
+applies to requests still waiting for a node. Requests without an
 account (config keys, a front end's anonymous users) have none.
 
 When the rules leave no node free, a request waits for one as any request does and is never sent
@@ -518,7 +519,7 @@ whether it serves chat and why not. The sign-in form states the age limit (18+, 
 | Field | Meaning |
 |---|---|
 | `geoip_country_file` | DB-IP's "IP to Country Lite" CSV (`first,last,CC` per line, plain or `.gz`), monthly from <https://db-ip.com/db/download/ip-to-country-lite>, licence **CC BY 4.0**: pages that show its results credit "IP Geolocation by DB-IP" with a link (the account page does). Without it every untrusted node's country is unknown, so users without the opt-in get trusted nodes (and their own) only; the gateway logs a warning at start |
-| `chat_rules_off` | turns both rules off. On by default; off only for a gateway whose nodes are all the operator's own, and in tests |
+| `chat_rules_off` | turns both rules off. On by default; off only for a gateway whose nodes are all the operator's own (as `examples/gateway.json`, one local node), and in tests |
 
 Trusted nodes must run in the EEA or an adequate country (D5); the gateway logs a warning when a
 trusted node connects from elsewhere. Countries from addresses are approximate: a VPN changes them,

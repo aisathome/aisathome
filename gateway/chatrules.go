@@ -138,7 +138,8 @@ func (s *AccountStore) WithdrawOperatorTerms(id string) error {
 		if a == nil {
 			return errNoOperator
 		}
-		a.OperatorTerms = nil
+		t := time.Now().UTC()
+		a.OperatorTerms, a.TermsWithdrawn = nil, &t
 		return nil
 	})
 }
@@ -212,10 +213,13 @@ func (s *AccountStore) connectorTerms(connector, user, version, country string, 
 		if a.Status != StatusActive && a.Status != StatusUnclaimed {
 			return errNoOperator
 		}
-		// An acceptance on the account page (or a later one) is not replaced by an older one.
-		if a.OperatorTerms == nil || a.OperatorTerms.Version != version || !at.Before(a.OperatorTerms.At) {
-			a.OperatorTerms = &Acceptance{Version: version, At: at.UTC(), Via: viaConnector + connector}
+		// A record older than the account's own acceptance or withdrawal (a connector resending an old
+		// consent) changes nothing, its country included.
+		if (a.OperatorTerms != nil && at.Before(a.OperatorTerms.At)) || (a.TermsWithdrawn != nil && !at.After(*a.TermsWithdrawn)) {
+			unclaimed = a.Status == StatusUnclaimed
+			return nil
 		}
+		a.OperatorTerms = &Acceptance{Version: version, At: at.UTC(), Via: viaConnector + connector}
 		if country != "" {
 			a.OperatorCountry = country
 		}
@@ -435,6 +439,10 @@ func (g *Gateway) handleTransferConsent(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := g.accounts.SetTransferConsent(id, on, ViaAccountPage, time.Now()); err != nil {
 		g.log.Error("transfer consent not recorded", "err", err)
+		d := g.accountData(id)
+		d.Error = "Your choice was not saved. Please try again."
+		g.accountPage(w, r, http.StatusInternalServerError, d)
+		return
 	}
 	http.Redirect(w, r, g.acfg.PublicURL+"/account#transfer", http.StatusSeeOther)
 }

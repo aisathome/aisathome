@@ -192,6 +192,9 @@ type Account struct {
 	// (ISO code, or "other"); TransferConsent: it allows its requests to go to volunteers outside Europe.
 	OperatorTerms   *Acceptance `json:"operator_terms,omitempty"`
 	OperatorCountry string      `json:"operator_country,omitempty"`
+	// TermsWithdrawn: when the account last withdrew its acceptance; a connector's record of an
+	// acceptance from before then does not bring it back.
+	TermsWithdrawn  *time.Time  `json:"terms_withdrawn,omitempty"`
 	TransferConsent *Acceptance `json:"transfer_consent,omitempty"`
 }
 

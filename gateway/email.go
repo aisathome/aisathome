@@ -484,7 +484,7 @@ func (g *Gateway) handleEmailStart(w http.ResponseWriter, r *http.Request) {
 		rand.Read(b)
 		pending = base64.RawURLEncoding.EncodeToString(b)
 	}
-	g.email.start(typed, norm, clientIP(r), next, pending, r.FormValue("contact") == "1", r.FormValue("transfer") == "1")
+	g.email.start(typed, norm, clientIP(r), next, pending, r.FormValue("contact") == "1", r.FormValue("transfer") == TransferConsentVersion)
 	g.setCookie(w, pendingCookie, pending, "/account/email", emailCodeTTL)
 	http.Redirect(w, r, g.acfg.PublicURL+"/account/email", http.StatusSeeOther)
 }

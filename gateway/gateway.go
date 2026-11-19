@@ -82,6 +82,8 @@ type Gateway struct {
 	// pilotRegistered, if set, runs when a pilot's connection is registered, before its record is
 	// checked once more (tests: a report racing the handshake).
 	pilotRegistered func(pilot string)
+	// sweepMu serialises sweepNodes.
+	sweepMu sync.Mutex
 	// geo is the GeoIP country table (geoip.go, chatrules.go); nil: every node's country is unknown.
 	geo *geoTable
 }

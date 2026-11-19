@@ -210,7 +210,7 @@ func (g *Gateway) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 	if r.PostFormValue("contact") == "1" {
 		f.contact = "1"
 	}
-	if r.PostFormValue("transfer") == "1" {
+	if r.PostFormValue("transfer") == TransferConsentVersion { // the box carries the version of the text it showed
 		f.transfer = "1"
 	}
 	g.startLogin(w, r, f)
@@ -753,7 +753,7 @@ no email unless you tick the box below.</p>{{end}}
 <label class="check"><input type="checkbox" name="contact" value="1" id="contact"><span>Email me about important changes and outages</span></label>
 <p class="hint">Optional. If you tick it, we keep your email address{{if or .GitHub .Google}} ({{if .Email}}the one you type below, or {{end}}a verified one from {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}){{end}}
 for these notices only, until you turn them off on your account page.</p>
-{{if .RulesOn}}<label class="check"><input type="checkbox" name="transfer" value="1" id="transfer"><span>{{.TransferText}}</span></label>
+{{if .RulesOn}}<label class="check"><input type="checkbox" name="transfer" value="{{.TransferVer}}" id="transfer"><span>{{.TransferText}}</span></label>
 <p class="hint">Optional. Unticked, your chats go only to nodes in Europe or countries the EU recognises as protecting personal data,
 which can mean waiting longer. You can change it on your account page.</p>{{end}}
 {{if .Email}}<div class="field"><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}

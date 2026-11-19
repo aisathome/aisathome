@@ -530,8 +530,12 @@ func (g *Gateway) recordHolds() {
 
 // sweepNodes applies the accounts file to connected nodes: nodes whose token was revoked or
 // whose account is no longer active are dropped (their requests in flight fail over), and
-// pauses set or cleared by the operator take effect.
+// pauses set or cleared by the operator take effect. Sweeps run one at a time: one that read the
+// accounts file earlier must not publish its older state over a newer sweep's (a withdrawal of the
+// operator terms sweeps at once, while the periodic sweep may be running).
 func (g *Gateway) sweepNodes() {
+	g.sweepMu.Lock()
+	defer g.sweepMu.Unlock()
 	g.mu.Lock()
 	conns := make([]*nodeConn, 0, len(g.node))
 	for _, n := range g.node {
