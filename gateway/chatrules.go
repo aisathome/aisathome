@@ -117,6 +117,11 @@ func (s *AccountStore) WithdrawOperatorTerms(id string) error {
 			return errNoOperator
 		}
 		t := time.Now().UTC()
+		if a.OperatorTerms != nil && a.OperatorTerms.At.After(t) {
+			// An acceptance stamped by a connector clock a little ahead: the withdrawal must still come
+			// after it, so a retry of that same record never undoes it.
+			t = a.OperatorTerms.At
+		}
 		a.OperatorTerms, a.TermsWithdrawn = nil, &t
 		return nil
 	})
@@ -230,6 +235,7 @@ func (g *Gateway) handleConnectorTerms(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Version    string    `json:"version"`
 		AcceptedAt time.Time `json:"accepted_at"`
+		Country    string    `json:"country"` // accepted and ignored: connectors built for the country rule send it
 	}
 	if !decodeTaskBody(w, r, maxConnectorBody, &body) {
 		return
@@ -242,14 +248,13 @@ func (g *Gateway) handleConnectorTerms(w http.ResponseWriter, r *http.Request) {
 	case !validVersion(body.Version):
 		apiError(w, http.StatusBadRequest, "version: 1-40 letters, digits, '.', '_' or '-'")
 		return
-	case body.AcceptedAt.IsZero() || body.AcceptedAt.After(now.Add(5*time.Minute)):
-		apiError(w, http.StatusBadRequest, "accepted_at: an RFC 3339 time, not in the future")
+	case body.AcceptedAt.IsZero() || body.AcceptedAt.After(now.Add(connectorClockSkew)):
+		apiError(w, http.StatusBadRequest, "accepted_at: an RFC 3339 time, not in the future (a minute of clock skew is allowed)")
 		return
 	}
+	// Stored as sent, never moved to now: a retry of the same record then compares the same time with a
+	// withdrawal (which comes after any acceptance it withdraws, WithdrawOperatorTerms), so it cannot undo it.
 	at := body.AcceptedAt
-	if at.After(now) { // a connector's clock ahead of ours: a withdrawal after now must still win
-		at = now
-	}
 	g.linkMu.Lock() // like a bind, it may make the user's unclaimed account: not while a claim moves it
 	unclaimed, applied, terms, err := g.accounts.connectorTerms(c.ID, user, body.Version, at, now)
 	g.linkMu.Unlock()
@@ -269,6 +274,9 @@ func (g *Gateway) handleConnectorTerms(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"recorded": applied, "current": terms,
 		"current_version": OperatorTermsVersion, "account_kind": kind})
 }
+
+// connectorClockSkew: how far ahead of the gateway's clock a connector's accepted_at may be.
+const connectorClockSkew = time.Minute
 
 func validVersion(v string) bool {
 	if v == "" || len(v) > 40 {

@@ -207,7 +207,8 @@ func TestClaimMergesUnclaimedAccount(t *testing.T) {
 		t.Errorf("connector's view: %v", v["account"])
 	}
 	page := r.page("gh:42")
-	for _, want := range []string{"boinccmd --project_attach https://boinc.test/proj/ " + weakKey("5"), "(claimed)", pid, "Chat on"} {
+	for _, want := range []string{"boinccmd --project_attach https://boinc.test/proj/ " + weakKey("5"), "(claimed)", pid, "Chat on",
+		"log in to the BOINC site with your account key"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("account page lacks %q", want)
 		}
@@ -435,7 +436,7 @@ func TestRunOnConnector(t *testing.T) {
 		t.Errorf("run again: HTTP %d", w.Code)
 	}
 
-	if !strings.Contains(r.page("gh:42"), "change it in your BOINC account settings") {
+	if page := r.page("gh:42"); !strings.Contains(page, "change it in your BOINC account settings") || strings.Contains(page, "data-account-key-login") {
 		t.Error("the page does not say how to use one's own address")
 	}
 	if w := r.form("gh:42", "/account/connectors/boinc/email", url.Values{"user": {"900"}, "email": {"ada@example.org"}}); w.Code != http.StatusNotFound &&
@@ -998,5 +999,50 @@ func TestClaimNeedsTheAccountKey(t *testing.T) {
 	// The WAL holds no older copy of a blanked request.
 	if fi, err := os.Stat(r.g.sci.path + "-wal"); err == nil && fi.Size() != 0 {
 		t.Errorf("the WAL has %d bytes after a request was blanked", fi.Size())
+	}
+}
+
+// Review fix (batch review 2026-11-19, high): a connector's acceptance is stored with the time it
+// sent; a withdrawal comes after it even if that time is ahead of ours, so retrying the same record
+// never undoes the withdrawal; more than a minute ahead is refused; an optional country is ignored.
+func TestConnectorTermsRetryAfterWithdrawal(t *testing.T) {
+	r := newLinkRig(t, nil)
+	path := "/v1/connectors/boinc/users/77/operator-terms"
+	now := r.clock()
+	if w, _ := r.call("POST", path, testConnectorKey, map[string]any{"version": OperatorTermsVersion, "accepted_at": now.Add(2 * time.Minute)}, ""); w.Code != 400 {
+		t.Errorf("two minutes ahead: HTTP %d", w.Code)
+	}
+	ahead := now.Add(30 * time.Second)
+	body := map[string]any{"version": OperatorTermsVersion, "accepted_at": ahead, "country": "NO"}
+	if out := r.want(200, "POST", path, testConnectorKey, body); out["recorded"] != true {
+		t.Fatalf("acceptance: %v", out)
+	}
+	id, _ := r.g.accounts.linkHolder("boinc", "77")
+	if a, _, _ := r.g.accounts.Get(id); a.OperatorTerms == nil || !a.OperatorTerms.At.Equal(ahead) {
+		t.Fatalf("stored acceptance %+v, sent %v", a.OperatorTerms, ahead)
+	}
+	if err := r.g.accounts.WithdrawOperatorTerms(id); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		r.advance(10 * time.Second) // retries come later, still before the sent time
+		delete(body, "country")
+		if out := r.want(200, "POST", path, testConnectorKey, body); out["recorded"] != false || out["current"] != false {
+			t.Fatalf("retry %d after the withdrawal: %v", i, out)
+		}
+	}
+	if a, _, _ := r.g.accounts.Get(id); a.OperatorTerms != nil {
+		t.Errorf("the retry undid the withdrawal: %+v", a.OperatorTerms)
+	}
+	// On the gateway's own clock (the withdrawal's): accepted 30 s ahead, withdrawn now, retried.
+	real := time.Now()
+	soon := real.Add(30 * time.Second)
+	if _, applied, _, err := r.g.accounts.connectorTerms("boinc", "78", OperatorTermsVersion, soon, real); !applied || err != nil {
+		t.Fatal(applied, err)
+	}
+	id78, _ := r.g.accounts.linkHolder("boinc", "78")
+	r.g.accounts.WithdrawOperatorTerms(id78)
+	if _, applied, terms, _ := r.g.accounts.connectorTerms("boinc", "78", OperatorTermsVersion, soon, real.Add(time.Second)); applied || terms {
+		t.Error("a retry of an acceptance from ahead of our clock undid the withdrawal")
 	}
 }

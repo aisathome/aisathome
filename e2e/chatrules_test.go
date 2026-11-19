@@ -274,6 +274,7 @@ func TestChatRulesConnectorTerms(t *testing.T) {
 		{"version": "", "accepted_at": time.Now()},
 		{"version": gateway.OperatorTermsVersion},
 		{"version": gateway.OperatorTermsVersion, "accepted_at": time.Now().Add(time.Hour)},
+		{"version": gateway.OperatorTermsVersion, "accepted_at": time.Now().Add(2 * time.Minute)},
 	} {
 		b, _ := json.Marshal(bad)
 		resp := a.do(t, "POST", "/v1/connectors/boinc/users/42/operator-terms", connectorKey, string(b))
@@ -286,19 +287,40 @@ func TestChatRulesConnectorTerms(t *testing.T) {
 		t.Errorf("another key: %d", resp.StatusCode)
 	}
 
-	// A connector clock a little ahead: accepted, recorded as now.
+	// A connector clock a little ahead: accepted, recorded as sent (an optional country is ignored).
+	ahead := time.Now().Add(30 * time.Second).UTC().Truncate(time.Second)
 	out := a.connector(t, "POST", "/users/42/operator-terms", map[string]any{"version": gateway.OperatorTermsVersion,
-		"accepted_at": time.Now().Add(2 * time.Minute)})
+		"accepted_at": ahead, "country": "NO"})
 	if out["recorded"] != true || out["current"] != true || out["account_kind"] != "unclaimed" {
 		t.Fatalf("connector terms answer: %v", out)
 	}
 	if code, body := ask(t, a.rig, keyB, deepBody); code != 200 || !strings.Contains(body, "Hello") {
 		t.Fatalf("chat on the accepted pilot: %d %s", code, body)
 	}
+	var unclaimed string
 	for _, x := range snap(a).Accounts {
-		if x.Status == gateway.StatusUnclaimed && x.OperatorTerms != nil && x.OperatorTerms.At.After(time.Now()) {
-			t.Fatalf("an acceptance from the future was stored: %v", x.OperatorTerms.At)
+		if x.Status == gateway.StatusUnclaimed && x.OperatorTerms != nil {
+			unclaimed = x.ID
+			if !x.OperatorTerms.At.Equal(ahead) {
+				t.Fatalf("stored %v, sent %v", x.OperatorTerms.At, ahead)
+			}
 		}
+	}
+	// Withdrawn, then the same record retried (the bridge did not see the answer): it stays withdrawn.
+	if err := a.store.WithdrawOperatorTerms(unclaimed); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		out = a.connector(t, "POST", "/users/42/operator-terms", map[string]any{"version": gateway.OperatorTermsVersion, "accepted_at": ahead})
+		if out["recorded"] != false || out["current"] != false {
+			t.Fatalf("retry %d after the withdrawal: %v", i, out)
+		}
+	}
+	// A new acceptance after the withdrawal counts again.
+	out = a.connector(t, "POST", "/users/42/operator-terms", map[string]any{"version": gateway.OperatorTermsVersion,
+		"accepted_at": ahead.Add(time.Second)})
+	if out["recorded"] != true || out["current"] != true {
+		t.Fatalf("a new acceptance after the withdrawal: %v", out)
 	}
 	// An older record changes nothing and says so.
 	out = a.connector(t, "POST", "/users/42/operator-terms", map[string]any{"version": "old-1", "accepted_at": time.Now().Add(-time.Hour)})
@@ -306,7 +328,7 @@ func TestChatRulesConnectorTerms(t *testing.T) {
 		t.Fatalf("older record: %v", out)
 	}
 	// A newer record of an old version is recorded but lets the pilot serve no chat.
-	out = a.connector(t, "POST", "/users/42/operator-terms", map[string]any{"version": "old-1", "accepted_at": time.Now()})
+	out = a.connector(t, "POST", "/users/42/operator-terms", map[string]any{"version": "old-1", "accepted_at": ahead.Add(2 * time.Second)})
 	if out["recorded"] != true || out["current"] != false {
 		t.Fatalf("old version: %v", out)
 	}

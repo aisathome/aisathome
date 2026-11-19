@@ -13,7 +13,11 @@ and **(site)** are live on aisathome.org once deployed.
   top of BOINC's "Account keys" page; the weak account key, which BOINC means to be shared, no longer
   claims. The connector finds the user by it and answers the user and its attach key; claiming again
   refreshes that key. The own-address form for pseudonymous BOINC users is gone (stock BOINC's
-  `am_set_info.php` is disabled): the person changes it on BOINC's site. Connector error texts are
+  `am_set_info.php` is disabled): the person changes it on BOINC's site. The optional password at "Run on
+  BOINC" now says it is for logging in to the BOINC site later; a claimed user's card says the account key
+  logs in there too. A connector's operator-terms record keeps the time it sent (at most a minute
+  ahead), a withdrawal comes after any acceptance it withdraws, so a retried record no longer undoes
+  it, and an optional `country` is accepted again. Connector error texts are
   stored without addresses or keys, the science database's WAL is truncated after a request is
   blanked, and the daily copies mark open requests failed. (gateway)
 
