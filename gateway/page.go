@@ -245,7 +245,7 @@ p{margin:.75rem 0}
 .card.ok{border-color:var(--ok);border-left:5px solid var(--ok)}
 .card-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem 1rem;margin-bottom:.75rem}.card-head>*{margin:0}
 .mut{color:var(--mut)}.small{font-size:.9rem}.back{margin:0 0 1rem;font-size:.9rem}
-code,kbd,pre{font-family:var(--mono);font-size:.9em}
+code,kbd,pre{font-family:var(--mono);font-size:.9em}p code{overflow-wrap:anywhere}
 .key{display:block;word-break:break-all;background:var(--bg);color:var(--head);padding:.65rem .8rem;border-radius:.4rem;border:1px solid var(--acc);user-select:all}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:2.75rem;padding:.55rem 1.3rem;border:2px solid var(--acc);border-radius:.4rem;
 background:var(--acc);color:var(--on-acc);font:800 1.15rem/1 var(--display);letter-spacing:.04em;text-transform:uppercase;text-decoration:none;cursor:pointer;

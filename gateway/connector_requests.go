@@ -230,13 +230,14 @@ func (s *scienceDB) verifyRequest(id, user, key, from string, now time.Time) (bo
 	return n == 1, nil
 }
 
-// failRequest fails a pending or verified request with msg (shown to the person), blanking the
-// address, password hash and key. False if it was neither.
-func (s *scienceDB) failRequest(id, msg string, now time.Time) (bool, error) {
+// failRequest fails a request in one of states with msg (shown to the person), blanking the address,
+// password hash and key. False if it was in none of them.
+func (s *scienceDB) failRequest(id, msg string, now time.Time, states ...string) (bool, error) {
 	ctx, cancel := pilotCtx()
 	defer cancel()
+	in := "'" + strings.Join(states, "', '") + "'" // the constants above, never input
 	res, err := s.db.ExecContext(ctx, `UPDATE connector_requests SET state = 'failed', error = ?, email = '', passwd_hash = '',
-		attach_key = '', updated_at = ? WHERE id = ? AND state IN ('pending', 'verified')`, msg, ptime(now), id)
+		attach_key = '', updated_at = ? WHERE id = ? AND state IN (`+in+`)`, msg, ptime(now), id)
 	if err != nil {
 		return false, s.fail("request fail", "", err)
 	}
@@ -437,7 +438,7 @@ func (g *Gateway) handleRequestResult(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		g.linkMu.Lock()
-		failed, err := g.sci.failRequest(q.ID, msg, now)
+		failed, err := g.sci.failRequest(q.ID, msg, now, reqPending) // a yes already taken stands
 		g.linkMu.Unlock()
 		g.answerRequest(w, c, q.ID, err, failed || q.State == reqFailed, "failed")
 		return
@@ -522,7 +523,7 @@ func (g *Gateway) finishRequest(q *connRequest) {
 			return
 		}
 		if refused != "" {
-			if _, err := g.sci.failRequest(q.ID, refused, now); err != nil {
+			if _, err := g.sci.failRequest(q.ID, refused, now, reqVerified); err != nil {
 				g.log.Error("connector request not failed", "request", q.ID, "err", err)
 			}
 			g.log.Info("connector request refused", "connector", q.Connector, "request", q.ID, "kind", q.Kind)

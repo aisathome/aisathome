@@ -141,7 +141,8 @@ var errClaimInactive = errors.New("only an active account can link a connector's
 
 // claimLink links connector's user to account target after the connector vouched for it (it made
 // the user for target, or target proved it with the attach key). The rules:
-//   - target must be active (not waitlisted, banned or unclaimed);
+//   - target must be active (not waitlisted, banned or unclaimed), unless the user is linked to it
+//     already (a link finished before a crash, then a ban: its records still follow);
 //   - a user linked to target already keeps its link (with the new attach key);
 //   - a user linked to an unclaimed account moves, and that account is merged into target: all its
 //     links move, target's probation starts at the earlier of the two first-node times, its chat
@@ -155,11 +156,11 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 	err = s.Update(func(f *AccountsFile) error {
 		from = ""
 		t := f.find(target)
-		if t == nil || t.Status != StatusActive {
-			return errClaimInactive
+		o := f.linkOwner(connector, user)
+		if t == nil || (t.Status != StatusActive && o != t) {
+			return errClaimInactive // linked already (a retry after a crash) is done whatever the status
 		}
 		link.Connector, link.User = connector, user
-		o := f.linkOwner(connector, user)
 		switch {
 		case o == t: // linked already: a fresh key; how it came stays
 			for i := range t.Links {

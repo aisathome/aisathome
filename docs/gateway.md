@@ -729,7 +729,11 @@ the next sweep (a minute). **Privacy:** the gateway never stores a connector use
 person's own address and the password hash live only in the pending request and are blanked once
 the connector answers (or the request fails); the claim key leaves the request when it is done or
 failed, and the link keeps the attach key (it can attach machines to that user and do nothing
-else). The records are in `science.db` (`connector_requests`, migration 3), backed up with it.
+else). The records are in `science.db` (`connector_requests`, migration 3), backed up with it; the
+database overwrites blanked values (`secure_delete`), and its daily copies blank the values of
+requests still open. Hardened, not airtight: the data volume's snapshots can still hold a request
+that was open at that moment. The pseudonymous login shown on the page is derived from the session
+secret: rotating it changes what the page shows, not the login the connector holds.
 
 ### What a pilot may serve
 

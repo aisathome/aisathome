@@ -15,6 +15,10 @@
 // a rollback never writes into a schema it does not know: restore the backup copy or start the
 // newer gateway again.
 //
+// secure_delete is on, so values the gateway blanks (connector requests' addresses, password hashes
+// and keys) are overwritten in the file, not left in free pages; the daily copies are scrubbed of
+// open requests' values too (scrubCopy).
+//
 // Backup: the data volume's daily snapshots hold the database and its WAL, which SQLite recovers
 // like a crash. Besides that, once a UTC day the gateway writes a clean copy beside it with VACUUM
 // INTO (science-YYYY-MM-DD.db) and keeps the newest scienceBackupsKept copies, so every snapshot
@@ -179,13 +183,13 @@ type scienceDB struct {
 // one in memory. Nothing is left open when it fails.
 func openScienceDB(dir string) (_ *scienceDB, err error) {
 	// A plain name: the driver takes the query off before SQLite sees the file name.
-	path, dsn := "", ":memory:?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=temp_store(MEMORY)&_txlock=immediate"
+	path, dsn := "", ":memory:?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=temp_store(MEMORY)&_pragma=secure_delete(1)&_txlock=immediate"
 	if dir != "" {
 		if strings.ContainsAny(dir, "?#") {
 			return nil, fmt.Errorf("science database: state_dir %q: no '?' or '#'", dir)
 		}
 		path = filepath.Join(dir, ScienceDBFile)
-		dsn = path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=temp_store(MEMORY)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_txlock=immediate"
+		dsn = path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=temp_store(MEMORY)&_pragma=secure_delete(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_txlock=immediate"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -309,6 +313,10 @@ func (s *scienceDB) backup(now time.Time) (bool, error) {
 			os.Remove(tmp)
 			return false, fmt.Errorf("science database copy: %w", err)
 		}
+		if err := scrubCopy(tmp); err != nil {
+			os.Remove(tmp)
+			return false, fmt.Errorf("science database copy: %w", err)
+		}
 		if err := syncFile(tmp); err != nil {
 			os.Remove(tmp)
 			return false, fmt.Errorf("science database copy: %w", err)
@@ -333,6 +341,23 @@ func (s *scienceDB) backup(now time.Time) (bool, error) {
 		all = all[1:]
 	}
 	return wrote, nil
+}
+
+// scrubCopy blanks what a copy must not keep: the addresses, password hashes and keys of connector
+// requests still open when it was made (connector_requests.go keeps them only while a step needs
+// them). secure_delete overwrites the old values in the file rather than leaving them in free pages.
+func scrubCopy(path string) error {
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=secure_delete(1)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err = db.ExecContext(ctx, `UPDATE connector_requests SET email = '', passwd_hash = '', attach_key = ''
+		WHERE email != '' OR passwd_hash != '' OR attach_key != ''`)
+	return err
 }
 
 func syncFile(path string) error {
