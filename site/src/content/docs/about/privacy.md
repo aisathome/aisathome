@@ -48,8 +48,15 @@ terms forbid it. We know people will sometimes do it anyway, so the rest of this
   identity number) go only to our own nodes ("trusted nodes"). Trusted means run by us, not secure: some are rented
   machines, whose host could in principle see what passes through. Detection is incomplete: names, addresses and health
   details are not detected and can reach volunteers' nodes.
-- No single volunteer gets more than a third of the conversations; while there are few nodes, a third is still a lot.
+- We try to give no single volunteer more than a third of the conversations, but that is not a guarantee: when no
+  other suitable node is free, the request goes to whichever suitable node is, so while few nodes are online one
+  volunteer can get every conversation.
+- If a node fails before it answers, the gateway sends the conversation to another node, which can be another
+  volunteer's. A conversation can therefore reach more than one node.
 - Agents (requests with tools, for example opencode) go to volunteers' nodes only if your API key allows it.
+- The node software keeps recent conversations in a prompt cache in the node's memory, so that the next turn of a
+  conversation is answered faster. Our Linux installer turns it on. The cache has a size limit but no time limit: a
+  conversation stays there until newer ones push it out or the node restarts.
 - We record which node answered each request, never the conversation itself, so a reported leak can be traced and
   the volunteer banned.
 - Node operators agree not to log, keep or share conversations, and to use them only to compute your answer
@@ -169,14 +176,17 @@ invitation-only, the error log also records the email address of each new accoun
 | BOINC account, computers, tasks and IP addresses on the BOINC server | (b) contract: taking part in the project |
 | BOINC statistics exports with CPIDs | (f) legitimate interest: credit counted across projects, as BOINC volunteers expect |
 | Server logs on both servers | (f) legitimate interest: security and running the service |
+| Evidence of a safety check (part of a node's stopped or flagged answer, 14 days) | (f) legitimate interest: security, protecting users from malicious nodes and telling a real attack from a false alarm; limited to at most 300 characters, with known secret formats removed, for 14 days |
 | Visitor statistics (counts) | (f) legitimate interest: knowing whether anyone reads the site |
 
 You need a GitHub or Google account id to sign in, and an email address for a BOINC account; without them we cannot give
 you an account.
 
 **Personal data in chats.** Our terms forbid putting personal data into chats, and we don't need any to answer you. If
-you do it anyway, we still handle it the way this page describes: the gateway passes it to one node without storing it,
+you do it anyway, we still handle it the way this page describes: the gateway passes it to a node without storing it,
 messages that look like personal data go only to our own nodes, and the operator's terms forbid keeping or using it.
+If a node fails before it answers, the conversation goes to another node; when detection missed the personal data, that
+can be another volunteer's.
 That is still processing of your data, under the same basis as the rest of the chat (contract). It applies just as much
 to health details, religion, politics or other sensitive information, which you should never type in.
 
@@ -200,7 +210,7 @@ A hold is temporary. Bans, of users or of node operators, are decided by a perso
 |---|---|
 | Message text on the gateway | not stored, apart from the evidence of a safety check |
 | Evidence of a safety check (part of a node's stopped or flagged answer) | 14 days |
-| Message text on a node | only while the node computes the answer (operator terms) |
+| Message text on a node | used only to compute the answer (operator terms); recent conversations stay in the node's memory cache until newer ones push them out or the node restarts (no time limit) |
 | Temporary chats | not stored |
 | Saved chats | until you delete them or your account |
 | Account, choices, usage and pilot records | as long as your account exists |
@@ -225,8 +235,10 @@ You can ask us to:
   (Art. 21);
 - withdraw your consent to email notices at any time; that does not affect what happened before.
 
-Write to contact@aisathome.org from the address you want the answer at. We may ask you to show that the account is
-yours, for example by signing in or with your BOINC weak account key. We answer within one month.
+Write to contact@aisathome.org from the address you want the answer at. Before we give out or delete anything, you
+show that the account is yours: by signing in to your aisathome.org account or, if you only have a BOINC account, with
+your full BOINC account key. We never accept the weak account key as proof, because people share it with others who
+compute for them. We answer within one month.
 
 **Deleting your account.** Write to contact@aisathome.org and we delete your aisathome.org account, your saved chats,
 your API keys and node tokens, your usage and pilot records, your email address if you gave one, and your BOINC account,
