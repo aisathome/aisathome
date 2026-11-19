@@ -31,7 +31,8 @@ anything here, including the requests under "Your rights".
 
 Your message travels encrypted to our gateway, a server in Stockholm (Amazon Web Services, region eu-north-1). The
 gateway passes it to a volunteer's computer (a "node"), which runs the model and sends the answer back the same way.
-The gateway does not store the text; only chats you choose to save are kept (below).
+The gateway stores no conversation text apart from the evidence of a safety check (below); only chats you choose to
+save are kept (below).
 
 ## What a node sees
 
@@ -49,15 +50,16 @@ terms forbid it. We know people will sometimes do it anyway, so the rest of this
   details are not detected and can reach volunteers' nodes.
 - No single volunteer gets more than a third of the conversations; while there are few nodes, a third is still a lot.
 - Agents (requests with tools, for example opencode) go to volunteers' nodes only if your API key allows it.
-- We record which node answered each request, never the text, so a reported leak can be traced and the volunteer
-  banned.
+- We record which node answered each request, never the conversation itself, so a reported leak can be traced and
+  the volunteer banned.
 - Node operators agree not to log, keep or share conversations, and to use them only to compute your answer
   (our [terms for operators](/about/terms/#6-requests-your-node-answers)). Breaking that means a permanent ban: all
   their nodes cut off at once, their credit removed and, for BOINC volunteers, their project account closed. We
   publish a short note about every confirmed case.
 - A volunteer's node answers chats only after its operator has accepted those terms; until then it does science work
   only.
-- We, who run the gateway, could see messages while they pass through. The gateway does not store them.
+- We, who run the gateway, could see messages while they pass through. The gateway does not store them, apart from the
+  evidence of a safety check (below).
 
 If you need confidentiality, run a model on your own machine. AIs@home's software is open source
 ([repository](https://github.com/aisathome/aisathome)), so you can.
@@ -84,6 +86,10 @@ until you delete them or your account.
 
 **For each request:** time, a pseudonymous user id, which node answered, the model, token counts, duration, the credit
 it earned, and whether a safety check flagged the answer (which rule, never the content). Never the text.
+
+**Evidence of a safety check.** When our safety checks stop or flag a node's answer, we keep the part of that answer that
+triggered the check (at most 300 characters, with known secret formats removed) for 14 days, so we can tell a real
+attack from a false alarm. It is the node's text, but it can quote something from your conversation.
 
 **If you run a node:** your node tokens (as a hash), the names you give your nodes, what they served and the credit they
 earn; whether you have accepted the operator terms, and when.
@@ -160,7 +166,6 @@ invitation-only, the error log also records the email address of each new accoun
 | Chat and API: passing your messages to a node, saved chats | (b) contract: it is the service you ask for |
 | Account, API keys, node tokens, usage limits and credit | (b) contract; (f) legitimate interest in preventing abuse |
 | Opt-in email about changes and outages | (a) your consent, which you can withdraw at any time |
-| Your aisathome.org account made from your BOINC account | (b) contract: settings, routing and credit for your pilots live there; (f) as a fallback |
 | BOINC account, computers, tasks and IP addresses on the BOINC server | (b) contract: taking part in the project |
 | BOINC statistics exports with CPIDs | (f) legitimate interest: credit counted across projects, as BOINC volunteers expect |
 | Server logs on both servers | (f) legitimate interest: security and running the service |
@@ -193,7 +198,8 @@ A hold is temporary. Bans, of users or of node operators, are decided by a perso
 
 | Data | How long |
 |---|---|
-| Message text on the gateway | not stored |
+| Message text on the gateway | not stored, apart from the evidence of a safety check |
+| Evidence of a safety check (part of a node's stopped or flagged answer) | 14 days |
 | Message text on a node | only while the node computes the answer (operator terms) |
 | Temporary chats | not stored |
 | Saved chats | until you delete them or your account |
