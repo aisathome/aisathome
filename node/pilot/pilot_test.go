@@ -36,24 +36,29 @@ import (
 
 // gateway is a stand-in for the gateway's node endpoint: it welcomes one node at a time,
 // records every frame and header it gets and the close reason, and sends requests on demand.
+// Tests wait on what it records (until), never on sleeps: the pilot's Run can return before this
+// side has read the close frame (seen in CI on 2026-11-18).
 type gateway struct {
 	srv *httptest.Server
 
-	mu      sync.Mutex
-	frames  [][]byte
-	headers []string
-	reason  string
-	closed  chan struct{} // closed when the node's connection ends
-	conn    *websocket.Conn
-	ready   chan struct{} // closed once a node is welcomed
-	once    sync.Once
-	done    map[string]bool
-	paused  bool
-	reqSeen atomic.Int32
+	mu       sync.Mutex
+	frames   [][]byte
+	headers  []string
+	reason   string
+	closed   chan struct{} // closed when the node's connection ends, after reason is set
+	conn     *websocket.Conn
+	ready    chan struct{} // closed once a node is welcomed
+	once     sync.Once
+	done     map[string]string // request id → how it ended: "done" or "error"
+	answered map[string]bool   // request ids the node sent any frame for
+	paused   bool
+	wake     chan struct{} // closed and replaced whenever a frame arrives
+	reqSeen  atomic.Int32
 }
 
 func newGateway(t *testing.T) *gateway {
-	g := &gateway{closed: make(chan struct{}), ready: make(chan struct{}), done: map[string]bool{}}
+	g := &gateway{closed: make(chan struct{}), ready: make(chan struct{}), done: map[string]string{},
+		answered: map[string]bool{}, wake: make(chan struct{})}
 	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		for k, v := range r.Header {
@@ -111,14 +116,48 @@ func (g *gateway) record(b []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.frames = append(g.frames, append([]byte(nil), b...))
+	if m.ReqID != "" {
+		g.answered[m.ReqID] = true
+	}
 	switch m.Type {
 	case protocol.TypeDone, protocol.TypeError:
-		g.done[m.ReqID] = true
+		g.done[m.ReqID] = m.Type
 	case protocol.TypeHeartbeat:
 		if m.Paused {
 			g.paused = true
 		}
 	}
+	close(g.wake)
+	g.wake = make(chan struct{})
+}
+
+// waitFor is how long a test waits for something the pilot should do within milliseconds: long
+// enough for a loaded CI runner under -race, and still a failure rather than a hang.
+const waitFor = 10 * time.Second
+
+// until waits until cond, called with g.mu held, holds; at most waitFor.
+func (g *gateway) until(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.After(waitFor)
+	for {
+		g.mu.Lock()
+		ok, wake := cond(), g.wake
+		g.mu.Unlock()
+		if ok {
+			return
+		}
+		select {
+		case <-wake:
+		case <-deadline:
+			t.Fatalf("waited %s for %s", waitFor, what)
+		}
+	}
+}
+
+// waitAnswered waits until the node answers request id (its first chunk, or an error).
+func (g *gateway) waitAnswered(t *testing.T, id string) {
+	t.Helper()
+	g.until(t, "an answer to request "+id, func() bool { return g.answered[id] })
 }
 
 // request sends one chat request to the node.
@@ -137,13 +176,23 @@ func (g *gateway) request(t *testing.T, id string) {
 	g.reqSeen.Add(1)
 }
 
-func (g *gateway) closeReason() string {
+// closeReason is the reason in the node's close frame. It waits for the connection to end: the
+// node's close handshake completes when this side replies, which is before it returns the
+// reason from Read.
+func (g *gateway) closeReason(t *testing.T) string {
+	t.Helper()
+	select {
+	case <-g.closed:
+	case <-time.After(waitFor):
+		t.Fatalf("the node's connection did not end within %s", waitFor)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.reason
 }
 
-func (g *gateway) isDone(id string) bool {
+// ended is how request id ended: "done", "error" or "" (not yet).
+func (g *gateway) ended(id string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.done[id]
@@ -236,6 +285,7 @@ type rig struct {
 	d    Deps
 	log  *bytes.Buffer
 	logm sync.Mutex
+	skew atomic.Int64 // added to the pilot's clock (Deps.Now): jump moves it on
 }
 
 type lockedWriter struct {
@@ -271,6 +321,7 @@ func newRig(t *testing.T) *rig {
 	r.d = Deps{
 		Log:  slog.New(slog.NewTextHandler(lockedWriter{&r.logm, r.log}, nil)),
 		Tick: 10 * time.Millisecond,
+		Now:  func() time.Time { return time.Now().Add(time.Duration(r.skew.Load())) },
 		NewEngine: func(cmd engine.Command, s setup.EngineSettings, onExit func(error, time.Duration)) Engine {
 			r.eng.port, r.eng.onExit = s.Port, onExit
 			return r.eng
@@ -282,6 +333,10 @@ func newRig(t *testing.T) *rig {
 	}
 	return r
 }
+
+// jump moves the pilot's clock on by d, so that a time rule fires at a moment the test chose
+// rather than after a sleep.
+func (r *rig) jump(d time.Duration) { r.skew.Add(int64(d)) }
 
 // run starts the pilot; the result arrives on the channel.
 func (r *rig) run(ctx context.Context) <-chan Result {
@@ -338,7 +393,7 @@ func TestIdleExit(t *testing.T) {
 	if res.Reason != ReasonIdle || res.Code != 0 {
 		t.Fatalf("result %+v, want idle, 0", res)
 	}
-	if got := r.gw.closeReason(); got != "pilot: idle" {
+	if got := r.gw.closeReason(t); got != "pilot: idle" {
 		t.Errorf("close reason %q, want %q", got, "pilot: idle")
 	}
 	if s := r.summary(); s.Reason != ReasonIdle || !s.Connected || s.Requests != 0 {
@@ -382,11 +437,11 @@ func TestRequestsDeferIdleExit(t *testing.T) {
 func TestTimeLimitDrains(t *testing.T) {
 	r := newRig(t)
 	r.eng.chunks, r.eng.chunkDelay = 20, 50*time.Millisecond // about 1 s
-	r.o.MaxServe = 1500 * time.Millisecond
 	ch := r.run(context.Background())
 	connected(t, r.gw)
-	time.Sleep(time.Second)
 	r.gw.request(t, "long")
+	r.gw.waitAnswered(t, "long")
+	r.jump(r.o.MaxServe) // the time limit passes while the request is in flight
 	res := wait(t, ch, 15*time.Second)
 	if res.Reason != ReasonTime || res.Code != 0 {
 		t.Fatalf("result %+v, want time, 0", res)
@@ -394,10 +449,10 @@ func TestTimeLimitDrains(t *testing.T) {
 	if !r.gw.sawPause() {
 		t.Error("the gateway never saw a paused heartbeat")
 	}
-	if !r.gw.isDone("long") {
-		t.Error("the request in flight did not finish before the pilot left")
+	if got := r.gw.ended("long"); got != protocol.TypeDone {
+		t.Errorf("the request in flight ended with %q before the pilot left, want %q", got, protocol.TypeDone)
 	}
-	if got := r.gw.closeReason(); got != "pilot: time" {
+	if got := r.gw.closeReason(t); got != "pilot: time" {
 		t.Errorf("close reason %q", got)
 	}
 }
@@ -411,7 +466,7 @@ func TestSigtermStopsInTime(t *testing.T) {
 	ch := r.run(ctx)
 	connected(t, r.gw)
 	r.gw.request(t, "endless")
-	time.Sleep(200 * time.Millisecond)
+	r.gw.waitAnswered(t, "endless") // in flight: the stop drains it, briefly
 	start := time.Now()
 	sigterm()
 	res := wait(t, ch, 10*time.Second)
@@ -421,7 +476,7 @@ func TestSigtermStopsInTime(t *testing.T) {
 	if res.Reason != ReasonSigterm || res.Code != 0 {
 		t.Fatalf("result %+v, want sigterm, 0", res)
 	}
-	if got := r.gw.closeReason(); got != "pilot: sigterm" {
+	if got := r.gw.closeReason(t); got != "pilot: sigterm" {
 		t.Errorf("close reason %q", got)
 	}
 	if !r.eng.stopped.Load() {
@@ -434,26 +489,22 @@ func TestSigtermStopsInTime(t *testing.T) {
 func TestSigtermDuringDrain(t *testing.T) {
 	r := newRig(t)
 	r.eng.chunks, r.eng.chunkDelay = 100000, 50*time.Millisecond
-	r.o.MaxServe, r.o.DrainWait, r.o.StopBudget = 1500*time.Millisecond, time.Minute, 4*time.Second
+	r.o.DrainWait, r.o.StopBudget = time.Minute, 4*time.Second
 	ctx, sigterm := context.WithCancel(context.Background())
 	ch := r.run(ctx)
 	connected(t, r.gw)
 	r.gw.request(t, "endless")
-	deadline := time.Now().Add(10 * time.Second)
-	for !r.gw.sawPause() {
-		if time.Now().After(deadline) {
-			t.Fatal("the pilot never paused at its time limit")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	r.gw.waitAnswered(t, "endless")
+	r.jump(r.o.MaxServe)
+	r.gw.until(t, "a paused heartbeat at the time limit", func() bool { return r.gw.paused })
 	start := time.Now()
 	sigterm()
 	res := wait(t, ch, 10*time.Second)
 	if took := time.Since(start); took > r.o.StopBudget {
 		t.Errorf("stop took %s, more than the %s budget", took, r.o.StopBudget)
 	}
-	if res.Reason != ReasonSigterm || r.gw.closeReason() != "pilot: sigterm" {
-		t.Errorf("result %+v, close reason %q; want sigterm", res, r.gw.closeReason())
+	if got := r.gw.closeReason(t); res.Reason != ReasonSigterm || got != "pilot: sigterm" {
+		t.Errorf("result %+v, close reason %q; want sigterm", res, got)
 	}
 }
 
