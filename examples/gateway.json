@@ -4,5 +4,6 @@
   "node_tokens": {"dev-node-token-change-me": "dev-operator"},
   "usage_log": "usage.jsonl",
   "keys_file": "keys.json",
-  "state_dir": "state"
+  "state_dir": "state",
+  "chat_rules_off": true
 }

@@ -453,6 +453,11 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 		g.mu.Lock()
 		wake := g.wake // taken before pick, so a signal in between is not lost
 		last, seen := g.known[rt.want]
+		if rt.rules && rt.acct != "" && g.accounts != nil {
+			// The opt-in as it is now (chatrules.go): a withdrawal applies to a request still waiting
+			// for a node, and to its retries. Under g.mu: yieldsLocked reads waiting routes.
+			rt.transfer = g.accounts.transferOK(rt.acct)
+		}
 		g.mu.Unlock()
 		if n, model := g.pick(rt); n != nil {
 			return n, model, ""

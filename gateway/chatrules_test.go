@@ -4,6 +4,7 @@ package gateway
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -301,10 +302,77 @@ func TestConnectorTermsMapsTheUser(t *testing.T) {
 	}
 }
 
+// A withdrawal is not undone by a connector resending an acceptance from before it, and a record
+// older than the account's acceptance changes nothing, its country included.
+func TestConnectorTermsAfterWithdrawal(t *testing.T) {
+	s, err := OpenAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	s.SignIn("gh:7", now)
+	s.SetStatus("gh:7", StatusActive)
+	s.Link("gh:7", "boinc", "43", now)
+	if err := s.AcceptOperatorTerms("gh:7", OperatorTermsVersion, ViaAccountPage, "NO", now); err != nil {
+		t.Fatal(err)
+	}
+	s.connectorTerms("boinc", "43", "older-version", "SE", now.Add(-time.Hour), now)
+	if terms, country := s.operatorState("gh:7"); !terms || country != "NO" {
+		t.Fatalf("an older record replaced the account's acceptance: %v %q", terms, country)
+	}
+	if err := s.WithdrawOperatorTerms("gh:7"); err != nil {
+		t.Fatal(err)
+	}
+	s.connectorTerms("boinc", "43", OperatorTermsVersion, "", now.Add(-time.Minute), now)
+	if terms, _ := s.operatorState("gh:7"); terms {
+		t.Fatal("a resent acceptance from before the withdrawal brought it back")
+	}
+	s.connectorTerms("boinc", "43", OperatorTermsVersion, "", time.Now().Add(time.Second), now)
+	if terms, _ := s.operatorState("gh:7"); !terms {
+		t.Fatal("a new acceptance after the withdrawal did not count")
+	}
+}
+
+// A range inside another of a different country makes the enclosing range's country unknown.
+func TestGeoTableNestedConflict(t *testing.T) {
+	gt, err := parseGeoTable(strings.NewReader("10.0.0.0,10.0.255.255,NO\n10.0.1.0,10.0.1.255,US\n10.1.0.0,10.1.255.255,SE\n10.1.2.0,10.1.2.255,SE\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for addr, want := range map[string]string{"10.0.1.5": "", "10.0.0.5": "", "10.1.2.5": "SE", "10.1.0.5": "SE"} {
+		if got := gt.country(addr); got != want {
+			t.Errorf("country(%s) = %q, want %q", addr, got, want)
+		}
+	}
+}
+
 func TestOAuthFlowCarriesTransfer(t *testing.T) {
 	f := oauthFlow{provider: "github", state: "s", contact: "1", transfer: "1"}
 	p := strings.Split(f.String(), "|")
 	if len(p) != 8 || p[7] != "1" {
 		t.Fatalf("flow %q", f.String())
+	}
+}
+
+// A request still waiting for a node follows the account's opt-in as it is now: withdrawn while it
+// waited (or before a retry), it does not reach a node abroad.
+func TestWaitingRequestFollowsWithdrawal(t *testing.T) {
+	s := rulesRig(t)
+	store, err := OpenAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.g.accounts = store
+	store.SignIn("gh:1", time.Now())
+	n := s.node("abroad", "op-abroad", false, 0)
+	n.rules = nodeRules{terms: true, geo: "US", stated: "US"}
+	rt := &route{want: "deep", rules: true, transfer: true, acct: "gh:1", class: ClassChat, exclude: map[*nodeConn]bool{}}
+	got, _, why := s.g.pickWait(context.Background(), rt, time.Now().Add(300*time.Millisecond))
+	if got != nil || why != timedOut {
+		t.Fatalf("withdrawn opt-in: node %v, why %q", got, why)
+	}
+	store.SetTransferConsent("gh:1", true, ViaAccountPage, time.Now())
+	if got, _, why := s.g.pickWait(context.Background(), rt, time.Now().Add(300*time.Millisecond)); got != n {
+		t.Fatalf("with the opt-in: node %v, why %q", got, why)
 	}
 }

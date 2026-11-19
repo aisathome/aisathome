@@ -105,14 +105,13 @@ func parseGeoTable(r io.Reader) (*geoTable, error) {
 		if !less128(p.lastHi, p.lastLo, g.firstHi, g.firstLo) {
 			// Overlapping ranges: the data is wrong somewhere, and a country it cannot tell apart is
 			// no country. Cut the overlap out of both (the later range keeps what lies beyond).
-			if less128(p.lastHi, p.lastLo, g.lastHi, g.lastLo) {
-				g.firstHi, g.firstLo = inc128(p.lastHi, p.lastLo)
-			} else {
-				continue
-			}
 			if g.cc != p.cc {
 				p.cc = [2]byte{} // unknown
 			}
+			if !less128(p.lastHi, p.lastLo, g.lastHi, g.lastLo) {
+				continue // inside p
+			}
+			g.firstHi, g.firstLo = inc128(p.lastHi, p.lastLo)
 		}
 		nextHi, nextLo := inc128(p.lastHi, p.lastLo)
 		if g.cc == p.cc && nextHi == g.firstHi && nextLo == g.firstLo {
