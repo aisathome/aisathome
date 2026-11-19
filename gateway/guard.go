@@ -3,7 +3,9 @@
 // person reading it. So tool calls from untrusted nodes are held back until complete and
 // checked before the client sees them: download-and-execute, credential files, encoded
 // commands and uploads of files. A tool call that breaks one of these rules is never released,
-// and the node is held (gets no requests) until the operator looks. Web addresses that appear
+// and the node is held (gets no requests) until the operator looks, unless it only runs an
+// official installer (guard_official.go). Each stop, hold and flag keeps its evidence, a fragment
+// of the node's answer (guard_evidence.go). Web addresses that appear
 // nowhere in the request and are not well-known sources (knownAddrs) are only flagged (logged),
 // in tool calls as in plain text: honest coding agents write such addresses all the time
 // (package indexes, documentation, git clones), and holding a node for one stopped all chat
@@ -65,24 +67,27 @@ var commandRules = []struct {
 
 // guardRules match dangerous tool calls. Credential paths are excused when the request
 // itself names them ("put the key in .env"): the node cannot add text to the request. why is
-// what a hold record keeps to say which pattern fired: fixed text, never the call's own.
+// what a hold record keeps to say which pattern fired: fixed text, never the call's own (the
+// evidence, guard_evidence.go, keeps a fragment of the call). installer: the pattern can run an
+// official installer (guard_official.go), which stops the answer without holding the node.
 var guardRules = []struct {
 	rule, why string
+	installer bool
 	re        *regexp.Regexp
 }{
-	{ruleDownloadExec, "a download piped into a shell or interpreter", regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`)},
-	{ruleDownloadExec, "a shell running a download", regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`)},
-	{ruleDownloadExec, "PowerShell running a download", regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`)},
-	{ruleCredentials, "a credential file or folder the request does not name", regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`)},
-	{ruleEncoded, "base64 decoded into a shell or interpreter", regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`)},
-	{ruleEncoded, "a shell running base64-decoded text", regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|eval)\b[^\n]*(?:\$\(|` + "`" + `)[^\n]*\bbase64\s+(?:-d|-D|--decode)\b`)},
-	{ruleEncoded, "PowerShell with an encoded command", regexp.MustCompile(`(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]*\s-(?:e|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}`)},
-	{ruleEncoded, "exec or eval of base64-decoded code", regexp.MustCompile(`(?i)\b(?:exec|eval)\s*\(\s*(?:__import__\(\s*["']base64["']\s*\)\.|base64\.)?b64decode\b`)},
-	{ruleUpload, "curl sending a file as form or data", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`)},
-	{ruleUpload, "curl uploading a file", regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
-	{ruleUpload, "wget posting a file", regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
-	{ruleUpload, "socat sending a file", regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`)},
-	{ruleUpload, "scp or rsync to a remote host", regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
+	{ruleDownloadExec, "a download piped into a shell or interpreter", true, regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`)},
+	{ruleDownloadExec, "a shell running a download", true, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`)},
+	{ruleDownloadExec, "PowerShell running a download", false, regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`)},
+	{ruleCredentials, "a credential file or folder the request does not name", false, regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`)},
+	{ruleEncoded, "base64 decoded into a shell or interpreter", false, regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`)},
+	{ruleEncoded, "a shell running base64-decoded text", false, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|eval)\b[^\n]*(?:\$\(|` + "`" + `)[^\n]*\bbase64\s+(?:-d|-D|--decode)\b`)},
+	{ruleEncoded, "PowerShell with an encoded command", false, regexp.MustCompile(`(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]*\s-(?:e|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}`)},
+	{ruleEncoded, "exec or eval of base64-decoded code", false, regexp.MustCompile(`(?i)\b(?:exec|eval)\s*\(\s*(?:__import__\(\s*["']base64["']\s*\)\.|base64\.)?b64decode\b`)},
+	{ruleUpload, "curl sending a file as form or data", false, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`)},
+	{ruleUpload, "curl uploading a file", false, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
+	{ruleUpload, "wget posting a file", false, regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
+	{ruleUpload, "socat sending a file", false, regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`)},
+	{ruleUpload, "scp or rsync to a remote host", false, regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
 }
 
 // urlHostRe finds the host of a web address; bareHostRe a host given to curl or wget without
@@ -99,6 +104,12 @@ var (
 // The work is linear in s and req: the request's host words are collected once, each host is
 // looked up among them, and a known-source check reads at most maxAddrTail bytes after its host.
 func unknownHost(s, req string, known knownAddrs) string {
+	h, _ := unknownAddr(s, req, known)
+	return h
+}
+
+// unknownAddr is unknownHost with where the host is in s (the evidence's match).
+func unknownAddr(s, req string, known knownAddrs) (string, [2]int) {
 	type addr struct{ host, end int } // the host is s[host:end]
 	var addrs []addr
 	for _, re := range []*regexp.Regexp{urlHostRe, bareHostRe} {
@@ -130,9 +141,9 @@ func unknownHost(s, req string, known knownAddrs) string {
 		if tail, whole := addrTail(s, a.end); known.has(h, tail, whole) {
 			continue
 		}
-		return h
+		return h, [2]int{a.host, a.end}
 	}
-	return ""
+	return "", [2]int{}
 }
 
 // maxAddrTail bounds what a known-source check reads after a host: the rest of its word, up to
@@ -181,20 +192,25 @@ const maxKnownAddrs = 64
 
 // parseKnownAddrs reads entries "host" or "host/path/...", lower case, without a scheme.
 func parseKnownAddrs(list []string) (knownAddrs, error) {
+	return parseAddrList("guard_known_addresses", list)
+}
+
+// parseAddrList reads a list of the config setting key as parseKnownAddrs does.
+func parseAddrList(key string, list []string) (knownAddrs, error) {
 	if len(list) > maxKnownAddrs {
-		return nil, fmt.Errorf("guard_known_addresses: at most %d entries", maxKnownAddrs)
+		return nil, fmt.Errorf("%s: at most %d entries", key, maxKnownAddrs)
 	}
 	var out knownAddrs
 	for _, e := range list {
 		host, path, _ := strings.Cut(e, "/")
 		if !knownHostRe.MatchString(host) {
-			return nil, fmt.Errorf("guard_known_addresses: %q: give a host name in lower case, then optionally /path, without a scheme", e)
+			return nil, fmt.Errorf("%s: %q: give a host name in lower case, then optionally /path, without a scheme", key, e)
 		}
 		k := knownAddr{host: host}
 		if path != "" {
 			for _, seg := range strings.Split(strings.TrimRight(path, "/"), "/") {
 				if !knownSegRe.MatchString(seg) || seg == "." || seg == ".." {
-					return nil, fmt.Errorf("guard_known_addresses: %q: path segments of lower-case letters, digits and _ . ~ -", e)
+					return nil, fmt.Errorf("%s: %q: path segments of lower-case letters, digits and _ . ~ -", key, e)
 				}
 				k.path += "/" + seg
 			}
@@ -394,32 +410,41 @@ func requestText(body map[string]any) string {
 // clientRoles are the message roles whose text the client wrote or its own tools produced.
 var clientRoles = map[string]bool{"system": true, "developer": true, "user": true, "tool": true, "function": true}
 
-// guardHit is what stopped an answer: the rule and, for the operator's hold record, why it
-// fired, in fixed words that name the pattern (guardRules) and hold nothing of the call or the
-// request. rule "" means nothing did.
+// guardHit is what stopped or flagged an answer: the rule and, for the operator's hold record, why
+// it fired, in fixed words that name the pattern (guardRules) and hold nothing of the call or the
+// request; and where it matched, for the evidence (guard_evidence.go): text[at[0]:at[1]] of the
+// text the rule read, which is the node's answer, never the request. rule "" means nothing did.
 type guardHit struct {
 	rule, why string
+	text      string // what the rule read: a tool call's text, the answer's text or a stream chunk
+	at        [2]int // the match in text
+	where     string // "tool call <name>", "answer text" or "stream"
+	host      string // the host of the address the match names, if any
+	official  bool   // an official installer (guard_official.go): stop the answer, do not hold the node
 }
 
-// blocks: the hit stops the answer and holds the node. An unknown address is only flagged.
+// blocks: the hit stops the answer and holds the node (unless official). An unknown address is
+// only flagged.
 func (h guardHit) blocks() bool { return h.rule != "" && h.rule != ruleUnknownURL }
 
 // Reasons of the rules that are not a pattern of guardRules.
 const (
 	whyUnknownURL  = "a web address that is not in the request"
+	whyTextURL     = "a web address in the answer's text that is not in the request"
 	whyAfterFinish = "tool-call pieces after the calls were complete"
 	whyOddKey      = "a stream key in an unusual case"
 )
 
-// streamHit is the hit of a stream rule (guard.violation).
-func streamHit(rule string) guardHit {
+// streamHit is the hit of a stream rule (guard.violation) in chunk, the node's chunk that broke it.
+func streamHit(rule string, chunk []byte) guardHit {
+	h := guardHit{rule: rule, text: string(chunk), at: [2]int{0, len(chunk)}, where: "stream"}
 	switch rule {
 	case ruleAfterFinish:
-		return guardHit{rule, whyAfterFinish}
+		h.why = whyAfterFinish
 	case ruleOddKey:
-		return guardHit{rule, whyOddKey}
+		h.why = whyOddKey
 	}
-	return guardHit{rule: rule}
+	return h
 }
 
 var (
@@ -466,28 +491,65 @@ func callText(name, args string) string {
 // write or edit tool's file text as well as shell commands: a script written now can run in the
 // next call, and in 1,032 recorded write and edit calls no rule fired on such text.
 func checkToolCall(name, args, req string, known knownAddrs) guardHit {
+	return checkCall(name, args, req, known, nil)
+}
+
+// checkCall is checkToolCall with the official installers (guard_official.go): a download-and-
+// execute match that runs only those is an official hit, which every other blocking hit in the
+// call goes before.
+func checkCall(name, args, req string, known, installers knownAddrs) guardHit {
+	where := "tool call " + name
 	text := callText(name, args)
+	var official guardHit
 	for _, r := range guardRules {
 		for _, m := range r.re.FindAllStringIndex(text, -1) {
 			if r.rule == ruleCredentials && strings.Contains(req, strings.ToLower(strings.Trim(text[m[0]:m[1]], " \t\n\"'=:(/~);,"))) {
 				continue
 			}
-			return guardHit{r.rule, r.why}
+			h := guardHit{rule: r.rule, why: r.why, text: text, at: [2]int{m[0], m[1]}, where: where, host: matchHost(text, m, r.installer)}
+			if r.installer && officialInstall(text, m[0], m[1], installers) {
+				if official.rule == "" {
+					h.official = true
+					official = h
+				}
+				continue
+			}
+			return h
 		}
 	}
 	cmds := commandText(name, args)
 	for _, r := range commandRules {
-		if r.re.MatchString(cmds) {
-			return guardHit{r.rule, r.why}
+		if m := r.re.FindStringIndex(cmds); m != nil {
+			return guardHit{rule: r.rule, why: r.why, text: cmds, at: [2]int{m[0], m[1]}, where: where, host: matchHost(cmds, m, false)}
 		}
 	}
-	if installSourceHit(name, args, req, known) {
-		return guardHit{ruleInstallSource, whyInstallSource}
+	if host, src := installSourceHit(name, args, req, known); host != "" {
+		h := guardHit{rule: ruleInstallSource, why: whyInstallSource, where: where, host: host, text: src, at: [2]int{0, len(src)}}
+		if i := strings.Index(strings.ToLower(text), host); i >= 0 && len(strings.ToLower(text)) == len(text) {
+			h.text, h.at = text, [2]int{i, i + len(host)} // the install in the call, if its host shows as is
+		}
+		return h
 	}
-	if unknownHost(text, req, known) != "" {
-		return guardHit{ruleUnknownURL, whyUnknownURL}
+	if official.rule != "" {
+		return official
+	}
+	if host, at := unknownAddr(text, req, known); host != "" {
+		return guardHit{rule: ruleUnknownURL, why: whyUnknownURL, text: text, at: at, where: where, host: host}
 	}
 	return guardHit{}
+}
+
+// matchHost is the host of the first web address in the match m of text; for a pattern that can run
+// an installer, also in the rest of its line ("sh -c "$(curl … https://…)"": the match ends at curl).
+func matchHost(text string, m []int, installer bool) string {
+	end := m[1]
+	if installer {
+		end = min(len(text), end+maxFragment)
+		if i := strings.IndexByte(text[m[1]:end], '\n'); i >= 0 {
+			end = m[1] + i
+		}
+	}
+	return hostIn(text[m[0]:end])
 }
 
 // cmdLines joins shell line continuations and keeps each line its own, so a command word
@@ -589,12 +651,13 @@ const (
 
 // guard follows one streamed answer of an untrusted node.
 type guard struct {
-	req   string     // requestText of the request
-	known knownAddrs // sources known without the request (defaultKnownAddrs)
-	calls []*heldCall
-	flag  string   // a flag-only rule a checked tool call broke (ruleUnknownURL)
-	held  int      // bytes of arguments held
-	early [][]byte // chunks before any content (the role): held, so that an answer made only of
+	req        string     // requestText of the request
+	known      knownAddrs // sources known without the request (defaultKnownAddrs)
+	installers knownAddrs // official installers (guard_official.go)
+	calls      []*heldCall
+	flag       guardHit // a flag-only rule a checked tool call broke (ruleUnknownURL)
+	held       int      // bytes of arguments held
+	early      [][]byte // chunks before any content (the role): held, so that an answer made only of
 	// a flagged tool call has sent nothing yet and can be retried on a trusted node
 	begun  bool   // content went out: nothing more is held early
 	finish []byte // the chunk with finish_reason, held until the calls are released
@@ -604,6 +667,7 @@ type guard struct {
 	// would be checked apart from what the client joins them to.
 	released  bool
 	violation string // a stream rule broken (ruleAfterFinish, ruleOddKey): stop the answer
+	violating []byte // the chunk that broke it, for the evidence
 }
 
 type heldCall struct {
@@ -612,6 +676,9 @@ type heldCall struct {
 }
 
 func newGuard(req string, known knownAddrs) *guard { return &guard{req: req, known: known} }
+
+// violationHit is the hit of the stream rule broken.
+func (gd *guard) violationHit() guardHit { return streamHit(gd.violation, gd.violating) }
 
 // filter takes one streamed chunk and returns what may go to the client now. Tool-call
 // deltas are taken out and held; a chunk with finish_reason is held while tool calls are
@@ -662,7 +729,7 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 		return raw, false
 	}
 	if oddKey(c) {
-		gd.violation = ruleOddKey
+		gd.violation, gd.violating = ruleOddKey, raw
 		return nil, false
 	}
 	if gd.meta == nil {
@@ -686,7 +753,7 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 		}
 		if tcs, ok := delta["tool_calls"].([]any); ok {
 			if gd.released && len(tcs) > 0 {
-				gd.violation = ruleAfterFinish
+				gd.violation, gd.violating = ruleAfterFinish, raw
 				return nil, false
 			}
 			gd.hold(tcs)
@@ -755,30 +822,35 @@ func (gd *guard) hold(tcs []any) {
 }
 
 // check returns what the held tool calls break that blocks; hit.rule is "" if nothing. A rule
-// that only flags is kept for flagged.
+// that only flags is kept for flagged. A call that is not official goes before an official one.
 func (gd *guard) check() guardHit {
+	var official guardHit
 	for _, k := range gd.calls {
-		h := checkToolCall(k.name, k.args.String(), gd.req, gd.known)
-		if h.blocks() {
+		h := checkCall(k.name, k.args.String(), gd.req, gd.known, gd.installers)
+		if h.blocks() && !h.official {
 			return h
 		}
-		if h.rule != "" && gd.flag == "" {
-			gd.flag = h.rule
+		if h.official && official.rule == "" {
+			official = h
+		}
+		if h.rule != "" && !h.blocks() && gd.flag.rule == "" {
+			gd.flag = h
 		}
 	}
-	return guardHit{}
+	return official
 }
 
-// flagged returns the rule to log for an answer that passed: ruleUnknownURL if a tool call named
-// a web address absent from the request, else ruleTextURL if the answer text did, else "".
-func (gd *guard) flagged() string {
-	if gd.flag != "" {
+// flagged returns the hit to log for an answer that passed: ruleUnknownURL if a tool call named
+// a web address absent from the request, else ruleTextURL if the answer text did; rule "" if none.
+func (gd *guard) flagged() guardHit {
+	if gd.flag.rule != "" {
 		return gd.flag
 	}
-	if unknownHost(gd.text.String(), gd.req, gd.known) != "" {
-		return ruleTextURL
+	text := gd.text.String()
+	if host, at := unknownAddr(text, gd.req, gd.known); host != "" {
+		return guardHit{rule: ruleTextURL, why: whyTextURL, text: text, at: at, where: "answer text", host: host}
 	}
-	return ""
+	return guardHit{}
 }
 
 // release returns the held chunks, the tool calls as one chunk, then the held finish chunk,
@@ -838,9 +910,10 @@ func oddKey(v any) bool {
 }
 
 // checkAssembled returns what a tool call in an assembled (non-streaming) answer breaks that
-// blocks; hit.rule is "" if nothing. flag is a flag-only rule a call broke. The client gets exactly
-// these calls, however the stream was cut into pieces.
-func checkAssembled(ans map[string]any, req string, known knownAddrs) (hit guardHit, flag string) {
+// blocks; hit.rule is "" if nothing; an official installer only if no call breaks a rule
+// otherwise. flag is a flag-only rule a call broke. The client gets exactly these calls, however
+// the stream was cut into pieces.
+func checkAssembled(ans map[string]any, req string, known, installers knownAddrs) (hit, flag guardHit) {
 	choices, _ := ans["choices"].([]any)
 	for _, ch := range choices {
 		cm, _ := ch.(map[string]any)
@@ -850,14 +923,21 @@ func checkAssembled(ans map[string]any, req string, known knownAddrs) (hit guard
 			fn, _ := c.(map[string]any)["function"].(map[string]any)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
-			h := checkToolCall(name, args, req, known)
-			if h.blocks() {
-				return h, ""
-			}
-			if flag == "" {
-				flag = h.rule
+			h := checkCall(name, args, req, known, installers)
+			switch {
+			case h.blocks() && !h.official:
+				return h, guardHit{}
+			case h.official:
+				if hit.rule == "" {
+					hit = h
+				}
+			case h.rule != "" && flag.rule == "":
+				flag = h
 			}
 		}
+	}
+	if hit.rule != "" {
+		return hit, guardHit{}
 	}
 	return guardHit{}, flag
 }

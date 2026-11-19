@@ -447,6 +447,7 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 		var gd *guard
 		if !n.trusted && (n.operator != rt.self || n.pilot != "") {
 			gd = newGuard(job.reqText, g.knownSrc)
+			gd.installers = g.installs
 		}
 		started, err := g.run(w, r, req, n, model, gd)
 		if errors.Is(err, errPreempted) && !started {

@@ -64,6 +64,8 @@ type Gateway struct {
 	shares   []shareEntry    // recent placements, for the share cap; guarded by mu
 	held     sync.Map        // node id → NodeHold: held by a guard, without an accounts file
 	knownSrc knownAddrs      // sources the guards know without the request (guard.go)
+	installs knownAddrs      // official installers: stopped, not held (guard_official.go)
+	glog     guardLog        // recent guard events with their evidence (guard_evidence.go)
 	unrec    unrecordedHolds // guard holds the accounts file has not recorded yet
 	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
 	counting chan struct{}   // prompts being counted before routing (countPrompt)
@@ -143,12 +145,19 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.GuardOfficialInstallers == nil {
+		cfg.GuardOfficialInstallers = defaultInstallers
+	}
+	installs, err := parseAddrList("guard_official_installers", cfg.GuardOfficialInstallers)
+	if err != nil {
+		return nil, err
+	}
 	// Startup order (refactor review 2026-11-17, finding 4): every step that can fail comes first,
 	// and what it opens is closed again when a later one fails; background work starts last, once
 	// nothing can fail any more, so a gateway that does not start leaves no goroutine or file behind.
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), press: newPressure(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
-		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known,
+		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known, installs: installs,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
 	g.tasks.compactAge = g.taskCompactAge
@@ -216,6 +225,8 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		g.hist.load(log)
 		g.press.path = filepath.Join(cfg.StateDir, pressureFile)
 		g.press.load(log, time.Now())
+		g.glog.path = filepath.Join(cfg.StateDir, GuardLogFile)
+		g.glog.load(log, time.Now())
 	}
 	// The usage log rebuilds today's and all-time statistics, and the history's request and
 	// token counts of the days it still covers.
@@ -239,6 +250,9 @@ func (g *Gateway) startBackground() {
 		}
 		g.every(keysFileCheck, func() { // the operator's CLI changes the file while we run
 			g.recordHolds()
+			if err := g.accounts.dropOldEvidence(time.Now()); err != nil {
+				log.Error("dropping guard evidence older than 14 days from the accounts file failed; retried", "err", err)
+			}
 			if err := g.accounts.Refresh(); err != nil {
 				log.Error("accounts file not applied, keeping the accounts in use", "err", err)
 			}
@@ -259,6 +273,9 @@ func (g *Gateway) startBackground() {
 			}
 			if err := g.hist.save(); err != nil {
 				log.Warn("saving history failed", "err", err)
+			}
+			if err := g.glog.save(time.Now()); err != nil {
+				log.Warn("saving the guard log failed", "err", err)
 			}
 		})
 		g.every(pressureSaveEvery, func() {
@@ -314,5 +331,5 @@ func (g *Gateway) every(d time.Duration, f func()) {
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
 	g.bg.Wait()
-	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.closeFiles())
+	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.glog.save(time.Now()), g.closeFiles())
 }

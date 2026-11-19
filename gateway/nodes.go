@@ -58,7 +58,7 @@ type AccountNode struct {
 }
 
 // NodeHold records a node stopped by a guard (guard.go). It gets no requests until the
-// operator clears it (`accounts node-clear`); the record is the evidence, without content.
+// operator clears it (`accounts node-clear`).
 type NodeHold struct {
 	Node     string `json:"node"`
 	Operator string `json:"operator"` // the account's pseudonym, or the config token's operator
@@ -68,6 +68,10 @@ type NodeHold struct {
 	// Empty in holds recorded before it existed.
 	Reason string    `json:"reason,omitempty"`
 	At     time.Time `json:"at"`
+	Req    string    `json:"req,omitempty"` // the request whose answer was stopped (its usage record)
+	// Evidence is what matched in the node's answer (guard_evidence.go): a fragment, secrets
+	// redacted, never the request. Dropped EvidenceKeep after At; the hold stays.
+	Evidence *GuardEvidence `json:"evidence,omitempty"`
 }
 
 type nodeRef struct {
@@ -413,11 +417,15 @@ func (g *Gateway) nodeHeld(id string) bool {
 	return p
 }
 
-// holdNode stops n after a guard fired on its answer. Neither the log nor the record holds content.
+// holdNode stops n after a guard fired on its answer. The log line holds no content; the record
+// and the guard log keep the evidence (guard_evidence.go).
 func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
 	g.log.Warn("guard stopped a node's answer; node held", "node", n.id, "operator", n.operator, "rule", hit.rule,
 		"reason", hit.why, "req", reqID)
-	p := NodeHold{Node: n.id, Operator: n.operator, Rule: hit.rule, Reason: hit.why, At: time.Now().UTC()}
+	ev := guardEvent(n, hit, reqID, GuardHeld, time.Now().UTC())
+	g.glog.add(ev)
+	evidence := ev.GuardEvidence
+	p := NodeHold{Node: n.id, Operator: n.operator, Rule: hit.rule, Reason: hit.why, At: ev.At, Req: reqID, Evidence: &evidence}
 	if g.accounts != nil {
 		if err := g.accounts.HoldNode(p); err != nil {
 			g.log.Error("HOLD NOT RECORDED: writing the node's hold to the accounts file failed; it is held in "+
