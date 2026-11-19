@@ -172,3 +172,45 @@ func snapshotText(f gateway.AccountsFile) string {
 	}
 	return b.String()
 }
+
+// A waitlisted account claims its BOINC user (owner, 2026-11-19): the pilot reconnects as its node
+// and keeps serving science; the account still has no chat.
+func TestWaitlistedClaimEndToEnd(t *testing.T) {
+	a := linkRig(t)
+	engine := mockEngine(t, false)
+	t.Cleanup(engine.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	id, cred := a.newPilot(t)
+	a.runPilot(ctx, cred, engine.URL)
+	a.connector(t, "POST", "/pilots/"+id+"/bind", map[string]any{"user": "6", "host": "13"})
+	waitUntil(t, "the pilot to connect", func() bool { return a.g.NodeCount() == 1 })
+
+	s, _ := a.signIn(t, 10)
+	if err := a.store.SetStatus("gh:10", gateway.StatusWaitlisted); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the gateway to see the waitlist", func() bool {
+		_, page := a.get(t, "/account", s)
+		return strings.Contains(page, "You are on the waitlist") && strings.Contains(page, "Claim a BOINC account")
+	})
+	key := "6_" + strings.Repeat("1e", 16)
+	if resp, body := a.post(t, "/account/connectors/boinc/claim", s, url.Values{"key": {key}}.Encode()); resp.StatusCode != 303 {
+		t.Fatalf("claim: %d %s", resp.StatusCode, body)
+	}
+	q := a.pendingRequest(t)
+	if st := a.connector(t, "POST", "/requests/"+q["id"].(string), map[string]any{"ok": true})["request"].(map[string]any)["state"]; st != "done" {
+		t.Fatalf("waitlisted claim: %v", st)
+	}
+	waitUntil(t, "the pilot to reconnect", func() bool {
+		p := a.pilotRecord(t, id)
+		return p["connections"].(float64) >= 2 && p["state"] == gateway.PilotConnected && p["account"] == "linked"
+	})
+	waitUntil(t, "science on the waitlisted account's pilot", func() bool { code, _ := ask(t, a.rig, pilotSciKey, deepBody); return code == 200 })
+	if resp, _ := a.get(t, "/account/auth", s); resp.StatusCode == 200 {
+		t.Error("the waitlisted account opened the chat")
+	}
+	if _, page := a.get(t, "/account", s); !strings.Contains(page, id) {
+		t.Error("the waitlist page does not list the pilot")
+	}
+}

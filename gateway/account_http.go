@@ -475,7 +475,7 @@ func (g *Gateway) accountData(id string) pageData {
 	d.MaxNodes = st.MaxNodesPerAccountOrDefault()
 	d.NodesClosed = st.NodesClosed
 	d.NetworkFull = g.accounts.nodeTotal() >= st.MaxNodesOrDefault()
-	if a.Status == StatusActive {
+	if canLink(a.Status) { // waitlisted accounts may link and see their pilots too
 		g.connectorData(&d, a)
 	}
 	return d
@@ -773,6 +773,9 @@ appears; come back to this page to check.</p></div>
 {{else}}<div class="card"><p>Your account is on hold: the maintainer lets it in by hand. You can write to
 <a href="mailto:contact@aisathome.org">contact@aisathome.org</a>.</p></div>{{end}}
 {{template "contact" .}}
+{{if or .Connectors .Pilots}}<p class="mut" data-waitlist-pilots>While you wait you can already run on BOINC: link or claim your BOINC account
+below and manage your pilots. The chat, the API and keys open when your account is let in.</p>
+{{template "connectors" .}}{{end}}
 {{else if eq .Account.Status "banned"}}
 <h1>Account closed</h1>
 <div class="card"><p>This account can no longer use AIs@home.</p></div>
