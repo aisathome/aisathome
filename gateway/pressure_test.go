@@ -193,7 +193,8 @@ func TestPressureSurvivesRestart(t *testing.T) {
 // science's slots within its trust and share; demand = min(open tasks, science slots).
 func TestPressureNowDemand(t *testing.T) {
 	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
-		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, MinTrust: "trusted", MaxNodeShare: 0.5},
+		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, MinTrust: "trusted", MaxNodeShare: 0.5, PublicQueue: true},
+		{ID: "quiet", KeySHA256: []string{keyHash(otherProjectKey)}, AgentOK: true}, // keeps its queue private
 	}})
 	defer g.Close()
 	add := func(id string, trusted bool, slots, inflight int) *nodeConn {
@@ -235,6 +236,15 @@ func TestPressureNowDemand(t *testing.T) {
 	}
 	if s = g.pressureNow(); s.OpenTasks != 5 || s.Demand != 3 {
 		t.Fatalf("five tasks: %+v", s)
+	}
+	// A project that keeps its queue private is in no public count: neither its tasks nor its slots.
+	for _, id := range []string{"q1", "q2", "q3"} {
+		if _, _, err := g.tasks.create("quiet", &taskNew{ID: id, Kind: kindOther, Title: id, CreatedBy: "owner", Spec: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s = g.pressureNow(); s.OpenTasks != 5 || s.Demand != 3 || s.ScienceSlots != 3 {
+		t.Fatalf("with a private project's tasks: %+v", s)
 	}
 	// A restarted gateway reads the queue for the sample, before any worker calls.
 	g.tasks.mu.Lock()
@@ -325,7 +335,9 @@ func TestPressureCountsRequests(t *testing.T) {
 			if m.Type == protocol.TypeRequest {
 				time.Sleep(60 * time.Millisecond) // the first token takes a moment
 				write(protocol.Msg{Type: protocol.TypeChunk, ReqID: m.ReqID, Data: []byte(`{"choices":[{"index":0,"delta":{"content":"x"}}]}`)})
-				write(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &protocol.Usage{PromptTokens: 5, CompletionTokens: 1}})
+				// llama-server's last chunk: its own timings (shorter than what the gateway measures)
+				write(protocol.Msg{Type: protocol.TypeChunk, ReqID: m.ReqID, Data: []byte(`{"choices":[],"timings":{"cache_n":3,"prompt_n":2,"prompt_ms":20,"predicted_n":1,"predicted_ms":30}}`)})
+				write(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &protocol.Usage{PromptTokens: 5, CachedTokens: 3, CompletionTokens: 1}})
 			}
 		}
 	}()
@@ -360,5 +372,102 @@ func TestPressureCountsRequests(t *testing.T) {
 	ft := v["first_token_s"].(map[string]any)[ClassAgent].(map[string]any)
 	if ft["count"] != int64(1) || ft["p50"].(float64) < 0.1 {
 		t.Fatalf("first token %v", ft)
+	}
+	// The answer's node time, from the engine's timings: 20 ms prefill, 30 ms decode; 3 of 5 prompt
+	// tokens from the cache.
+	nd := v["node"].(map[string]any)
+	if nd["requests"] != 1 || nd["engine_timed"] != 1 || nd["prefill_share"] != 0.4 || nd["cache_hit"] != 0.6 ||
+		nd["prefill_tok_s"] != 100.0 || nd["decode_tok_s"] != 33.3 {
+		t.Fatalf("node %v", nd)
+	}
+}
+
+// The node time of an answer: the engine's timings when they fit within the gateway's measure, else
+// the gateway's split at the first text; engine timings that are odd are not read.
+func TestPressureNodeTime(t *testing.T) {
+	ms := time.Millisecond
+	et := &engineTimings{PromptMs: 300, PredictedMs: 1200}
+	if p, d, e := nodeTime(2000*ms, 900*ms, et); p != 300*ms || d != 1200*ms || !e {
+		t.Fatalf("engine: %v %v %v", p, d, e)
+	}
+	// Longer than the gateway saw: a node cannot claim more time than it took.
+	if p, d, e := nodeTime(1000*ms, 400*ms, et); p != 400*ms || d != 600*ms || e {
+		t.Fatalf("too long: %v %v %v", p, d, e)
+	}
+	if p, d, e := nodeTime(1000*ms, 250*ms, nil); p != 250*ms || d != 750*ms || e {
+		t.Fatalf("no timings: %v %v %v", p, d, e)
+	}
+	if p, d, _ := nodeTime(1000*ms, 0, nil); p != 0 || d != 0 {
+		t.Fatalf("no text: %v %v", p, d)
+	}
+	for _, bad := range []string{`{"timings":{"prompt_ms":-1,"predicted_ms":5}}`, `{"timings":{}}`, `{"timings":"x"}`, `{"choices":[]}`, `not json "timings"`} {
+		if chunkTimings([]byte(bad)) != nil {
+			t.Errorf("%s: read as timings", bad)
+		}
+	}
+	if et := chunkTimings([]byte(`{"timings":{"prompt_ms":12.5,"predicted_ms":40}}`)); et == nil || et.PromptMs != 12.5 {
+		t.Fatalf("timings: %+v", et)
+	}
+	// Buckets: counted per hour and day; a range sums them; an answer with no text is not counted.
+	p := newPressure()
+	at := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	p.node(2000*ms, 500*ms, nil, protocol.Usage{PromptTokens: 1000, CachedTokens: 900, CompletionTokens: 30}, at)
+	p.node(2000*ms, 500*ms, et, protocol.Usage{PromptTokens: 1000, CachedTokens: 0, CompletionTokens: 30}, at.Add(time.Hour))
+	p.node(2000*ms, 0, nil, protocol.Usage{PromptTokens: 9999}, at)
+	tot := p.view("24h", at.Add(time.Hour))["total"].(map[string]any)["node"].(map[string]any)
+	if tot["requests"] != 2 || tot["engine_timed"] != 1 || tot["cache_hit"] != 0.45 || tot["prefill_share"] != 0.229 {
+		t.Fatalf("total %v", tot)
+	}
+}
+
+// Projects that share nodes: demand is capped by the slots of the nodes the projects with work may
+// use, each node once; a project without work adds no slot to that cap (part 1 counted the slots
+// of every project, so two projects sharing one slot could show a demand of two).
+func TestPressureDemandSharedSlots(t *testing.T) {
+	keys := []string{"ak-a-test-key-0123456789abcdef", "ak-b-test-key-0123456789abcdef", "ak-c-test-key-0123456789abcdef"}
+	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
+		{ID: "a", KeySHA256: []string{keyHash(keys[0])}, MinTrust: "trusted", PublicQueue: true},
+		{ID: "b", KeySHA256: []string{keyHash(keys[1])}, MinTrust: "trusted", PublicQueue: true},
+		{ID: "c", KeySHA256: []string{keyHash(keys[2])}, AgentOK: true, PublicQueue: true}, // volunteers too
+	}})
+	defer g.Close()
+	add := func(id string, trusted bool, slots int) {
+		n := &nodeConn{id: id, operator: "op-" + id, trusted: trusted, pending: map[string]*pendingReq{}, closed: make(chan struct{}),
+			models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: slots}}}
+		g.mu.Lock()
+		g.node[id] = n
+		g.mu.Unlock()
+	}
+	add("shared", true, 1) // a, b and c may use it
+	add("vol", false, 1)   // only c may
+	task := func(project, id string) {
+		t.Helper()
+		if _, _, err := g.tasks.create(project, &taskNew{ID: id, Kind: kindOther, Title: id, CreatedBy: "owner", Spec: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task("a", "a1")
+	task("b", "b1")
+	s := g.pressureNow()
+	if s.OpenTasks != 2 || s.ScienceSlots != 2 || s.Demand != 1 {
+		t.Fatalf("a and b share one slot, c has none of their work: %+v", s)
+	}
+	task("c", "c1")
+	if s = g.pressureNow(); s.OpenTasks != 3 || s.Demand != 2 {
+		t.Fatalf("c's work may use the volunteer's slot too: %+v", s)
+	}
+}
+
+// The waiting peak of people and science together is its own gauge: two peaks at different moments
+// do not add up.
+func TestPressureQueueAllPeak(t *testing.T) {
+	p := newPressure()
+	at := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	p.queuePeak(3, 0, at)
+	p.queuePeak(0, 4, at.Add(time.Minute))
+	p.sample(pressSample{QueuePeople: 1, QueueScience: 1}, at.Add(2*time.Minute))
+	q := p.view("24h", at)["buckets"].([]map[string]any)[0]["queue"].(map[string]any)
+	if q["all"].(map[string]any)["peak"] != 4 || q["people"].(map[string]any)["peak"] != 3 || q["science"].(map[string]any)["peak"] != 4 {
+		t.Fatalf("queue %v", q)
 	}
 }

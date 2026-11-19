@@ -1,7 +1,11 @@
 // Network pressure for the network page: how full the network was, per UTC hour (the last two
-// weeks) and per UTC day (the last 90 days). What limits it now, GPU slots or the queue, and the
-// demand signal a runner pool can be sized by: demand = min(open science tasks, the GPU slots
-// online that science may use).
+// weeks) and per UTC day (the last 90 days). What limits it now, GPU slots, the queue or the science
+// runners (their CPU, memory, disk and Lean slots: pressure_runner.go), how the nodes spend their
+// time (prefill or decode, prompt-cache hits: pressure_node.go), and the demand signal a runner pool
+// can be sized by: demand = min(open science tasks, the GPU slots online that science may use).
+//
+// Public numbers come only from projects that publish their queue (public_queue): a project that
+// keeps its queue private is in no count here, so its queue depth cannot be read off by subtraction.
 //
 // Gauges (slots, busy slots, requests waiting, held nodes, science slots, open tasks, demand) are
 // sampled every pressureSampleEvery and kept as sum and peak; the peaks of the waiting requests
@@ -13,7 +17,7 @@
 // Kept in state_dir/pressure.json, written every minute and at shutdown (a crash loses at most a
 // minute): a file of its own, since the history file is written every few seconds and a pressure
 // bucket is larger than a history day. Aggregates only: never a user, key, node, operator,
-// project or prompt.
+// project, runner, instance or prompt.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -134,7 +138,8 @@ type pressSample struct {
 	Held         int `json:"held"`          // nodes held by a guard
 	ScienceSlots int `json:"science_slots"` // slots science may use (trust, agents, its share of nodes)
 	OpenTasks    int `json:"open_tasks"`    // science tasks queued or running
-	Demand       int `json:"demand"`        // min(open tasks, science slots), per project then in all
+	Demand       int `json:"demand"`        // min(open tasks, science slots), per project, capped by the slots of the projects with work
+	Runners      int `json:"runners"`       // science runners that reported in the last runnerFresh
 }
 
 // pressBucket is one hour or one day.
@@ -149,10 +154,14 @@ type pressBucket struct {
 	ScienceSlots gauge               `json:"science_slots"`
 	OpenTasks    gauge               `json:"open_tasks"`
 	Demand       gauge               `json:"demand"`
+	QueueAll     gauge               `json:"queue_all"` // people's and science requests waiting together
+	Runners      gauge               `json:"runners"`
 	Wait         map[string]*durHist `json:"wait,omitempty"`        // by class: arrival to a slot (or to giving up)
 	FirstToken   map[string]*durHist `json:"first_token,omitempty"` // by class: arrival to the first generated token
 	Outcomes     map[string]int      `json:"outcomes,omitempty"`
-	Holds        int                 `json:"holds,omitempty"` // nodes a guard held
+	Holds        int                 `json:"holds,omitempty"`  // nodes a guard held
+	Runner       *runnerAgg          `json:"runner,omitempty"` // the science runners' reports (pressure_runner.go)
+	Node         *nodeAgg            `json:"node,omitempty"`   // how the nodes spent their time (pressure_node.go)
 }
 
 func (b *pressBucket) sample(s pressSample) {
@@ -165,6 +174,8 @@ func (b *pressBucket) sample(s pressSample) {
 	b.ScienceSlots.add(s.ScienceSlots)
 	b.OpenTasks.add(s.OpenTasks)
 	b.Demand.add(s.Demand)
+	b.QueueAll.add(s.QueuePeople + s.QueueScience)
+	b.Runners.add(s.Runners)
 }
 
 func histIn(m *map[string]*durHist, k string) *durHist {
@@ -184,7 +195,7 @@ func (b *pressBucket) merge(o *pressBucket) {
 	b.Samples += o.Samples
 	for _, p := range []struct{ to, from *gauge }{{&b.Slots, &o.Slots}, {&b.Busy, &o.Busy}, {&b.QueuePeople, &o.QueuePeople},
 		{&b.QueueScience, &o.QueueScience}, {&b.Held, &o.Held}, {&b.ScienceSlots, &o.ScienceSlots},
-		{&b.OpenTasks, &o.OpenTasks}, {&b.Demand, &o.Demand}} {
+		{&b.OpenTasks, &o.OpenTasks}, {&b.Demand, &o.Demand}, {&b.QueueAll, &o.QueueAll}, {&b.Runners, &o.Runners}} {
 		p.to.Sum += p.from.Sum
 		p.to.Peak = max(p.to.Peak, p.from.Peak)
 	}
@@ -201,6 +212,18 @@ func (b *pressBucket) merge(o *pressBucket) {
 		b.Outcomes[k] += n
 	}
 	b.Holds += o.Holds
+	if o.Runner != nil {
+		if b.Runner == nil {
+			b.Runner = &runnerAgg{}
+		}
+		b.Runner.merge(o.Runner)
+	}
+	if o.Node != nil {
+		if b.Node == nil {
+			b.Node = &nodeAgg{}
+		}
+		b.Node.merge(o.Node)
+	}
 }
 
 type pressure struct {
@@ -213,6 +236,8 @@ type pressure struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]pressCached // built answers, by range
+
+	runners map[runnerKey]*runnerSeen // runners heard from lately (pressure_runner.go); memory only
 }
 
 type pressCached struct {
@@ -285,6 +310,7 @@ func (p *pressure) queuePeak(people, science int, now time.Time) {
 	for _, b := range []*pressBucket{h, d} {
 		b.QueuePeople.Peak = max(b.QueuePeople.Peak, people)
 		b.QueueScience.Peak = max(b.QueueScience.Peak, science)
+		b.QueueAll.Peak = max(b.QueueAll.Peak, people+science)
 	}
 }
 
@@ -444,12 +470,13 @@ func (b *pressBucket) public() map[string]any {
 		"samples":       b.Samples,
 		"slots":         stat(b.Slots, b.Samples),
 		"busy":          stat(b.Busy, b.Samples),
-		"queue":         map[string]any{"people": stat(b.QueuePeople, b.Samples), "science": stat(b.QueueScience, b.Samples)},
+		"queue":         map[string]any{"people": stat(b.QueuePeople, b.Samples), "science": stat(b.QueueScience, b.Samples), "all": stat(b.QueueAll, b.Samples)},
 		"held":          stat(b.Held, b.Samples),
 		"holds":         b.Holds,
 		"science_slots": stat(b.ScienceSlots, b.Samples),
 		"open_tasks":    stat(b.OpenTasks, b.Samples),
 		"demand":        stat(b.Demand, b.Samples),
+		"runners":       stat(b.Runners, b.Samples),
 		"wait_s":        durStats(b.Wait),
 		"first_token_s": durStats(b.FirstToken),
 		"outcomes":      map[string]int{},
@@ -464,6 +491,12 @@ func (b *pressBucket) public() map[string]any {
 		if n := b.Outcomes[o]; n > 0 {
 			m["outcomes"].(map[string]int)[o] = n
 		}
+	}
+	if b.Runner != nil && b.Runner.Reports > 0 {
+		m["runner"] = b.Runner.public()
+	}
+	if b.Node != nil && b.Node.Requests > 0 {
+		m["node"] = b.Node.public()
 	}
 	return m
 }
@@ -505,12 +538,15 @@ func (p *pressure) view(rng string, now time.Time) map[string]any {
 		"buckets": buckets, "total": total.public(), "last_24h": day.public()}
 }
 
-// pressureNow samples the network: nodes and their slots, the queues, and science's demand.
+// pressureNow samples the network: nodes and their slots, the queues, science's demand (of the
+// projects that publish their queue) and the runners reporting.
 func (g *Gateway) pressureNow() pressSample {
 	var projs []*Project
 	if pt := g.projects.Load(); pt != nil {
 		for _, id := range pt.ids {
-			projs = append(projs, pt.byID[id])
+			if p := pt.byID[id]; p != nil && p.PublicQueue {
+				projs = append(projs, p)
+			}
 		}
 	}
 	open := make([]int, len(projs))
@@ -520,7 +556,7 @@ func (g *Gateway) pressureNow() pressSample {
 		}
 	}
 	trustedOnly := g.accounts != nil && g.accounts.Settings().Routing == RoutingTrustedOnly
-	s := pressSample{QueuePeople: int(g.queued.Load()), QueueScience: int(g.queuedSc.Load())}
+	s := pressSample{QueuePeople: int(g.queued.Load()), QueueScience: int(g.queuedSc.Load()), Runners: g.press.runnersFresh(time.Now())}
 	now := time.Now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -546,8 +582,10 @@ func (g *Gateway) pressureNow() pressSample {
 		ups = append(ups, up{n, sl})
 	}
 	// Science: per project, the slots of the nodes its agent requests may use, within its share of
-	// them (the largest nodes: an upper bound); demand is what of its open tasks those slots could run.
-	union := map[*nodeConn]int{}
+	// them (the largest nodes: an upper bound); its demand is what of its open tasks those slots could
+	// run. Projects share nodes, so the total is capped by the slots of the nodes the projects with
+	// work may use, each node once: a project without work adds no slot to that cap.
+	all, withWork := map[*nodeConn]int{}, map[*nodeConn]int{}
 	capSum, demand := 0, 0
 	for i, p := range projs {
 		rt := &route{tools: true, consent: p.AgentOK, trusted: p.MinTrust == "trusted", trustedOnly: trustedOnly}
@@ -555,7 +593,10 @@ func (g *Gateway) pressureNow() pressSample {
 		for _, u := range ups {
 			if rt.allows(u.n, now) {
 				sl = append(sl, u.slots)
-				union[u.n] = u.slots
+				all[u.n] = u.slots
+				if open[i] > 0 {
+					withWork[u.n] = u.slots
+				}
 			}
 		}
 		sort.Sort(sort.Reverse(sort.IntSlice(sl)))
@@ -570,12 +611,15 @@ func (g *Gateway) pressureNow() pressSample {
 		demand += min(open[i], c)
 		s.OpenTasks += open[i]
 	}
-	all := 0
-	for _, v := range union {
-		all += v
+	sum := func(m map[*nodeConn]int) int {
+		t := 0
+		for _, v := range m {
+			t += v
+		}
+		return t
 	}
-	s.ScienceSlots = min(all, capSum)
-	s.Demand = min(demand, s.ScienceSlots)
+	s.ScienceSlots = min(sum(all), capSum)
+	s.Demand = min(demand, sum(withWork))
 	return s
 }
 
