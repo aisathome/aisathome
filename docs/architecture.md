@@ -172,9 +172,9 @@ or misusing data harder, less valuable and more visible.
 
 | Boundary | Who | Can see | Measures |
 |---|---|---|---|
-| Client → gateway | The gateway's operator | Requests and answers while they pass through | TLS; the gateway does not store prompts or answers; the usage log has no content |
+| Client → gateway | The gateway's operator | Requests and answers while they pass through | TLS; the gateway does not store prompts or answers (except the evidence of a guard stop or flag below); the usage log has no content |
 | Gateway → node | The node's operator | The request body the node serves: messages, tools, sampling settings | No identity (no user, account, key or email reaches a node); well-known secret formats replaced by placeholders; requests that look like personal data only to trusted nodes; agent requests (with tools) to volunteers only with the key's consent and past the node's probation; no volunteer gets more than about a third of recent conversations while others are free |
-| Node → gateway | The gateway, the requester | The node's answer | Guards on tool calls in volunteers' answers (a node that trips one is held) and flags on unknown addresses; revoking a token cuts a node off within seconds |
+| Node → gateway | The gateway, the requester | The node's answer | Guards on tool calls in volunteers' answers (a node that trips one is held) and flags on unknown addresses, each with its evidence for the operator; revoking a token cuts a node off within seconds |
 | Node machine | The node's operator | Everything on the machine | Engine bound to `127.0.0.1`; services sandboxed; no core dumps, no swap for the services, no prompt logging, a bounded prompt cache in RAM. These reduce traces; they cannot stop an operator who wants to look. The terms forbid logging or inspecting prompts |
 | Public views | Anyone | Aggregates and public task fields | See below |
 
@@ -183,7 +183,10 @@ rented machines whose host could see what passes through. Every other node is a 
 
 **What the gateway stores.** Accounts by the sign-in provider's user id (or an HMAC of an email
 address), API keys and node tokens as hashes, usage records without content under a
-pseudonym, daily budgets, the credit ledger and daily history. In memory only: rate-limit
+pseudonym, daily budgets, the credit ledger and daily history. When a guard stops or flags an
+untrusted node's answer: the evidence for the operator, a fragment of that answer of at most 300
+bytes around what matched (never the request), secrets redacted, kept 14 days and shown to admins
+only. In memory only: rate-limit
 counters by address, and hashes and lengths of answered conversations (to keep a conversation
 on one model file), never their text.
 
