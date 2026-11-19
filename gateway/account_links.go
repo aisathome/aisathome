@@ -161,7 +161,10 @@ var errClaimInactive = errors.New("a closed account cannot link a connector's us
 //
 // Moving the link stops that user's connected pilots (pilotAccountState: the user is no longer the
 // old account's); they reconnect as target's once their records point there.
-func (s *AccountStore) claimLink(target, connector, user string, link AccountLink, now time.Time) (from string, err error) {
+//
+// keep, if set, is called with the unclaimed account's id before it is deleted, inside the file's lock
+// (so on the file as it is then, not the cached copy): an error stops the merge, nothing is written.
+func (s *AccountStore) claimLink(target, connector, user string, link AccountLink, now time.Time, keep func(id string) error) (from string, err error) {
 	err = s.Update(func(f *AccountsFile) error {
 		from = ""
 		t := f.find(target)
@@ -191,6 +194,11 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 			return nil
 		case o.Status != StatusUnclaimed:
 			return errLinkTaken
+		}
+		if keep != nil {
+			if err := keep(o.ID); err != nil {
+				return err
+			}
 		}
 		for _, l := range o.Links {
 			if l.Connector == connector && l.User == user {
