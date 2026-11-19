@@ -23,6 +23,14 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Evidence for guard holds.** Every guard stop, hold and flag keeps what matched: a fragment of
+  the node's answer (at most 300 bytes around the match, never the request, secrets redacted),
+  where, the host and the request id, with the hold and in a log of the last 200 events
+  (`state_dir/guard-log.json`), kept 14 days. Admins see it on `/account/ops` ("Held nodes"), in
+  `accounts nodes` and in the new `accounts guard-log`. Log lines stay without it. (gateway)
+- **Official installers stop without a hold.** A download piped into a shell from a listed
+  installer (rustup, uv, ruff, nvm, Deno, Bun, Homebrew, elan, Poetry; `guard_official_installers`)
+  still stops an untrusted node's answer, but no longer holds the node. (gateway)
 - **Operator terms for chat on volunteers' nodes.** An untrusted node or pilot serves chat, agents
   and API calls only once its account has accepted the operator terms (version `2026-11-19`; on the
   account page, or through the connector for a BOINC volunteer:

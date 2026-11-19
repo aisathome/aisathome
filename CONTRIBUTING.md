@@ -76,7 +76,9 @@ What we expect of tests:
 
 - **Hardened, not confidential.** Never claim, in code, docs or UI text, that prompts are
   confidential or not retained on nodes. Never log, store or publish prompts or answers, and
-  never add them, user identities or node owners to a public view. See "Trust boundaries and
+  never add them, user identities or node owners to a public view. The one exception is the
+  guards' evidence: a short fragment of an untrusted node's answer that a guard stopped or
+  flagged, secrets redacted, for admins only and for 14 days (docs/gateway.md, "Guards"). See "Trust boundaries and
   privacy" in [docs/architecture.md](docs/architecture.md).
 - **The gateway is generic.** A science project's workflow (what its tasks mean, what comes
   after a result) belongs in the project's own code, not in the gateway; the gateway knows
