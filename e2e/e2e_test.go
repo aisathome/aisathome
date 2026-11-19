@@ -113,6 +113,9 @@ func newRigCfg(t *testing.T, mod func(*gateway.Config), engines ...*httptest.Ser
 			"agent-key":   {User: "dave", VolunteerAgents: true}}, // tools may reach volunteer nodes
 		NodeTokens: map[string]gateway.NodeToken{"node-token": {Operator: "op1"}},
 		UsageLog:   usage,
+		// The chat rules (operator terms, the country rule) are on by default and would keep op1's
+		// untrusted node from people's requests; chatrules_test.go turns them on and tests them.
+		ChatRulesOff: true,
 	}
 	if mod != nil {
 		mod(&cfg)

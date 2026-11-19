@@ -82,6 +82,8 @@ type Gateway struct {
 	// pilotRegistered, if set, runs when a pilot's connection is registered, before its record is
 	// checked once more (tests: a report racing the handshake).
 	pilotRegistered func(pilot string)
+	// geo is the GeoIP country table (geoip.go, chatrules.go); nil: every node's country is unknown.
+	geo *geoTable
 }
 
 // New creates a gateway.
@@ -174,6 +176,17 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		if g.acfg.Email != nil {
 			g.email = newEmailSignIn(*g.acfg.Email, g.acfg.PublicURL, log)
 		}
+	}
+	if cfg.GeoIPCountryFile != "" {
+		if g.geo, err = loadGeoTable(cfg.GeoIPCountryFile); err != nil {
+			return err
+		}
+		if log != nil {
+			log.Info("GeoIP country table loaded", "ranges", len(g.geo.ranges))
+		}
+	} else if !cfg.ChatRulesOff && log != nil {
+		log.Warn("no geoip_country_file: every untrusted node's country is unknown, so people who have not opted in " +
+			"to volunteers outside Europe are served by trusted nodes and their own only")
 	}
 	g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg)}})
 	if err := g.loadKeys(cfg); err != nil {

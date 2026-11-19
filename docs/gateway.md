@@ -485,6 +485,45 @@ forgets the hold. More than 1024 unrecorded holds hold every node until a restar
 Beyond `max_nodes` the page says "the network is full for now" (there is no waitlist for
 nodes).
 
+## Chat rules: operator terms and countries
+
+On top of the rules above, an untrusted node serves people's requests (chat, agents, API calls)
+only under two rules (GDPR decisions of 2026-11-19, D3 and D4 option B; `gateway/chatrules.go`).
+Science (a project's key) carries no personal data and is not affected. Trusted nodes and the
+requester's own nodes (not pilots) are outside both rules.
+
+| Rule | |
+|---|---|
+| **Operator terms** | the node's account accepted the current operator terms (version and time are recorded in the accounts file, `operator_terms`). On the account page ("Operator terms": the text, a tick that also confirms 18 or older, the country the nodes run in; withdrawable) or, for a connector's user, through the connector (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below). A config node token counts as accepted if it is trusted or names the version (`"operator_terms": "<version>"`). A new terms version needs a new acceptance. Without one the node serves science only |
+| **Country** | a node's country is its connection address's in the GeoIP table (`geoip_country_file`), and only if its operator states the same country (account page, connector, or a config token's `"country"`); a mismatch, no stated country or an address the table does not know count as outside Europe. A request from a user who has not opted in goes only to nodes in the EEA or a country with an adequacy decision (`gateway/transfer_countries.txt`: EU, IS, LI, NO and the Commission's list of 2026-11-19; not the US, whose adequacy covers only DPF-certified organisations, nor Canada, commercial organisations only). With the opt-in it may go to any node with the operator terms |
+
+**The opt-in** (`transfer_consent`, version and time) is per account, unticked by default: a box
+on the sign-in form next to the email-notice box (it travels with that one sign-in, like the
+contact box; a sign-in without the tick withdraws nothing) and a card on the account page ("Volunteers
+outside Europe", on and off). The account's API keys and its chat follow it. Requests without an
+account (config keys, a front end's anonymous users) have none.
+
+When the rules leave no node free, a request waits for one as any request does and is never sent
+elsewhere; after the queue time it gets a 503 that says why (`outside_europe`: "allow volunteers
+outside Europe on your account page"; `operator_terms`). The account page shows, per connected node,
+whether it serves chat and why not. The sign-in form states the age limit (18+, D12).
+
+```json
+{
+  "geoip_country_file": "/etc/aisathome/dbip-country-lite.csv.gz",
+  "chat_rules_off": false
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `geoip_country_file` | DB-IP's "IP to Country Lite" CSV (`first,last,CC` per line, plain or `.gz`), monthly from <https://db-ip.com/db/download/ip-to-country-lite>, licence **CC BY 4.0**: pages that show its results credit "IP Geolocation by DB-IP" with a link (the account page does). Without it every untrusted node's country is unknown, so users without the opt-in get trusted nodes (and their own) only; the gateway logs a warning at start |
+| `chat_rules_off` | turns both rules off. On by default; off only for a gateway whose nodes are all the operator's own, and in tests |
+
+Trusted nodes must run in the EEA or an adequate country (D5); the gateway logs a warning when a
+trusted node connects from elsewhere. Countries from addresses are approximate: a VPN changes them,
+which is why the stated country must match.
+
 ## Connectors and pilots
 
 A **connector** is an outside system that brings machines in bounded serving sessions, **pilots**
@@ -544,6 +583,7 @@ refused):
 | `GET /v1/connectors/{id}/pilots/{pid}` | One pilot: state, deadline, user/host/team, `account` (`linked` or `unclaimed`, never which), times, `close_reason`, `end_reason`, `connections`, `served_seconds`, `requests` (answers that went to the client, whole or in part), `failed` (the others), `self_served`, `tokens`, `metered_credit`, `credit`, `withheld`, `agent` |
 | `POST /v1/connectors/{id}/pilots/{pid}/bind` `{"user", "host", "team"}` | Who runs it: the connector's own ids (1-64 letters, digits, `.`, `_`, `:` or `-`; never an address). Binding again with the same ids changes nothing; other ids, or an ended pilot, get 409 |
 | `POST /v1/connectors/{id}/pilots/{pid}/reported` `{"outcome": "success\|error\|cancelled\|expired"}` | Its work item is done (or was cancelled): the pilot ends (`end_reason` `reported: <outcome>`) and its connection, if any, is closed. Idempotent |
+| `POST /v1/connectors/{id}/users/{user}/operator-terms` `{"version", "accepted_at", "country"}` | The connector's user accepted the operator terms (BOINC: the bridge, when BOINC records the user's ENROLL consent to `terms_of_use.txt`, which holds the operator terms). `version` the terms version accepted, `accepted_at` when (RFC 3339, not in the future), `country` optional: the ISO 3166-1 alpha-2 code the user states (or `other`). Recorded on the user's account, the linked one or a new unclaimed one; a later call with an older time does not replace it. Answer: `{"recorded", "current", "current_version", "account_kind"}`; `current` false means that version lets no pilot serve chat. The user's connected pilots follow within the call |
 | `GET /v1/connectors/{id}/pilots/{pid}/credit` | `{"pilot", "state", "final", "final_at", "credit", "withheld"}`: `credit` only once `final`; until then `final_at` says when (null while the pilot has not ended) |
 
 A pilot's **credential** is `pc-<12 hex>.<secret>`; its id is `p-` and the same 12 hex digits, and
@@ -602,7 +642,9 @@ API calls, when any of these holds:
 | its account's "chat on pilots" is off | the person's choice (on by default, also for unclaimed accounts) |
 | `pilots_chat_enabled` is false (the default) and its user is not in `trusted_users` | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (decision 0020: they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots; the maintainer's own test pilots go in `trusted_users` |
 
-Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
+And it serves people's requests only under the chat rules above: its account accepted the operator
+terms, and for users without the opt-in, it connects from the EEA or an adequate country that its
+account states. Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
 seconds. Nothing here makes a pilot confidential: whoever runs the machine can read what it serves
 ("hardened, not confidential"). Public task views name a pilot's class as `pilot`.
 

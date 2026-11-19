@@ -74,6 +74,9 @@ type nodeConn struct {
 	// registering: a pilot registered but not yet routable, until its record is checked once more
 	// (a report during its handshake ends it); guarded by g.mu.
 	registering bool
+	// rules: what the chat rules know of it (chatrules.go); guarded by g.mu, updated by sweepNodes and
+	// Reload.
+	rules nodeRules
 }
 
 // pendingReq is one request in flight on a node. The reader delivers messages on ch; the
@@ -273,6 +276,12 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		g.mu.Unlock()
 		refuse("node token revoked or changed", true)
 		return
+	}
+	n.rules = g.rulesFor(n.trusted, account, g.tokens[token], ip)
+	if n.trusted && n.rules.geo != "" && !transferFree[n.rules.geo] {
+		// D5: a node we call trusted runs in the EEA or an adequate country. A warning, not a refusal:
+		// the GeoIP table is approximate.
+		g.log.Warn("trusted node connects from outside the EEA and the adequate countries", "node", n.id, "country", n.rules.geo)
 	}
 	old := g.node[n.id]
 	if old != nil && old.token != token { // only the node's own token may replace it

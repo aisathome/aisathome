@@ -161,6 +161,8 @@ type emailAttempt struct {
 	fails   int
 	next    string
 	contact string // the typed address, only if the user ticked the box for notices; else ""
+	// transfer: the user ticked the opt-in to volunteers outside Europe (chatrules.go)
+	transfer bool
 }
 
 // emailMsg is a mail waiting in the queue. It holds the address, code and token only until
@@ -212,7 +214,7 @@ func (e *emailSignIn) macs(norm string) []EmailMAC {
 // start queues a code for typed (normalised: norm) unless something stops it. It reports
 // nothing on purpose: the caller answers the same either way. With contact (the user ticked
 // the box for notices) the attempt keeps typed until it is used or expires.
-func (e *emailSignIn) start(typed, norm, client, next, pending string, contact bool) {
+func (e *emailSignIn) start(typed, norm, client, next, pending string, contact, transfer bool) {
 	macs := e.macs(norm)
 	if isDisposable(norm[strings.LastIndexByte(norm, '@')+1:]) {
 		return
@@ -246,6 +248,7 @@ func (e *emailSignIn) start(typed, norm, client, next, pending string, contact b
 	if contact {
 		a.contact = typed
 	}
+	a.transfer = transfer
 	e.pending[pending] = a
 }
 
@@ -253,21 +256,21 @@ func (e *emailSignIn) start(typed, norm, client, next, pending string, contact b
 // success consumes the attempt (code and token alike) and returns its hashes, where to go
 // next and the contact address if the user asked for notices. Every wrong guess counts
 // against the attempt and the address; a new code does not reset the address's count.
-func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next, contact string, ok bool) {
+func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next, contact string, transfer, ok bool) {
 	now := e.cfg.Now()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	a := e.pending[pending]
 	if a == nil {
-		return nil, "", "", false
+		return nil, "", "", false, false
 	}
 	if !now.Before(a.expires) {
 		delete(e.pending, pending)
-		return nil, "", "", false
+		return nil, "", "", false, false
 	}
 	mac := a.macs[0].MAC
 	if now.Before(e.locked[mac]) {
-		return nil, "", "", false
+		return nil, "", "", false, false
 	}
 	var got, want [32]byte
 	switch {
@@ -276,11 +279,11 @@ func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next
 	case token != "" && code == "":
 		got, want = sha256.Sum256([]byte(token)), a.token
 	default: // neither or both: not a guess
-		return nil, "", "", false
+		return nil, "", "", false, false
 	}
 	if subtle.ConstantTimeCompare(got[:], want[:]) == 1 {
 		delete(e.pending, pending)
-		return a.macs, a.next, a.contact, true
+		return a.macs, a.next, a.contact, a.transfer, true
 	}
 	if a.fails++; a.fails >= emailCodeTries {
 		delete(e.pending, pending)
@@ -289,7 +292,7 @@ func (e *emailSignIn) verify(pending, code, token string) (macs []EmailMAC, next
 	if e.fails.count(mac, now, emailFailWin) >= emailMaxFails {
 		e.locked[mac] = now.Add(emailLockout)
 	}
-	return nil, "", "", false
+	return nil, "", "", false, false
 }
 
 // prune forgets expired attempts, old counts and ended locks.
@@ -481,7 +484,7 @@ func (g *Gateway) handleEmailStart(w http.ResponseWriter, r *http.Request) {
 		rand.Read(b)
 		pending = base64.RawURLEncoding.EncodeToString(b)
 	}
-	g.email.start(typed, norm, clientIP(r), next, pending, r.FormValue("contact") == "1")
+	g.email.start(typed, norm, clientIP(r), next, pending, r.FormValue("contact") == "1", r.FormValue("transfer") == "1")
 	g.setCookie(w, pendingCookie, pending, "/account/email", emailCodeTTL)
 	http.Redirect(w, r, g.acfg.PublicURL+"/account/email", http.StatusSeeOther)
 }
@@ -504,7 +507,7 @@ func (g *Gateway) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 		g.emailPage(w, r, http.StatusBadRequest, "Open the link in the browser where you asked for the code, or type the code there. A code works for 10 minutes.")
 		return
 	}
-	macs, next, contact, ok := g.email.verify(c.Value, strings.TrimSpace(r.FormValue("code")), r.FormValue("token"))
+	macs, next, contact, transfer, ok := g.email.verify(c.Value, strings.TrimSpace(r.FormValue("code")), r.FormValue("token"))
 	if !ok { // one message for every failure, so it tells nothing about the address
 		g.emailPage(w, r, http.StatusBadRequest, "That did not work: the code is wrong, used or expired. Check the latest email or ask for a new code. After many wrong codes, email sign-in for the address pauses for an hour.")
 		return
@@ -513,6 +516,9 @@ func (g *Gateway) handleEmailVerify(w http.ResponseWriter, r *http.Request) {
 	a, err := g.accounts.SignInEmail(macs, time.Now())
 	if err == nil && contact != "" && a.Status != StatusBanned {
 		g.storeContact(a.ID, contact, ContactEmail)
+	}
+	if err == nil && transfer && a.Status != StatusBanned {
+		g.storeTransfer(a.ID)
 	}
 	g.signedIn(w, r, a, err, next)
 }

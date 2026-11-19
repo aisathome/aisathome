@@ -542,6 +542,7 @@ func (g *Gateway) sweepNodes() {
 		live        bool
 		first       time.Time
 		scienceOnly bool
+		rules       nodeRules
 	}
 	st := make([]state, len(conns))
 	for i, n := range conns {
@@ -556,6 +557,9 @@ func (g *Gateway) sweepNodes() {
 			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff, trusted)
 		case n.account != "":
 			st[i].first, st[i].live = g.accounts.nodeLive(keyHash(n.token))
+		}
+		if n.account != "" { // the chat rules: the account may have accepted or withdrawn (chatrules.go)
+			st[i].rules = g.rulesFor(n.trusted, n.account, NodeToken{}, n.ip)
 		}
 	}
 	var drop []*nodeConn
@@ -575,6 +579,11 @@ func (g *Gateway) sweepNodes() {
 		if n.pilot != "" {
 			cleared = cleared || (n.scienceOnly && !st[i].scienceOnly)
 			n.scienceOnly = st[i].scienceOnly
+		}
+		if n.account != "" {
+			r := st[i].rules
+			cleared = cleared || (r.terms && !n.rules.terms) || (r.adequate && !n.rules.adequate)
+			n.rules = r
 		}
 	}
 	g.mu.Unlock()
@@ -646,9 +655,11 @@ func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAc
 		}
 		rt.trusted = true
 	}
+	rt.rules = g.chatRulesOn()
 	if g.accounts != nil {
 		rt.trustedOnly = g.accounts.Settings().Routing == RoutingTrustedOnly
 		if reqAcct != "" {
+			rt.transfer = g.accounts.transferOK(reqAcct)
 			rt.self, rt.acct = g.pseudonym(reqAcct), reqAcct
 			switch g.accounts.nodePref(reqAcct) {
 			case NodePrefOnly: // on top of a front end's operator: if they differ, no node fits
