@@ -166,7 +166,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	operator, ip := tok.Operator, clientIP(r)
+	operator, ip := tok.Operator, g.clientIP(r)
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
@@ -277,12 +277,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		refuse("node token revoked or changed", true)
 		return
 	}
-	n.rules = g.rulesFor(n.trusted, account, g.tokens[token], ip)
-	if n.trusted && n.rules.geo != "" && !transferFree[n.rules.geo] {
-		// D5: a node we call trusted runs in the EEA or an adequate country. A warning, not a refusal:
-		// the GeoIP table is approximate.
-		g.log.Warn("trusted node connects from outside the EEA and the adequate countries", "node", n.id, "country", n.rules.geo)
-	}
+	n.rules = g.rulesFor(n.trusted, account, g.tokens[token])
 	old := g.node[n.id]
 	if old != nil && old.token != token { // only the node's own token may replace it
 		g.mu.Unlock()

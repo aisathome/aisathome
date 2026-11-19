@@ -77,10 +77,8 @@ type route struct {
 	// pilotProbationOK: the project's agents may use pilots of accounts still in probation
 	// (Project.PilotProbationOK).
 	pilotProbationOK bool
-	// The chat rules (chatrules.go): rules is set when they apply to this gateway, transfer when the
-	// requester opted in to volunteers outside Europe.
-	rules    bool
-	transfer bool
+	// rules: the chat rules apply to this gateway (chatrules.go).
+	rules bool
 }
 
 // usable reports whether n could serve rt now if it had a free slot: allowed, not paused,
@@ -184,8 +182,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 		return true
 	case rt.trusted:
 		return false
-	case rt.gatedBy(n) != "":
-		return false // the chat rules (chatrules.go): operator terms, and the country without the opt-in
+	case rt.gatedBy(n):
+		return false // the chat rules (chatrules.go): its operator has not accepted the operator terms
 	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
 		return rt.consent && (!now.Before(n.probEnd) || (n.pilot != "" && rt.pilotProbationOK))
 	}
@@ -455,11 +453,6 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 		g.mu.Lock()
 		wake := g.wake // taken before pick, so a signal in between is not lost
 		last, seen := g.known[rt.want]
-		if rt.rules && rt.acct != "" && g.accounts != nil {
-			// The opt-in as it is now (chatrules.go): a withdrawal applies to a request still waiting
-			// for a node, and to its retries. Under g.mu: yieldsLocked reads waiting routes.
-			rt.transfer = g.accounts.transferOK(rt.acct)
-		}
 		g.mu.Unlock()
 		if n, model := g.pick(rt); n != nil {
 			return n, model, ""
@@ -659,15 +652,8 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				return
 			case rt.trusted && rt.why != "":
 				because = rt.why
-			case g.rulesBlocked(&loose) != "":
-				// The chat rules (chatrules.go) left no node: say which, and what the user can do.
-				if g.rulesBlocked(&loose) == "country" {
-					reason = "outside_europe"
-					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node serving %q in Europe or a country the EU "+
-						"recognises as protecting personal data is online right now, and your requests go only to such nodes. "+
-						"Try again later, or allow volunteers outside Europe on your account page", want))
-					return
-				}
+			case g.rulesBlocked(&loose):
+				// The chat rules (chatrules.go) left no node.
 				reason = "operator_terms"
 				which, because = "node", "only nodes whose operators accepted the operator terms serve people's requests"
 			case rt.tools && !rt.trusted:
@@ -699,26 +685,15 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 	}
 }
 
-// rulesBlocked says whether the chat rules alone keep rt from every connected node: "country" when
-// nodes are there that the user's opt-in to volunteers outside Europe would allow, "terms" when only
-// nodes whose operators have not accepted the operator terms are, "" when the rules are not the reason.
-func (g *Gateway) rulesBlocked(rt *route) string {
+// rulesBlocked reports whether the chat rules alone keep rt from every connected node: only nodes
+// whose operators have not accepted the operator terms serve it.
+func (g *Gateway) rulesBlocked(rt *route) bool {
 	if !rt.rules || rt.class == ClassScience {
-		return ""
+		return false
 	}
 	off := *rt
 	off.rules = false
-	if g.servesFor(&off) == 0 {
-		return ""
-	}
-	if !rt.transfer {
-		opted := *rt
-		opted.transfer = true
-		if g.servesFor(&opted) > 0 {
-			return "country"
-		}
-	}
-	return "terms"
+	return g.servesFor(&off) > 0
 }
 
 // ownNodesOffline reports whether the requesting account has registered nodes and none of

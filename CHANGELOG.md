@@ -9,16 +9,15 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
-- **Chat rules for volunteers' nodes.** An untrusted node or pilot serves chat, agents and API
-  calls only once its account has accepted the operator terms (account page, or the connector for
-  a BOINC volunteer: `POST /v1/connectors/{id}/users/{user}/operator-terms`); until then it serves
-  science only. People who have not opted in to volunteers outside Europe (a new, unticked box at
-  sign-in and on the account page; API keys follow the account) are served only by nodes in the EEA
-  or a country with an EU adequacy decision, judged from the node's address (`geoip_country_file`,
-  DB-IP Lite, CC BY 4.0) and the country its operator states; a mismatch counts as outside. Science
-  is not affected; trusted nodes and one's own nodes are outside both rules. On by default
-  (`chat_rules_off` turns them off). The sign-in page states the age limit, 18. See "Chat rules" in
-  `docs/gateway.md`. (gateway)
+- **Operator terms for chat on volunteers' nodes.** An untrusted node or pilot serves chat, agents
+  and API calls only once its account has accepted the operator terms (version `2026-11-19`; on the
+  account page, or through the connector for a BOINC volunteer:
+  `POST /v1/connectors/{id}/users/{user}/operator-terms`); until then it serves science only. A
+  draft version is accepted by nobody. Science is not affected; trusted nodes and one's own nodes are
+  outside the rule. On by default (`chat_rules_off` turns it off). The sign-in page states the age
+  limit, 18, and the rule for people who chat. See "Chat rules" in `docs/gateway.md`. (gateway)
+- **`trusted_proxies`.** `X-Forwarded-For` counts only from loopback and the listed proxies (before,
+  from any private address); behind Caddy in a container network, list that network. (gateway)
 - **Connectors and pilots.** A connector (the BOINC project's bridge first) brings machines as
   pilots: bounded serving sessions the gateway mints, routes and meters. Generic endpoints under
   `/v1/connectors/{id}/` with the connector's own key (and an optional `allow_from`): demand

@@ -562,7 +562,7 @@ func (g *Gateway) sweepNodes() {
 			st[i].first, st[i].live = g.accounts.nodeLive(keyHash(n.token))
 		}
 		if n.account != "" { // the chat rules: the account may have accepted or withdrawn (chatrules.go)
-			st[i].rules = g.rulesFor(n.trusted, n.account, NodeToken{}, n.ip)
+			st[i].rules = g.rulesFor(n.trusted, n.account, NodeToken{})
 		}
 	}
 	var drop []*nodeConn
@@ -585,7 +585,7 @@ func (g *Gateway) sweepNodes() {
 		}
 		if n.account != "" {
 			r := st[i].rules
-			cleared = cleared || (r.terms && !n.rules.terms) || (r.adequate && !n.rules.adequate)
+			cleared = cleared || (r.terms && !n.rules.terms)
 			n.rules = r
 		}
 	}
@@ -662,7 +662,6 @@ func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAc
 	if g.accounts != nil {
 		rt.trustedOnly = g.accounts.Settings().Routing == RoutingTrustedOnly
 		if reqAcct != "" {
-			rt.transfer = g.accounts.transferOK(reqAcct)
 			rt.self, rt.acct = g.pseudonym(reqAcct), reqAcct
 			switch g.accounts.nodePref(reqAcct) {
 			case NodePrefOnly: // on top of a front end's operator: if they differ, no node fits

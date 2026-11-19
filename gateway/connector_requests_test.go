@@ -800,7 +800,7 @@ func TestPilotAccountChangeDuringRegistration(t *testing.T) {
 }
 
 // A claim carries the unclaimed account's operator terms over: the newer acceptance, the later
-// withdrawal (an acceptance older than a withdrawal goes), the claiming account's country if set.
+// withdrawal (an acceptance older than a withdrawal goes).
 func TestClaimCarriesOperatorTerms(t *testing.T) {
 	t0 := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
 	acc := func(h int) *Acceptance {
@@ -808,18 +808,17 @@ func TestClaimCarriesOperatorTerms(t *testing.T) {
 	}
 	at := func(h int) *time.Time { x := t0.Add(time.Duration(h) * time.Hour); return &x }
 	for i, tc := range []struct {
-		name                       string
-		target, unclaimed          Account
-		wantAt                     int // hours after t0; -1: no acceptance
-		wantWithdrawn, wantCountry string
+		name              string
+		target, unclaimed Account
+		wantAt            int // hours after t0; -1: no acceptance
+		wantWithdrawn     string
 	}{
-		{"only the unclaimed accepted", Account{}, Account{OperatorTerms: acc(1), OperatorCountry: "NO"}, 1, "", "NO"},
-		{"the target's newer acceptance and country stay", Account{OperatorTerms: acc(2), OperatorCountry: "DE"},
-			Account{OperatorTerms: acc(1), OperatorCountry: "NO"}, 2, "", "DE"},
-		{"the unclaimed's newer acceptance wins", Account{OperatorTerms: acc(1)}, Account{OperatorTerms: acc(3), OperatorCountry: "SE"}, 3, "", "SE"},
-		{"a later withdrawal on the target removes it", Account{TermsWithdrawn: at(3)}, Account{OperatorTerms: acc(1)}, -1, "3", ""},
-		{"an acceptance after the target's withdrawal stands", Account{TermsWithdrawn: at(3)}, Account{OperatorTerms: acc(4)}, 4, "3", ""},
-		{"a withdrawal on the unclaimed carries over", Account{OperatorTerms: acc(1)}, Account{TermsWithdrawn: at(2)}, -1, "2", ""},
+		{"only the unclaimed accepted", Account{}, Account{OperatorTerms: acc(1)}, 1, ""},
+		{"the target's newer acceptance stays", Account{OperatorTerms: acc(2)}, Account{OperatorTerms: acc(1)}, 2, ""},
+		{"the unclaimed's newer acceptance wins", Account{OperatorTerms: acc(1)}, Account{OperatorTerms: acc(3)}, 3, ""},
+		{"a later withdrawal on the target removes it", Account{TermsWithdrawn: at(3)}, Account{OperatorTerms: acc(1)}, -1, "3"},
+		{"an acceptance after the target's withdrawal stands", Account{TermsWithdrawn: at(3)}, Account{OperatorTerms: acc(4)}, 4, "3"},
+		{"a withdrawal on the unclaimed carries over", Account{OperatorTerms: acc(1)}, Account{TermsWithdrawn: at(2)}, -1, "2"},
 	} {
 		r := newLinkRig(t, nil)
 		user := string(rune('a' + i))
@@ -833,7 +832,7 @@ func TestClaimCarriesOperatorTerms(t *testing.T) {
 				src Account
 			}{{"gh:42", tc.target}, {p.account, tc.unclaimed}} {
 				a := f.find(x.id)
-				a.OperatorTerms, a.OperatorCountry, a.TermsWithdrawn = x.src.OperatorTerms, x.src.OperatorCountry, x.src.TermsWithdrawn
+				a.OperatorTerms, a.TermsWithdrawn = x.src.OperatorTerms, x.src.TermsWithdrawn
 			}
 			return nil
 		})
@@ -851,9 +850,6 @@ func TestClaimCarriesOperatorTerms(t *testing.T) {
 			}
 		} else if tc.wantWithdrawn != "" {
 			t.Errorf("%s: withdrawal lost", tc.name)
-		}
-		if a.OperatorCountry != tc.wantCountry {
-			t.Errorf("%s: country %q", tc.name, a.OperatorCountry)
 		}
 	}
 }

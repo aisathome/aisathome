@@ -37,7 +37,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -253,29 +252,6 @@ func (g *Gateway) connector(id string) *connector {
 	return nil
 }
 
-// requestAddr is the client address of r as clientIP sees it (behind a local proxy, the last
-// X-Forwarded-For hop), unmasked.
-func requestAddr(r *http.Request) (netip.Addr, bool) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	addr = addr.Unmap()
-	if addr.IsLoopback() || addr.IsPrivate() {
-		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-			hops := strings.Split(xff[len(xff)-1], ",")
-			if a, err := netip.ParseAddr(strings.TrimSpace(hops[len(hops)-1])); err == nil {
-				addr = a.Unmap()
-			}
-		}
-	}
-	return addr, true
-}
-
 // connectorFor authenticates a call to connector id's endpoints: its own key, from an allowed
 // address. Anything else is answered here.
 func (g *Gateway) connectorFor(w http.ResponseWriter, r *http.Request) *connector {
@@ -292,7 +268,7 @@ func (g *Gateway) connectorFor(w http.ResponseWriter, r *http.Request) *connecto
 		return nil
 	}
 	if len(c.allow) > 0 {
-		addr, aok := requestAddr(r)
+		addr, aok := g.requestAddr(r)
 		if !aok || !slices.ContainsFunc(c.allow, func(p netip.Prefix) bool { return p.Contains(addr) }) {
 			g.log.Warn("connector call from an address not in allow_from", "connector", c.ID, "addr", addr)
 			apiError(w, http.StatusForbidden, "this connector's key is not accepted from this address")

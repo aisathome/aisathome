@@ -60,7 +60,6 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/contact/email", smallForm(g.handleContactEmail))
 	mux.HandleFunc("POST /account/contact/off", smallForm(g.handleContactOff))
 	mux.HandleFunc("POST /account/operator", smallForm(g.handleOperatorTerms))
-	mux.HandleFunc("POST /account/transfer", smallForm(g.handleTransferConsent))
 	mux.HandleFunc("POST /account/connectors/{id}/run", smallForm(g.handleConnectorRun))
 	mux.HandleFunc("POST /account/connectors/{id}/claim", smallForm(g.handleConnectorClaim))
 	mux.HandleFunc("POST /account/connectors/{id}/email", smallForm(g.handleConnectorEmail))
@@ -161,12 +160,11 @@ func randomToken() string {
 // in a short-lived cookie that the callback clears: the provider, the state, where to go next,
 // for Google the OpenID Connect nonce and the PKCE verifier, and whether the user ticked "Email
 // me about important changes and outages" for this sign-in (contact "1") and whether it was
-// started from the account page to add the address to the signed-in account (connect "1"), and whether
-// they ticked the opt-in to volunteers outside Europe (transfer "1", chatrules.go).
-type oauthFlow struct{ provider, state, next, nonce, verifier, contact, connect, transfer string }
+// started from the account page to add the address to the signed-in account (connect "1").
+type oauthFlow struct{ provider, state, next, nonce, verifier, contact, connect string }
 
 func (f oauthFlow) String() string {
-	return strings.Join([]string{f.provider, f.state, f.next, f.nonce, f.verifier, f.contact, f.connect, f.transfer}, "|")
+	return strings.Join([]string{f.provider, f.state, f.next, f.nonce, f.verifier, f.contact, f.connect}, "|")
 }
 
 // takeFlow reads and clears the flow cookie; ok only if it was started for provider and the
@@ -175,10 +173,8 @@ func (g *Gateway) takeFlow(w http.ResponseWriter, r *http.Request, provider stri
 	var f oauthFlow
 	if c, err := r.Cookie(g.cookieName(oauthCookie)); err == nil {
 		switch p := strings.Split(c.Value, "|"); len(p) {
-		case 8:
-			f = oauthFlow{p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]}
-		case 7: // a flow started before the transfer opt-in existed
-			f = oauthFlow{p[0], p[1], p[2], p[3], p[4], p[5], p[6], ""}
+		case 7:
+			f = oauthFlow{p[0], p[1], p[2], p[3], p[4], p[5], p[6]}
 		case 5: // a flow started before the contact fields existed
 			f = oauthFlow{provider: p[0], state: p[1], next: p[2], nonce: p[3], verifier: p[4]}
 		}
@@ -213,9 +209,6 @@ func (g *Gateway) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.PostFormValue("contact") == "1" {
 		f.contact = "1"
-	}
-	if r.PostFormValue("transfer") == TransferConsentVersion { // the box carries the version of the text it showed
-		f.transfer = "1"
 	}
 	g.startLogin(w, r, f)
 }
@@ -298,9 +291,6 @@ func (g *Gateway) finishSignIn(w http.ResponseWriter, r *http.Request, f oauthFl
 	next := f.next
 	if err == nil && f.contact == "1" && a.Status != StatusBanned && !g.storeContact(id, addr, source) {
 		next = contactNone
-	}
-	if err == nil && f.transfer == "1" && a.Status != StatusBanned {
-		g.storeTransfer(id)
 	}
 	g.signedIn(w, r, a, err, next)
 }
@@ -643,7 +633,7 @@ type pageData struct {
 	ContactWay    string    // how to turn it on from this page: "github", "google", "email" or ""
 	ContactNone   string    // after a sign-in that asked for an address and got none: says so
 
-	chatRulesPage // operator terms and the opt-in to volunteers outside Europe (chatrules.go)
+	chatRulesPage // operator terms and the rule for people who chat (chatrules.go)
 
 	// Connectors with accounts (account_connectors.go): a card each, the account's pilots, and
 	// whether any of them lets pilots serve chat at all yet.
@@ -705,8 +695,7 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 		d.Separate = strings.Join(ways[:n-1], ", ") + " and " + ways[n-1]
 	}
 	d.shell = shell{Title: "Your account", ChatURL: g.acfg.ChatURL, Theme: themeOf(r), Back: "/account"}
-	// The sign-in form's opt-in to volunteers outside Europe (chatrules.go).
-	d.RulesOn, d.TransferText, d.TransferVer = g.chatRulesOn(), TransferConsentText, TransferConsentVersion
+	d.UserRule = UserRule
 	if d.NewKey == "" && d.NewNode == "" { // no button that leaves a secret's only showing
 		d.Notice = g.noticeFor(r)
 	}
@@ -766,9 +755,6 @@ no email unless you tick the box below.</p>{{end}}
 <label class="check"><input type="checkbox" name="contact" value="1" id="contact"><span>Email me about important changes and outages</span></label>
 <p class="hint">Optional. If you tick it, we keep your email address{{if or .GitHub .Google}} ({{if .Email}}the one you type below, or {{end}}a verified one from {{if .GitHub}}GitHub{{end}}{{if and .GitHub .Google}} or {{end}}{{if .Google}}Google{{end}}){{end}}
 for these notices only, until you turn them off on your account page.</p>
-{{if .RulesOn}}<label class="check"><input type="checkbox" name="transfer" value="{{.TransferVer}}" id="transfer"><span>{{.TransferText}}</span></label>
-<p class="hint">Optional. Unticked, your chats go only to nodes in Europe or countries the EU recognises as protecting personal data,
-which can mean waiting longer. You can change it on your account page.</p>{{end}}
 {{if .Email}}<div class="field"><label for="email">{{if or .GitHub .Google}}Or sign in with email: we{{else}}Sign in with email: we{{end}}
 send you a one-time code.</label>
 <div class="row"><input id="email" type="email" name="email" required autocomplete="email" maxlength="254">
@@ -778,7 +764,8 @@ send you a one-time code.</label>
 <p class="mut small">New accounts are let in in order while there is room; otherwise you get a place in the
 waitlist.</p>
 <p class="small" id="age">You must be 18 or older to use AIs@home. By signing in you accept the <a href="/about/terms/">terms of use</a>;
-see also the <a href="/about/privacy/">privacy notice</a>.</p></div>
+see also the <a href="/about/privacy/">privacy notice</a>.</p>
+<p class="small" id="user-rule">{{.UserRule}}</p></div>
 {{else if eq .Account.Status "waitlisted"}}
 <h1>You are on the waitlist</h1>
 {{if .Position}}<div class="card"><p>Place <strong>{{.Position}}</strong>. Accounts are let in in order as room
@@ -800,6 +787,7 @@ appears; come back to this page to check.</p></div>
 {{else}}
 <h1>Your account</h1>
 <div class="card"><p><a class="btn" href="{{.ChatURL}}">Open the chat</a></p>
+<p class="small" id="user-rule">{{.UserRule}}</p>
 <p class="mut">Today: {{.Used}}{{if .Budget}} of {{.Budget}}{{end}} tokens (resets 00:00 UTC; chat and API share it).</p></div>
 {{if .Admin}}<div class="card" id="ops"><h2>Operations</h2><p><a href="/account/ops">Operations page</a>: the runner, its tasks, the nodes and health warnings (admins only).</p></div>{{end}}
 <div class="card" id="keys"><h2>API keys</h2>
@@ -821,7 +809,6 @@ See <a href="/use/api/">API and opencode</a>.</p></div>
 {{if .Account.Username}}<p class="mut small">You appear as <strong>{{.Account.Username}}</strong> on the <a href="/network/">leaderboard</a>.</p>
 {{else}}<p class="mut small">You are anonymous: your credit counts in the totals only.</p>{{end}}</div>
 {{template "contact" .}}
-{{template "transfer" .}}
 <div class="card" id="nodes"><h2>Your nodes</h2>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
 strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that{{if .Probation}},

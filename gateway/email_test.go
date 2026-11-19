@@ -2,7 +2,6 @@
 package gateway
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -49,29 +48,6 @@ func TestDisposable(t *testing.T) {
 		"example.org": false, "amailinator.com.example": false} {
 		if isDisposable(d) != want {
 			t.Errorf("isDisposable(%q) != %v", d, want)
-		}
-	}
-}
-
-func TestClientIP(t *testing.T) {
-	cases := []struct{ remote, xff, want string }{
-		{"203.0.113.9:4000", "198.51.100.1", "203.0.113.9"}, // not from Caddy: XFF ignored
-		{"127.0.0.1:4000", "198.51.100.1, 198.51.100.2", "198.51.100.2"},
-		{"10.88.0.5:4000", "1.1.1.1, 198.51.100.7", "198.51.100.7"}, // rightmost: what Caddy saw
-		{"[::1]:4000", "2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"},
-		{"[2001:db8:a:b:c::1]:4000", "", "2001:db8:a:b::/64"},
-		{"127.0.0.1:4000", "garbage", "127.0.0.1"},
-		{"127.0.0.1:4000", "", "127.0.0.1"},
-		{"[::ffff:127.0.0.1]:4000", "198.51.100.3", "198.51.100.3"},
-	}
-	for _, c := range cases {
-		r, _ := http.NewRequest("POST", "/", nil)
-		r.RemoteAddr = c.remote
-		if c.xff != "" {
-			r.Header.Set("X-Forwarded-For", c.xff)
-		}
-		if got := clientIP(r); got != c.want {
-			t.Errorf("clientIP(%s, %q) = %q, want %q", c.remote, c.xff, got, c.want)
 		}
 	}
 }
