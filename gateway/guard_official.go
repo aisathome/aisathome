@@ -81,15 +81,23 @@ func officialInstall(text string, m0, m1 int, list knownAddrs) bool {
 			return false
 		}
 		rest := text[m1:]
-		if j := strings.IndexAny(rest, ")`|;&\n"); j >= 0 {
-			rest = rest[:j]
+		j := strings.IndexAny(rest, ")`")
+		if j < 0 {
+			return false // no end of the substitution: nothing to say what runs
 		}
-		// A quote inside the substitution could hide its end, or more words, from this reading; the
-		// installers' own commands have none (code review, 2026-11-19).
-		if strings.ContainsAny(rest, `"'\`) {
+		rest = rest[:j]
+		// The installers' own commands are one download in the substitution: a separator could run a
+		// second command in it ("$(curl official; curl evil)"), and a quote, an escape, an expansion
+		// or a redirection could hide its end or more words from this reading (code review,
+		// 2026-11-19).
+		if strings.ContainsAny(rest, "\"'\\;&|\n$<>(") {
 			return false
 		}
 		seg = seg[w[0]:] + rest
+	}
+	// An expansion, a redirection or a subshell in the download command: not one of the installers'.
+	if strings.ContainsAny(seg, "$<>()`") {
+		return false
 	}
 	words := strings.Fields(seg)
 	if len(words) < 2 {

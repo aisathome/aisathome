@@ -92,6 +92,26 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		}
 		cfg = &c
 	}
+	// guard-log reads the gateway's state_dir only: it needs no accounts file, nor the right to
+	// write it (opening the store writes it).
+	if a := fs.Args(); len(a) > 0 && a[0] == "guard-log" {
+		if len(a) > 2 {
+			fs.Usage()
+			return errors.New("guard-log takes at most one argument, a node")
+		}
+		if cfg == nil || cfg.StateDir == "" {
+			return errors.New("guard-log needs -config with a state_dir: the gateway keeps the log there")
+		}
+		node := ""
+		if len(a) == 2 {
+			node = a[1]
+		}
+		es, err := gateway.ReadGuardLog(cfg.StateDir, time.Now())
+		if err != nil {
+			return err
+		}
+		return printGuardLog(out, es, node)
+	}
 	if path == "" {
 		if cfg.Accounts == nil || cfg.Accounts.File == "" {
 			return fmt.Errorf("%s has no accounts.file; pass -file", *cfgPath)
@@ -198,23 +218,6 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return err
 		}
 		return store.RevokeNode("", a[1])
-	case "guard-log":
-		if len(a) > 2 {
-			fs.Usage()
-			return errors.New("guard-log takes at most one argument, a node")
-		}
-		if cfg == nil || cfg.StateDir == "" {
-			return errors.New("guard-log needs -config with a state_dir: the gateway keeps the log there")
-		}
-		node := ""
-		if len(a) == 2 {
-			node = a[1]
-		}
-		es, err := gateway.ReadGuardLog(cfg.StateDir, time.Now())
-		if err != nil {
-			return err
-		}
-		return printGuardLog(out, es, node)
 	case "node-clear":
 		if err := need(1); err != nil {
 			return err
