@@ -390,9 +390,9 @@ func TestAccountsPilotCommands(t *testing.T) {
 // what matched quoted; it needs the config's state_dir.
 func TestAccountsGuardLog(t *testing.T) {
 	dir := t.TempDir()
-	file, state := filepath.Join(dir, "accounts.json"), filepath.Join(dir, "state")
+	// The accounts file is not needed, nor its folder: guard-log reads the state_dir only.
+	file, state := filepath.Join(dir, "no-such-dir", "accounts.json"), filepath.Join(dir, "state")
 	os.Mkdir(state, 0o700)
-	gateway.OpenAccountStore(file)
 	now := time.Now().UTC()
 	es := []gateway.GuardEvent{
 		{At: now.Add(-gateway.EvidenceKeep - time.Hour), Node: "n-00000001", Req: "r0", Rule: "file-upload", Action: gateway.GuardHeld,
@@ -428,6 +428,17 @@ func TestAccountsGuardLog(t *testing.T) {
 	}
 	if out, _ := run("guard-log", "n-00000002"); strings.Contains(out, "n-00000001") || !strings.Contains(out, "1 guard event(s)") {
 		t.Fatalf("guard-log of one node:\n%s", out)
+	}
+	// A config without an accounts section works as well.
+	bare := filepath.Join(dir, "bare.json")
+	raw, _ = json.Marshal(gateway.Config{StateDir: state})
+	os.WriteFile(bare, raw, 0o600)
+	var o bytes.Buffer
+	if err := runAccounts([]string{"-config", bare, "guard-log"}, &o, &bytes.Buffer{}); err != nil || !strings.Contains(o.String(), "2 guard event(s)") {
+		t.Fatalf("without accounts: %v\n%s", err, o.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "no-such-dir")); !os.IsNotExist(err) {
+		t.Fatal("guard-log made the accounts file's folder")
 	}
 	if err := runAccounts([]string{"-file", file, "guard-log"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "state_dir") {
 		t.Fatalf("without a state_dir: %v", err)

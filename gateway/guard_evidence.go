@@ -83,16 +83,23 @@ func (h guardHit) evidence() GuardEvidence {
 // maxField bounds where and the host: a tool's name or a host name is short.
 const maxField = 100
 
-// cleanField is a short field of the node's text, redacted and escaped as a fragment is, cut to
-// maxField bytes.
+// cleanField is a short field of the node's text, redacted and escaped as a fragment is, then cut
+// to maxField bytes. Redacted before it is cut: a secret cut first could fall below its pattern's
+// shortest length and stay (code review, 2026-11-19). The text read for secrets is bounded by
+// redactReach; what lies beyond it is never kept.
 func cleanField(s string) string {
 	if s == "" {
 		return ""
 	}
+	s = escapeFragment(redactWindow(s, 0, min(len(s), redactReach)))
 	if len(s) > maxField {
-		s = strings.ToValidUTF8(s[:maxField], "") + "…"
+		end := maxField
+		for end > 0 && !utf8.RuneStart(s[end]) {
+			end--
+		}
+		s = s[:end] + "…"
 	}
-	return escapeFragment(redactWindow(s, 0, len(s)))
+	return s
 }
 
 // fragmentOf is text[m0:m1] with the text around it, at most maxFragment bytes of text before
