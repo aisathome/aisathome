@@ -23,8 +23,9 @@
 //     trusted_users. This keeps the rule that people's prompts reach strangers' machines only after
 //     anti-retention measures and the privacy notice are in place: the operator turns it on then.
 //
-// Pilots of trusted_users are the maintainer's own machines (test hosts): trusted, like a config
-// node token with trust "trusted".
+// Pilots of trusted_users are the maintainer's own machines (test hosts): they serve chat before
+// pilots_chat_enabled, but no pilot is ever trusted (a credential copied in transit must not
+// receive personal data).
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -63,7 +64,8 @@ type Connector struct {
 	PilotsChatEnabled bool `json:"pilots_chat_enabled,omitempty"`
 	// NoChatUsers: its users whose pilots serve science only, whatever else says.
 	NoChatUsers []string `json:"no_chat_users,omitempty"`
-	// TrustedUsers: its users whose pilots are the maintainer's own machines: trusted nodes.
+	// TrustedUsers: its users whose pilots are the maintainer's own machines: they serve chat before
+	// PilotsChatEnabled, as untrusted nodes.
 	TrustedUsers []string `json:"trusted_users,omitempty"`
 	// ChatHeadroom: pilots to keep for chat, agents and API calls (demand), counted only while
 	// PilotsChatEnabled.
@@ -406,16 +408,21 @@ func (g *Gateway) handlePilotReported(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pid := r.PathValue("pid")
-	if _, err := g.sci.pilot(c.ID, pid); err != nil {
+	p, err := g.sci.pilot(c.ID, pid)
+	if err == errNoPilot {
 		taskError(w, err)
 		return
 	}
-	p, err := g.sci.endPilot(c.ID, pid, "reported: "+body.Outcome, g.pilotNow())
+	if err == nil {
+		p, err = g.sci.endPilot(c.ID, pid, "reported: "+body.Outcome, g.pilotNow())
+	}
+	// Dropped whatever the database said: a reported pilot has exited, and one that failed to end in
+	// the record must not keep serving until its deadline. Its own connection says whose it is.
+	g.dropPilot(c.ID, pid, "pilot reported")
 	if err != nil {
 		taskError(w, err)
 		return
 	}
-	g.dropPilot(pid, "pilot reported")
 	writeJSON(w, http.StatusOK, map[string]any{"pilot": g.pilotView(p)})
 }
 

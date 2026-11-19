@@ -317,14 +317,20 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		if g.pilotRegistered != nil {
 			g.pilotRegistered(n.pilot)
 		}
+		// Its account, link and switch are read again too: authPilot's answer is from before hello.
 		p, err := g.sci.pilot("", n.pilot)
+		first, chatOff, live := g.accounts.pilotAccountState(n.account, n.connector, n.extUser)
+		c := g.connector(n.connector)
 		switch {
 		case err != nil:
 			n.conn.Close(websocket.StatusTryAgainLater, "pilot records unavailable, try again")
 		case p.State != PilotConnected:
 			n.conn.Close(websocket.StatusPolicyViolation, "this pilot has ended")
+		case !live || c == nil:
+			n.conn.Close(websocket.StatusPolicyViolation, "this pilot's account is closed")
 		default:
 			g.mu.Lock()
+			n.probEnd, n.scienceOnly = first.Add(g.acfg.probation), pilotScienceOnly(c, n.extUser, chatOff, c.trusted[n.extUser])
 			n.registering = false
 			g.mu.Unlock()
 		}
@@ -359,6 +365,8 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		if err := g.sci.pilotDisconnected(n.pilot, reason, n.since, g.pilotNow()); err != nil {
 			g.log.Error("pilot disconnect not recorded", "pilot", n.pilot, "err", err)
 		}
+		g.bufByTok.Delete(token) // a pilot's credential never comes back after its end; nothing to keep
+		g.speeds.forget(n.pilot)
 		g.log.Info("pilot disconnected", "pilot", n.pilot, "reason", reason)
 	}
 }

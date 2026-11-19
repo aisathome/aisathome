@@ -522,7 +522,7 @@ gateway is BOINC-specific beyond the configuration.
 | `max_deadline_hours` | A pilot's deadline at most this far ahead (default 336). |
 | `pilots_chat_enabled` | Off by default: its pilots serve **science only**. See below. |
 | `no_chat_users` | Its users (connector ids) whose pilots serve science only, whatever else says: Science United's account, whose hosts cannot reach a person's switch. |
-| `trusted_users` | Its users whose pilots are the maintainer's own machines (rented test hosts): they count as trusted nodes, like a config token with `"trust": "trusted"`, and serve chat even while `pilots_chat_enabled` is off. Never list anyone else. |
+| `trusted_users` | Its users whose pilots are the maintainer's own machines (rented test hosts): they serve chat even while `pilots_chat_enabled` is off. They stay **untrusted** nodes (no personal data, guarded answers): the gateway cannot tell which machine holds a credential, and one copied on its way to the host must not receive personal data. Never list anyone else. |
 | `chat_headroom` | Pilots to keep for people's requests in the demand number, counted only while `pilots_chat_enabled`. |
 | `sessions_per_slot` | Science sessions one GPU slot keeps busy (default 2: a session alternates model calls with its own tools). |
 | `unsent_buffer` | Created pilots no machine has taken yet, at most (default 2). |

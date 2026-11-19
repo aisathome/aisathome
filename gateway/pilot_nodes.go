@@ -55,13 +55,12 @@ func (g *Gateway) authPilot(cred string) (*pilotLogin, int, string) {
 	if !live {
 		return nil, http.StatusForbidden, "this pilot's account is closed"
 	}
-	trusted := c.trusted[p.User] && !c.noChat[p.User]
+	// Never trusted, not even for trusted_users: the gateway cannot tell which machine holds a
+	// credential, and one copied in transit must not receive personal data. trusted_users only lets
+	// the maintainer's own pilots serve chat before pilots_chat_enabled.
 	tok := NodeToken{Operator: g.pseudonym(p.account), NodeID: p.ID}
-	if trusted {
-		tok.Trust = "trusted"
-	}
 	return &pilotLogin{tok: tok, account: p.account, pilot: p, conn: c, first: first,
-		scienceOnly: pilotScienceOnly(c, p.User, chatOff, trusted)}, 0, ""
+		scienceOnly: pilotScienceOnly(c, p.User, chatOff, c.trusted[p.User])}, 0, ""
 }
 
 // pilotReasons are the close reasons a pilot sends (node/pilot) that its record keeps; any other
@@ -81,12 +80,12 @@ func pilotClose(err error) string {
 	return "closed"
 }
 
-// dropPilot closes pilot id's connection, if it has one.
-func (g *Gateway) dropPilot(id, why string) {
+// dropPilot closes connector's pilot id's connection, if it has one.
+func (g *Gateway) dropPilot(connector, id, why string) {
 	g.mu.Lock()
 	n := g.node[id]
 	g.mu.Unlock()
-	if n != nil && n.pilot == id {
+	if n != nil && n.pilot == id && n.connector == connector {
 		n.conn.Close(websocket.StatusPolicyViolation, why)
 	}
 }

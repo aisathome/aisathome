@@ -551,9 +551,8 @@ func (g *Gateway) sweepNodes() {
 			var chatOff bool
 			st[i].first, chatOff, st[i].live = g.accounts.pilotAccountState(n.account, n.connector, n.extUser)
 			c := g.connector(n.connector)
-			trusted := c != nil && c.trusted[n.extUser] && !c.noChat[n.extUser]
-			st[i].live = st[i].live && c != nil && trusted == n.trusted
-			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff, trusted)
+			st[i].live = st[i].live && c != nil
+			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff, c.trusted[n.extUser])
 		case n.account != "":
 			st[i].first, st[i].live = g.accounts.nodeLive(keyHash(n.token))
 		}

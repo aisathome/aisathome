@@ -412,11 +412,20 @@ func TestPilotCredentialRules(t *testing.T) {
 	if pl, _, _ := r.g.authPilot(cred2); pl != nil {
 		t.Error("an ended pilot's credential accepted")
 	}
-	// A trusted user's pilot is trusted; a no-chat user's is not, even if listed as trusted too.
+	// A trusted_users user's pilot serves chat before pilots_chat_enabled, but is never trusted: a copy
+	// of its credential must not receive personal data.
 	id3, cred3 := r.create()
 	r.bind(id3, "1")
-	if pl, _, _ := r.g.authPilot(cred3); pl == nil || pl.tok.Trust != "trusted" || pl.scienceOnly {
-		t.Errorf("trusted user's pilot: %+v", pl)
+	pl, _, _ := r.g.authPilot(cred3)
+	if pl == nil || pl.tok.Trust != "" || pl.scienceOnly {
+		t.Fatalf("trusted user's pilot: %+v", pl)
+	}
+	n := r.pilotNode(cred3, 1)
+	if (&route{class: ClassChat, trusted: true, pii: "email"}).allows(n, r.clock()) {
+		t.Error("personal data reached a trusted user's pilot")
+	}
+	if !(&route{class: ClassChat}).allows(n, r.clock()) {
+		t.Error("a trusted user's pilot does not serve chat")
 	}
 }
 
@@ -495,7 +504,7 @@ func TestPilotRouting(t *testing.T) {
 }
 
 // sweepNodes applies a change of the account's switch or of the connector's settings to a connected
-// pilot within one sweep, and drops a pilot whose account was banned.
+// pilot within one sweep (a banned account's pilots: TestPilotCredentialRules and the e2e).
 func TestPilotSweep(t *testing.T) {
 	r := newPilotRig(t, func(c *Config) { c.Connectors[0].PilotsChatEnabled = true })
 	id, cred := r.create()
@@ -752,6 +761,11 @@ func TestPilotDemand(t *testing.T) {
 	if d = demand(); num(d["science"].(map[string]any), "slots_online") != 1 {
 		t.Fatalf("own pilot counted as a slot: %v", d)
 	}
+	// In trusted-only mode no pilot can serve (pilots are never trusted): none are wanted for science.
+	r.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = RoutingTrustedOnly; return nil })
+	if d = demand(); num(d["science"].(map[string]any), "pilots") != 0 {
+		t.Fatalf("science pilots wanted in trusted-only mode: %v", d)
+	}
 }
 
 // An account's own API key reads and sets its "chat on pilots" switch; other keys cannot.
@@ -794,6 +808,30 @@ func TestPilotCredentialRedacted(t *testing.T) {
 	if strings.Contains(statusText(body), cred[3:]) {
 		t.Fatal("a pilot credential reached the node's copy of the request")
 	}
+	glued := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "token_" + cred}}}
+	newRedactor().redactBody(glued)
+	if strings.Contains(statusText(glued), cred[3:]) {
+		t.Fatal("a pilot credential glued to a word reached the node")
+	}
+}
+
+// An account's own pilot is not "its own node" for placement either: it gets no preference and its
+// placements count toward its operator's share.
+func TestPilotNotOwnForPlacement(t *testing.T) {
+	r := newPilotRig(t, nil)
+	id, cred := r.create()
+	r.bind(id, "5")
+	n := r.pilotNode(cred, 1)
+	rt := &route{want: "m", class: ClassScience, project: "lab", self: n.operator, preferSelf: true, exclude: map[*nodeConn]bool{}}
+	got, _ := r.g.pick(rt)
+	if got != n {
+		t.Fatalf("picked %v", got)
+	}
+	r.g.mu.Lock()
+	defer r.g.mu.Unlock()
+	if len(r.g.shares) != 1 || r.g.shares[0].op != n.operator {
+		t.Fatalf("the own pilot's placement was not counted toward its share: %+v", r.g.shares)
+	}
 }
 
 // A pilot reported while its connection registers is never routable: it waits, registered but
@@ -821,7 +859,7 @@ func reportedDuringRegistration(t *testing.T, drop bool) {
 		hooked.Store(true) // before the close below reaches the client
 		r.g.sci.endPilot("boinc", pid, "reported: success", r.clock())
 		if drop {
-			r.g.dropPilot(pid, "pilot reported")
+			r.g.dropPilot("boinc", pid, "pilot reported")
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -859,5 +897,124 @@ func reportedDuringRegistration(t *testing.T, drop bool) {
 		if time.Now().After(deadline) {
 			t.Fatal("the reported pilot stayed registered")
 		}
+	}
+}
+
+// dialPilot connects a raw pilot with its credential and hello; the caller reads until it closes.
+func dialPilot(t *testing.T, ctx context.Context, srv *httptest.Server, id, cred string) *websocket.Conn {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/node/connect",
+		&websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello, _ := json.Marshal(protocol.Msg{Type: protocol.TypeHello, NodeID: id, Protocol: protocol.LegacyVersion,
+		Models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: 1}}})
+	c.Write(ctx, websocket.MessageText, hello)
+	return c
+}
+
+// readClose reads c until it closes and returns why (a context error if it never does).
+func readClose(ctx context.Context, c *websocket.Conn) error {
+	for {
+		if _, _, err := c.Read(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// A change made while a pilot's connection is being set up (after authPilot, before it is
+// routable) applies when it registers, not at the next sweep: a ban closes it, the account's chat
+// switch keeps it on science.
+func TestPilotRechecksAccountWhenRegistered(t *testing.T) {
+	for _, change := range []string{"ban", "chat off"} {
+		t.Run(change, func(t *testing.T) {
+			r := newPilotRig(t, func(c *Config) { c.Connectors[0].PilotsChatEnabled = true })
+			srv := httptest.NewServer(r.g.Handler())
+			defer srv.Close()
+			id, cred := r.create()
+			r.bind(id, "5")
+			p, _ := r.g.sci.pilot("boinc", id)
+			r.g.pilotRegistered = func(string) {
+				if change == "ban" {
+					r.g.accounts.SetStatus(p.account, StatusBanned)
+				} else {
+					r.g.accounts.SetPilotChat(p.account, false)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			c := dialPilot(t, ctx, srv, id, cred)
+			if change == "ban" {
+				// Closed at registration (its reason), not by the sweep that would follow seconds later.
+				if err := readClose(ctx, c); !strings.Contains(err.Error(), "this pilot's account is closed") {
+					t.Fatalf("a pilot banned while registering: %v", err)
+				}
+				return
+			}
+			go readClose(ctx, c)
+			var n *nodeConn
+			for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+				r.g.mu.Lock()
+				n = r.g.node[id]
+				ready := n != nil && !n.registering
+				r.g.mu.Unlock()
+				if ready {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the pilot never became routable")
+				}
+			}
+			r.g.mu.Lock()
+			chat := (&route{class: ClassChat}).allows(n, r.clock())
+			r.g.mu.Unlock()
+			if chat {
+				t.Error("a pilot whose account turned chat off while it registered serves chat")
+			}
+		})
+	}
+}
+
+// A report ends the pilot's connection even when the record cannot be written or read back: a
+// reported pilot never keeps serving until its deadline.
+func TestPilotReportedDropsOnDatabaseError(t *testing.T) {
+	r := newPilotRig(t, nil)
+	srv := httptest.NewServer(r.g.Handler())
+	defer srv.Close()
+	id, cred := r.create()
+	r.bind(id, "5")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	c := dialPilot(t, ctx, srv, id, cred)
+	closed := make(chan error, 1)
+	go func() { closed <- readClose(ctx, c) }()
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		r.g.mu.Lock()
+		n := r.g.node[id]
+		ready := n != nil && !n.registering
+		r.g.mu.Unlock()
+		if ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pilot never connected")
+		}
+	}
+	r.g.sci.db.Close() // every write and read fails from here
+	// Another connector cannot drop it, database or not.
+	if w, _ := r.call("POST", "/v1/connectors/other/pilots/"+id+"/reported", otherConnectorKey, map[string]any{"outcome": "success"}, "203.0.113.9:1"); w.Code != 503 {
+		t.Fatalf("another connector's report: HTTP %d", w.Code)
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("another connector's report dropped the pilot: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if w, _ := r.call("POST", pilotsPath+"/"+id+"/reported", testConnectorKey, map[string]any{"outcome": "success"}, ""); w.Code != 503 {
+		t.Fatalf("report with the database down: HTTP %d", w.Code)
+	}
+	if err := <-closed; websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+		t.Fatalf("the reported pilot was not dropped: %v", err)
 	}
 }

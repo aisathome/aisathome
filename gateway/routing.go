@@ -345,8 +345,10 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 		}
 		return nil, ""
 	}
+	// own: the requester's own standalone node. Not its pilots: the connector linked those.
+	own := func(n *nodeConn) bool { return n.operator == rt.self && n.pilot == "" }
 	if rt.preferSelf && rt.self != "" {
-		if n, m := try(func(n *nodeConn) bool { return n.operator == rt.self }); n != nil {
+		if n, m := try(own); n != nil {
 			return n, m // serving oneself counts for no share
 		}
 	}
@@ -355,12 +357,12 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 	// already counts for the node's operator in the window. It adds nothing to the share.
 	counted := func(n *nodeConn) bool { return hits[n.id].cont && seen(n.operator) }
 	n, m := try(func(n *nodeConn) bool {
-		return n.trusted || n.operator == rt.self || !over(n.operator) || counted(n)
+		return n.trusted || own(n) || !over(n.operator) || counted(n)
 	})
 	if n == nil {
 		n, m = try(nil) // every free node is over its share: better served than waiting
 	}
-	if n != nil && n.operator != rt.self && !counted(n) {
+	if n != nil && !own(n) && !counted(n) {
 		g.shares = append(g.shares, shareEntry{now, n.operator, key})
 	}
 	return n, m
