@@ -873,7 +873,9 @@ Its pilots run as your nodes, with your settings below.</p>
 <code data-login>{{.Login}}</code> and the password you chose here (without one, use the command above).</p>
 <p class="mut small" data-own-address>To use your own email address (one cross-project id, Gridcoin), log in on the {{$c.Name}} site with
 this login and your password and change it in your {{$c.Name}} account settings; {{$c.Name}} sends its own confirmation mail.</p>
-{{else if .Created}}<p class="mut small">This {{$c.Name}} account uses your own email address.</p>{{end}}</div>{{end}}
+{{else if .Created}}<p class="mut small">This {{$c.Name}} account uses your own email address.</p>{{end}}
+{{if .Claimed}}<p class="mut small" data-account-key-login>You can log in to the {{$c.Name}} site with your account key (the one you
+claimed with), in place of your password.</p>{{end}}</div>{{end}}
 {{with $c.Pending}}<p role="status" data-request-pending="{{.Kind}}"><span class="badge busy">Waiting</span> {{$c.Name}} is {{.What}} (asked {{.Since.Format "15:04 UTC"}}).
 Reload this page in a few seconds.</p>{{end}}
 {{with $c.Failed}}<p role="alert" data-request-failed="{{.Kind}}"><span class="badge off">Did not work</span> {{.What}}: {{.Error}}.</p>{{end}}
@@ -890,8 +892,9 @@ we pass it on and delete it here)</span></label>
 <input id="run-name-{{$c.ID}}" name="name" maxlength="40"></div>
 <div class="field"><label for="run-pw-{{$c.ID}}">Password for BOINC Manager and the {{$c.Name}} site (optional, 8 or more characters)</label>
 <input id="run-pw-{{$c.ID}}" type="password" name="password" maxlength="128" autocomplete="new-password">
-<p class="hint">Choose it now: changing it later means attaching your machines again. Only {{$c.Name}} keeps it, as a hash; we keep nothing.
-Without one, attach with the command line, and you cannot log in on the {{$c.Name}} site to change the address later.</p></div>
+<p class="hint" data-password-note>Choose a password if you want to log in to the {{$c.Name}} site later (stats, Gridcoin). Choose it now:
+changing it later means attaching your machines again. Only {{$c.Name}} keeps it, as a hash; we keep nothing. Without one, attach with
+the command line.</p></div>
 <div class="actions"><button class="btn">Run on {{$c.Name}}</button></div></form>{{end}}
 <form class="form" method="post" action="/account/connectors/{{$c.ID}}/claim"><h3>Claim a {{$c.Name}} account</h3>
 <p>Already crunching for AIs@home on {{$c.Name}}? Your machines' work is kept under an unclaimed account until you claim it. Paste your
