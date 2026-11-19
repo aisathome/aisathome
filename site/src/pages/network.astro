@@ -534,37 +534,48 @@ import LiveStats from '../components/LiveStats.astro';
 	};
 
 	let loading = 0;
+	const setRange = (r: Range) => {
+		range = r;
+		try {
+			const u = new URL(location.href);
+			if (r === DEFAULT_RANGE) u.searchParams.delete('range');
+			else u.searchParams.set('range', r);
+			history.replaceState(history.state, '', u);
+		} catch {
+			// the address stays as it was
+		}
+	};
 	const load = async () => {
 		if (!box || !window.fetch) return;
 		const mine = ++loading; // a slower answer for an earlier range never replaces a newer one
+		// A newly picked range that fails goes back to the one shown (the buttons stay usable); the shown range failing
+		// hides the section, as everywhere on the page.
+		const fail = () => {
+			if (mine !== loading) return;
+			if (!last || last.range === range) return hide();
+			setRange(last.range);
+			draw(last);
+		};
 		try {
 			const ctl = new AbortController();
 			const timer = setTimeout(() => ctl.abort(), 8000);
 			const res = await fetch(`/v1/stats/pressure?range=${range}`, { signal: ctl.signal, headers: { accept: 'application/json' } });
 			clearTimeout(timer);
 			if (mine !== loading) return;
-			if (!res.ok) return hide();
+			if (!res.ok) return fail();
 			const v = parsePressure(await res.json());
 			if (mine !== loading) return;
-			if (!v) return hide();
+			if (!v) return fail();
 			draw(v);
 		} catch {
-			if (mine === loading) hide();
+			fail();
 		}
 	};
 	box?.querySelector('[data-pressure-ranges]')?.addEventListener('click', (e) => {
 		const btn = (e.target as Element).closest<HTMLButtonElement>('[data-range]');
 		if (!btn || !isRange(btn.dataset.range) || btn.dataset.range === range) return;
-		range = btn.dataset.range;
+		setRange(btn.dataset.range);
 		for (const b of box.querySelectorAll<HTMLButtonElement>('[data-range]')) b.setAttribute('aria-pressed', String(b === btn));
-		try {
-			const u = new URL(location.href);
-			if (range === DEFAULT_RANGE) u.searchParams.delete('range');
-			else u.searchParams.set('range', range);
-			history.replaceState(history.state, '', u);
-		} catch {
-			// the address stays as it was
-		}
 		load();
 	});
 	load();
