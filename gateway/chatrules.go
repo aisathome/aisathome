@@ -210,7 +210,7 @@ func (s *AccountStore) connectorTerms(connector, user, version, country string, 
 			a = &Account{ID: id, Status: StatusUnclaimed, Created: t, Links: []AccountLink{{Connector: connector, User: user, Linked: t}}}
 			f.Accounts = append(f.Accounts, a)
 		}
-		if a.Status != StatusActive && a.Status != StatusUnclaimed {
+		if !runsPilots(a.Status) {
 			return errNoOperator
 		}
 		// A record older than the account's own acceptance or withdrawal (a connector resending an old

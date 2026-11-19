@@ -712,8 +712,10 @@ finished ones are deleted after 30 days. The page says while a request waits and
 
 When the connector says yes, the user is linked (`create_link` and `claim` alike):
 
-- only to an **active** account (a banned or waitlisted one gets no link, also if it changed while
-  the request waited);
+- only to an **active or waitlisted** account (a banned one gets no link, also if it was banned while
+  the request waited). A waitlisted account (owner, 2026-11-19) may claim, run on BOINC, see its
+  pilots and use the chat switch, and its pilots serve under it as any account's do; the waitlist
+  still keeps it from the chat, the API and keys until it is let in;
 - a user linked to the same account keeps its link with the new key;
 - a user held by an **unclaimed** account is **merged**: all its links move, the account's probation
   starts at the earlier first-node time, its chat switch is off if either was off, its operator

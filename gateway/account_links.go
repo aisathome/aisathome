@@ -67,14 +67,22 @@ func (s *AccountStore) pilotAccount(connector, user string, now time.Time) (id s
 	return id, unclaimed, err
 }
 
-// pilotAccountState says whether account id may run pilots of connector's user now (active or
-// unclaimed, and still linked to that user: an unlinked or relinked user's pilots stop), when its
+// canLink: the statuses whose accounts may link a connector's user and run its pilots (owner,
+// 2026-11-19: waitlisted ones too; the waitlist blocks only their own chat, API use and keys).
+// Banned accounts may not.
+func canLink(status string) bool { return status == StatusActive || status == StatusWaitlisted }
+
+// runsPilots: the statuses whose accounts' pilots may serve (canLink, and unclaimed accounts).
+func runsPilots(status string) bool { return canLink(status) || status == StatusUnclaimed }
+
+// pilotAccountState says whether account id may run pilots of connector's user now (runsPilots, and
+// still linked to that user: an unlinked or relinked user's pilots stop), when its
 // probation started, and whether its "chat on pilots" switch is off.
 func (s *AccountStore) pilotAccountState(id, connector, user string) (first time.Time, chatOff, live bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.f.find(id)
-	if a == nil || (a.Status != StatusActive && a.Status != StatusUnclaimed) || s.f.linkOwner(connector, user) != a {
+	if a == nil || !runsPilots(a.Status) || s.f.linkOwner(connector, user) != a {
 		return time.Time{}, false, false
 	}
 	if a.FirstNode != nil {
@@ -87,8 +95,8 @@ func (s *AccountStore) pilotAccountState(id, connector, user string) (first time
 func (s *AccountStore) SetPilotChat(id string, on bool) error {
 	return s.Update(func(f *AccountsFile) error {
 		a := f.find(id)
-		if a == nil || (a.Status != StatusActive && a.Status != StatusUnclaimed) {
-			return fmt.Errorf("no active or unclaimed account %s", id)
+		if a == nil || !runsPilots(a.Status) {
+			return fmt.Errorf("no active, waitlisted or unclaimed account %s", id)
 		}
 		a.PilotChatOff = !on
 		return nil
@@ -137,11 +145,11 @@ func (s *AccountStore) Unlink(id, connector, user string) error {
 	})
 }
 
-var errClaimInactive = errors.New("only an active account can link a connector's user")
+var errClaimInactive = errors.New("a closed account cannot link a connector's user")
 
 // claimLink links connector's user to account target after the connector vouched for it (it made
 // the user for target, or target proved it with the attach key). The rules:
-//   - target must be active (not waitlisted, banned or unclaimed), unless the user is linked to it
+//   - target must be active or waitlisted (canLink: not banned or unclaimed), unless the user is linked to it
 //     already (a link finished before a crash, then a ban: its records still follow);
 //   - a user linked to target already keeps its link (with the new attach key);
 //   - a user linked to an unclaimed account moves, and that account is merged into target: all its
@@ -158,7 +166,7 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 		from = ""
 		t := f.find(target)
 		o := f.linkOwner(connector, user)
-		if t == nil || (t.Status != StatusActive && o != t) {
+		if t == nil || (!canLink(t.Status) && o != t) {
 			return errClaimInactive // linked already (a retry after a crash) is done whatever the status
 		}
 		link.Connector, link.User = connector, user

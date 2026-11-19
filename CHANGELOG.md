@@ -43,7 +43,8 @@ and **(site)** are live on aisathome.org once deployed.
   account the user's pilots made is merged in, with its pilots, daily credit and probation start,
   and the pilots reconnect as the account's), and switching a pseudonymous user to the person's own
   address. Requests wait for the connector at `GET /v1/connectors/{id}/requests` and are answered at
-  `POST …/requests/{rid}`; only active accounts get links, and a user linked to another account is
+  `POST …/requests/{rid}`; only active or waitlisted accounts get links (a waitlisted one runs pilots
+  and uses the switch, still without chat, API or keys), and a user linked to another account is
   never taken. The page also has the "Science only on my pilots" switch and the account's pilots.
   The gateway keeps no connector user's address: an own address and the password hash live only in
   the pending request. See "Linked accounts" in `docs/gateway.md`. (gateway)

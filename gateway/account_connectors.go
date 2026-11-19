@@ -151,7 +151,7 @@ func (g *Gateway) connectorData(d *pageData, a Account) {
 	}
 }
 
-// connectorForm is the start of every connector form: the signed-in, active account and the
+// connectorForm is the start of every connector form: the signed-in account (active or waitlisted) and the
 // connector (with accounts on) the form is for. Anything else is answered here.
 func (g *Gateway) connectorForm(w http.ResponseWriter, r *http.Request) (string, *connector, bool) {
 	id, ok := g.session(r)
@@ -164,7 +164,7 @@ func (g *Gateway) connectorForm(w http.ResponseWriter, r *http.Request) (string,
 		http.NotFound(w, r)
 		return "", nil, false
 	}
-	if !g.accounts.active(id) {
+	if a, _, ok := g.accounts.Get(id); !ok || !canLink(a.Status) {
 		g.formError(w, r, id, errClaimInactive)
 		return "", nil, false
 	}
@@ -317,8 +317,8 @@ func (g *Gateway) handlePilotChatForm(w http.ResponseWriter, r *http.Request) {
 		g.formError(w, r, id, errors.New("chat: on or off"))
 		return
 	}
-	if !g.accounts.active(id) {
-		g.formError(w, r, id, errors.New("only an active account can change this"))
+	if a, _, ok := g.accounts.Get(id); !ok || !canLink(a.Status) {
+		g.formError(w, r, id, errors.New("a closed account cannot change this"))
 		return
 	}
 	if err := g.accounts.SetPilotChat(id, on == "on"); err != nil {

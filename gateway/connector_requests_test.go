@@ -261,21 +261,24 @@ func TestClaimChatSetting(t *testing.T) {
 	}
 }
 
-// Only an active account may claim: a banned (or waitlisted) one cannot ask, and one banned while
-// its claim waits gets no link; the unclaimed account keeps its user.
+// A banned account may not claim: it cannot ask, and one banned while its claim waits gets no link;
+// the unclaimed account keeps its user.
 func TestBannedCannotClaim(t *testing.T) {
 	r := newLinkRig(t, nil)
 	pid, _ := r.create()
 	r.bind(pid, "5")
 	p, _ := r.g.sci.pilot("boinc", pid)
-	for _, st := range []string{StatusBanned, StatusWaitlisted} {
-		r.addAccount("gh:"+st, st)
-		if w := r.form("gh:"+st, "/account/connectors/boinc/claim", url.Values{"key": {weakKey("5")}}); w.Code != http.StatusBadRequest {
-			t.Errorf("%s account's claim form: HTTP %d", st, w.Code)
+	r.addAccount("gh:9", StatusBanned)
+	for _, path := range []string{"claim", "run"} {
+		if w := r.form("gh:9", "/account/connectors/boinc/"+path, url.Values{"key": {weakKey("5")}}); w.Code != http.StatusBadRequest {
+			t.Errorf("banned account's %s form: HTTP %d", path, w.Code)
 		}
 	}
+	if w := r.form("gh:9", "/account/pilots/chat", url.Values{"chat": {"off"}}); w.Code != http.StatusBadRequest {
+		t.Errorf("banned account's chat switch: HTTP %d", w.Code)
+	}
 	if l := r.pending(); len(l) != 0 {
-		t.Fatalf("requests from inactive accounts: %v", l)
+		t.Fatalf("requests from a banned account: %v", l)
 	}
 	r.addAccount("gh:44", StatusActive)
 	r.claim("gh:44", weakKey("5"))
@@ -289,6 +292,73 @@ func TestBannedCannotClaim(t *testing.T) {
 	}
 	if a, _, _ := r.g.accounts.Get("gh:44"); len(a.Links) != 0 {
 		t.Errorf("the banned account got links: %+v", a.Links)
+	}
+}
+
+// A waitlisted account may link (owner, 2026-11-19): claim, Run on BOINC, its pilots serve under it
+// and follow its switch; the waitlist still keeps it from keys, the chat and the API.
+func TestWaitlistedCanLink(t *testing.T) {
+	r := newLinkRig(t, func(c *Config) { c.Connectors[0].PilotsChatEnabled = true })
+	pid, cred := r.create()
+	r.bind(pid, "5")
+	r.addAccount("gh:7", StatusWaitlisted) // held: stays on the waitlist
+	page := r.page("gh:7")
+	for _, want := range []string{"You are on the waitlist", "Claim a BOINC account", "Run on BOINC</button>", "Science only on my pilots"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("waitlist page lacks %q", want)
+		}
+	}
+	r.claim("gh:7", weakKey("5"))
+	if out := r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true}); out["state"] != reqDone {
+		t.Fatalf("waitlisted claim: %v", out)
+	}
+	if p, _ := r.g.sci.pilot("boinc", pid); p.account != "gh:7" {
+		t.Fatalf("the pilot belongs to %q", p.account)
+	}
+	pl, _, why := r.g.authPilot(cred)
+	if pl == nil || pl.account != "gh:7" || pl.tok.Trust == "trusted" {
+		t.Fatalf("waitlisted account's pilot: %+v %s", pl, why)
+	}
+	if err := r.g.sci.meterPilot(pid, "gh:7", pilotUse{ok: true, credit: 2}, 10, 15, r.clock()); err != nil || r.creditDay("gh:7") != 2 {
+		t.Errorf("credit of a waitlisted account's pilot: %v %v", r.creditDay("gh:7"), err)
+	}
+	if w := r.form("gh:7", "/account/pilots/chat", url.Values{"chat": {"off"}}); w.Code != http.StatusSeeOther {
+		t.Fatalf("switch: HTTP %d", w.Code)
+	}
+	if pl, _, _ := r.g.authPilot(cred); pl == nil || !pl.scienceOnly {
+		t.Error("the switch does not keep chat off the waitlisted account's pilot")
+	}
+	page = r.page("gh:7")
+	if !strings.Contains(page, pid) || !strings.Contains(page, "(claimed)") {
+		t.Error("the waitlist page does not show the link and the pilot")
+	}
+	// Still waitlisted: no key, no chat, no API.
+	if a, _, _ := r.g.accounts.Get("gh:7"); a.Status != StatusWaitlisted {
+		t.Fatalf("status %s", a.Status)
+	}
+	if _, err := r.g.accounts.AddKey("gh:7", 3, r.clock(), true, nil); err == nil {
+		t.Error("a waitlisted account got an API key")
+	}
+	req := httptest.NewRequest("GET", "/account/auth", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.AddCookie(&http.Cookie{Name: r.g.cookieName(sessionCookie), Value: signSession(r.g.acfg.SessionSecret, "gh:7", time.Now().Add(time.Hour))})
+	w := httptest.NewRecorder()
+	r.g.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusFound || w.Header().Get(authEmailHeader) != "" {
+		t.Errorf("chat for a waitlisted account: HTTP %d", w.Code)
+	}
+	// Run on BOINC for another waitlisted account.
+	r.addAccount("gh:8", StatusWaitlisted)
+	if w := r.form("gh:8", "/account/connectors/boinc/run", nil); w.Code != http.StatusSeeOther {
+		t.Fatalf("waitlisted run: HTTP %d", w.Code)
+	}
+	r.answer(r.onlyPending()["id"].(string), map[string]any{"ok": true, "user": "800", "key": weakKey("800")})
+	if a, _, _ := r.g.accounts.Get("gh:8"); len(a.Links) != 1 {
+		t.Fatalf("waitlisted run: links %+v", a.Links)
+	}
+	p2, _ := r.create()
+	if v := r.bind(p2, "800")["pilot"].(map[string]any); v["account"] != "linked" {
+		t.Errorf("a waitlisted account's user's pilot: %v", v["account"])
 	}
 }
 
