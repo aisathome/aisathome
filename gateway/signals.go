@@ -14,7 +14,7 @@
 //     neither letters, digits, spaces nor punctuation (high: random bytes). degenerate marks one
 //     beyond the honest 0.1%/99.9% tails measured on 5,695 honest prove2me messages (gz < 0.218 or
 //     > 0.757, rep > 0.779, odd > 0.069: 0.37% of honest messages, 100% of random or repeated
-//     padding, 25% of word salad; research node-verification/honest_text_stats.py). Go's zlib
+//     padding, 25% of word salad, measured on our own transcripts). Go's zlib
 //     compresses a little differently from Python's, so the gz tails are approximate.
 //
 // The statistics are computed in memory from the text the meter already holds; no text is kept.
@@ -53,7 +53,7 @@ type textStats struct {
 }
 
 // Degeneracy: texts shorter than degenMinBytes are not measured; the statistics are computed on
-// at most degenMaxBytes (the start of a longer text); the tails are honest_text_stats.py's.
+// at most degenMaxBytes (the start of a longer text); the tails are the measured honest ones above.
 const (
 	degenMinBytes = 400
 	degenMaxBytes = 256 << 10
