@@ -134,8 +134,9 @@ func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, node
 	}
 	t := *rec.Tokens
 	rec.facts.reasoning = -1
+	gen := mt.generated(out, closeThink)
 	if g.tok != nil {
-		t.Completion = g.tok.Count(mt.generated(out, closeThink))
+		t.Completion = g.tok.Count(gen)
 		if ended {
 			t.Completion++ // <|im_end|>
 		}
@@ -153,7 +154,8 @@ func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, node
 	}
 	rec.Tokens = &t
 	rec.Credit = 0
-	if (ended || (cancelled && !sent.empty())) && !rec.SelfServed {
+	// A continued message streamed back is the client's own text: delivering only that is nothing.
+	if (ended || (cancelled && !sent.empty() && gen != "")) && !rec.SelfServed {
 		rec.Credit = math.Round(t.credit()*1e6) / 1e6
 	}
 }

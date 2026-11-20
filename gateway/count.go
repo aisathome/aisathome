@@ -317,7 +317,8 @@ type meter struct {
 // output. Its parts are as the template renders them.
 type prefill struct {
 	reasoning, content string
-	thinking           bool // only reasoning was given: the engine goes on with it, the answer's thinking is open
+	parts              string // content given as text parts, joined as llama.cpp may stream them back
+	thinking           bool   // only reasoning was given: the engine goes on with it, the answer's thinking is open
 }
 
 // prefillOf is body's prefill, chosen as llama-server does (continue_final_message "auto"; a node
@@ -339,6 +340,14 @@ func prefillOf(body map[string]any) *prefill {
 	reasoning, _ := m["reasoning_content"].(string)
 	p := &prefill{reasoning: strings.TrimSpace(reasoning), content: strings.TrimSpace(renderContent(m["content"]))}
 	parts, _ := m["content"].([]any)
+	var texts []string
+	for _, x := range parts {
+		pm, _ := x.(map[string]any)
+		if t, ok := pm["text"].(string); ok {
+			texts = append(texts, t)
+		}
+	}
+	p.parts = strings.TrimSpace(strings.Join(texts, "\n\n"))
 	c, _ := m["content"].(string)
 	p.thinking = reasoning != "" && c == "" && len(parts) == 0
 	return p
@@ -514,7 +523,11 @@ func (m *meter) generated(o *genOut, closeThink bool) string {
 		gen += "\n</think>\n\n"
 	}
 	all := o.content.String()
-	return gen + strings.TrimPrefix(all, p.content) + renderCalls(all, calls)
+	content, ok := strings.CutPrefix(all, p.content)
+	if !ok && p.parts != "" {
+		content = strings.TrimPrefix(all, p.parts)
+	}
+	return gen + content + renderCalls(all, calls)
 }
 
 // render is o as the model generated it after this prompt. closeThink: the end of thinking

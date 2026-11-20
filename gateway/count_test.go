@@ -164,6 +164,7 @@ func TestPrefillIsNotOutput(t *testing.T) {
 	delta := func(field, s string) string {
 		return `{"choices":[{"delta":{` + mustJSONString(field) + `:` + mustJSONString(s) + `}}]}`
 	}
+	var credit float64
 	count := func(last, outcome string, chunks ...string) int {
 		t.Helper()
 		var body map[string]any
@@ -177,8 +178,9 @@ func TestPrefillIsNotOutput(t *testing.T) {
 			m.chunk([]byte(c))
 			sent.chunk([]byte(c))
 		}
-		rec := &usageRecord{Outcome: outcome, Tokens: &creditTokens{}}
+		rec := &usageRecord{Outcome: outcome, Tokens: &creditTokens{Prompt: 100}}
 		g.countOutput(rec, m, sent, protocol.Usage{}, 4096)
+		credit = rec.Credit
 		return rec.Tokens.Completion
 	}
 	asked := `,{"role":"assistant","content":` + mustJSONString(notice) + `}`
@@ -201,6 +203,18 @@ func TestPrefillIsNotOutput(t *testing.T) {
 	}
 	if got := count(started, "cancelled", delta("content", "The notes say to buy milk")); got != g.tok.Count(" milk") {
 		t.Errorf("cancelled: %d tokens, want %d", got, g.tok.Count(" milk"))
+	}
+	// A client that got only the prefill back got nothing: no credit, not even for the prompt.
+	if got := count(started, "cancelled", delta("content", "The notes say to buy")); got != 0 || credit != 0 {
+		t.Errorf("cancelled after the prefill only: %d tokens, credit %v; want none", got, credit)
+	}
+	if count(started, "cancelled", delta("content", "The notes say to buy milk")); credit == 0 {
+		t.Error("cancelled after a generated token: no credit")
+	}
+	// Text parts may come back joined by blank lines.
+	parts := `,{"role":"assistant","content":[{"type":"text","text":"The notes"},{"type":"text","text":"say to buy"}]}`
+	if got := count(parts, "ok", delta("content", "The notes\n\nsay to buy milk.")); got != want {
+		t.Errorf("text parts streamed back: %d tokens, want %d", got, want)
 	}
 	// Reasoning alone is continued as reasoning: its end of thinking is generated.
 	thought := `,{"role":"assistant","content":"","reasoning_content":"The user wants a summary."}`
