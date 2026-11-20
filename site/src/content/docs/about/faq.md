@@ -11,8 +11,8 @@ Yes. Each account has a daily limit so that the volunteers’ GPUs are shared fa
 
 No. It is **hardened, not confidential**: the volunteer whose GPU answers you can
 technically read the conversation. We limit what they learn (no identity, secrets hidden,
-personal data only to the maintainer's own nodes), but we can’t make it confidential. See
-[Privacy](/about/privacy/).
+messages that look like personal data refused unless your own node answers), but we can’t
+make it confidential. See [Privacy](/about/privacy/).
 
 ## Which model runs?
 

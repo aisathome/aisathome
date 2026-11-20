@@ -10,10 +10,10 @@ Config fields beyond the example (`examples/gateway.json`):
 |---|---|
 | `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown; the guard log `guard-log.json`, below, saved likewise; the task queues; the science database `science.db`, below). Without it a restart gives every key a fresh day and forgets credit, and the science records live in memory. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
 | `tokenizer_file`, `tokenizer_sha256` | The model's `tokenizer.json`, so the gateway counts tokens for credit itself (see [credit.md](credit.md)); the gateway refuses to start if the file does not match the SHA-256. |
-| `model_check` | The gateway's model check of untrusted nodes and pilots: secret probe prompts at random times, their logprobs compared with a secret reference ([modelcheck.md](modelcheck.md), "The gateway's check"). `enabled`, `references` (`model`, `file`, `sha256`; the gateway refuses to start if a file is missing or does not match), `interval_seconds` (1800), `recheck_seconds` (300), `include_trusted` (false), `withhold` (false: observe-only; when true, a failing node is held, and only after 3 days of observing), `cover_share` (0.2). Results in `state_dir/model-check.json`, on `/account/ops` and `aisathome-gateway accounts model-check`. Read at start. |
+| `model_check` | The gateway's model check of every node and pilot: secret probe prompts at random times, their logprobs compared with a secret reference ([modelcheck.md](modelcheck.md), "The gateway's check"). `enabled`, `references` (`model`, `file`, `sha256`; the gateway refuses to start if a file is missing or does not match), `interval_seconds` (1800), `recheck_seconds` (300), `withhold` (false: observe-only; when true, a failing node is held, and only after 3 days of observing), `cover_share` (0.2). Results in `state_dir/model-check.json`, on `/account/ops` and `aisathome-gateway accounts model-check`. Read at start. |
 | `node_protocol_min`, `node_protocol_max` | The node protocol versions the gateway accepts (`protocol/PROTOCOL.md`, "Protocol versions"). Default: the gateway's own version and the one before it, so nodes of the current and the previous release connect. A node outside the range is refused with close code 4001 and a reason its volunteer sees, logged as `msg="node refused: unsupported protocol version"`. Every connect logs `protocol=<version>`; the account page shows it next to the node's software version. Max cannot exceed the gateway's own version; raise min only on a published retirement date. |
-| `guard_known_addresses` | Web addresses the guards count as known (not flagged) in tool calls from untrusted nodes even when the request does not name them (see "Guards" below): `"host"` (with its subdomains) or `"host/path"` (that host, the path and below, segment by segment), lower case, no scheme. Absent: the built-in list of Lean and Mathlib sources (`github.com/leanprover-community`, `github.com/leanprover`, `leanprover-community.github.io`, `lean-lang.org`, `cache.mathlib.org`, `lakecache.blob.core.windows.net`); `[]` turns it off; a list replaces it. Read at start. |
-| `guard_official_installers` | Install scripts whose download piped into a shell (`curl … \| sh`, `sh -c "$(curl …)"`) stops an untrusted node's answer as any other but does **not hold the node** (see "Guards" below): `"host"` (with its subdomains) or `"host/path"` (that path and below), https only, written as `guard_known_addresses`. Absent: the built-in list, from each project's own install page: `sh.rustup.rs`, `astral.sh/uv`, `astral.sh/ruff`, `raw.githubusercontent.com/nvm-sh/nvm`, `deno.land/install.sh`, `deno.land/install.ps1`, `bun.sh/install`, `bun.sh/install.ps1`, `raw.githubusercontent.com/homebrew/install`, `elan.lean-lang.org`, `raw.githubusercontent.com/leanprover/elan`, `install.python-poetry.org`; `[]` turns it off (every such answer holds its node again); a list replaces it. Read at start. |
+| `guard_known_addresses` | Web addresses the guards count as known (not flagged) in tool calls from nodes even when the request does not name them (see "Guards" below): `"host"` (with its subdomains) or `"host/path"` (that host, the path and below, segment by segment), lower case, no scheme. Absent: the built-in list of Lean and Mathlib sources (`github.com/leanprover-community`, `github.com/leanprover`, `leanprover-community.github.io`, `lean-lang.org`, `cache.mathlib.org`, `lakecache.blob.core.windows.net`); `[]` turns it off; a list replaces it. Read at start. |
+| `guard_official_installers` | Install scripts whose download piped into a shell (`curl … \| sh`, `sh -c "$(curl …)"`) stops a node's answer as any other but does **not hold the node** (see "Guards" below): `"host"` (with its subdomains) or `"host/path"` (that path and below), https only, written as `guard_known_addresses`. Absent: the built-in list, from each project's own install page: `sh.rustup.rs`, `astral.sh/uv`, `astral.sh/ruff`, `raw.githubusercontent.com/nvm-sh/nvm`, `deno.land/install.sh`, `deno.land/install.ps1`, `bun.sh/install`, `bun.sh/install.ps1`, `raw.githubusercontent.com/homebrew/install`, `elan.lean-lang.org`, `raw.githubusercontent.com/leanprover/elan`, `install.python-poetry.org`; `[]` turns it off (every such answer holds its node again); a list replaces it. Read at start. |
 | `keys_file` | Per-user API keys, managed with `aisathome-gateway keys` (use absolute paths: relative ones resolve from the working directory). The gateway rereads it every 2 s, so no restart or reload is needed. |
 
 Keys in `api_keys` and `keys` (in the config, in clear) still work and reload on SIGHUP.
@@ -21,13 +21,14 @@ The keys file stores only a SHA-256 hash and a short prefix of each key:
 
 ```bash
 aisathome-gateway keys add bob -config gateway.json     # prints the key once
-aisathome-gateway keys add bob -tokens-per-day 500000 -rpm 10 -min-trust any
+aisathome-gateway keys add bob -tokens-per-day 500000 -rpm 10
 aisathome-gateway keys list -config gateway.json        # prefixes, users, limits
 aisathome-gateway keys revoke ak-AbCd1234 -config gateway.json
 ```
 
-New keys default to 2,000,000 weighted tokens per UTC day, 30 requests per minute, 4 in
-flight, and trusted nodes only (`-min-trust any` to allow every node). Secrets in prompts
+New keys default to 2,000,000 weighted tokens per UTC day, 30 requests per minute and 4 in
+flight; their requests may go to every node, as everyone's (`only_operator`, edited into the file,
+restricts a key to one operator's nodes). Secrets in prompts
 are always redacted for them; `restore_secrets` stays off unless you edit the file. Run
 the command as the gateway's user (in a container: `podman exec <name> aisathome-gateway
 keys ...`) and keep `keys_file` on a writable volume. Run one `keys` command at a time.
@@ -119,9 +120,8 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `key_sha256` | SHA-256 (hex) of each of the project's keys. Keys are never in the config. |
 | `daily_tokens` | The project's budget in weighted tokens per UTC day, shared by all its keys; `0` = no limit. Accounts' budgets never apply to it. Over it, requests get 429 with `Retry-After`. |
 | `max_node_share` | At most this share of the nodes that may serve a request work for the project at once (rounded down, at least one node, so a small network still does science when people leave it idle); `0` = no cap. |
-| `agent_ok` | The project's requests with tools (agents) may go to volunteer nodes past their probation, as an account key with consent may; without it they go to trusted nodes only. Requests that look like personal data still go only to trusted nodes, and secrets are redacted, as for everyone. |
+| `agent_ok` | The project's requests with tools (agents) may go to volunteer nodes past their probation, as an account key with consent may; without it they go to no node (a project has no nodes of its own). Requests that look like personal data are refused, and secrets are redacted, as for everyone. |
 | `pilot_probation_ok` | With `agent_ok`: the project's agents may also use connector pilots (below) whose account is still in probation (decision 0020: science, where every proof is checked). Standalone nodes in probation stay excluded. |
-| `min_trust` | `"trusted"` keeps all its requests on trusted nodes. |
 | `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
 | `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
 | `kinds` | The task kinds the project may create besides `other`: one per scaffold generation (`p2m-v7`), 1-32 lower-case letters, digits, `_` or `-`. Its workers claim by kind, so a worker never takes a task of a generation it does not run. None: `other` only. |
@@ -186,7 +186,7 @@ gate nothing.
 `project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,
 hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens,
 uncached_prompt_tokens, tokens_computed, tokens_with_cache, created_at, started_at, finished_at,
-updated_at, node_classes, live` (`node_classes`: the classes, trusted, volunteer or pilot (a connector's pilot, below), of the nodes that
+updated_at, node_classes, live` (`node_classes`: the classes, volunteer or pilot (a connector's pilot, below; `trusted` in tasks from before 2026-11-20), of the nodes that
 served the requests that named the task; `live`: below). A field a task does not have is `null`.
 Query `project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500, default 100) and `after`
 (the answer's `next`); newest first.
@@ -344,7 +344,7 @@ operators):
   missing without slots), `queue.people` and `queue.science` (requests waiting for a slot) and
   `queue.all` (both together, so its peak is the most that waited at once),
   `held` (nodes held by a guard) and `holds` (new holds), `science_slots` (slots science may use:
-  each project's trust and agent rules and its share of nodes), `open_tasks` (science tasks queued
+  each project's agent rules and its share of nodes), `open_tasks` (science tasks queued
   or running) and `demand` = min(open tasks, science slots) per project, capped by the slots of
   the nodes the projects with work may use (each node once), the signal a runner pool can be sized
   by; `runners` (science runners that reported in the last 150 s). Each of these is sampled every
@@ -413,7 +413,7 @@ applies that user's limits (and, for signed-in accounts, the account's budget). 
 accepted **only** on the private listener `frontend_addr` (e.g. `":8081"`), never on the
 public one, so a leaked key can neither pose as other users nor be used as an ordinary key.
 Point Open WebUI at `http://<gateway>:8081/v1` over a private network and never publish that
-port. The front-end key's `min_trust` and `only_operator` also bind the accounts it carries.
+port. The front-end key's `only_operator` also binds the accounts it carries.
 
 With accounts, Open WebUI logs users in from headers set by the gateway's
 `/account/auth` (`X-Auth-Email`, `X-Auth-Role`). That is safe only if the reverse proxy
@@ -478,11 +478,17 @@ never by their GitHub, Google or email id.
 
 ## Volunteer nodes (self-registered)
 
-**Trust model.** "Trusted" means *operated by the maintainer* (node tokens in the gateway
-config with `"trust": "trusted"`), not "secure": the maintainer's nodes are partly rented,
-and whoever controls a machine can read what it serves. Every other node is an untrusted
-volunteer. Nothing here is confidential; the measures below make keeping or misusing data
-harder and more visible ("hardened, not confidential").
+**Every node is untrusted** (owner, 2026-11-20): a volunteer's, a pilot and a config token's alike,
+the maintainer's included; whoever controls a machine can read what it serves. The one exception
+is no trust: a requester's **own nodes** (standalone nodes registered to the requesting account,
+not its pilots) may get what that requester sends, its personal data included, since that is its
+own data on its own machine. Nothing here is confidential; the measures below make keeping or
+misusing data harder and more visible ("hardened, not confidential"). Until 2026-11-20 config
+tokens could be marked `"trust": "trusted"`; that and the other trust fields (`min_trust` on keys,
+accounts and projects, a connector's `trusted_users`, `model_check.include_trusted`) are now
+accepted and ignored, each named once in the log at start (`removed config field ignored`). A key,
+account or project that had `min_trust: "trusted"` is served by every node now; `only_operator`
+and an account's "only my own nodes" still restrict where requests go.
 
 Signed-in active accounts add nodes on the account page ("Your nodes"): up to 10 node tokens
 per account (`max_nodes_per_account`), shown once on their own page with a Copy button
@@ -501,14 +507,14 @@ Routing and protections:
 
 | What | Rule |
 |---|---|
-| Personal data (email addresses, card numbers, IBANs, Norwegian ID numbers) | trusted nodes only (and the requester's own nodes). With none connected it gets the 503 and its reason at once instead of waiting out the queue time, except in the two minutes after a gateway start, while nodes reconnect |
-| Requests with `tools` (agents) | trusted nodes and the requester's own, unless the API key was created with "allow volunteer nodes for agents" (`agents` on the key; `volunteer_agents` for config keys) **and** the node's account is past probation. The chat (Open WebUI) never carries consent |
+| Personal data (email addresses, card numbers, IBANs, Norwegian ID numbers; `gateway/privacy.go`) | the requester's own nodes only. If none of them is online it is **refused at once**, 400 with `"code": "personal_data"` and the users' rule: "This looks like personal data (an email address). Personal data isn't allowed in chats on AIs@home: answers are computed on volunteers' machines. Remove it and try again. …", naming the kind found, never the value. An own node that is online but busy is waited for as any node; in the two minutes after a gateway start a request of an account with registered nodes waits for them to reconnect |
+| Requests with `tools` (agents) | the requester's own nodes, unless the API key was created with "allow volunteer nodes for agents" (`agents` on the key; `volunteer_agents` for config keys) **and** the node's account is past probation. The chat (Open WebUI) never carries consent |
 | Probation | `accounts.node_probation` (Go duration, default `0`: none) from the account's first node token; revoking and recreating does not reset it |
-| Share cap | no untrusted operator gets more than about a third of the conversations placed in the last 10 minutes while other nodes are free (soft: if only its nodes are free, they serve). A conversation counts once per window, however many turns go to the node that holds it |
+| Share cap | no operator gets more than about a third of the conversations placed in the last 10 minutes while other nodes are free (soft: if only its nodes are free, they serve). A conversation counts once per window, however many turns go to the node that holds it |
 | Per address | at most 10 connected account nodes per client address (IPv6 per /64; the rightmost `X-Forwarded-For` from loopback or a `trusted_proxies` peer, i.e. Caddy) |
 | Own nodes | per account: "my own nodes first" (default), "only my own nodes" or "any node", for its chat and API requests; "only my own nodes" applies on top of a front-end key's `only_operator` (if they differ, no node serves) |
 | Cut-off | revoking a token, `accounts ban` or `accounts node-revoke` drops the node within ~2 s (no restart); requests in flight on it fail over to another node if no output was sent yet |
-| Guards | answers from untrusted nodes (not the requester's own): tool-call arguments are held back until the call is complete and their decoded values (not the JSON text, whose `\n` escapes made words such as `ncat` out of nothing) are checked for download-and-execute (`curl … \| sh`), credential paths (`~/.ssh`, `~/.aws`, `.env`, `id_rsa`; excused if the request names them), encoded commands and file uploads (`curl -F @…`, `scp`, netcat fed from a file, a here-document or a pipe: read only in shell commands and shell scripts, never in other files, so Lean's `have nc : a < b` passes); web addresses that appear nowhere in the request and are not a known source are only flagged (`guard_known_addresses`: agent clients compact long conversations into a summary, so an address the agent read from its own workspace hours before, such as Mathlib's git address in a lakefile, is gone from the request; a known source must be one plain shell word: a plain host name, and after it no quotes but closing ones, no backslashes, `$`, backticks or braces, which would join more text into the host, and at most 1,024 bytes; a path entry matches only a plain path, without `.` or `..` segments or percent-escapes). The stream itself must be well-formed: tool-call pieces after the calls were completed (`tool-call-after-finish`) or keys that differ from the stream's only in case (`malformed-chunk`) stop the answer as well, and non-streaming answers are checked again as assembled. A flagged call is never released: the request is retried on a free trusted node (keeping all of its restrictions: `only_operator`, only my own nodes) or fails with 502, the node is **held** (no requests until `accounts node-clear`) with its rule, a reason in the guard's own fixed words naming the pattern (e.g. "netcat sending a file to a host and port"), the request id and the **evidence** (below), and the event is logged without content (usage log `outcome: blocked`, `guard: <rule>`; the log line has rule, reason, node and request id, never what matched). An **official installer** (`guard_official_installers`: every word of the download command is an `https://` address of the list or a flag that only quietens, fails, follows redirects or asks for https, such as rustup's `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`) is stopped and retried the same way, but the node is not held: honest models suggest these installers, and a hold for one took half the network's capacity for hours (2026-11-19). It is still stopped because the guard reads one command, not what the installer does with its arguments and environment, and a node can read the list too; so the list decides only whether a node is held, never what reaches a client. A second address, a proxy, a config file, `http://`, another path, a second command, an expansion, a redirection or a quote inside the substitution, or another blocking call in the same answer holds as before. Unknown addresses are only flagged: the answer reaches the client, nothing is retried and the node is not held; the usage log records `guard: unknown-address` (in a tool call) or `guard: unknown-address-in-text` with outcome `ok`, and nothing of the address. Honest coding agents write such addresses all the time (package indexes, documentation, git clones), and the guard cannot tell them from one a node injected; a download piped into a shell is stopped whatever its address. A **package install from an unknown index** blocks and holds like the other rules (`install-source`, "a package install from an unknown index"): the index's build and install scripts would run on the client. It reads shell commands and shell scripts as above and, for an install only, every address with `://` in it: `pip`/`pip3`/`python -m pip`/`uv pip`/`pipx` install, download or wheel (`--index-url`, `-i`, `--extra-index-url`, `-f`/`--find-links`, a direct `https://` or `git+https://` requirement, `-r https://…`), `pip config set`, `uv add`/`sync`/`lock`/`tool install` and the index flags of `uv run`/`uvx`, `npm`/`pnpm`/`yarn`/`bun` installs (`--registry`, a URL or tarball spec) and `npm config set registry …`, `npx --registry`, `cargo install`/`add` (`--index`, `--git`), `GOPROXY=… go …` and `go env -w GOPROXY=…`, `gem install --source`/`gem sources --add`, `conda`/`mamba -c https://…`, the environment variables these tools read (`PIP_INDEX_URL`, `UV_INDEX_URL`, `npm_config_registry`, ...; assigned anywhere in a command, such as `make PIP_INDEX_URL=…`, and in `echo … >> file` or `echo … | tee`, but not printed or in a comment), and a package manager's own source file written by a write or edit tool (`.npmrc`, `.yarnrc.yml`, `pip.conf`, `uv.toml`, `.condarc`, `.gemrc`, `.cargo/config.toml`, `requirements*.txt`, `yarn.lock`, `pnpm-lock.yaml`; read raw and with JSON, TOML and YAML escapes such as `\/` and `\u002f` decoded; a whole `package.json` or `package-lock.json` that is valid JSON is decoded and read by its structure: every address but the project's own links at the top level of `package.json` (`homepage`, `repository`, `bugs`, `funding`, `description`, `author`, ...) and a package's metadata in a lock file (`funding`, `license`, ...), so dependency maps, `overrides`, `resolutions`, `resolved` and `version` always count; in an edit of these files, which shows no level, every address counts). An index is known if the request names its host (as a whole word: `github.com` does not name `hub.com`; punctuation such as curly quotes ends a word, an IPv6 address matches in any of its forms, and a host longer than DNS allows, 253 bytes, is never named; this holds for flagged addresses too), it is a `guard_known_addresses` source, a local or private address, or a registry the tools use by default (`pypi.org`, `files.pythonhosted.org`, `download.pytorch.org`, `registry.npmjs.org`, `registry.yarnpkg.com`, `proxy.golang.org`, `rubygems.org`, `crates.io`, `conda.anaconda.org`, `repo.anaconda.com`); such an install is at most flagged as an unknown address. A plain `pip install requests`, an address in an `echo`, a comment or a README, and arguments a run command passes to its package (`npx tool https://…`) are no install source. These are tripwires for crude attacks, not answer checking |
+| Guards | answers from every node but the requester's own (pilots included): tool-call arguments are held back until the call is complete and their decoded values (not the JSON text, whose `\n` escapes made words such as `ncat` out of nothing) are checked for download-and-execute (`curl … \| sh`), credential paths (`~/.ssh`, `~/.aws`, `.env`, `id_rsa`; excused if the request names them), encoded commands and file uploads (`curl -F @…`, `scp`, netcat fed from a file, a here-document or a pipe: read only in shell commands and shell scripts, never in other files, so Lean's `have nc : a < b` passes); web addresses that appear nowhere in the request and are not a known source are only flagged (`guard_known_addresses`: agent clients compact long conversations into a summary, so an address the agent read from its own workspace hours before, such as Mathlib's git address in a lakefile, is gone from the request; a known source must be one plain shell word: a plain host name, and after it no quotes but closing ones, no backslashes, `$`, backticks or braces, which would join more text into the host, and at most 1,024 bytes; a path entry matches only a plain path, without `.` or `..` segments or percent-escapes). The stream itself must be well-formed: tool-call pieces after the calls were completed (`tool-call-after-finish`) or keys that differ from the stream's only in case (`malformed-chunk`) stop the answer as well, and non-streaming answers are checked again as assembled. A flagged call is never released, and the request is not sent to another node (no node may answer it unchecked): it fails with 502, the node is **held** (no requests until `accounts node-clear`) with its rule, a reason in the guard's own fixed words naming the pattern (e.g. "netcat sending a file to a host and port"), the request id and the **evidence** (below), and the event is logged without content (usage log `outcome: blocked`, `guard: <rule>`; the log line has rule, reason, node and request id, never what matched). An **official installer** (`guard_official_installers`: every word of the download command is an `https://` address of the list or a flag that only quietens, fails, follows redirects or asks for https, such as rustup's `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`) is stopped the same way, but the node is not held: honest models suggest these installers, and a hold for one took half the network's capacity for hours (2026-11-19). It is still stopped because the guard reads one command, not what the installer does with its arguments and environment, and a node can read the list too; so the list decides only whether a node is held, never what reaches a client. A second address, a proxy, a config file, `http://`, another path, a second command, an expansion, a redirection or a quote inside the substitution, or another blocking call in the same answer holds as before. Unknown addresses are only flagged: the answer reaches the client, nothing is retried and the node is not held; the usage log records `guard: unknown-address` (in a tool call) or `guard: unknown-address-in-text` with outcome `ok`, and nothing of the address. Honest coding agents write such addresses all the time (package indexes, documentation, git clones), and the guard cannot tell them from one a node injected; a download piped into a shell is stopped whatever its address. A **package install from an unknown index** blocks and holds like the other rules (`install-source`, "a package install from an unknown index"): the index's build and install scripts would run on the client. It reads shell commands and shell scripts as above and, for an install only, every address with `://` in it: `pip`/`pip3`/`python -m pip`/`uv pip`/`pipx` install, download or wheel (`--index-url`, `-i`, `--extra-index-url`, `-f`/`--find-links`, a direct `https://` or `git+https://` requirement, `-r https://…`), `pip config set`, `uv add`/`sync`/`lock`/`tool install` and the index flags of `uv run`/`uvx`, `npm`/`pnpm`/`yarn`/`bun` installs (`--registry`, a URL or tarball spec) and `npm config set registry …`, `npx --registry`, `cargo install`/`add` (`--index`, `--git`), `GOPROXY=… go …` and `go env -w GOPROXY=…`, `gem install --source`/`gem sources --add`, `conda`/`mamba -c https://…`, the environment variables these tools read (`PIP_INDEX_URL`, `UV_INDEX_URL`, `npm_config_registry`, ...; assigned anywhere in a command, such as `make PIP_INDEX_URL=…`, and in `echo … >> file` or `echo … | tee`, but not printed or in a comment), and a package manager's own source file written by a write or edit tool (`.npmrc`, `.yarnrc.yml`, `pip.conf`, `uv.toml`, `.condarc`, `.gemrc`, `.cargo/config.toml`, `requirements*.txt`, `yarn.lock`, `pnpm-lock.yaml`; read raw and with JSON, TOML and YAML escapes such as `\/` and `\u002f` decoded; a whole `package.json` or `package-lock.json` that is valid JSON is decoded and read by its structure: every address but the project's own links at the top level of `package.json` (`homepage`, `repository`, `bugs`, `funding`, `description`, `author`, ...) and a package's metadata in a lock file (`funding`, `license`, ...), so dependency maps, `overrides`, `resolutions`, `resolved` and `version` always count; in an edit of these files, which shows no level, every address counts). An index is known if the request names its host (as a whole word: `github.com` does not name `hub.com`; punctuation such as curly quotes ends a word, an IPv6 address matches in any of its forms, and a host longer than DNS allows, 253 bytes, is never named; this holds for flagged addresses too), it is a `guard_known_addresses` source, a local or private address, or a registry the tools use by default (`pypi.org`, `files.pythonhosted.org`, `download.pytorch.org`, `registry.npmjs.org`, `registry.yarnpkg.com`, `proxy.golang.org`, `rubygems.org`, `crates.io`, `conda.anaconda.org`, `repo.anaconda.com`); such an install is at most flagged as an unknown address. A plain `pip install requests`, an address in an `echo`, a comment or a README, and arguments a run command passes to its package (`npx tool https://…`) are no install source. These are tripwires for crude attacks, not answer checking |
 | Context | a request goes only to nodes whose announced context fits its estimated prompt plus `max_tokens`. The estimate is the gateway's own count of the rendered prompt plus 1% and 16 tokens (on 713 real requests the count was never under the node's and at most 47 over); without `tokenizer_file` it is a third of the rendered bytes, which is safe but runs up to 1.4 x real. Rendered means what the model sees: reasoning the template drops does not count; if no node fits that, prompt plus 4,096 tokens is enough (llama-server ends the answer at the context limit). If none fits even that: 400 `context_length_exceeded`. `/v1/models` advertises per model the smallest context among connected nodes (ignoring announcements below 8,192 when larger ones exist) |
 | One model per session | nodes of different tiers serve the same roles (`deep`, `agent`) from different files under different model names (`qwen3.8-27b` on 24 GB cards, `qwen3.8-27b-q3` on 16 GB). A request that continues an answered conversation of the same requester (its rendered prompt is longer than and starts with all of that conversation, its answer included, byte for byte; secret placeholders compare without their per-request nonce; clients send no common session id, so the gateway recognises it from hashes, keeping no text) goes only to nodes serving the model that answered it, for 24 hours after the last answer. If none is free it waits like any request; if none is online after the queue time: 503 naming the model ("this conversation started on ..."), never a silent switch. A request that names a model is not held. Answers name the model that answered in `model`, streamed or not |
 
@@ -526,7 +532,7 @@ aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token
 aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
 aisathome-gateway accounts guard-log [n-1a2b3c4d] # recent stops, holds and flags with what matched (14 days)
 aisathome-gateway accounts node-checks [7] [n-1a2b3c4d] # answer checks and signals per node over the last days
-aisathome-gateway accounts routing trusted-only   # emergency: everything to trusted nodes; "any" to undo
+aisathome-gateway accounts routing own-only       # emergency: every request, waiting ones too, only to its sender's own nodes (no stranger's node serves anything, science neither); "any" to undo
 aisathome-gateway accounts ban gh:12345           # also deletes the account's node tokens
 ```
 
@@ -544,7 +550,7 @@ nodes).
 
 The gateway pays per token only for tokens it can show came from the model (node verification,
 owner decision D1 of 2026-11-19). Every answer that can earn credit (`ok`, `cancelled`, `preempted`),
-from any node, trusted or not, and pilots alike, is checked against three rules no honest node
+from every node, pilots alike, is checked against three rules no honest node
 breaks, all from what the gateway itself counted and timed (`gateway/verify.go`):
 
 | Rule | Fails when | Why no honest node fails it |
@@ -581,8 +587,8 @@ JSON object), and for generated text of 400 bytes or more `text` (`gz`, compress
 (beyond the tails of honest agent text measured on our own prove2me transcripts). A **discarded** answer, one
 whose requester's next prompt starts with the prompt it answered but not with the answer (a retry or
 regenerate), is named in the record of the request that discarded it: `discarded: [{"req_id", "node"}]`. These are numbers only,
-computed in memory; no text is kept. None of them changes credit: they are compared per node with our
-own trusted nodes' rates, and decide what a person, and later the replay sampler, looks at. Honest rates of
+computed in memory; no text is kept. None of them changes credit: they are compared per node with the rates
+of the maintainer's own nodes, and decide what a person, and later the replay sampler, looks at. Honest rates of
 discarded answers and `length` endings are still to be measured on our own nodes.
 
 The operations page (`/account/ops`, card "Answer checks") shows per node since the gateway started:
@@ -592,11 +598,11 @@ degenerate answers. `accounts node-checks [days] [node]` gives the same from the
 
 ## Chat rules: operator terms
 
-On top of the rules above, an untrusted node serves people's requests (chat, agents, API calls)
+On top of the rules above, a node serves people's requests (chat, agents, API calls)
 only once its account has accepted the operator terms (GDPR decision D3 of 2026-11-19;
 `gateway/chatrules.go`). Where a node runs makes no difference (owner, 2026-11-19). Science (a
-project's key) carries no personal data and is not affected. Trusted nodes and the requester's own
-nodes (not pilots) are outside the rule.
+project's key) carries no personal data and is not affected. The requester's own nodes (not pilots)
+are outside the rule.
 
 - **Accepting** (owner, 2026-11-20: on by default, with an opt-out). **Creating a node** on the
   account page accepts the operator terms (section "Requests your node answers", approved on
@@ -608,12 +614,12 @@ nodes (not pilots) are outside the rule.
   "Accept the operator terms to let your nodes answer chats", and their nodes stay science-only until
   they press it; nothing is accepted on their behalf. For a connector's user, the connector records
   it (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below; BOINC: the ENROLL consent). A config node token counts as
-  accepted if it is trusted or names the version (`"operator_terms": "<version>"`). The version and
+  accepted if it names the version (`"operator_terms": "<version>"`). The version and
   time are recorded in the accounts file (`operator_terms`). Without an acceptance the node serves
   science only.
 - **Versions.** The current version is `2026-11-19`. A new version needs a new acceptance. A version
-  starting with `draft-` is accepted by nobody: while one is current, no untrusted node serves
-  people's requests.
+  starting with `draft-` is accepted by nobody: while one is current, no node but the requester's
+  own serves people's requests.
 - **Science only on my nodes** (the account page's switch, when accepted) withdraws the acceptance
   for all the account's nodes and pilots: they do science only, and chat stops within the call; "Let
   my nodes answer chats" accepts again. The withdrawal is recorded with its time; a connector's record of an acceptance from before it (or
@@ -648,7 +654,6 @@ gateway is BOINC-specific beyond the configuration.
   "mint_per_hour": 120,
   "pilots_chat_enabled": false,
   "no_chat_users": ["<Science United's BOINC user id>"],
-  "trusted_users": ["<the maintainer's own BOINC user id>"],
   "chat_headroom": 0,
   "sessions_per_slot": 2,
   "unsent_buffer": 2,
@@ -674,7 +679,6 @@ gateway is BOINC-specific beyond the configuration.
 | `max_deadline_hours` | A pilot's deadline at most this far ahead (default 336). |
 | `pilots_chat_enabled` | Off by default: its pilots serve **science only**. See below. |
 | `no_chat_users` | Its users (connector ids) whose pilots serve science only, whatever else says: Science United's account, whose hosts cannot reach a person's switch. |
-| `trusted_users` | Its users whose pilots are the maintainer's own machines (rented test hosts): they serve chat even while `pilots_chat_enabled` is off. They stay **untrusted** nodes (no personal data, guarded answers): the gateway cannot tell which machine holds a credential, and one copied on its way to the host must not receive personal data. Never list anyone else. |
 | `chat_headroom` | Pilots to keep for people's requests in the demand number, counted only while `pilots_chat_enabled`. |
 | `sessions_per_slot` | Science sessions one GPU slot keeps busy (default 2: a session alternates model calls with its own tools). |
 | `unsent_buffer` | Created pilots no machine has taken yet, at most (default 2). |
@@ -811,8 +815,8 @@ secret: rotating it changes what the page shows, not the login the connector hol
 
 ### What a pilot may serve
 
-A bound pilot is an **untrusted account node** under decision 0007 and every rule in "Volunteer
-nodes" above: personal data only to trusted nodes, the share cap per operator (the account's
+A bound pilot is an **account node** under decision 0007 and every rule in "Volunteer
+nodes" above: no personal data, the share cap per operator (the account's
 pseudonym), the guards and holds, requests with tools only with the requester's consent and past
 the account's probation, except that a project with `pilot_probation_ok` may use pilots during
 it. Unlike a standalone node, a pilot gets no "own node" exemption: the connector, not the person,
@@ -825,10 +829,10 @@ API calls, when any of these holds:
 |---|---|
 | its user is in `no_chat_users` | Science United's hosts: their owners cannot reach a switch |
 | its account's "chat on pilots" is off | the person's choice (on by default, also for unclaimed accounts) |
-| `pilots_chat_enabled` is false (the default) and its user is not in `trusted_users` | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (decision 0020: they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots; the maintainer's own test pilots go in `trusted_users` |
+| `pilots_chat_enabled` is false (the default) | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (decision 0020: they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots, the maintainer's own test pilots too (`trusted_users`, which let those serve chat, is gone) |
 
 And it serves people's requests only under the chat rules above: its account accepted the operator
-terms. Changes to the switch, the lists or `pilots_chat_enabled` (on reload) reach connected pilots within
+terms. Changes to the switch, `no_chat_users` or `pilots_chat_enabled` (on reload) reach connected pilots within
 seconds. Nothing here makes a pilot confidential: whoever runs the machine can read what it serves
 ("hardened, not confidential"). Public task views name a pilot's class as `pilot`.
 
@@ -837,7 +841,7 @@ seconds. Nothing here makes a pilot confidential: whoever runs the machine can r
 `GET …/demand` computes:
 
 ```
-science sessions = Σ over projects with agent_ok (not min_trust trusted):
+science sessions = Σ over projects with agent_ok:
                    min(open tasks, runner workers active in the last 5 minutes)
 have             = sessions_per_slot × GPU slots online that those projects may use
                    (held and paused nodes and this connector's own pilots left out)

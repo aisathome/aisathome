@@ -3,7 +3,7 @@ title: Privacy
 description: Who handles your data on AIs@home and its BOINC project, and what a volunteer's GPU can see.
 ---
 
-*Last changed: 2026-11-19.*
+*Last changed: 2026-11-20.*
 
 AIs@home is an experiment: open AI models running on volunteers' GPUs instead of a big company's data centre. This page
 covers the chat (chat.aisathome.org), the API, the website, running a node, and our BOINC project
@@ -45,8 +45,7 @@ terms forbid it. We know people will sometimes do it anyway, so the rest of this
 - We replace well-known secret formats (API keys and tokens of common services, private keys, webhook addresses) before
   a node sees them. Passwords and unusual formats are not caught: don't paste them.
 - Messages that look like personal data (an email address, a payment card number, an IBAN or a Norwegian national
-  identity number) go only to our own nodes ("trusted nodes"). Trusted means run by us, not secure: some are rented
-  machines, whose host could in principle see what passes through. Detection is incomplete: names, addresses and health
+  identity number) are refused unless your own node answers. Detection is incomplete: names, addresses and health
   details are not detected and can reach volunteers' nodes.
 - We try to give no single volunteer more than a third of the conversations, but that is not a guarantee: when no
   other suitable node is free, the request goes to whichever suitable node is, so while few nodes are online one
@@ -77,10 +76,9 @@ Answers can be computed on volunteers' machines anywhere in the world, including
 protect what you write. That is why users may not put personal data into chats. If you need a GDPR-compliant or
 EU-hosted service for personal data, use an established provider. We send nodes no account, name, email address or IP
 address. Messages that look like personal data (an email address, a payment card number, an IBAN or a Norwegian
-national identity number) go only to our own nodes, but detection is incomplete: names, addresses and health details
-are not detected. Hardened, not confidential: the volunteer whose machine answers can read the conversation.
-
-The nodes we run ourselves, including rented ones, are only in the EEA or a country with an EU adequacy decision.
+national identity number) are refused unless your own node answers, but detection is incomplete: names, addresses and
+health details are not detected. Hardened, not confidential: the volunteer whose machine answers can read the
+conversation.
 
 ## What we store, and why
 
@@ -184,7 +182,8 @@ you an account.
 
 **Personal data in chats.** Our terms forbid putting personal data into chats, and we don't need any to answer you. If
 you do it anyway, we still handle it the way this page describes: the gateway passes it to a node without storing it,
-messages that look like personal data go only to our own nodes, and the operator's terms forbid keeping or using it.
+messages that look like personal data are refused unless your own node answers, and the operator's terms forbid keeping
+or using it.
 If a node fails before it answers, the conversation goes to another node; when detection missed the personal data, that
 can be another volunteer's.
 That is still processing of your data, under the same basis as the rest of the chat (contract). It applies just as much

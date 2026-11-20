@@ -77,7 +77,7 @@ What we expect of tests:
 - **Hardened, not confidential.** Never claim, in code, docs or UI text, that prompts are
   confidential or not retained on nodes. Never log, store or publish prompts or answers, and
   never add them, user identities or node owners to a public view. The one exception is the
-  guards' evidence: a short fragment of an untrusted node's answer that a guard stopped or
+  guards' evidence: a short fragment of a node's answer that a guard stopped or
   flagged, secrets redacted, for admins only and for 14 days (docs/gateway.md, "Guards"). See "Trust boundaries and
   privacy" in [docs/architecture.md](docs/architecture.md).
 - **The gateway is generic.** A science project's workflow (what its tasks mean, what comes
@@ -126,6 +126,6 @@ found and how to reproduce it.
 
 Worth reporting: ways to learn who sent a request, to make the gateway send a node more than
 the documented request body, to read another account's data, to get around the guards, the
-trust rules or the limits, or to run code on a node or a harness worker. Not a vulnerability:
+privacy rules or the limits, or to run code on a node or a harness worker. Not a vulnerability:
 a node operator can read the prompts their node serves. That is the documented design
 ("hardened, not confidential"); ideas that make it harder are welcome as issues.
