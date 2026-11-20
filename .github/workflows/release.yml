@@ -1,8 +1,9 @@
 # On a v* tag: run the CI checks, build static binaries, llama-server with CUDA, the
-# prebuilt node bundle and the Windows installer, plus SHA256SUMS, and attach them to a draft
-# GitHub Release (the owner publishes it after review). A manual run (workflow_dispatch) on
-# a branch is the dry run: it builds everything without publishing and keeps the files as a
-# workflow artifact for 7 days (for a test install on a rented GPU).
+# prebuilt node bundle and the Windows installer (also under a name without the version, for a
+# stable download link), plus SHA256SUMS, and attach them to a draft GitHub Release (the owner
+# publishes it after review). A manual run (workflow_dispatch) on a branch is the dry run: it
+# builds everything without publishing and keeps the files as a workflow artifact for 7 days
+# (for a test install on a rented GPU).
 # SPDX-License-Identifier: Apache-2.0
 name: release
 
@@ -144,6 +145,9 @@ jobs:
           # The installer's agent must be the release's Windows agent, byte for byte.
           cmp "$RUNNER_TEMP/windows/aisathome-node-windows-amd64.exe" dist/aisathome-node-windows-amd64.exe
           cp "$RUNNER_TEMP/windows/AIsAtHome-node-setup-$version.exe" dist/
+          # The same installer under a name without the version: releases/latest/download/
+          # AIsAtHome-node-setup.exe (the site's download button) then always gets the newest.
+          cp "dist/AIsAtHome-node-setup-$version.exe" dist/AIsAtHome-node-setup.exe
           (cd dist && sha256sum aisathome-* AIsAtHome-* > SHA256SUMS)
           ls -l dist
       - name: Publish
