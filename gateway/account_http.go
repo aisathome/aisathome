@@ -792,9 +792,9 @@ below and manage your pilots. The chat, the API and keys open when your account 
 {{else if .NewNode}}<section aria-labelledby="secret-title">
 {{template "secret" (secretView "Your new node token" .NewNode)}}
 <p>Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p>
+<form method="get" action="/account#nodes"><button class="btn">Done</button></form>
 {{if .RulesOn}}{{if .TermsAccepted}}<p class="small" id="terms-created">Running this node means you accept the {{template "terms-link" .}} (accepted {{day .TermsSince}}). You can switch your nodes to science only on your account page.</p>
-{{else if .TermsOptedOut}}<p class="small" id="terms-created">Your nodes do science only, as you chose; this one too.</p>{{end}}{{end}}
-<form method="get" action="/account#nodes"><button class="btn">Done</button></form></section>
+{{else if .TermsOptedOut}}<p class="small" id="terms-created">Your nodes do science only, as you chose; this one too.</p>{{end}}{{end}}</section>
 {{else}}
 <h1>Your account</h1>
 {{template "terms-banner" .}}
