@@ -165,6 +165,7 @@ func TestPrefillIsNotOutput(t *testing.T) {
 		return `{"choices":[{"delta":{` + mustJSONString(field) + `:` + mustJSONString(s) + `}}]}`
 	}
 	var credit float64
+	var reasoning int
 	count := func(last, outcome string, chunks ...string) int {
 		t.Helper()
 		var body map[string]any
@@ -180,7 +181,7 @@ func TestPrefillIsNotOutput(t *testing.T) {
 		}
 		rec := &usageRecord{Outcome: outcome, Tokens: &creditTokens{Prompt: 100}}
 		g.countOutput(rec, m, sent, protocol.Usage{}, 4096)
-		credit = rec.Credit
+		credit, reasoning = rec.Credit, rec.facts.reasoning
 		return rec.Tokens.Completion
 	}
 	asked := `,{"role":"assistant","content":` + mustJSONString(notice) + `}`
@@ -221,6 +222,9 @@ func TestPrefillIsNotOutput(t *testing.T) {
 	want = g.tok.Count(" Short.\n</think>\n\nMilk.") + 1
 	if got := count(thought, "ok", delta("reasoning_content", "The user wants a summary. Short."), delta("content", "Milk.")); got != want {
 		t.Errorf("reasoning continued: %d tokens, want %d", got, want)
+	}
+	if reasoning != g.tok.Count(" Short.") { // the reasoning budget check counts only what was generated
+		t.Errorf("reasoning continued: %d reasoning tokens, want %d", reasoning, g.tok.Count(" Short."))
 	}
 	// A new answer counts as before.
 	want = g.tok.Count("Fine.\n</think>\n\nMilk.") + 1
