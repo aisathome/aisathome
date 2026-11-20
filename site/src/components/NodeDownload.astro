@@ -1,0 +1,152 @@
+---
+// The "run a node" download block: a Windows installer button, or the one Linux command. Without
+// JavaScript it shows the Windows button with a link to the Linux page; with it, a Linux visitor
+// sees the Linux command first, and each panel links to the other. os="windows" shows only the
+// Windows panel (on the Windows page). Version and size: src/data/node-release.ts.
+import { Code } from '@astrojs/starlight/components';
+import { installerSize, installerURL, linuxCommand, nodeRelease } from '../data/node-release';
+
+interface Props { os?: 'windows' }
+const both = Astro.props.os !== 'windows';
+const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
+---
+
+<section class="dl not-content" data-node-download aria-label="Download the node">
+	<div class="dl-panel" data-os-panel="windows">
+		<p class="dl-req">
+			<strong>Before you download:</strong> an NVIDIA GPU with 16 GB or more and driver 527.41 or newer
+			(570.65 for an RTX 50) · Windows 10 or 11, 64-bit · about 17 GB free disk. Slower 16 GB cards
+			(RTX 4060 Ti, 5060 Ti class) fail the installer’s speed test. <a href="/node/#what-you-need">Details</a>
+		</p>
+		<div class="dl-get">
+			<a class="dl-btn" href={installerURL} data-dl-windows>
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d={arrow} /></svg>
+				Download for Windows
+			</a>
+			<p class="dl-meta">
+				{nodeRelease.version} · {installerSize}{both && <>{' · '}<a href="/node/install/" data-os-show="linux">Linux</a></>}{' · '}<a href="/node/windows/#check-the-download">Check the download</a>
+			</p>
+		</div>
+		<ol class="dl-steps">
+			<li><strong>Download and run</strong> the installer.</li>
+			<li>
+				<strong>Windows may warn “unknown publisher”</strong> (it is not signed yet):{' '}
+				<b>More info</b> → <b>Run anyway</b>, then allow the administrator prompt.
+			</li>
+			<li>
+				<strong>Follow the node’s page</strong> that opens: it checks your card, downloads the model
+				(13-14 GB), tests its speed and asks for your node token from <a href="/account">your account</a>{' '}
+				(<b>Add a node</b>).
+			</li>
+		</ol>
+		{both && <p class="dl-other"><a href="/node/windows/">Windows install in detail</a></p>}
+	</div>
+
+	{both && (
+		<div class="dl-panel dl-linux" data-os-panel="linux" hidden>
+			<p class="dl-req">
+				<strong>Before you install:</strong> an NVIDIA RTX 30, 40 or 50 with 16 GB or more and driver
+				525.60.13 or newer (570.26 for an RTX 50) · x86_64 Linux with systemd and glibc 2.35+ (Ubuntu
+				22.04, Debian 12 or newer) · about 17 GB free disk. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti
+				class) fail the installer’s speed test. <a href="/node/#what-you-need">Details</a>
+			</p>
+			<div class="dl-get">
+				<p class="dl-kicker">Install on Linux: paste in a terminal</p>
+				<Code code={linuxCommand} lang="bash" />
+				<p class="dl-meta">
+					Prebuilt bundle, {nodeRelease.version} · about 0.5 GB{' · '}<a href="/node/windows/" data-os-show="windows">Windows</a>
+				</p>
+			</div>
+			<ol class="dl-steps">
+				<li><strong>Paste the command:</strong> it downloads the bundle and checks its SHA-256.</li>
+				<li><strong>The installer checks</strong> your driver, card and disk, downloads the model (13-14 GB) and tests its speed.</li>
+				<li>
+					<strong>Paste your node token</strong> when asked: from <a href="/account">your account</a>{' '}
+					(<b>Add a node</b>).
+				</li>
+			</ol>
+			<p class="dl-other"><a href="/node/install/">Linux install in detail</a></p>
+		</div>
+	)}
+</section>
+
+<script>
+	// Linux visitors (not Android or ChromeOS) see the Linux panel first; the "On Linux?" and
+	// "On Windows?" links switch panels instead of leaving the page.
+	(() => {
+		const box = document.querySelector<HTMLElement>('[data-node-download]');
+		if (!box?.querySelector('[data-os-panel="linux"]')) return;
+		const show = (os: string) =>
+			box.querySelectorAll<HTMLElement>('[data-os-panel]').forEach((p) => (p.hidden = p.dataset.osPanel !== os));
+		const ua = navigator.userAgent;
+		const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || ua;
+		if (/linux/i.test(platform) && !/android|cros/i.test(ua)) show('linux');
+		box.querySelectorAll<HTMLAnchorElement>('[data-os-show]').forEach((a) =>
+			a.addEventListener('click', (e) => {
+				e.preventDefault();
+				const os = a.dataset.osShow!;
+				show(os);
+				box.querySelector<HTMLElement>(`[data-os-panel="${os}"] [data-os-show]`)?.focus();
+			}),
+		);
+	})();
+</script>
+
+<style>
+	.dl {
+		margin-block: 1.5rem 2.5rem;
+		padding: clamp(1.25rem, 3vw, 2rem);
+		border-top: 5px solid var(--sl-color-accent);
+		border-radius: 0.5rem;
+		background: var(--b-surface);
+		color: var(--sl-color-gray-2);
+	}
+	.dl p, .dl ol { margin: 0; }
+	.dl-panel:not([hidden]) {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 1.25rem 2.5rem;
+		align-items: start;
+	}
+	.dl-get { display: flex; flex-direction: column; align-items: flex-start; gap: 0.6rem; min-width: 0; }
+	.dl-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 1rem 1.75rem;
+		border-radius: 0.4rem;
+		background: var(--sl-color-accent);
+		color: #1c0d02;
+		font: 800 1.45rem/1 var(--font-display);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		text-decoration: none;
+		white-space: nowrap;
+		transition: background-color 0.15s;
+	}
+	.dl-btn:hover, .dl-btn:focus-visible { background: var(--sl-color-accent-high); color: #1c0d02; }
+	:global([data-theme='light']) .dl-btn, :global([data-theme='light']) .dl-btn:hover { color: #fff; }
+	.dl-btn svg { width: 1.4rem; flex: none; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+	.dl-kicker { font: 800 1.35rem/1.1 var(--font-display); letter-spacing: 0.03em; text-transform: uppercase; color: var(--sl-color-white); }
+	.dl-get :global(.expressive-code) { width: 100%; }
+	.dl-linux:not([hidden]) { grid-template-columns: minmax(0, 1fr); }
+	.dl-linux .dl-get { align-items: stretch; }
+	.dl-linux .dl-steps { max-width: 42rem; }
+	.dl-meta { font-size: 0.9rem; font-weight: 600; color: var(--sl-color-white); }
+	.dl-meta a { font-weight: 400; }
+	.dl-req { grid-column: 1 / -1; font-size: 0.9rem; line-height: 1.55; }
+	.dl-req strong { color: var(--sl-color-white); }
+	.dl-steps { padding-left: 1.4rem; font-size: 0.95rem; line-height: 1.55; }
+	.dl-steps li + li { margin-top: 0.5rem; }
+	.dl-steps li::marker { font-weight: 800; color: var(--sl-color-accent-high); }
+	.dl-steps strong, .dl-steps b { color: var(--sl-color-white); }
+	.dl-other { grid-column: 1 / -1; font-size: 0.9rem; }
+	.dl a:not(.dl-btn) { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
+	@media (max-width: 50rem) {
+		.dl-panel:not([hidden]) { grid-template-columns: minmax(0, 1fr); }
+		.dl-btn { align-self: stretch; justify-content: center; padding-inline: 1rem; font-size: 1.3rem; }
+	}
+	@media (max-width: 24rem) {
+		.dl-btn { white-space: normal; text-align: center; }
+	}
+</style>

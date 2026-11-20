@@ -9,6 +9,18 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Download for Windows, in one click.** `/node/` opens with a download block: the requirements
+  that make an install fail first (NVIDIA 16 GB+, the driver, the disk, and that slower 16 GB cards
+  fail the speed test), a **Download for Windows** button straight to the installer, its version and
+  size, and three steps (run it; Windows may warn "unknown publisher" because it is not signed yet:
+  More info, Run anyway; follow the node's page and paste your node token). Linux visitors see the one command that downloads, checks
+  and installs the prebuilt bundle instead, and each links to the other; without JavaScript the
+  Windows button shows. The install page for Windows starts with the button, and the hash check
+  moved to a "Check the download" section further down, with its limits. (site)
+- **The Windows installer without the version in its name.** Each release also carries
+  `AIsAtHome-node-setup.exe` (the same bytes, listed in `SHA256SUMS`), so
+  `releases/latest/download/AIsAtHome-node-setup.exe` always gets the newest. (node)
+
 - **What may serve whom, at a glance.** `/v1/stats` has `serve`: of the nodes online, how many may
   serve people's chats and API requests (`chat`), agents (`tools`) and science (`science`) right now,
   counts only. With nodes online and none for chat, the operations page shows a `no-chat-nodes` warning
