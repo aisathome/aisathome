@@ -166,17 +166,15 @@ func AddCreditCorrection(stateDir, node string, credit float64, reason string, n
 	if credit == 0 || math.IsNaN(credit) || math.IsInf(credit, 0) || math.Abs(credit) > 1e9 {
 		return c, errors.New("the credit must be a number other than zero (negative takes credit back)")
 	}
-	_, pending, err := ReadCreditCorrections(stateDir)
+	path := filepath.Join(stateDir, CreditCorrectionsFile)
+	unlock, err := lockFile(path + ".lock") // one request at a time: two would each drop the other's
 	if err != nil {
 		return c, err
 	}
-	var f creditFile
-	raw, err := os.ReadFile(filepath.Join(stateDir, "credit.json"))
+	defer unlock()
+	f, pending, err := readCorrectionState(stateDir) // one read of the ledger: its balance and what it applied agree
 	if err != nil {
-		return c, fmt.Errorf("credit ledger: %w", err)
-	}
-	if err := json.Unmarshal(raw, &f); err != nil {
-		return c, fmt.Errorf("credit ledger: %w", err)
+		return c, err
 	}
 	n := f.Nodes[node]
 	if n == nil {
@@ -195,34 +193,42 @@ func AddCreditCorrection(stateDir, node string, credit float64, reason string, n
 	rand.Read(b)
 	c.ID = "corr-" + hex.EncodeToString(b)
 	all := append(append([]CreditCorrection{}, pending...), c) // applied ones leave the file: the ledger keeps them
-	raw, err = json.MarshalIndent(all, "", "  ")
+	raw, err := json.MarshalIndent(all, "", "  ")
 	if err != nil {
 		return c, err
 	}
-	path := filepath.Join(stateDir, CreditCorrectionsFile)
-	tmp := path + ".tmp"
+	tmp := path + "." + c.ID + ".tmp"
 	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
 		return c, err
 	}
-	return c, os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return c, err
+	}
+	return c, nil
 }
 
 // ReadCreditCorrections returns the corrections the ledger holds (as of the gateway's last save)
 // and the requests it has not applied yet.
 func ReadCreditCorrections(stateDir string) (applied, pending []CreditCorrection, err error) {
-	var f creditFile
+	f, pending, err := readCorrectionState(stateDir)
+	return f.Corrections, pending, err
+}
+
+// readCorrectionState reads the saved ledger and the requests it has not applied.
+func readCorrectionState(stateDir string) (f creditFile, pending []CreditCorrection, err error) {
 	raw, err := os.ReadFile(filepath.Join(stateDir, "credit.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("credit ledger: %w", err)
+		return f, nil, fmt.Errorf("credit ledger: %w", err)
 	}
 	if err == nil {
 		if err := json.Unmarshal(raw, &f); err != nil {
-			return nil, nil, fmt.Errorf("credit ledger: %w", err)
+			return f, nil, fmt.Errorf("credit ledger: %w", err)
 		}
 	}
 	reqs, err := readCorrections(filepath.Join(stateDir, CreditCorrectionsFile))
 	if err != nil {
-		return nil, nil, err
+		return f, nil, err
 	}
 	done := map[string]bool{}
 	for _, c := range f.Corrections {
@@ -233,7 +239,7 @@ func ReadCreditCorrections(stateDir string) (applied, pending []CreditCorrection
 			pending = append(pending, c)
 		}
 	}
-	return f.Corrections, pending, nil
+	return f, pending, nil
 }
 
 // publicCorrections lists the applied corrections for the leaderboard: when, how much and why;
