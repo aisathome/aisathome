@@ -358,7 +358,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 			body[k] = g.cfg.MaxMaxTokens
 		}
 	}
-	// Privacy: personal data goes only to trusted nodes (and the requester's own); secrets
+	// Privacy: personal data goes only to the requester's own nodes, or is refused; secrets
 	// never reach a node at all (replaced by placeholders, restored in the answer).
 	rt := g.routeFor(want, body, c.acct, c.reqAcct, c.acct.VolunteerAgents && !c.info.ForwardUsers)
 	rt.class = c.class
@@ -406,8 +406,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 }
 
 // chatExecute finds a node and runs the request on it: one retry on another connection while no
-// output went out, a trusted node after a guard stopped an answer, and for preempted science a
-// place behind the people.
+// output went out, and for preempted science a place behind the people.
 func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJob) {
 	rt, req := job.rt, job.req
 	start := time.Now()
@@ -444,9 +443,10 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 			return
 		}
 		rt.exclude[n] = true
-		// Answers from strangers' nodes are checked (guard.go); a pilot's even for its own account.
+		// Answers from every node but the requester's own are checked (guard.go); a pilot's even for
+		// its own account.
 		var gd *guard
-		if !n.trusted && (n.operator != rt.self || n.pilot != "") {
+		if !rt.own(n) {
 			gd = newGuard(job.reqText, g.knownSrc)
 			gd.installers = g.installs
 		}
@@ -467,25 +467,11 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 		}
 		var flagged *guardError
 		if errors.As(err, &flagged) && !started {
-			// Not one byte of the stopped answer went out: try a trusted node if one is free now,
-			// within all of the request's restrictions (operator, own nodes only, context).
-			fb := *rt
-			fb.trustedOnly, fb.preferSelf = true, false
-			if tn, tmodel := g.pick(&fb); tn != nil {
-				if started, err = g.run(w, r, req, tn, tmodel, nil); err == nil || started {
-					outcome = runOutcome(err)
-					return
-				}
-				if errors.Is(err, errPreempted) {
-					outcome = pressPreempted
-					preemptedError(w)
-					return
-				}
-			}
+			// Not one byte of the stopped answer went out. No other node is sent it instead: there is
+			// no node it may go to unchecked (there were trusted nodes for that until 2026-11-20).
 			outcome = pressBlocked
 			apiError(w, http.StatusBadGateway, "the volunteer node's answer was stopped by a safety check (a tool call that "+
-				"downloads and runs code, reads credentials, encodes a command or sends files), "+
-				"and no trusted node is free to answer instead; try again later")
+				"downloads and runs code, reads credentials, encodes a command or sends files); try again later")
 			return
 		}
 		if err == nil || started {

@@ -1,6 +1,6 @@
 // Self-registered nodes (decision 0007, backlog 15): node tokens on the account page, the
-// cut-off (revoke, ban), the per-address cap, the share cap, node preferences and the
-// trusted-only switch; and the node connection itself: bound ids, revocation while
+// cut-off (revoke, ban), the per-address cap, the share cap, node preferences, personal data on
+// one's own node and the own-only switch; and the node connection itself: bound ids, revocation while
 // connecting, frame limits, stalled reconnects.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -62,10 +62,11 @@ func (r *rig) startTokenNode(ctx context.Context, token string, engine *httptest
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: slots, Ctx: ctxLen}}})
 }
 
-// nodeRig is an accounts gateway with a trusted config token ("home-token") and no nodes yet.
+// nodeRig is an accounts gateway with a config token of the maintainer's ("home-token", untrusted as
+// every node) and no nodes yet.
 func nodeRig(t *testing.T, mod func(*gateway.AccountsConfig)) *acctRig {
 	return newAcctRigNodes(t, 100, mod, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
 		c.QueueTimeoutSec = 3 // requests that may only go to an offline node fail sooner
 	})
 }
@@ -252,12 +253,16 @@ func TestNodesPerAddress(t *testing.T) {
 	a.waitNodes(t, 11)
 }
 
-// No untrusted operator gets more than about a third of the requests while other nodes
+// No operator gets more than about a third of the requests while other nodes
 // are free. These are short one-off requests, so each is a conversation of its own
 // (TestStickySessionShareCap covers a session's many turns).
 func TestShareCap(t *testing.T) {
-	var home, stranger atomic.Int32
-	r := trustRig(t, &home, &stranger)
+	var home, stranger, third atomic.Int32
+	r := twoNodeRig(t, &home, &stranger)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.startNode(ctx, "third", "node-token", countEngine(t, &third), 4) // operator op1
+	r.waitNodes(t, 3)
 	for i := 0; i < 30; i++ {
 		if code, _ := ask(t, r, "user-key", chatBody); code != 200 {
 			t.Fatalf("request %d: %d", i, code)
@@ -334,25 +339,120 @@ func TestNodePreference(t *testing.T) {
 	}
 }
 
-// The operator's emergency switch sends everything to trusted nodes.
-func TestRoutingTrustedOnly(t *testing.T) {
-	var home, stranger atomic.Int32
-	a := nodeRig(t, nil)
+// A request with personal data goes to the requester's own node, from an API key or the chat; with no
+// own node online it is refused at once with the user rule, and no other node ever gets it (owner,
+// 2026-11-20). The maintainer's config-token node is a stranger's node like any other.
+func TestPersonalDataOnOwnNode(t *testing.T) {
+	var own, home, stranger atomic.Int32
+	a := nodeRig(t, func(c *gateway.AccountsConfig) { c.Limits.TokensPerDay = 0 })
+	s, _ := a.signIn(t, 1)
+	token, _, _ := a.addNode(t, s, "")
+	_, page := a.createKey(t, s)
+	key := keyRe.FindString(page)
+	a.post(t, "/account/nodes/pref", s, "pref=any") // no preference: only the personal data keeps it home
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a.startNode(ctx, "home", "home-token", countEngine(t, &home), 4)
 	a.startNode(ctx, "stranger", "node-token", countEngine(t, &stranger), 4)
-	a.waitNodes(t, 2)
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = gateway.RoutingTrustedOnly; return nil })
-	time.Sleep(2500 * time.Millisecond) // the gateway rereads the file every 2 s
+	ownCtx, stopOwn := context.WithCancel(ctx)
+	a.startTokenNode(ownCtx, token, countEngine(t, &own), 4, 32768)
+	a.waitNodes(t, 3)
+	pii, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "write to ola.nordmann@example.no"}}})
+	chat := func(body string) (int, string) {
+		req, _ := http.NewRequest("POST", a.front.URL+"/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer owui-key")
+		req.Header.Set("X-OpenWebUI-User-Email", "gh-1@users.invalid")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(b)
+	}
 	for i := 0; i < 6; i++ {
-		ask(t, a.rig, "user-key", chatBody)
+		if code, out := ask(t, a.rig, key, string(pii)); code != 200 {
+			t.Fatalf("personal data, own node online: %d %s", code, out)
+		}
 	}
-	if stranger.Load() != 0 {
-		t.Fatalf("trusted-only: %d requests reached an untrusted node", stranger.Load())
+	if code, out := chat(string(pii)); code != 200 {
+		t.Fatalf("personal data in the chat, own node online: %d %s", code, out)
 	}
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = ""; return nil })
-	waitFor(t, func() bool { ask(t, a.rig, "user-key", chatBody); return stranger.Load() > 0 })
+	if own.Load() != 7 || home.Load()+stranger.Load() != 0 {
+		t.Fatalf("personal data: own %d, home %d, stranger %d", own.Load(), home.Load(), stranger.Load())
+	}
+	for i := 0; i < 6; i++ { // the control: without personal data the account uses every node
+		ask(t, a.rig, key, chatBody)
+	}
+	if home.Load()+stranger.Load() == 0 {
+		t.Fatal("pref any: plain requests stayed on the own node")
+	}
+	before := home.Load() + stranger.Load()
+	stopOwn()
+	a.waitNodes(t, 2)
+	// The account's own requests wait out the queue time (3 s) for its node to reconnect, as in the two
+	// minutes after a gateway start this rig is in; a key without an account has nothing to wait for.
+	for _, c := range []struct {
+		name  string
+		send  func() (int, string)
+		quick bool
+	}{
+		{"the account's key", func() (int, string) { return ask(t, a.rig, key, string(pii)) }, false},
+		{"the account's chat", func() (int, string) { return chat(string(pii)) }, false},
+		{"a key without an account", func() (int, string) { return ask(t, a.rig, "user-key", string(pii)) }, true},
+	} {
+		start := time.Now()
+		code, out := c.send()
+		if code != http.StatusBadRequest || !strings.Contains(out, `"code":"personal_data"`) ||
+			!strings.Contains(out, "This looks like personal data (an email address). Personal data isn't allowed in chats on AIs@home: "+
+				"answers are computed on volunteers' machines. Remove it and try again.") {
+			t.Fatalf("%s, personal data, no own node: %d %s", c.name, code, out)
+		}
+		if d := time.Since(start); c.quick && d > 2*time.Second {
+			t.Fatalf("%s: refused only after %v: it waited", c.name, d)
+		}
+	}
+	if home.Load()+stranger.Load() != before {
+		t.Fatalf("personal data reached a stranger's node: home %d, stranger %d (before %d)", home.Load(), stranger.Load(), before)
+	}
+}
+
+// The operator's emergency switch keeps every request on its sender's own nodes: no stranger's node,
+// the maintainer's config token included, serves anything. "trusted-only", its name before
+// 2026-11-20, still in an accounts file, works the same.
+func TestRoutingOwnOnly(t *testing.T) {
+	for _, mode := range []string{gateway.RoutingOwnOnly, "trusted-only"} {
+		t.Run(mode, func(t *testing.T) {
+			var own, home, stranger atomic.Int32
+			a := nodeRig(t, nil)
+			s, _ := a.signIn(t, 1)
+			token, _, _ := a.addNode(t, s, "")
+			_, page := a.createKey(t, s)
+			key := keyRe.FindString(page)
+			a.post(t, "/account/nodes/pref", s, "pref=any")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			a.startNode(ctx, "home", "home-token", countEngine(t, &home), 4)
+			a.startNode(ctx, "stranger", "node-token", countEngine(t, &stranger), 4)
+			a.startTokenNode(ctx, token, countEngine(t, &own), 4, 32768)
+			a.waitNodes(t, 3)
+			a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = mode; return nil })
+			time.Sleep(2500 * time.Millisecond) // the gateway rereads the file every 2 s
+			for i := 0; i < 6; i++ {
+				if code, body := ask(t, a.rig, "user-key", chatBody); code != 503 || !strings.Contains(body, "only on its sender's own nodes") {
+					t.Fatalf("own-only, a key without nodes: %d %s", code, body)
+				}
+				if code, body := ask(t, a.rig, key, chatBody); code != 200 {
+					t.Fatalf("own-only, the account's own node: %d %s", code, body)
+				}
+			}
+			if home.Load()+stranger.Load() != 0 || own.Load() != 6 {
+				t.Fatalf("own-only: own %d, home %d, stranger %d", own.Load(), home.Load(), stranger.Load())
+			}
+			a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = ""; return nil })
+			waitFor(t, func() bool { ask(t, a.rig, "user-key", chatBody); return stranger.Load() > 0 })
+		})
+	}
 }
 
 // The account page tells a volunteer's own pause (local node UI) from a hold by a guard.
@@ -456,7 +556,7 @@ func TestMalformedFrameDoesNotDropNode(t *testing.T) {
 
 func TestBoundIDCannotBeSquatted(t *testing.T) {
 	r := newRigCfg(t, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", NodeID: "home-1", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", NodeID: "home-1"}
 		c.NodeTokens["other-token"] = gateway.NodeToken{Operator: "mallory"}
 	})
 	rawNodeWith(t, r, "home-1", "other-token", func(func(protocol.Msg), func([]byte), protocol.Msg) {})

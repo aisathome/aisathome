@@ -15,7 +15,7 @@
 // task's place on it as the project's configuration says (Project.Page, PageAnchor).
 //
 // The task's node_classes (tasks.go): a named task's request notes the class of the node serving
-// it, trusted, volunteer or pilot, never which node or whose. Its live count (tasks_live.go): a named
+// it, volunteer or pilot, never which node or whose. Its live count (tasks_live.go): a named
 // task's call that ended ok adds its tokens and time.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -118,19 +118,14 @@ type workItem struct {
 	Href   string // the project's science page (a leaf's place on it), or ""
 }
 
-// The classes of node a task's public node_classes names.
+// The classes of node a task's public node_classes names. "trusted" (the maintainer's config tokens) is
+// only in tasks recorded before 2026-11-20, when trusted nodes were removed: every node since is a
+// volunteer's or a pilot.
 const (
 	nodeClassTrusted   = "trusted"
 	nodeClassVolunteer = "volunteer"
-	nodeClassPilot     = "pilot" // a connector's pilot (connector.go), trusted or not
+	nodeClassPilot     = "pilot" // a connector's pilot (connector.go)
 )
-
-func nodeClassOf(trusted bool) string {
-	if trusted {
-		return nodeClassTrusted
-	}
-	return nodeClassVolunteer
-}
 
 // nodeWorkView says what an account's node is serving now (nil when nothing or when it is not the
 // account's), and its speed ("" before any answer).

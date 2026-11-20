@@ -60,13 +60,14 @@ type Project struct {
 	// requests occupy at once (rounded down, at least one node). 0 = no cap.
 	MaxNodeShare float64 `json:"max_node_share,omitempty"`
 	// AgentOK lets the project's requests with tools (agents) reach volunteer nodes past their
-	// probation, as an account key with consent does. Without it they go to trusted nodes only.
+	// probation, as an account key with consent does. Without it they go to no node (a project has
+	// no nodes of its own).
 	AgentOK bool `json:"agent_ok,omitempty"`
 	// PilotProbationOK lets the project's agents (with AgentOK) use connector pilots whose account is
 	// still in probation (decision 0020 addendum: science only; Lean checks every proof).
 	PilotProbationOK bool `json:"pilot_probation_ok,omitempty"`
-	// MinTrust "trusted" keeps all of the project's requests on trusted nodes.
-	MinTrust string `json:"min_trust,omitempty"`
+	// LegacyMinTrust is the removed "min_trust" (removed.go): accepted and ignored.
+	LegacyMinTrust string `json:"min_trust,omitempty"`
 	// RPM and Concurrent limit the project's requests (all keys together); 0 = unlimited.
 	RPM        int `json:"rpm,omitempty"`
 	Concurrent int `json:"concurrent,omitempty"`
@@ -141,9 +142,6 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 		if math.IsNaN(p.MaxNodeShare) || p.MaxNodeShare < 0 || p.MaxNodeShare > 1 {
 			return nil, fmt.Errorf("project %q: max_node_share must be from 0 to 1", p.ID)
 		}
-		if p.MinTrust != "" && p.MinTrust != "trusted" && p.MinTrust != "any" {
-			return nil, fmt.Errorf("project %q: min_trust must be trusted or any", p.ID)
-		}
 		if p.TaskCompactDays < 0 || p.TaskCompactDays > maxCompactDays {
 			return nil, fmt.Errorf("project %q: task_compact_days must be from 1 to %d (0: %d)", p.ID, maxCompactDays, defaultCompactDays)
 		}
@@ -203,7 +201,7 @@ func (g *Gateway) project(key string) *Project {
 // Project keys are the operator's: their answers name the node that served them.
 func (p *Project) info() KeyInfo {
 	return KeyInfo{User: projectUser(p.ID), RPM: p.RPM, MaxConcurrent: p.Concurrent, TokensPerDay: p.DailyTokens,
-		MinTrust: p.MinTrust, VolunteerAgents: p.AgentOK, ServedBy: true}
+		VolunteerAgents: p.AgentOK, ServedBy: true}
 }
 
 // projectUser is the budget key and usage-log user of a project's requests. The colon cannot

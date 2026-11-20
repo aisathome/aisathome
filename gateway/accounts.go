@@ -41,7 +41,7 @@ type AccountsConfig struct {
 	Email              *EmailConfig `json:"email,omitempty"`     // email sign-in (one-time code and link)
 	ChatURL            string       `json:"chat_url,omitempty"`  // where "next=chat" leads after sign-in
 	Limits             UserLimits   `json:"limits"`              // per account: rpm, concurrent, tokens_per_day
-	MinTrust           string       `json:"min_trust,omitempty"` // default "trusted"
+	LegacyMinTrust     string       `json:"min_trust,omitempty"` // removed (removed.go): accepted and ignored
 	MaxKeys            int          `json:"max_keys,omitempty"`  // API keys per account; default 3
 	Admins             []string     `json:"admins,omitempty"`    // account ids ("gh:123", "google:<sub>", "em:<hex>") that are chat admins
 	// NodeProbation is how long after an account's first node token its nodes serve chats
@@ -88,9 +88,6 @@ func (c *AccountsConfig) defaults() error {
 		return errors.New("accounts: session_secret must be at least 32 characters")
 	}
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
-	if c.MinTrust == "" {
-		c.MinTrust = "trusted"
-	}
 	if c.MaxKeys == 0 {
 		c.MaxKeys = 3
 	}
@@ -151,7 +148,7 @@ type AccountSettings struct {
 	MaxNodes           int    `json:"max_nodes,omitempty"`             // node tokens over all accounts; 0 = DefaultMaxNodes
 	MaxNodesPerAccount int    `json:"max_nodes_per_account,omitempty"` // node tokens per account; 0 = DefaultMaxNodesPerAccount
 	NodesClosed        bool   `json:"nodes_closed,omitempty"`          // no new node tokens (existing ones keep working)
-	Routing            string `json:"routing,omitempty"`               // RoutingTrustedOnly sends every request to trusted nodes; "" or "any" = normal
+	Routing            string `json:"routing,omitempty"`               // RoutingOwnOnly: every request only to the requester's own nodes; "" or "any" = normal
 	// Notice is the operator's banner on the account pages and in the chat (contact.go).
 	Notice *Notice `json:"notice,omitempty"`
 }
@@ -229,7 +226,7 @@ type AccountKey struct {
 	Prefix  string    `json:"prefix"`
 	Created time.Time `json:"created"`
 	// Agents: the user allowed volunteer nodes for requests with tools (decision 0007
-	// addendum). Without it such requests go only to trusted nodes and the account's own.
+	// addendum). Without it such requests go only to the account's own nodes.
 	Agents bool `json:"agents,omitempty"`
 }
 
@@ -646,8 +643,7 @@ func verifySession(secret, v string, now time.Time) (string, bool) {
 // key's consent for agents (VolunteerAgents).
 func (g *Gateway) accountInfo(id string) KeyInfo {
 	l := g.acfg.Limits
-	return KeyInfo{User: g.pseudonym(id), RPM: l.RPM, MaxConcurrent: l.MaxConcurrent, TokensPerDay: l.TokensPerDay,
-		MinTrust: g.acfg.MinTrust}
+	return KeyInfo{User: g.pseudonym(id), RPM: l.RPM, MaxConcurrent: l.MaxConcurrent, TokensPerDay: l.TokensPerDay}
 }
 
 // pseudonym names an account in the usage log without its GitHub, Google or email id; with

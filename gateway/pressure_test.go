@@ -212,33 +212,36 @@ func TestPressureDropsVersion1PrivateNumbers(t *testing.T) {
 }
 
 // The sample: slots of nodes that serve (not held, not paused), the largest model's slots per node;
-// science's slots within its trust and share; demand = min(open tasks, science slots).
+// science's slots within its agent rules and share; demand = min(open tasks, science slots).
 func TestPressureNowDemand(t *testing.T) {
 	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
-		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, MinTrust: "trusted", MaxNodeShare: 0.5, PublicQueue: true},
+		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, AgentOK: true, MaxNodeShare: 0.5, PublicQueue: true},
 		{ID: "quiet", KeySHA256: []string{keyHash(otherProjectKey)}, AgentOK: true}, // keeps its queue private
 	}})
 	defer g.Close()
-	add := func(id string, trusted bool, slots, inflight int) *nodeConn {
-		n := &nodeConn{id: id, operator: "op-" + id, trusted: trusted, pending: map[string]*pendingReq{}, closed: make(chan struct{}),
+	add := func(id string, probation bool, slots, inflight int) *nodeConn {
+		n := &nodeConn{id: id, operator: "op-" + id, pending: map[string]*pendingReq{}, closed: make(chan struct{}),
 			inflight: inflight, models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: slots}, {Name: "small", Slots: 1}}}
+		if probation {
+			n.probEnd = time.Now().Add(time.Hour)
+		}
 		g.mu.Lock()
 		g.node[id] = n
 		g.mu.Unlock()
 		return n
 	}
-	add("t1", true, 2, 2)
-	add("t2", true, 3, 1)
-	add("t3", true, 1, 0)
-	add("v1", false, 4, 4) // a volunteer: not for a trusted-only project
-	add("p1", true, 8, 0).paused = true
-	add("h1", true, 8, 0).held = true
+	add("t1", false, 2, 2)
+	add("t2", false, 3, 1)
+	add("t3", false, 1, 0)
+	add("v1", true, 4, 4) // in probation: no agents yet
+	add("p1", false, 8, 0).paused = true
+	add("h1", false, 8, 0).held = true
 
 	s := g.pressureNow()
 	if s.Slots != 10 || s.Busy != 7 || s.Held != 1 {
 		t.Fatalf("slots %d busy %d held %d", s.Slots, s.Busy, s.Held)
 	}
-	// Three trusted nodes serve the project; its share is one of them, the largest (3 slots).
+	// Three nodes serve the project's agents; its share is one of them, the largest (3 slots).
 	if s.ScienceSlots != 3 || s.OpenTasks != 0 || s.Demand != 0 {
 		t.Fatalf("no tasks: %+v", s)
 	}
@@ -281,7 +284,7 @@ func TestPressureNowDemand(t *testing.T) {
 // project or user).
 func TestPressureEndpoint(t *testing.T) {
 	s := newStickyRig(t)
-	s.node("node-secret", "op-secret", true, 0)
+	s.node("node-secret", "op-secret", 0)
 	now := time.Now()
 	s.g.press.sample(s.g.pressureNow(), now)
 	s.g.press.wait(ClassAgent, time.Second, now)
@@ -330,8 +333,8 @@ func TestPressureEndpoint(t *testing.T) {
 // A request through the gateway counts once: its wait for a slot, the time to its first token
 // and its outcome; one that finds no node counts as refused.
 func TestPressureCountsRequests(t *testing.T) {
-	g := newTestGateway(t, Config{Keys: map[string]KeyInfo{"user-key": {User: "alice", MinTrust: "any"}},
-		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", Trust: "trusted"}}, QueueTimeoutSec: 1,
+	g := newTestGateway(t, Config{Keys: map[string]KeyInfo{"user-key": {User: "alice"}},
+		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", OperatorTerms: OperatorTermsVersion}}, QueueTimeoutSec: 1,
 		Projects: []Project{{ID: "quiet", KeySHA256: []string{keyHash(otherProjectKey)}}}}) // keeps its queue private
 	defer g.Close()
 	srv := httptest.NewServer(g.Handler())
@@ -455,20 +458,23 @@ func TestPressureNodeTime(t *testing.T) {
 func TestPressureDemandSharedSlots(t *testing.T) {
 	keys := []string{"ak-a-test-key-0123456789abcdef", "ak-b-test-key-0123456789abcdef", "ak-c-test-key-0123456789abcdef"}
 	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
-		{ID: "a", KeySHA256: []string{keyHash(keys[0])}, MinTrust: "trusted", PublicQueue: true},
-		{ID: "b", KeySHA256: []string{keyHash(keys[1])}, MinTrust: "trusted", PublicQueue: true},
-		{ID: "c", KeySHA256: []string{keyHash(keys[2])}, AgentOK: true, PublicQueue: true}, // volunteers too
+		{ID: "a", KeySHA256: []string{keyHash(keys[0])}, AgentOK: true, PublicQueue: true},
+		{ID: "b", KeySHA256: []string{keyHash(keys[1])}, AgentOK: true, PublicQueue: true},
+		{ID: "c", KeySHA256: []string{keyHash(keys[2])}, AgentOK: true, PilotProbationOK: true, PublicQueue: true}, // pilots in probation too
 	}})
 	defer g.Close()
-	add := func(id string, trusted bool, slots int) {
-		n := &nodeConn{id: id, operator: "op-" + id, trusted: trusted, pending: map[string]*pendingReq{}, closed: make(chan struct{}),
+	add := func(id string, pilotInProbation bool, slots int) {
+		n := &nodeConn{id: id, operator: "op-" + id, pending: map[string]*pendingReq{}, closed: make(chan struct{}),
 			models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: slots}}}
+		if pilotInProbation {
+			n.pilot, n.deadline, n.probEnd = "p-"+id, time.Now().Add(time.Hour), time.Now().Add(time.Hour)
+		}
 		g.mu.Lock()
 		g.node[id] = n
 		g.mu.Unlock()
 	}
-	add("shared", true, 1) // a, b and c may use it
-	add("vol", false, 1)   // only c may
+	add("shared", false, 1) // a, b and c may use it
+	add("vol", true, 1)     // only c may
 	task := func(project, id string) {
 		t.Helper()
 		if _, _, err := g.tasks.create(project, &taskNew{ID: id, Kind: kindOther, Title: id, CreatedBy: "owner", Spec: json.RawMessage(`{}`)}); err != nil {

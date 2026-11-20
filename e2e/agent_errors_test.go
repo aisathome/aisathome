@@ -35,8 +35,8 @@ func blockingEngine(t *testing.T, entered chan<- struct{}, release <-chan struct
 	return srv
 }
 
-// A key without consent, a stranger's volunteer node online (it may not take the request), no
-// maintainer node: the answer names the actual reason.
+// A key without consent, a stranger's volunteer node online (it may not take the request): the answer
+// names the actual reason.
 func TestAgentNowhereToGoNamesTheReason(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -45,7 +45,7 @@ func TestAgentNowhereToGoNamesTheReason(t *testing.T) {
 		want    string
 		consent bool // the consent advice is in the answer
 	}{
-		{"no own node", "", "60", "requests with tools go only to your own node or the maintainer's", true},
+		{"no own node", "", "60", "requests with tools go only to your own node, and none", true},
 		{"own node offline", "offline", "60", "your own node is offline", false},
 		{"own node busy", "busy", "10", "are busy; try again shortly", false},
 	} {

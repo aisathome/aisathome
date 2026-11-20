@@ -171,7 +171,7 @@ func tierRig(t *testing.T) (*stickyRig, *nodeConn, *nodeConn) {
 	s := newStickyRig(t)
 	s.g.start = time.Now().Add(-2 * startupGrace)
 	add := func(id string, m protocol.ModelInfo) *nodeConn {
-		n := &nodeConn{id: id, operator: "op", trusted: true, pending: map[string]*pendingReq{},
+		n := &nodeConn{id: id, operator: "op", pending: map[string]*pendingReq{},
 			closed: make(chan struct{}), models: []protocol.ModelInfo{m}}
 		s.g.mu.Lock()
 		s.g.node[id] = n

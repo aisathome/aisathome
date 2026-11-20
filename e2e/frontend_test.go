@@ -45,17 +45,17 @@ func TestFrontEndKeyOnlyOnPrivateListener(t *testing.T) {
 }
 
 // An account in the chat keeps the front-end key's routing restrictions: a front end that
-// may use only trusted nodes does not reach volunteers through its users' accounts.
+// may use only one operator's nodes does not reach others through its users' accounts.
 func TestFrontEndRestrictionsKeptForAccounts(t *testing.T) {
 	a := newAcctRigWith(t, 100, nil, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
-		c.Keys["owui-key"] = gateway.KeyInfo{User: "owui", ForwardUsers: true, MinTrust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
+		c.Keys["owui-key"] = gateway.KeyInfo{User: "owui", ForwardUsers: true, OnlyOperator: "owner"}
 	})
 	var home atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a.startNode(ctx, "home", "home-token", countEngine(t, &home), 4)
-	a.waitNodes(t, 2) // plus the rig's untrusted node
+	a.waitNodes(t, 2) // plus the rig's node of op1
 	a.signIn(t, 7)
 	for i := 0; i < 6; i++ {
 		req, _ := http.NewRequest("POST", a.front.URL+"/v1/chat/completions", strings.NewReader(chatBody))
@@ -72,7 +72,7 @@ func TestFrontEndRestrictionsKeptForAccounts(t *testing.T) {
 		}
 	}
 	if n := home.Load(); n != 6 {
-		t.Fatalf("only %d of 6 account requests stayed on the trusted node", n)
+		t.Fatalf("only %d of 6 account requests stayed on the front end's operator's node", n)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestFrontEndRestrictionsKeptForAccounts(t *testing.T) {
 func TestFrontEndOperatorAndOwnNodesOnly(t *testing.T) {
 	var own, home atomic.Int32
 	a := newAcctRigNodes(t, 100, nil, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
 		c.Keys["owui-owner"] = gateway.KeyInfo{User: "owui-owner", ForwardUsers: true, OnlyOperator: "owner"}
 		c.QueueTimeoutSec = 2
 	})

@@ -78,6 +78,7 @@ func (g *Gateway) loadKeysLocked(cfg Config) error {
 			hashed[r.Hash] = r.KeyInfo
 		}
 	}
+	g.warnRemoved(removedFields(cfg, hashed))
 	g.projects.Store(projects)
 	g.connCfgs.Store(connectors)
 	if _, builtin := g.keys.Load().KeyStore.(*configKeys); builtin {
@@ -126,7 +127,7 @@ func (g *Gateway) Reload(cfg Config) error {
 		if n.account != "" { // an account's node: its token is in the accounts file (sweepNodes)
 			continue
 		}
-		if t, ok := g.tokens[n.token]; !ok || (t.NodeID != "" && t.NodeID != n.id) || (t.Trust == "trusted") != n.trusted {
+		if t, ok := g.tokens[n.token]; !ok || (t.NodeID != "" && t.NodeID != n.id) {
 			revoked = append(revoked, n)
 			continue
 		}
@@ -136,7 +137,7 @@ func (g *Gateway) Reload(cfg Config) error {
 				break
 			}
 		}
-		n.rules = g.rulesFor(n.trusted, "", g.tokens[n.token]) // its operator terms may have changed
+		n.rules = g.rulesFor("", g.tokens[n.token]) // its operator terms may have changed
 	}
 	g.mu.Unlock()
 	g.signal() // a node may serve more requests now

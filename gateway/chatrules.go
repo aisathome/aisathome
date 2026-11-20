@@ -1,9 +1,9 @@
 // Chat rules for volunteers' nodes (item 12 tier 2; GDPR decisions 2026-11-19 D3 and D12; decision 0020
-// addendum 2026-11-19 "chat from day one"). An untrusted node or pilot serves people's requests (chat,
-// agents and API calls) only if its operator account has accepted the current operator terms
+// addendum 2026-11-19 "chat from day one"). A node or pilot serves people's requests (chat, agents and
+// API calls) only if its operator account has accepted the current operator terms
 // (OperatorTermsVersion; the version and the time are recorded). Science (project keys) carries no
-// personal data and is not affected; trusted nodes (the maintainer's own, by config) and the requester's
-// own nodes are outside the rule. Where a node runs makes no difference (owner, 2026-11-19, revising D4).
+// personal data and is not affected; the requester's own nodes are outside the rule. Where a node runs
+// makes no difference (owner, 2026-11-19, revising D4).
 //
 // Accepted when the account creates a node on the account page (owner, 2026-11-20: the form says that
 // creating and running the node accepts the terms, and the creation records it, via "node-created"; an
@@ -11,15 +11,16 @@
 // nodes came before, or that switched back), or, for a connector's user (a BOINC volunteer), by the
 // connector when the user accepted there (handleConnectorTerms: the BOINC bridge, once
 // BOINC records the user's ENROLL consent to terms_of_use.txt, which holds the operator terms verbatim,
-// D8). A config node token counts as accepted when it is trusted, or when it names the version it
-// accepted ("operator_terms").
+// D8). A config node token counts as accepted when it names the version its operator accepted
+// ("operator_terms"); there are no trusted nodes outside the rule (owner, 2026-11-20).
 //
 // A draft of the terms (a version starting with "draft-") is accepted by nobody: while one is current, no
-// untrusted node serves people's requests.
+// node serves people's requests but the requester's own.
 //
 // No eligible node free: the request waits for one as any request does, and is never sent elsewhere.
 // The rule is on unless the config says chat_rules_off (a private gateway of one's own nodes, or tests).
-// Standalone nodes stay untrusted (decision 0007): personal data still goes only to trusted nodes.
+// Every node stays untrusted (decision 0007 and its addendum of 2026-11-20): personal data goes only to
+// the requester's own nodes.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -195,16 +196,14 @@ func (s *AccountStore) connectorTerms(connector, user, version string, at, now t
 // nodeRules is what the chat rules know of a node, computed when it connects and on every sweep (its
 // account may accept or withdraw meanwhile). Kept on nodeConn, guarded by g.mu.
 type nodeRules struct {
-	terms bool // its operator accepted the current operator terms (or it is trusted)
+	terms bool // its operator accepted the current operator terms
 }
 
 // rulesFor works out a node's nodeRules: from its account (account nodes and pilots), or from its config
 // token. It reads the accounts file under the store's own lock (g.mu may be held: g.mu, then the store).
-func (g *Gateway) rulesFor(trusted bool, account string, tok NodeToken) nodeRules {
+func (g *Gateway) rulesFor(account string, tok NodeToken) nodeRules {
 	var r nodeRules
 	switch {
-	case trusted:
-		r.terms = true
 	case account != "" && g.accounts != nil:
 		r.terms = g.accounts.operatorTerms(account)
 	case account == "":
@@ -216,8 +215,8 @@ func (g *Gateway) rulesFor(trusted bool, account string, tok NodeToken) nodeRule
 // chatRulesOn reports whether the rules apply (they do unless the config turns them off).
 func (g *Gateway) chatRulesOn() bool { return !g.cfg.ChatRulesOff }
 
-// gatedBy reports whether the chat rules keep rt from n. Only for people's requests on untrusted nodes
-// that are not the requester's own (route.allows checks those first). Caller holds g.mu.
+// gatedBy reports whether the chat rules keep rt from n. Only for people's requests on nodes that are not
+// the requester's own (route.allows checks those first). Caller holds g.mu.
 func (rt *route) gatedBy(n *nodeConn) bool {
 	return rt.rules && rt.class != ClassScience && !n.rules.terms
 }
@@ -230,7 +229,7 @@ func (g *Gateway) chatView(account, id string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	n := g.node[id]
-	if n == nil || n.account != account || n.trusted {
+	if n == nil || n.account != account {
 		return ""
 	}
 	switch {

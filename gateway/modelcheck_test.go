@@ -360,7 +360,6 @@ func TestModelCheckCover(t *testing.T) {
 	one := 1.0
 	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}, CoverShare: &one}, "")
 	checked := &nodeConn{id: "a", models: []protocol.ModelInfo{{Name: "qwen3.8-27b", Slots: 1}}}
-	trusted := &nodeConn{id: "b", trusted: true, models: checked.models}
 	other := &nodeConn{id: "c", models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q3", Slots: 1}}}
 	chat := map[string]any{"messages": []any{}}
 	tools := map[string]any{"messages": []any{}, "tools": []any{map[string]any{"type": "function"}}}
@@ -374,10 +373,14 @@ func TestModelCheckCover(t *testing.T) {
 	for name, c := range map[string]struct {
 		n    *nodeConn
 		body map[string]any
-	}{"tools": {checked, tools}, "trusted node": {trusted, chat}, "model without a reference": {other, chat}} {
+	}{"tools": {checked, tools}, "model without a reference": {other, chat}} {
 		if mc.coverFor(c.n, c.body) {
 			t.Errorf("%s: cover", name)
 		}
+	}
+	// Every node is checked, a config token's (the maintainer's, once "trusted") as any other.
+	if !mc.checks(&nodeConn{id: "home", operator: "owner", models: checked.models}) {
+		t.Error("a config token's node is not checked")
 	}
 	zero := 0.0
 	off := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}, CoverShare: &zero}, "")

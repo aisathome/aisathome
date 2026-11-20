@@ -75,13 +75,13 @@ type Config struct {
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
 	// GuardKnownAddresses are web addresses the guards (guard.go) count as known (not flagged) in tool
-	// calls from untrusted nodes even when the request does not name them: "host" (and its subdomains)
+	// calls from nodes even when the request does not name them: "host" (and its subdomains)
 	// or "host/path" (that host, the path and below), lower case, no scheme. Absent or null: the
 	// built-in list of Lean and Mathlib sources (defaultKnownAddrs); [] turns it off; a list
 	// replaces it.
 	GuardKnownAddresses []string `json:"guard_known_addresses"`
 	// GuardOfficialInstallers are install scripts (guard_official.go) whose download piped into a
-	// shell still stops an untrusted node's answer but does not hold the node: "host" (and its
+	// shell still stops a node's answer but does not hold the node: "host" (and its
 	// subdomains) or "host/path" (that path and below), https only, as guard_known_addresses.
 	// Absent or null: the built-in list (rustup, uv, ruff, nvm, Deno, Bun, Homebrew, elan, Poetry);
 	// [] turns it off (every such answer holds its node again); a list replaces it.
@@ -90,7 +90,7 @@ type Config struct {
 	// and the lowest priority (project.go).
 	Projects []Project `json:"projects,omitempty"`
 	// ChatRulesOff turns off the chat rule for volunteers' nodes (chatrules.go: the operator terms).
-	// It is on by default; off suits only a gateway whose nodes are all the operator's own, and tests.
+	// It is on by default; off suits only a private gateway of one's own nodes, and tests.
 	ChatRulesOff bool `json:"chat_rules_off,omitempty"`
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For the gateway believes (addresses or
 	// prefixes, "10.89.0.0/24"), besides loopback, which it always believes. A client's address names it
@@ -100,7 +100,7 @@ type Config struct {
 	// Connectors bring machines as pilots (connector.go): BOINC's bridge is the first. They need
 	// accounts (pilots serve as accounts' nodes) and a state_dir for their records.
 	Connectors []Connector `json:"connectors,omitempty"`
-	// ModelCheck is the gateway's model check of untrusted nodes (modelcheck.go): secret probe
+	// ModelCheck is the gateway's model check of nodes (modelcheck.go): secret probe
 	// prompts compared with a reference. Absent or not enabled: off.
 	ModelCheck *ModelCheckConfig `json:"model_check,omitempty"`
 	// HistorySample, if set, replaces how often the number of nodes online is sampled for the
@@ -120,12 +120,11 @@ type Config struct {
 type NodeToken struct {
 	Operator string `json:"operator"`
 	NodeID   string `json:"node_id,omitempty"`
-	// Trust "trusted" marks the maintainer's own nodes (not "secure"): they serve MinTrust
-	// keys, requests carrying personal data, and agents without consent. Volunteers, and
-	// every node registered from the account page, are untrusted.
-	Trust string `json:"trust,omitempty"`
+	// LegacyTrust is the removed "trust" (removed.go): accepted and ignored. A config token's node is
+	// untrusted, as every node is.
+	LegacyTrust string `json:"trust,omitempty"`
 	// OperatorTerms is the operator terms version its operator accepted outside the gateway (by mail,
-	// say): the chat rules (chatrules.go). A trusted token needs none.
+	// say): the chat rules (chatrules.go).
 	OperatorTerms string `json:"operator_terms,omitempty"`
 }
 

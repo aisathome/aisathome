@@ -43,7 +43,6 @@ type nodeConn struct {
 	id       string
 	operator string    // the config token's operator, or the account's pseudonym
 	token    string    // to disconnect the node if its token is revoked
-	trusted  bool      // from its token: the maintainer's own nodes (not "secure"; see README)
 	account  string    // the account that registered it; "" for a token from the config
 	ip       string    // client address it connected from (account nodes: maxNodesPerIP)
 	held     bool      // stopped by a guard until the operator clears it; guarded by g.mu
@@ -66,7 +65,7 @@ type nodeConn struct {
 	// Pilots (connector.go): id is the pilot id. Set before the node is registered, never changed.
 	pilot     string    // the pilot id; "" for a node
 	connector string    // its connector
-	extUser   string    // its connector user (no_chat_users, trusted_users)
+	extUser   string    // its connector user (no_chat_users)
 	deadline  time.Time // its credential's end
 	// scienceOnly: the pilot serves only science requests (connector.go); guarded by g.mu, updated
 	// by sweepNodes when its account's switch or the connector's settings change.
@@ -210,7 +209,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
 		return
 	}
-	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, trusted: tok.Trust == "trusted", account: account, ip: ip,
+	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, account: account, ip: ip,
 		agent: cleanAgent(hello.Agent), proto: proto, since: time.Now(), models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
 	if pl != nil {
 		n.pilot, n.connector, n.extUser, n.deadline, n.scienceOnly = pl.pilot.ID, pl.conn.ID, pl.pilot.User, pl.pilot.Deadline, pl.scienceOnly
@@ -267,7 +266,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		var cur NodeToken
 		cur, still = g.tokens[token]
 		still = still && (cur.NodeID == "" || cur.NodeID == hello.NodeID)
-		n.trusted, n.operator = cur.Trust == "trusted", cur.Operator
+		n.operator = cur.Operator
 	default:
 		_, _, still = g.accounts.nodeToken(token)
 		n.probEnd = first.Add(g.acfg.probation)
@@ -277,7 +276,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		refuse("node token revoked or changed", true)
 		return
 	}
-	n.rules = g.rulesFor(n.trusted, account, g.tokens[token])
+	n.rules = g.rulesFor(account, g.tokens[token])
 	old := g.node[n.id]
 	if old != nil && old.token != token { // only the node's own token may replace it
 		g.mu.Unlock()
@@ -334,7 +333,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 			n.conn.Close(websocket.StatusPolicyViolation, "this pilot's account is closed")
 		default:
 			g.mu.Lock()
-			n.probEnd, n.scienceOnly = first.Add(g.acfg.probation), pilotScienceOnly(c, n.extUser, chatOff, c.trusted[n.extUser])
+			n.probEnd, n.scienceOnly = first.Add(g.acfg.probation), pilotScienceOnly(c, n.extUser, chatOff)
 			n.registering = false
 			g.mu.Unlock()
 		}

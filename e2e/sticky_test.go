@@ -224,12 +224,13 @@ func TestStickyBusyAndSeparate(t *testing.T) {
 	}
 }
 
-// Placement policy comes first: a turn that carries personal data goes to the trusted node,
-// although the volunteer node holds the conversation and is free.
+// Placement policy comes first: a turn that carries personal data reaches neither the volunteer node
+// that holds the conversation and is free, nor any other (the key has no node of its own): it is
+// refused.
 func TestStickyPolicyFirst(t *testing.T) {
 	vol, home := newCacheEngine(t, "vol"), newCacheEngine(t, "home")
 	r := newRigCfg(t, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -243,8 +244,11 @@ func TestStickyPolicyFirst(t *testing.T) {
 	}
 	r.startNode(ctx, "node-home", "home-token", home.Server, 1)
 	r.waitNodes(t, 2)
-	if got := s.turn(t, r, "write to jane.doe@example.com about it"); got != "home" {
-		t.Fatalf("a turn with personal data went to %s", got)
+	if got, err := s.try(t, r, "write to jane.doe@example.com about it"); err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("a turn with personal data went to %q (%v)", got, err)
+	}
+	if got := s.turn(t, r, toolResult(2)); got != "vol" { // the conversation itself stays where it was
+		t.Fatalf("the next turn: %s", got)
 	}
 }
 

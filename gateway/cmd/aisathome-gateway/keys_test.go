@@ -26,12 +26,15 @@ func TestKeysCommand(t *testing.T) {
 	}
 	list, err := run("list", "-config", cfg)
 	if err != nil || strings.Contains(list, key) || !strings.Contains(list, key[:11]) ||
-		!strings.Contains(list, "1000") || !strings.Contains(list, "trusted") {
+		!strings.Contains(list, "1000") || strings.Contains(list, "TRUST") {
 		t.Fatalf("list must show the prefix and limits, never the key: %q %v", list, err)
 	}
 	raw, _ := os.ReadFile(filepath.Join(dir, "keys.json"))
 	if strings.Contains(string(raw), `"restore_secrets"`) {
 		t.Fatal("new keys must not restore secrets")
+	}
+	if strings.Contains(string(raw), `"min_trust"`) {
+		t.Fatal("a new key has a min_trust: there are no trusted nodes any more")
 	}
 	if _, err := run("revoke", key[:11], "-config", cfg); err != nil {
 		t.Fatal(err)
@@ -39,8 +42,8 @@ func TestKeysCommand(t *testing.T) {
 	if list, _ := run("list", "-config", cfg); strings.Contains(list, key[:11]) {
 		t.Fatalf("revoked key still listed: %q", list)
 	}
-	if _, err := run("add", "bob", "-min-trust", "maybe", "-config", cfg); err == nil {
-		t.Fatal("invalid -min-trust accepted")
+	if _, err := run("add", "bob", "-min-trust", "trusted", "-config", cfg); err == nil {
+		t.Fatal("the removed -min-trust accepted")
 	}
 	if _, err := run("list", "-config", filepath.Join(dir, "missing.json")); err == nil {
 		t.Fatal("a missing config must be an error")

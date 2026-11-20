@@ -56,7 +56,7 @@ func TestChatPrepareOrder(t *testing.T) {
 	}
 
 	// A value the redaction takes away still counted as personal data for the route.
-	if job := prepared(t, g, c, "password=alice@example.com", nil); !job.rt.trusted {
+	if job := prepared(t, g, c, "password=alice@example.com", nil); job.rt.pii == "" {
 		t.Fatalf("personal data, hidden by the redaction, goes to any node: %+v; sent %v", job.rt, job.req.body)
 	}
 
@@ -83,8 +83,8 @@ func TestChatPrepareProject(t *testing.T) {
 // When the gateway's own buffers are full the client hears 503 and comes back: no other node is
 // tried, since none would do better.
 func TestChatGatewayBusyIsNotRetried(t *testing.T) {
-	g := newTestGateway(t, Config{Keys: map[string]KeyInfo{"user-key": {User: "alice", MinTrust: "any"}},
-		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", Trust: "trusted"}}})
+	g := newTestGateway(t, Config{Keys: map[string]KeyInfo{"user-key": {User: "alice"}},
+		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", OperatorTerms: OperatorTermsVersion}}})
 	defer g.Close()
 	srv := httptest.NewServer(g.Handler())
 	defer srv.Close()

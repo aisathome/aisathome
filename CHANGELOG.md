@@ -16,9 +16,9 @@ and **(site)** are live on aisathome.org once deployed.
   stay science-only until they press it. BOINC volunteers are unchanged (the connector records their
   acceptance). (gateway, site)
 
-- **The gateway checks the model of untrusted nodes and pilots (observe-only).** At random times it
+- **The gateway checks the model of every node and pilot (observe-only).** At random times it
   sends secret probe prompts, as ordinary requests, and compares their token probabilities with a
-  reference recorded on a trusted card (the method of `aisathome-node modelcheck`). Each node's
+  reference recorded on the maintainer's own card (the method of `aisathome-node modelcheck`). Each node's
   result (pass, suspect, fail) is on the operations page and in `aisathome-gateway accounts
   model-check`. Probes earn no credit and cost nobody anything. Failing nodes are only recorded for
   now; the switch that holds them (and withholds a pilot's credit) is off and works only after 3 days
@@ -28,6 +28,18 @@ and **(site)** are live on aisathome.org once deployed.
   for the gateway's secret check. (node)
 
 ### Changed
+
+- **No more trusted nodes: every node is untrusted.** Personal data in a request (an email address,
+  a card number, an IBAN, a Norwegian national identity number) goes only to the requester's own
+  node; with none online the request is refused at once (400, `"code": "personal_data"`, "This looks
+  like personal data (…). Personal data isn't allowed in chats on AIs@home: answers are computed on
+  volunteers' machines. Remove it and try again.") instead of waiting for a trusted node. Guards,
+  operator terms and the model check apply to every node but the requester's own; a stopped answer
+  is no longer retried elsewhere; agents without a key's consent go only to one's own nodes. The
+  config's `trust`, `min_trust`, `trusted_users` and `include_trusted` are accepted and ignored,
+  each named once in the log; a key or account with `min_trust: "trusted"` is now served by every
+  node. `keys add -min-trust` is gone, and the emergency switch is `accounts routing own-only`
+  (an accounts file's `trusted-only` counts as it). (gateway)
 
 - **Connector review fixes, third round.** A reply already on its way can no longer verify a claim
   made with a weak key before the account-key change; the unclaimed account a claim merges is recorded

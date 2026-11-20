@@ -426,13 +426,14 @@ func TestChatRulesConnectorTerms(t *testing.T) {
 	}
 }
 
-// Trusted nodes need no operator terms, and a config token can name the version accepted.
+// A config token serves people's requests only when it names the operator terms version accepted; one
+// marked "trusted" (removed on 2026-11-20, ignored) needs it as any other.
 func TestChatRulesConfigTokens(t *testing.T) {
 	a, saved := rulesRig(t)
 	_, keyB := a.apiUser(t, 2)
 	cfg := *saved
 	cfg.NodeTokens = map[string]gateway.NodeToken{
-		"home-token":  {Operator: "owner", Trust: "trusted"},
+		"home-token":  {Operator: "owner", LegacyTrust: "trusted"},
 		"vol-token":   {Operator: "vol"},
 		"volok-token": {Operator: "volok", OperatorTerms: gateway.OperatorTermsVersion},
 	}
@@ -440,15 +441,11 @@ func TestChatRulesConfigTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	termsNode(t, a.gw.URL, "home", "home-token")
-	a.waitNodes(t, 1)
-	if got, _, body := servedBy(t, a.rig, keyB, 2); got["from-home"] != 2 {
-		t.Fatalf("trusted node: %v %s", got, body)
-	}
 	termsNode(t, a.gw.URL, "vol", "vol-token")
 	termsNode(t, a.gw.URL, "volok", "volok-token")
 	a.waitNodes(t, 3)
 	got, _, _ := servedBy(t, a.rig, keyB, 12)
-	if got["from-vol"] != 0 || got["from-volok"] == 0 {
+	if got["from-home"] != 0 || got["from-vol"] != 0 || got["from-volok"] == 0 {
 		t.Fatalf("config tokens: %v", got)
 	}
 }

@@ -23,9 +23,8 @@ type KeyInfo struct {
 	RPM           int    `json:"rpm,omitempty"`            // requests per minute; 0 = unlimited
 	MaxConcurrent int    `json:"concurrent,omitempty"`     // requests in flight; 0 = unlimited
 	TokensPerDay  int    `json:"tokens_per_day,omitempty"` // weighted tokens per UTC day; 0 = unlimited
-	// MinTrust "trusted" sends this key's requests only to nodes whose token is trusted
-	// (user chats should not reach unknown volunteers).
-	MinTrust string `json:"min_trust,omitempty"`
+	// LegacyMinTrust is the removed "min_trust" (removed.go): accepted and ignored.
+	LegacyMinTrust string `json:"min_trust,omitempty"`
 	// OnlyOperator restricts this key to nodes of one operator ("use only my own nodes").
 	OnlyOperator string `json:"only_operator,omitempty"`
 	// ForwardUsers marks a trusted front end (Open WebUI): its X-OpenWebUI-User-Id header
@@ -38,7 +37,7 @@ type KeyInfo struct {
 	// form. Enable only for clients that render no remote content and execute nothing.
 	RestoreSecrets bool `json:"restore_secrets,omitempty"`
 	// VolunteerAgents lets this key's requests with tools (agents) reach volunteer nodes past
-	// their probation; without it they go only to trusted nodes (decision 0007 addendum).
+	// their probation; without it they go only to the requester's own nodes (decision 0007 addendum).
 	// Never carried over to end users behind a front end.
 	VolunteerAgents bool `json:"volunteer_agents,omitempty"`
 	// ServedBy marks the operator's own keys (a test runner, dogfooding): their chat answers
@@ -61,7 +60,7 @@ type UserLimits struct {
 // forUser is the account of one end user behind a ForwardUsers key. The user id is the
 // front end's pseudonymous id; names and email addresses are never used.
 func (k KeyInfo) forUser(uid string) KeyInfo {
-	u := KeyInfo{User: k.User + "/" + uid, MinTrust: k.MinTrust, OnlyOperator: k.OnlyOperator,
+	u := KeyInfo{User: k.User + "/" + uid, OnlyOperator: k.OnlyOperator,
 		RestoreSecrets: k.RestoreSecrets}
 	if k.UserLimits != nil {
 		u.RPM, u.MaxConcurrent, u.TokensPerDay = k.UserLimits.RPM, k.UserLimits.MaxConcurrent, k.UserLimits.TokensPerDay
@@ -69,12 +68,9 @@ func (k KeyInfo) forUser(uid string) KeyInfo {
 	return u
 }
 
-// within keeps the front-end key's routing restrictions (trusted nodes only, one operator's
-// nodes only) for an end user's own policy: a front end restricted to some nodes stays so.
+// within keeps the front-end key's routing restriction (one operator's nodes only) for an end
+// user's own policy: a front end restricted to some nodes stays so.
 func (k KeyInfo) within(front KeyInfo) KeyInfo {
-	if front.MinTrust == "trusted" {
-		k.MinTrust = "trusted"
-	}
 	if front.OnlyOperator != "" {
 		k.OnlyOperator = front.OnlyOperator
 	}

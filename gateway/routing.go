@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/aisathome/aisathome/protocol"
@@ -51,20 +52,21 @@ func (g *Gateway) signal() {
 type route struct {
 	want        string
 	model       string // only nodes serving this model name: the session's (session.go); "" = any serving want
-	trusted     bool   // only trusted nodes, or the requester's own
-	why         string // why trusted is set, for the error message ("" = the key's min_trust)
-	pii         string // the kind of personal data that set trusted (piiKind), "" = none
-	trustedOnly bool   // the operator's emergency switch: trusted nodes only, not even one's own
-	operator    string // only nodes of this operator ("" = any), e.g. a key's or front end's only_operator
-	self        string // the requesting account's operator name: its own nodes count as trusted for it
-	acct        string // the requesting account ("" = none), to name its own nodes in errors
-	onlySelf    bool   // only the requester's own nodes (its preference), on top of operator
-	preferSelf  bool   // try the requester's own nodes first
-	tools       bool   // the request defines tools (an agent)
-	consent     bool   // the key allows volunteer nodes for agents
-	need        int    // context tokens: estimated prompt plus max_tokens
-	needMin     int    // prompt plus minOutputRoom: enough when no node fits need
-	exclude     map[*nodeConn]bool
+	pii         string // the kind of personal data found (piiKind): only the requester's own nodes; "" = none
+	ownOnlyMode bool   // the operator's emergency switch (RoutingOwnOnly): only the requester's own nodes
+	// ownOnlyNow is the switch as the gateway knows it now (Gateway.ownOnlyNow), for a request that
+	// waits: turned on meanwhile, it keeps a stranger's node from the request too. nil: ownOnlyMode alone.
+	ownOnlyNow *atomic.Bool
+	operator   string // only nodes of this operator ("" = any), e.g. a key's or front end's only_operator
+	self       string // the requesting account's operator name: its own nodes (own) may see anything it sends
+	acct       string // the requesting account ("" = none), to name its own nodes in errors
+	onlySelf   bool   // only the requester's own nodes (its preference, or past its budget), on top of operator
+	preferSelf bool   // try the requester's own nodes first
+	tools      bool   // the request defines tools (an agent)
+	consent    bool   // the key allows volunteer nodes for agents
+	need       int    // context tokens: estimated prompt plus max_tokens
+	needMin    int    // prompt plus minOutputRoom: enough when no node fits need
+	exclude    map[*nodeConn]bool
 	// For sticky routing: the requester (as the prefix cache keys it) and the block hashes of
 	// the rendered conversation. Empty: no preference.
 	who  string
@@ -160,8 +162,17 @@ func (n *nodeConn) projectLoad(project string) int {
 	return n.projects[project]
 }
 
-// allows reports whether n may see the request, ignoring context and free slots. Caller
-// holds g.mu (n.held, n.probEnd).
+// own reports whether n is the requester's own node: a standalone node registered to the requesting
+// account. Not a pilot: the connector binds it to the account, and a connector (or its host) could bind
+// a stranger's machine.
+func (rt *route) own(n *nodeConn) bool {
+	return rt.self != "" && n.operator == rt.self && n.pilot == ""
+}
+
+// allows reports whether n may see the request, ignoring context and free slots. Every node is
+// untrusted (decision 0007, addendum 2026-11-20); the one exception is the requester's own node, which
+// sees nothing the requester did not send itself, so it may get the requester's personal data too: one's
+// own data on one's own machine. Caller holds g.mu (n.held, n.probEnd).
 func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	switch {
 	case rt.exclude[n] || n.held:
@@ -170,24 +181,21 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 		return false // a pilot still registering, past its deadline, or without chat (connector.go)
 	case rt.operator != "" && n.operator != rt.operator:
 		return false
-	case rt.onlySelf && (n.operator != rt.self || n.pilot != ""): // a pilot is not "my own" (the connector linked it)
-		return false
-	case n.trusted:
+	case rt.own(n):
 		return true
-	case rt.trustedOnly:
-		return false
-	case rt.self != "" && n.operator == rt.self && n.pilot == "":
-		// One's own node sees nothing one did not send oneself. Not a pilot: the connector binds it
-		// to the account, and a connector (or its host) could bind a stranger's machine.
-		return true
-	case rt.trusted:
-		return false
+	case rt.onlySelf || rt.ownOnly() || rt.pii != "":
+		return false // personal data, the emergency switch or the requester's choice: its own nodes only
 	case rt.gatedBy(n):
 		return false // the chat rules (chatrules.go): its operator has not accepted the operator terms
 	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
 		return rt.consent && (!now.Before(n.probEnd) || (n.pilot != "" && rt.pilotProbationOK))
 	}
 	return true
+}
+
+// ownOnly reports whether the emergency switch keeps rt on its sender's own nodes.
+func (rt *route) ownOnly() bool {
+	return rt.ownOnlyMode || (rt.ownOnlyNow != nil && rt.ownOnlyNow.Load())
 }
 
 // minOutputRoom is the room for the answer that a node's context must leave when no node
@@ -349,8 +357,7 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 		}
 		return nil, ""
 	}
-	// own: the requester's own standalone node. Not its pilots: the connector linked those.
-	own := func(n *nodeConn) bool { return n.operator == rt.self && n.pilot == "" }
+	own := rt.own
 	if rt.preferSelf && rt.self != "" {
 		if n, m := try(own); n != nil {
 			return n, m // serving oneself counts for no share
@@ -361,7 +368,9 @@ func (g *Gateway) pick(rt *route) (*nodeConn, string) {
 	// already counts for the node's operator in the window. It adds nothing to the share.
 	counted := func(n *nodeConn) bool { return hits[n.id].cont && seen(n.operator) }
 	n, m := try(func(n *nodeConn) bool {
-		return n.trusted || own(n) || !over(n.operator) || counted(n)
+		// Not own(n): an own node is never capped (it serves through try(nil) below, and counts for
+		// no share), but without the account's preference it is not preferred either.
+		return !over(n.operator) || counted(n)
 	})
 	if n == nil {
 		n, m = try(nil) // every free node is over its share: better served than waiting
@@ -409,6 +418,7 @@ const (
 	timedOut     = "timeout"  // waited QueueTimeoutSec without a free slot
 	clientGone   = "canceled" // the client disconnected while waiting
 	tooLong      = "context"  // no allowed node has the context the request needs
+	personal     = "personal" // personal data, and none of the requester's own nodes is online to take it
 )
 
 // pickWait is pick, but waits until deadline for capacity: a free slot, or a node serving a
@@ -471,13 +481,16 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 				return nil, "", unknownModel
 			}
 		}
-		// A retry waits only if another allowed node serves the model (it is just busy), and
-		// so does personal data, which only a trusted node may see, once nodes have had the
-		// time to reconnect after a restart. Otherwise there is nothing to wait for. A key's
-		// own min_trust keeps its wait: with a why, the route exists for this one message.
-		settled := time.Since(g.start) >= startupGrace
-		if (len(rt.exclude) > 0 || (rt.why != "" && settled)) && g.servesFor(rt) == 0 {
+		// A retry waits only if another allowed node serves the model (it is just busy).
+		// Otherwise there is nothing to wait for.
+		if len(rt.exclude) > 0 && g.servesFor(rt) == 0 {
 			return nil, "", timedOut
+		}
+		// Personal data waits only for the requester's own node, and only while one is online (just
+		// busy), or while its registered nodes may still reconnect after a gateway start. Otherwise it
+		// is refused at once (unavailable): no other node will ever take it.
+		if rt.pii != "" && g.servesFor(rt) == 0 && (time.Since(g.start) >= startupGrace || !g.hasNodes(rt.acct)) {
+			return nil, "", personal
 		}
 		if !waiting {
 			if int(queue.Add(1)) > g.cfg.MaxQueued {
@@ -602,6 +615,9 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 			"message": fmt.Sprintf("the conversation (about %d tokens, with room for the answer) is longer than the context of any node that may serve it (largest: %d tokens); shorten or compact it",
 				rt.needMin, g.largestCtx(&loose)),
 			"type": "invalid_request_error", "code": "context_length_exceeded"}})
+	case personal:
+		reason = "personal_data"
+		personalDataError(w, rt.pii)
 	case queueFull:
 		reason = "queue_full"
 		w.Header().Set("Retry-After", "10")
@@ -620,6 +636,13 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				return
 			}
 		}
+		loose := *rt
+		loose.exclude = nil
+		if rt.pii != "" && g.servesFor(&loose) == 0 { // its own node went away while it waited
+			reason = "personal_data"
+			personalDataError(w, rt.pii)
+			return
+		}
 		if g.servesNow(want) == 0 {
 			reason = "no_node"
 			w.Header().Set("Retry-After", "60")
@@ -627,12 +650,10 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 				"no node serving %q is online right now; AIs@home runs on volunteer machines, try again later", want))
 			return
 		}
-		loose := *rt
-		loose.exclude = nil
 		if g.servesFor(&loose) == 0 {
 			w.Header().Set("Retry-After", "60")
-			reason = "trusted_only"
-			which, because := "trusted node", "this request may only go to such nodes"
+			reason = "no_allowed_node"
+			which, because := "node", "this request may not go to the nodes that are online"
 			switch {
 			case rt.onlySelf:
 				reason = "own_nodes_only"
@@ -640,41 +661,31 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 			case rt.operator != "":
 				reason = "operator_nodes_only"
 				which = "node of your own"
-			case rt.trustedOnly:
-				reason = "trusted_only_mode"
-				because = "the network is in trusted-only mode for now"
-			case rt.pii != "":
-				// Say what was found, so a false positive can be told apart from an outage.
-				reason = "personal_data"
-				apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no trusted node serving %q is online right now, "+
-					"and this request may only go to one: it looks like it contains personal data (%s). If it does not, "+
-					"rewrite that part (for example, split a long number) or try again later", want, rt.pii))
-				return
-			case rt.trusted && rt.why != "":
-				because = rt.why
+			case rt.ownOnly():
+				reason = "own_only_mode"
+				which, because = "node of your own", "for now the network serves each request only on its sender's own nodes"
 			case g.rulesBlocked(&loose):
 				// The chat rules (chatrules.go) left no node.
 				reason = "operator_terms"
 				which, because = "node", "only nodes whose operators accepted the operator terms serve people's requests"
-			case rt.tools && !rt.trusted:
+			case rt.tools:
 				// Name the actual reason: the account's own node being offline is not a key problem.
 				// (Its own node online but busy is counted above and gets the busy answer.)
 				if g.ownNodesOffline(rt) {
 					reason = "own_node_offline"
 					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
-						"your own node is offline, and no maintainer node serving %q is online. Start your node, or try again later", want))
+						"your own node is offline, and no other node serving %q may take them. Start your node, or try again later", want))
 					return
 				}
-				reason = "tools_need_trust"
-				which = "trusted node, or volunteer node past its probation,"
-				because = "requests with tools go to volunteer nodes only with an API key that allows them"
 				if !rt.consent {
 					reason = "tools_no_consent"
 					apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no node may run agents for this key right now: "+
-						"requests with tools go only to your own node or the maintainer's, and none serving %q is online. "+
+						"requests with tools go only to your own node, and none serving %q is online. "+
 						"Create a key with \"Run requests through nodes operated by other people\" ticked on your account page, or try again later", want))
 					return
 				}
+				reason = "tools_probation"
+				which, because = "volunteer node past its probation", "requests with tools go only to nodes past their probation"
 			}
 			apiError(w, http.StatusServiceUnavailable, fmt.Sprintf("no %s serving %q is online right now (%s)", which, want, because))
 			return
@@ -696,13 +707,31 @@ func (g *Gateway) rulesBlocked(rt *route) bool {
 	return g.servesFor(&off) > 0
 }
 
+// hasNodes reports whether account id has registered nodes (they may be offline).
+func (g *Gateway) hasNodes(id string) bool {
+	if g.accounts == nil || id == "" {
+		return false
+	}
+	a, _, ok := g.accounts.Get(id)
+	return ok && len(a.Nodes) > 0
+}
+
+// personalDataError refuses a request that looks like it carries personal data (piiKind) when none of
+// the requester's own nodes can take it: every other node is a stranger's. The user rule of the terms,
+// and what was found, so a false positive can be told apart (never the value). 400: sending it again
+// changes nothing, so clients do not retry.
+func personalDataError(w http.ResponseWriter, kind string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+		"message": fmt.Sprintf("This looks like personal data (%s). Personal data isn't allowed in chats on AIs@home: "+
+			"answers are computed on volunteers' machines. Remove it and try again. If it isn't personal data, "+
+			"rewrite that part (for example, split a long number).", kind),
+		"type": "invalid_request_error", "code": "personal_data"}})
+}
+
 // ownNodesOffline reports whether the requesting account has registered nodes and none of
 // them is connected.
 func (g *Gateway) ownNodesOffline(rt *route) bool {
-	if g.accounts == nil || rt.acct == "" || rt.self == "" {
-		return false
-	}
-	if a, _, ok := g.accounts.Get(rt.acct); !ok || len(a.Nodes) == 0 {
+	if rt.self == "" || !g.hasNodes(rt.acct) {
 		return false
 	}
 	g.mu.Lock()

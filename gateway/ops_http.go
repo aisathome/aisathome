@@ -88,7 +88,7 @@ type opsAttempt struct {
 type opsNode struct {
 	ID, Version, Operator, Since, Contract, Load string
 	Protocol, Science                            int
-	Trusted, Paused, Held                        bool
+	Paused, Held                                 bool
 }
 
 // opsHold is one row of the held nodes card.
@@ -144,7 +144,7 @@ type opsModelCheck struct {
 type opsMCRow struct {
 	Node, Operator, Model, Result, Checks, WorstKL, Flips, Last, Reasons string
 	Dropped                                                              int
-	Connected, Trusted, Held                                             bool
+	Connected, Held                                                      bool
 }
 
 // opsCheck is one row of the answer checks card.
@@ -283,7 +283,7 @@ func (g *Gateway) opsNodes(contracts map[string]*time.Time) []opsNode {
 		n.mu.Unlock()
 		row := opsNode{ID: n.id, Version: strings.TrimPrefix(n.agent, "aisathome-node/"), Protocol: n.proto,
 			Operator: n.operator, Since: n.since.UTC().Format("01-02 15:04"), Load: fmt.Sprintf("%d of %d", busy, slots),
-			Science: sci, Trusted: n.trusted, Paused: paused, Held: n.held}
+			Science: sci, Paused: paused, Held: n.held}
 		if c := contracts[n.id]; c != nil {
 			row.Contract = c.UTC().Format("2006-01-02 15:04")
 		}
@@ -407,7 +407,7 @@ func (g *Gateway) opsModelCheck(connected map[string]bool, now time.Time) *opsMo
 	for _, s := range st.Nodes {
 		res, worst, flips := s.Status(th)
 		row := opsMCRow{Node: s.Node, Operator: s.Operator, Model: s.Model, Result: res, Dropped: s.Dropped,
-			Checks: fmt.Sprintf("%d pass · %d fail", s.Pass, s.Fail), Connected: connected[s.Node], Trusted: s.Trusted,
+			Checks: fmt.Sprintf("%d pass · %d fail", s.Pass, s.Fail), Connected: connected[s.Node],
 			Held: !s.HeldAt.IsZero(), Last: "–"}
 		if len(s.Checks) > 0 {
 			last := s.Checks[len(s.Checks)-1]
@@ -619,7 +619,7 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <td data-label="Steps" class="num">{{.Steps}}{{if .StepCap}} of {{.StepCap}}{{end}}</td><td data-label="Minutes" class="num">{{.Used}}</td><td data-label="Outcome">{{.Outcome}}</td></tr>{{end}}</table></div></div>{{end}}
 <div class="card" id="nodes"><h2>Nodes online ({{.Online}}){{if gt (len .Nodes) .Online}} · {{sub (len .Nodes) .Online}} held{{end}}</h2>
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Version</th><th>Protocol</th><th class="num">Busy</th><th class="num">Science</th><th>Connected</th><th>Contract ends</th></tr>
-{{range .Nodes}}<tr data-node="{{.ID}}"><td data-label="Node"><code>{{.ID}}</code>{{if .Trusted}} <span class="mut small">trusted</span>{{end}}{{if .Paused}} <span class="badge paused">paused</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}</td>
+{{range .Nodes}}<tr data-node="{{.ID}}"><td data-label="Node"><code>{{.ID}}</code>{{if .Paused}} <span class="badge paused">paused</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}</td>
 <td data-label="Version">{{if .Version}}<code>{{.Version}}</code>{{else}}<span class="mut">unknown</span>{{end}}</td><td data-label="Protocol">{{.Protocol}}</td>
 <td data-label="Busy" class="num">{{.Load}}</td><td data-label="Science" class="num">{{.Science}}</td><td data-label="Connected">{{.Since}} UTC</td>
 <td data-label="Contract ends">{{if .Contract}}{{.Contract}} UTC{{else}}<span class="mut">–</span>{{end}}</td></tr>{{end}}</table></div>
@@ -627,7 +627,7 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{with .ModelCheck}}<div class="card" id="model-check"><div class="card-head"><h2>Model check</h2><span class="badge {{if eq .Mode "withholding"}}held{{else}}paused{{end}}" data-mode>{{.Mode}}</span></div>
 <p class="mut small">Secret probe prompts compared with the reference's logprobs; observing since {{.Since}}. A node fails with two failed checks, or too many confident flips, among its last checks. Limits: {{.Limits}}. <code>aisathome-gateway accounts model-check [node]</code> lists the checks.</p>
 {{if .Rows}}<div class="table-wrap"><table><tr><th>Node</th><th>Result</th><th>Checks</th><th class="num">Largest KL</th><th class="num">Flips</th><th>Last check</th><th class="num">No answer</th></tr>
-{{range .Rows}}<tr data-mc-node="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if .Trusted}} <span class="mut small">trusted</span>{{end}}{{if not .Connected}} <span class="badge offline">offline</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}<br><span class="mut small">{{.Operator}} · {{.Model}}</span></td>
+{{range .Rows}}<tr data-mc-node="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if not .Connected}} <span class="badge offline">offline</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}<br><span class="mut small">{{.Operator}} · {{.Model}}</span></td>
 <td data-label="Result"><span class="badge {{mcbadge .Result}}" data-result>{{.Result}}</span>{{with .Reasons}}<br><span class="mut small">{{.}}</span>{{end}}</td>
 <td data-label="Checks">{{.Checks}}</td><td data-label="Largest KL" class="num">{{.WorstKL}}</td><td data-label="Flips" class="num">{{.Flips}}</td>
 <td data-label="Last check">{{.Last}}</td><td data-label="No answer" class="num">{{.Dropped}}</td></tr>{{end}}</table></div>

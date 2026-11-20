@@ -1,9 +1,8 @@
-// The gateway's model check (BACKLOG 11): does an untrusted
-// node or pilot compute like the model it announces?
+// The gateway's model check (BACKLOG 11): does a node or pilot compute like the model it announces?
 //
 // The gateway sends secret probe prompts to nodes at random times, through the same connection and
 // in the same message as any request, and compares the answer's top-20 logprobs with a reference
-// recorded on a trusted card, by the method of `aisathome-node modelcheck` (node/modelcheck): KL
+// recorded on the maintainer's own card, by the method of `aisathome-node modelcheck` (node/modelcheck): KL
 // divergence per position over groups of 4 prompts, and confident flips. The prompts and their
 // reference are secret: a file pinned by SHA-256 in the gateway's config (model_check.references),
 // recorded with `aisathome-node modelcheck record -prompts` on a maintainer's own card and kept with
@@ -64,9 +63,9 @@ type ModelCheckConfig struct {
 	// RecheckSec is the mean time between probe prompts before a node's first check is complete
 	// and while a failed check waits for its re-check. Default 300 (a first result within ~20 min).
 	RecheckSec int `json:"recheck_seconds"`
-	// IncludeTrusted also checks the maintainer's own (trusted) nodes: the honest baseline while
-	// observing. Default off: they are not who the check is for.
-	IncludeTrusted bool `json:"include_trusted"`
+	// LegacyIncludeTrusted is the removed "include_trusted" (removed.go): accepted and ignored. The
+	// check is for every node.
+	LegacyIncludeTrusted bool `json:"include_trusted,omitempty"`
 	// Withhold makes a failing node held (no requests; its pilot's credit withheld) instead of
 	// only recorded. Off by default, and without effect until the gateway has observed for
 	// mcObserveFirst (3 days, owner D2): the limits must first hold on our own honest nodes.
@@ -144,7 +143,6 @@ type ModelCheckNode struct {
 	Node     string             `json:"node"`
 	Operator string             `json:"operator,omitempty"`
 	Model    string             `json:"model"`
-	Trusted  bool               `json:"trusted,omitempty"`
 	Pass     int                `json:"pass"`    // checks passed, all time
 	Fail     int                `json:"fail"`    // checks failed, all time
 	Dropped  int                `json:"dropped"` // probe prompts without an answer (node error, disconnect, stall, preempted)
@@ -428,10 +426,10 @@ func (mc *modelChecker) checkedModel(n *nodeConn) string {
 	return ""
 }
 
-// checks reports whether the check is for node n at all (untrusted, or trusted with
-// include_trusted, and announcing a model with a reference).
+// checks reports whether the check is for node n at all: every node announcing a model with a
+// reference.
 func (mc *modelChecker) checks(n *nodeConn) bool {
-	return mc != nil && (!n.trusted || mc.cfg.IncludeTrusted) && mc.checkedModel(n) != ""
+	return mc != nil && mc.checkedModel(n) != ""
 }
 
 // coverFor reports whether a person's request to n also asks for the probes' logprobs: a share of
@@ -499,7 +497,7 @@ func (mc *modelChecker) nodeLocked(n *nodeConn, model string, now time.Time) *Mo
 		s = &ModelCheckNode{Node: n.id}
 		mc.st.Nodes[n.id] = s
 	}
-	s.Operator, s.Model, s.Trusted, s.LastSeen = n.operator, model, n.trusted, now.UTC()
+	s.Operator, s.Model, s.LastSeen = n.operator, model, now.UTC()
 	return s
 }
 

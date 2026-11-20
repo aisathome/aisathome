@@ -368,19 +368,19 @@ func TestTaskNodeClasses(t *testing.T) {
 	lease := r.claimID("w1", "A")
 	s := r.g.tasks
 	s.noteNode("lab", "A", nodeClassVolunteer)
-	s.noteNode("lab", "A", nodeClassTrusted)
-	s.noteNode("lab", "A", nodeClassTrusted)
-	s.noteNode("lab", "Q", nodeClassTrusted) // queued: not running
-	s.noteNode("lab", "nope", nodeClassTrusted)
-	s.noteNode("nosuch", "A", nodeClassTrusted)
-	if got := s.get("lab", "A").NodeClasses; !slices.Equal(got, []string{"trusted", "volunteer"}) {
+	s.noteNode("lab", "A", nodeClassPilot)
+	s.noteNode("lab", "A", nodeClassPilot)
+	s.noteNode("lab", "Q", nodeClassPilot) // queued: not running
+	s.noteNode("lab", "nope", nodeClassPilot)
+	s.noteNode("nosuch", "A", nodeClassPilot)
+	if got := s.get("lab", "A").NodeClasses; !slices.Equal(got, []string{"pilot", "volunteer"}) {
 		t.Fatalf("node classes %v", got)
 	}
 	if got := s.get("lab", "Q").NodeClasses; got != nil {
 		t.Fatalf("a queued task got %v", got)
 	}
 	r.lease("A", "heartbeat", "w1", lease, nil)
-	if raw, _ := os.ReadFile(taskFile(dir, "A")); !strings.Contains(string(raw), `"node_classes":["trusted","volunteer"]`) {
+	if raw, _ := os.ReadFile(taskFile(dir, "A")); !strings.Contains(string(raw), `"node_classes":["pilot","volunteer"]`) {
 		t.Fatalf("not saved with the heartbeat: %s", raw)
 	}
 }

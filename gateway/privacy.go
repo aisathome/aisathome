@@ -426,9 +426,9 @@ func (s *restorer) flush() (out, orig []byte) {
 
 // ---------------------------------------------------------------- personal data
 
-// piiPatterns flag requests that carry personal data; such requests go to trusted nodes
-// only (the text itself is not changed: names and addresses cannot be found reliably, and
-// rewriting them would degrade answers).
+// piiPatterns flag requests that carry personal data; such requests go to the requester's own
+// nodes only, or are refused (routing.go). The text itself is not changed: names and addresses
+// cannot be found reliably, and rewriting them would degrade answers.
 var (
 	emailRe = regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`)
 	digitRe = regexp.MustCompile(`\b\d(?:[ \-]?\d){10,18}\b`)
