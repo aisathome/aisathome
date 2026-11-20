@@ -56,8 +56,9 @@ above (KL per group of 4 prompts, confident flips, the same limits).
   `enable_thinking` false, no tools, nothing in the protocol that marks it. The answer runs to its
   end (at most 4,096 tokens); its first positions are compared (as many as the reference has, plus
   one to see whether it went on). A share of people's streamed requests without tools
-  (`cover_share`, default 0.2) asks for the same logprobs, which the gateway removes before the
-  client sees them, so "logprobs" alone does not mark a probe. On a rented RTX 4090 (2026-11-20,
+  (`cover_share`, default 0.2) to nodes that have passed a check (so their engine is known to
+  answer with logprobs) asks for the same logprobs, which the gateway removes before the client
+  sees them, so "logprobs" alone does not mark a probe. On a rented RTX 4090 (2026-11-20,
   b12342, UD-IQ4_XS) the probe's shape gave exactly the reference's numbers: 20 of 20 public
   prompts the same 32 tokens streamed with `max_tokens` 16384 as non-streamed with 32, largest
   logprob difference 0; the full public set on that card against the published b12342 reference
@@ -66,11 +67,12 @@ above (KL per group of 4 prompts, confident flips, the same limits).
 - **When.** Per node, one prompt at a time, exponential waits: a mean of `recheck_seconds` (300)
   until its first check of 4 prompts is complete and after a failed check, `interval_seconds`
   (1800, a check about every 2 hours) otherwise. A probe takes only a free slot that no waiting
-  request could use, and a person's request that waits for the node stops it, as it stops science.
+  request could use, and any request that then waits for the node (a person's or science) stops it.
   A node gets no prompt twice until it has had the whole pool; among those it has not had, the
   ones sent least often over all nodes come first.
 - **Result.** Each check is pass or fail; an answer without logprobs (a proxy, or an engine that
-  is not llama-server) fails it. A node's result is judged on its last 25 checks: **fail** with
+  is not llama-server) or an error in answer to a probe fails it. A probe the node never answered
+  (it left, stalled, or a request took the slot) counts as "no answer", not against it. A node's result is judged on its last 25 checks: **fail** with
   two failed checks, or more than 2 confident flips over them (the published 100-prompt limit);
   **suspect** with one (its re-check comes within minutes); **pass** otherwise; **unknown**
   before its first check. Results are on `/account/ops` (admins) and `aisathome-gateway accounts
@@ -80,7 +82,8 @@ above (KL per group of 4 prompts, confident flips, the same limits).
 - **Observe-only, then withholding.** `withhold` is off. When it is on, a node whose result is
   fail is held like a guard hit (rule `model-check`; a pilot's credit is withheld), and
   `accounts node-clear` lets it serve again with a fresh window. It takes effect only once the
-  check has observed for 3 days (`observing_since` in the results file survives restarts), so
+  check has observed for 3 days (`observing_since` in the results file survives restarts; after
+  more than a day without the check running, observing starts again), so
   the limits are first seen to hold on our own honest nodes (`include_trusted: true` checks those
   too). Turn it on only after a clean observe-only period on 3090, 4090 and 5090 nodes.
 
@@ -110,8 +113,9 @@ aisathome-node modelcheck record -prompts pool.json -out modelcheck-iq4xs.json.g
   -name qwen3.8-27b-iq4xs-b12342-rtx4090-secret -note "Gateway model check, secret pool."
 ```
 
-Never record it on a rented machine (its host can read the disk) or commit the pool, its
-generator or the reference to any repository. Re-record at every release that changes llama.cpp
+The file is written readable by its owner only (0600); a pool has at most 2,000 prompts. Never
+record it on a rented machine (its host can read the disk) or commit the pool, its generator or
+the reference to any repository. Re-record at every release that changes llama.cpp
 or a tier's model file, as for the published references, and replace the pool when it may have
 leaked or nodes have seen most of it (each node sees a check about every 2 hours: a pool of 700
 prompts lasts a node about two weeks before it repeats).

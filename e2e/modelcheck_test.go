@@ -275,16 +275,24 @@ func TestModelCheckCatchesTheWrongModel(t *testing.T) {
 		}
 	}
 	waitUsage(t, r, 6)
-	if right.coverSeen.Load()+wrong.coverSeen.Load()+proxy.coverSeen.Load() != 6 {
-		t.Errorf("cover logprobs on %d+%d+%d of 6 requests", right.coverSeen.Load(), wrong.coverSeen.Load(), proxy.coverSeen.Load())
+	// Cover goes only to a node that passed a check (its engine answers with logprobs): here the
+	// right one, on every request it got at share 1, and never to the failing ones.
+	if right.people.Load() == 0 || right.coverSeen.Load() != right.people.Load() || wrong.coverSeen.Load()+proxy.coverSeen.Load() != 0 {
+		t.Errorf("cover logprobs on %d of %d, %d, %d requests", right.coverSeen.Load(), right.people.Load(), wrong.coverSeen.Load(), proxy.coverSeen.Load())
 	}
 	// A request that asks for logprobs itself gets them, as before.
 	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", `{"model":"deep","messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":1}`)
-	var out map[string]any
+	var out struct {
+		Choices []struct {
+			Logprobs struct {
+				Content []map[string]any `json:"content"`
+			} `json:"logprobs"`
+		} `json:"choices"`
+	}
 	json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
-	if !strings.Contains(fmt.Sprint(out), "logprobs") {
-		t.Errorf("logprobs asked for were dropped: %v", out)
+	if len(out.Choices) == 0 || len(out.Choices[0].Logprobs.Content) != 3 {
+		t.Errorf("logprobs asked for did not arrive: %+v", out)
 	}
 }
 

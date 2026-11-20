@@ -366,8 +366,8 @@ type Prompt struct {
 }
 
 // maxPrompts bounds a private prompt set (LoadPrompts): a reference of that many prompts stays
-// well under maxFile.
-const maxPrompts = 5000
+// under maxFile (about 23 MB of JSON per 1,000 prompts at 32 positions).
+const maxPrompts = 2000
 
 // LoadPrompts reads a prompt set from a JSON file, a list of {"id", "text"}: a private set, such as
 // the gateway's secret model-check pool (docs/modelcheck.md), recorded with `modelcheck record
