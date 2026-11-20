@@ -146,21 +146,53 @@ func (d *discardTracker) next(who, prompt string, now time.Time) []openAnswer {
 			out = append(out, a)
 		}
 	}
-	if len(closed) > 0 {
-		d.mu.Lock()
-		if w := d.by[who]; w != nil {
-			live := w.list[:0]
-			for _, a := range w.list {
-				if !closed[a.reqID] {
-					live = append(live, a)
-				}
-			}
-			w.list = live
-			w.used = now
-		}
-		d.mu.Unlock()
+	if len(closed) == 0 {
+		return nil
 	}
-	return out
+	// Closed under the lock, and returned only if still open then: a concurrent prompt of the same
+	// requester may have closed it meanwhile, and an answer counts as discarded once.
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	w = d.by[who]
+	if w == nil {
+		return nil
+	}
+	still := map[string]bool{}
+	live := w.list[:0]
+	for _, a := range w.list {
+		if closed[a.reqID] {
+			still[a.reqID] = true
+		} else {
+			live = append(live, a)
+		}
+	}
+	w.list = live
+	w.used = now
+	kept := out[:0]
+	for _, a := range out {
+		if still[a.reqID] {
+			kept = append(kept, a)
+		}
+	}
+	return kept
+}
+
+// forget drops who's open answer reqID: it did not reach its client after all (relay.undelivered).
+func (d *discardTracker) forget(who, reqID string) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if w := d.by[who]; w != nil {
+		live := w.list[:0]
+		for _, a := range w.list {
+			if a.reqID != reqID {
+				live = append(live, a)
+			}
+		}
+		w.list = live
+	}
 }
 
 // noteDiscards closes who's open answers that prompt keeps or discards, counts the discarded

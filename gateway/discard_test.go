@@ -68,3 +68,28 @@ func TestDiscardTracker(t *testing.T) {
 		t.Fatal("nil tracker")
 	}
 }
+
+// Two prompts of the same requester at once count an answer as discarded once; an answer that
+// never reached its client is forgotten.
+func TestDiscardOnceAndForget(t *testing.T) {
+	d := newDiscardTracker()
+	now := time.Now()
+	p := strings.Repeat("x", 600) + "<|im_start|>assistant\n"
+	for round := 0; round < 50; round++ {
+		d.answered("w", p, []string{p + "A<|im_end|>\n"}, "n-1", "", "r", now)
+		got := make(chan int, 2)
+		for i := 0; i < 2; i++ {
+			go func() { got <- len(d.next("w", p, now)) }()
+		}
+		if n := <-got + <-got; n != 1 {
+			t.Fatalf("round %d: counted %d times", round, n)
+		}
+	}
+	d.answered("w", p, []string{p + "A<|im_end|>\n"}, "n-1", "", "r2", now)
+	d.forget("w", "r2")
+	if got := d.next("w", p, now); got != nil {
+		t.Fatalf("a forgotten answer counted: %v", got)
+	}
+	var nilT *discardTracker
+	nilT.forget("w", "r")
+}

@@ -315,12 +315,16 @@ func (rl *relay) meter(outcome string, u protocol.Usage, estimated bool) *usageR
 		Estimated: estimated, Clamped: clamped, SelfServed: req.self != "" && n.operator == req.self, Guard: rl.flag,
 		Tools: hasTools(req.body), Class: req.class, Project: req.project, Task: req.task}
 	rl.g.meterRecord(rec, rl.mt, &rl.sent, n, req.who, u, rl.maxTokens, rec.Time)
+	if outcome == "ok" { // before the end goes out: the next prompt shows whether the client kept it (discard.go)
+		rl.g.discards.answered(keyHash(req.who), rl.mt.prompt, rl.mt.forms, n.id, n.operator, rec.ReqID, rec.Time)
+	}
 	return rec
 }
 
 // undelivered turns the record of an ok answer whose end never reached the client into that
 // of a cancelled one, credited for what did reach it.
 func (rl *relay) undelivered(rec *usageRecord) {
+	rl.g.discards.forget(keyHash(rl.req.who), rec.ReqID)
 	rec.Outcome = "cancelled"
 	rl.g.countOutput(rec, rl.mt, &rl.sent, rec.Usage, rl.maxTokens)
 }
@@ -332,9 +336,6 @@ func (rl *relay) commit(rec *usageRecord) {
 	rec.Signals = signalsOf(&rl.mt.genOut, rec.facts.out, rec.facts.reasoning, rec.Usage.DurationMs)
 	g.checkAnswer(rec, req.body, rl.maxTokens) // in enforce mode a failed answer's credit is voided here
 	g.checks.add(rec)
-	if rec.Outcome == "ok" { // it reached the client: its next prompt shows whether it kept it (discard.go)
-		g.discards.answered(keyHash(req.who), rl.mt.prompt, rl.mt.forms, n.id, n.operator, rec.ReqID, rec.Time)
-	}
 	if n.pilot != "" { // into the pilot's record, never the public ledger (pilots.go)
 		g.pilotServed(n, rec)
 	} else if (rec.Outcome == "ok" || rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted) && !rec.SelfServed {

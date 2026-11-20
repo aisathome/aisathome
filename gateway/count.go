@@ -358,15 +358,15 @@ func (m *genOut) chunk(data []byte) {
 					} `json:"function"`
 				} `json:"tool_calls"`
 			} `json:"delta"`
-			FinishReason string `json:"finish_reason"`
+			FinishReason json.RawMessage `json:"finish_reason"` // raw: a wrong type must not hide the chunk's text
 		} `json:"choices"`
 	}
 	if json.Unmarshal(data, &c) != nil {
 		return
 	}
 	for _, ch := range c.Choices {
-		if ch.FinishReason != "" && len(ch.FinishReason) <= 32 {
-			m.finish = ch.FinishReason
+		if f := finishOf(ch.FinishReason); f != "" {
+			m.finish = f
 		}
 	}
 	// The bound counts the text kept, not the chunk: logprobs (top_logprobs 20 is about 1.5 kB
@@ -387,6 +387,20 @@ func (m *genOut) chunk(data []byte) {
 			m.size += len(tc.Function.Name) + len(tc.Function.Arguments)
 		}
 	}
+}
+
+// finishOf is a chunk's finish_reason as the usage log may keep it: one of the values engines
+// send, "other" for any other text (never the node's own words), "" for none.
+func finishOf(raw json.RawMessage) string {
+	var f string
+	if len(raw) == 0 || json.Unmarshal(raw, &f) != nil || f == "" {
+		return ""
+	}
+	switch f {
+	case "stop", "length", "tool_calls", "content_filter", "function_call":
+		return f
+	}
+	return "other"
 }
 
 // output is what the model generated after the prompt (reasoning, the end of thinking, the
