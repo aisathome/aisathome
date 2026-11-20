@@ -110,3 +110,27 @@ func TestSignalsOf(t *testing.T) {
 		t.Fatalf("padding: %+v", s)
 	}
 }
+
+// The usage log keeps only the finish reasons engines send; a node's own words become "other",
+// and a finish_reason of the wrong type neither hides the chunk's text nor reaches the log.
+func TestFinishReason(t *testing.T) {
+	var o genOut
+	o.chunk([]byte(`{"choices":[{"delta":{"content":"abc"},"finish_reason":"my secret is hunter2"}]}`))
+	if o.finish != "other" || o.content.String() != "abc" {
+		t.Fatalf("free text: %q %q", o.finish, o.content.String())
+	}
+	o.chunk([]byte(`{"choices":[{"delta":{"content":"def"},"finish_reason":42}]}`))
+	if o.finish != "other" || o.content.String() != "abcdef" {
+		t.Fatalf("a number hid the text: %q %q", o.finish, o.content.String())
+	}
+	for _, f := range []string{"stop", "length", "tool_calls"} {
+		o.chunk([]byte(`{"choices":[{"delta":{},"finish_reason":"` + f + `"}]}`))
+		if o.finish != f {
+			t.Fatalf("%s: %q", f, o.finish)
+		}
+	}
+	o.chunk([]byte(`{"choices":[{"delta":{},"finish_reason":null}]}`))
+	if o.finish != "tool_calls" {
+		t.Fatalf("null replaced it: %q", o.finish)
+	}
+}

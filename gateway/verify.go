@@ -246,9 +246,10 @@ func (c *nodeChecks) add(rec *usageRecord) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := c.get(rec.Node, rec.Operator, rec.Time)
-	if credited(rec.Outcome) {
-		s.Answers++
+	if !credited(rec.Outcome) { // the rates are of answers that could earn credit, as in node-checks
+		return
 	}
+	s.Answers++
 	if len(rec.Checks) > 0 {
 		s.Failed++
 		for _, r := range rec.Checks {

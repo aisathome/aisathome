@@ -137,12 +137,14 @@ func totalCredit(t *testing.T, r *rig) float64 {
 	}
 	defer resp.Body.Close()
 	var b struct {
-		Total struct {
-			Credit float64 `json:"credit"`
+		Total *struct {
+			Credit *float64 `json:"credit"`
 		} `json:"total"`
 	}
-	json.NewDecoder(resp.Body).Decode(&b)
-	return b.Total.Credit
+	if err := json.NewDecoder(resp.Body).Decode(&b); err != nil || resp.StatusCode != 200 || b.Total == nil || b.Total.Credit == nil {
+		t.Fatalf("GET /v1/stats/credit: HTTP %d, %v, %+v", resp.StatusCode, err, b)
+	}
+	return *b.Total.Credit
 }
 
 func bodyWith(extra map[string]any) string {
