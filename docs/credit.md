@@ -58,6 +58,14 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   kept apart from accounts): today (UTC), total and BOINC's `expavg_credit`
   (`update_average` from `lib/util.cpp`, 7-day half-life; the first grant is spread over the
   time since the account or node was created, at least a day).
+- **Corrections, not rewrites.** Credit granted or withheld by mistake (a counting bug) is
+  corrected with a signed entry: `aisathome-gateway accounts credit-adjust <node> <credit>
+  "<reason>"` writes a request to `credit-corrections.json` in the state dir; the gateway applies
+  it once, within seconds or at its next start, to the node and its owner (account or operator),
+  keeps it in `credit.json` (`corrections`) and lists it in `/v1/stats/credit` (`corrections`:
+  time, credit, reason; never whose) and on the network page. It changes totals, not today's
+  credit or the recent average, and never takes anyone below zero. `accounts credit-adjust`
+  alone lists applied and pending corrections.
 - **Usernames.** An account may set a username on its account page (3–32 letters, digits,
   spaces, `- _ . '`; unique ignoring case; no web addresses). Setting it is the consent to
   appear publicly; without one an account counts in totals only. `aisathome-gateway accounts

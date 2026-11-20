@@ -490,3 +490,33 @@ func TestAccountsModelCheck(t *testing.T) {
 		t.Fatal("an unknown node gave no error")
 	}
 }
+
+// credit-adjust asks for a correction and lists corrections, pending until the gateway applies them.
+func TestAccountsCreditAdjust(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	os.Mkdir(state, 0o700)
+	os.WriteFile(filepath.Join(state, "credit.json"),
+		[]byte(`{"accounts":{"gh:1":{"total":50}},"operators":{},"nodes":{"n-00000001":{"total":50,"account":"gh:1"}}}`), 0o600)
+	cfgFile := filepath.Join(dir, "gateway.json")
+	raw, _ := json.Marshal(gateway.Config{StateDir: state})
+	os.WriteFile(cfgFile, raw, 0o600)
+	run := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		err := runAccounts(append([]string{"-config", cfgFile, "credit-adjust"}, args...), &out, &bytes.Buffer{})
+		return out.String(), err
+	}
+	if out, err := run(); err != nil || !strings.Contains(out, "(none)") {
+		t.Fatalf("empty list: %v\n%s", err, out)
+	}
+	out, err := run("n-00000001", "-20.625", "count bug, fixed in #52")
+	if err != nil || !strings.Contains(out, "n-00000001 -20.625 credit (count bug, fixed in #52)") ||
+		!strings.Contains(out, "pending") {
+		t.Fatalf("request: %v\n%s", err, out)
+	}
+	for _, bad := range [][]string{{"n-00000001", "x", "why"}, {"n-00000001", "-40", "why"}, {"n-00000001", "-1"}} {
+		if _, err := run(bad...); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

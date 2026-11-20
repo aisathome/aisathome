@@ -246,6 +246,11 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **Credit counted by mistake is corrected, visibly.** `accounts credit-adjust <node> <credit>
+  "<reason>"` adds a signed correction the gateway applies once to the node and its owner; the
+  leaderboard (`/v1/stats/credit`, network page) lists each correction with its reason, never
+  whose. Used first for the continued-message count bug below: 1,216.875 credit taken back from
+  the project's own rented nodes. (gateway, site)
 - **An assistant message at the end of a request no longer counts as output.** llama-server
   continues such a message (opencode sends its step-limit notice that way), and llama.cpp b11146
   streams it back at the start of the answer as if generated: the gateway credited the notice's

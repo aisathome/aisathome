@@ -145,6 +145,8 @@ type creditFile struct {
 	Nodes      map[string]*creditEntry `json:"nodes"`     // by node id
 	NextUserID int64                   `json:"next_user_id"`
 	NextHostID int64                   `json:"next_host_id"`
+	// Corrections of credit granted or withheld by mistake, in the order applied (credit_correct.go).
+	Corrections []CreditCorrection `json:"corrections,omitempty"`
 }
 
 // creditLedger is the credit of everyone, saved like the budgets.
@@ -212,7 +214,7 @@ func (l *creditLedger) snapshot() creditFile {
 		return out
 	}
 	return creditFile{Accounts: cp(l.f.Accounts), Operators: cp(l.f.Operators), Nodes: cp(l.f.Nodes),
-		NextUserID: l.f.NextUserID, NextHostID: l.f.NextHostID}
+		NextUserID: l.f.NextUserID, NextHostID: l.f.NextHostID, Corrections: append([]CreditCorrection(nil), l.f.Corrections...)}
 }
 
 // account and node return copies of one entry (nil if none).

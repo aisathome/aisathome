@@ -62,6 +62,14 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
                        from the usage log (needs -config with usage_log): answers, failed
                        checks by rule, credit voided, output tok/s, answers cut at
                        max_tokens, bad tool calls, discarded answers, degenerate texts
+  credit-adjust        the credit corrections: applied (as of the gateway's last save) and
+                       pending (needs -config with state_dir)
+  credit-adjust <node> <credit> "<reason>"
+                       correct a node's credit and its owner's by a signed amount (negative
+                       takes credit back) after a mistake, e.g. a counting bug; applied by the
+                       gateway within seconds, kept in the ledger and listed with its reason on
+                       the public leaderboard; it changes totals, not today's credit or the
+                       recent average
   routing trusted-only | any
                        emergency switch: send every request to trusted nodes only, or back
 
@@ -141,6 +149,12 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			node = a[1]
 		}
 		return printModelCheck(out, st, node, time.Now())
+	}
+	if a := fs.Args(); len(a) > 0 && a[0] == "credit-adjust" {
+		if cfg == nil || cfg.StateDir == "" {
+			return errors.New("credit-adjust needs -config with a state_dir: the gateway keeps its ledger there")
+		}
+		return creditAdjust(out, cfg.StateDir, a[1:], time.Now())
 	}
 	if a := fs.Args(); len(a) > 0 && a[0] == "node-checks" {
 		if cfg == nil || cfg.UsageLog == "" {
@@ -606,4 +620,42 @@ func thousands(n int64) string {
 		s = "-" + s
 	}
 	return s
+}
+
+// creditAdjust lists the credit corrections, or asks for one (node, signed credit, reason).
+func creditAdjust(out io.Writer, stateDir string, a []string, now time.Time) error {
+	switch len(a) {
+	case 0:
+	case 3:
+		credit, err := strconv.ParseFloat(a[1], 64)
+		if err != nil {
+			return fmt.Errorf("credit %q: not a number", a[1])
+		}
+		c, err := gateway.AddCreditCorrection(stateDir, a[0], credit, a[2], now)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "requested %s: %s %+.3f credit (%s); the gateway applies it within seconds\n", c.ID, c.Node, c.Credit, c.Reason)
+	default:
+		return errors.New(`credit-adjust takes no arguments, or <node> <credit> "<reason>"`)
+	}
+	applied, pending, err := gateway.ReadCreditCorrections(stateDir)
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATE\tTIME (UTC)\tNODE\tCREDIT\tREASON")
+	row := func(c gateway.CreditCorrection, state string, at time.Time) {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%+.3f\t%s\n", c.ID, state, at.UTC().Format("2006-01-02 15:04"), c.Node, c.Credit, c.Reason)
+	}
+	for _, c := range applied {
+		row(c, "applied", c.Applied)
+	}
+	for _, c := range pending {
+		row(c, "pending", c.Time)
+	}
+	if len(applied)+len(pending) == 0 {
+		fmt.Fprintln(tw, "(none)")
+	}
+	return tw.Flush()
 }

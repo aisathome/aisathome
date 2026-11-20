@@ -75,8 +75,10 @@ type Gateway struct {
 	discards *discardTracker // answers whose requester may still throw them away (discard.go)
 	checks   nodeChecks      // per node: answers, failed checks and signals since the start (verify.go)
 	credit   *creditLedger
-	statsOut statsCache    // the leaderboard and the BOINC-format exports
-	stop     chan struct{} // closed by Close: ends background work
+	corrMu   sync.Mutex
+	corrSeen map[string]bool // credit corrections logged in this run (credit_correct.go)
+	statsOut statsCache      // the leaderboard and the BOINC-format exports
+	stop     chan struct{}   // closed by Close: ends background work
 	stopOnce sync.Once
 	bg       sync.WaitGroup
 
@@ -236,6 +238,7 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		g.budget.load(time.Now(), log)
 		g.credit.path = filepath.Join(cfg.StateDir, "credit.json")
 		g.credit.load(log)
+		g.applyCreditCorrections()
 		g.hist.path = filepath.Join(cfg.StateDir, "history.json")
 		g.hist.load(log)
 		g.press.path = filepath.Join(cfg.StateDir, pressureFile)
@@ -275,8 +278,9 @@ func (g *Gateway) startBackground() {
 		})
 	}
 	g.every(keysFileCheck, g.checkKeysFile)
-	g.every(taskSweepEvery, g.tasks.sweepAll) // expired leases go back to the queue without a call
-	g.every(pilotSeenEvery, g.sweepPilots)    // pilots past their deadline end; connected ones are seen
+	g.every(keysFileCheck, g.applyCreditCorrections) // the operator's CLI asks for corrections (accounts credit-adjust)
+	g.every(taskSweepEvery, g.tasks.sweepAll)        // expired leases go back to the queue without a call
+	g.every(pilotSeenEvery, g.sweepPilots)           // pilots past their deadline end; connected ones are seen
 	g.every(connectorRequestSweep, g.sweepRequests)
 	if g.cfg.StateDir != "" {
 		g.every(saveEvery, func() {

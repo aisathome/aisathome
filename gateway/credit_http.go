@@ -263,9 +263,10 @@ func (g *Gateway) leaderboard(now time.Time) map[string]any {
 			"recent_average": round1(vol.rac + maint.rac)},
 		"volunteers": map[string]any{"count": vol.people, "nodes": vol.nodes, "credit": round1(vol.credit),
 			"today": round1(vol.today), "recent_average": round1(vol.rac)},
-		"anonymous":  map[string]any{"count": anon.people, "credit": round1(anon.credit), "today": round1(anon.today)},
-		"maintainer": map[string]any{"nodes": maint.nodes, "credit": round1(maint.credit), "today": round1(maint.today)},
-		"top":        rows,
+		"anonymous":   map[string]any{"count": anon.people, "credit": round1(anon.credit), "today": round1(anon.today)},
+		"maintainer":  map[string]any{"nodes": maint.nodes, "credit": round1(maint.credit), "today": round1(maint.today)},
+		"top":         rows,
+		"corrections": publicCorrections(snap.Corrections), // credit taken back or given after a mistake, with why
 	}
 }
 
