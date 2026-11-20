@@ -135,3 +135,29 @@ func TestWithholdAccountPilots(t *testing.T) {
 		}
 	}
 }
+
+// A claim merges an unclaimed account into the claimant: its holds by the answer checks go with it,
+// so the same BOINC user's next pilots (now the claimant's) stay held; an existing hold stands.
+func TestClaimKeepsCheckHolds(t *testing.T) {
+	r := newLinkRig(t, nil)
+	pid, _ := r.create()
+	r.bind(pid, "5")
+	p, _ := r.g.sci.pilot("boinc", pid)
+	cx := p.account
+	at := r.clock()
+	r.g.accounts.HoldNode(NodeHold{Node: pid, Rule: ruleAnswerChecks, Account: cx, At: at})
+	r.g.accounts.HoldAccount(AccountHold{Account: cx, Rule: ruleAnswerChecks, Reason: "2 of its nodes", At: at})
+	r.addAccount("gh:42", StatusActive)
+	if _, err := r.g.accounts.claimLink("gh:42", "boinc", "5", AccountLink{AttachKey: weakKey("5"), Via: LinkClaimed}, r.clock()); err != nil {
+		t.Fatal(err)
+	}
+	if !r.g.accounts.isAccountHeld("gh:42") || r.g.accounts.isAccountHeld(cx) || r.g.accounts.checkHoldsOf("gh:42") != 1 {
+		t.Fatalf("after the claim: holds %+v, node holds %+v", r.g.accounts.accountHolds(), r.g.accounts.nodeHolds())
+	}
+
+	f := AccountsFile{AccountHolds: []AccountHold{{Account: "gh:1", Reason: "own"}, {Account: "cx:a", Reason: "merged"}}}
+	f.moveCheckHolds("cx:a", "gh:1")
+	if len(f.AccountHolds) != 1 || f.AccountHolds[0].Reason != "own" {
+		t.Fatalf("the claimant's own hold should stand: %+v", f.AccountHolds)
+	}
+}

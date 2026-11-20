@@ -48,6 +48,33 @@ func (s *AccountStore) ClearAccountHold(id string) error {
 	})
 }
 
+// moveCheckHolds gives account from's holds by the answer checks to account to (a claim merges an
+// unclaimed account into the claimant: its pilots serve as the claimant's from then on). An account
+// hold the claimant already has stands.
+func (f *AccountsFile) moveCheckHolds(from, to string) {
+	for i := range f.NodeHolds {
+		if f.NodeHolds[i].Account == from {
+			f.NodeHolds[i].Account = to
+		}
+	}
+	held := slices.ContainsFunc(f.AccountHolds, func(h AccountHold) bool { return h.Account == to })
+	f.AccountHolds = slices.DeleteFunc(f.AccountHolds, func(h AccountHold) bool {
+		if h.Account != from {
+			return false
+		}
+		if held {
+			return true
+		}
+		held = true
+		return false
+	})
+	for i := range f.AccountHolds {
+		if f.AccountHolds[i].Account == from {
+			f.AccountHolds[i].Account = to
+		}
+	}
+}
+
 // accountHolds lists the held accounts.
 func (s *AccountStore) accountHolds() []AccountHold {
 	s.mu.Lock()

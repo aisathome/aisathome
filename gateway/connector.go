@@ -475,5 +475,8 @@ func (g *Gateway) handlePilotCredit(w http.ResponseWriter, r *http.Request) {
 	if p.Withheld == "" && g.nodeHeld(p.ID) { // a hold whose withholding write failed
 		p.Withheld = "guard hold"
 	}
+	if p.Withheld == "" && g.accountHeld(p.account) { // an account hold whose withholding write failed
+		p.Withheld = "answer checks: account held"
+	}
 	writeJSON(w, http.StatusOK, p.creditView(g.pilotNow()))
 }
