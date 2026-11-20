@@ -99,7 +99,7 @@ func (a *acctRig) apiUser(t *testing.T, n int) (session, key string) {
 
 func (a *acctRig) acceptTerms(t *testing.T, session string) {
 	t.Helper()
-	resp := a.postForm(t, "/account/operator", "action=accept&accept=1&version="+gateway.OperatorTermsVersion, session)
+	resp := a.postForm(t, "/account/operator", "action=accept&version="+gateway.OperatorTermsVersion, session)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("accept the operator terms: %d", resp.StatusCode)
 	}
@@ -128,61 +128,121 @@ func servedBy(t *testing.T, r *rig, key string, n int) (map[string]int, int, str
 	return got, code, last
 }
 
-// D3: a node whose operator has not accepted the operator terms serves science, never people's
-// requests; accepting on the account page lets it serve chat, withdrawing stops it again. The page shows
-// the approved text.
-func TestChatRulesOperatorTerms(t *testing.T) {
+// D3, owner 2026-11-20: creating a node on the account page, under the line that says so, accepts the
+// operator terms; "Science only on my nodes" withdraws them (science continues) and a new node does not
+// undo that choice; the account's button lets its nodes answer chats again. The page shows the approved
+// text.
+func TestChatRulesNodeCreateAccepts(t *testing.T) {
 	a, _ := rulesRig(t)
-	sA, tokA, idA := a.operator(t, 1)
+	sA, _ := a.signIn(t, 1)
+	_, page := a.get(t, "/account", sA)
+	if !strings.Contains(page, "By creating this node and running it you accept the") || !strings.Contains(page, gateway.OperatorTermsURL) {
+		t.Fatal("the add-a-node form does not say that creating a node accepts the operator terms")
+	}
+	if strings.Contains(page, `name="accept" value="1" checked`) || strings.Contains(page, "terms-banner") {
+		t.Fatal("a pre-ticked box or a banner before any node")
+	}
+	tokA, idA, panel := a.addNode(t, sA, "node1")
+	if tokA == "" {
+		t.Fatalf("no node token: %s", panel)
+	}
+	if !strings.Contains(panel, "Running this node means you accept the") {
+		t.Error("the new token's panel does not repeat the acceptance")
+	}
+	acct := snap(a).Find("gh:1")
+	if acct.OperatorTerms == nil || acct.OperatorTerms.Version != gateway.OperatorTermsVersion || acct.OperatorTerms.Via != gateway.ViaNodeCreated || acct.OperatorTerms.At.IsZero() {
+		t.Fatalf("acceptance at node creation: %+v", acct.OperatorTerms)
+	}
 	_, keyB := a.apiUser(t, 2)
 	termsNode(t, a.gw.URL, idA, tokA)
 	a.waitNodes(t, 1)
-
-	if got, code, body := servedBy(t, a.rig, keyB, 1); len(got) != 0 || code != 503 || !strings.Contains(body, "operator terms") {
-		t.Fatalf("chat on a node without the operator terms: %v %d %s", got, code, body)
+	if got, _, body := servedBy(t, a.rig, keyB, 3); got["from-"+idA] != 3 {
+		t.Fatalf("chat on a node created under the terms: %v %s", got, body)
 	}
-	if got, _, body := servedBy(t, a.rig, rulesSciKey, 1); got["from-"+idA] != 1 {
-		t.Fatalf("science on a node without the operator terms: %v %s", got, body)
-	}
-	_, page := a.get(t, "/account", sA)
-	for _, want := range []string{"science only: accept the operator terms", `name="accept"`, "2026-11-19",
+	_, page = a.get(t, "/account", sA)
+	for _, want := range []string{"answer chats and science (operator terms accepted " + time.Now().UTC().Format("2006-01-02") + ")",
+		"Science only on my nodes", "chat and science", "2026-11-19",
 		html.EscapeString("Users may not put personal data into their chats, and we send your node no account, name, email address or IP address."),
 		html.EscapeString("Not let anyone else run your node's work for you or pass requests on."),
-		html.EscapeString("Your node answers other people's chats only after you have accepted these terms; until then it does science work only."),
 		html.EscapeString(gateway.UserRule)} {
 		if !strings.Contains(page, want) {
-			t.Errorf("account page before accepting lacks %q", want)
+			t.Errorf("account page after creating a node lacks %q", want)
 		}
 	}
 	if strings.Contains(page, "These terms are a draft") {
 		t.Error("the final terms are shown as a draft")
 	}
-	// The tick is required.
-	if resp := a.postForm(t, "/account/operator", "action=accept&version="+gateway.OperatorTermsVersion, sA); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("accepting without the tick: %d", resp.StatusCode)
-	}
 
-	a.acceptTerms(t, sA)
-	if got, _, body := servedBy(t, a.rig, keyB, 3); got["from-"+idA] != 3 {
-		t.Fatalf("chat after accepting: %v %s", got, body)
-	}
-	_, page = a.get(t, "/account", sA)
-	if !strings.Contains(page, "chat and science") || !strings.Contains(page, "Accepted") {
-		t.Errorf("account page after accepting: no chat state")
-	}
-	acct := snap(a).Find("gh:1")
-	if acct.OperatorTerms == nil || acct.OperatorTerms.Version != gateway.OperatorTermsVersion || acct.OperatorTerms.At.IsZero() {
-		t.Fatalf("recorded acceptance: %+v", acct.OperatorTerms)
-	}
-
+	// Opt out: science only, chat stops, science goes on.
 	if resp := a.postForm(t, "/account/operator", "action=withdraw", sA); resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("withdraw: %d", resp.StatusCode)
+		t.Fatalf("science only: %d", resp.StatusCode)
 	}
-	if got, code, _ := servedBy(t, a.rig, keyB, 1); len(got) != 0 || code != 503 {
-		t.Fatalf("chat after withdrawing: %v %d", got, code)
+	if got, code, body := servedBy(t, a.rig, keyB, 1); len(got) != 0 || code != 503 || !strings.Contains(body, "operator terms") {
+		t.Fatalf("chat after science only: %v %d %s", got, code, body)
 	}
 	if got, _, _ := servedBy(t, a.rig, rulesSciKey, 1); got["from-"+idA] != 1 {
-		t.Fatalf("science after withdrawing: %v", got)
+		t.Fatalf("science after science only: %v", got)
+	}
+	_, page = a.get(t, "/account", sA)
+	if !strings.Contains(page, "science only, as you chose") || !strings.Contains(page, "Let my nodes answer chats") || strings.Contains(page, "terms-banner") {
+		t.Error("account page after science only")
+	}
+	// A new node keeps the choice.
+	if tok2, _, panel2 := a.addNode(t, sA, "node2"); tok2 == "" || !strings.Contains(panel2, "Your nodes do science only, as you chose") {
+		t.Fatalf("second node: %q", panel2)
+	}
+	if x := snap(a).Find("gh:1"); x.OperatorTerms != nil {
+		t.Fatalf("a new node undid science only: %+v", x.OperatorTerms)
+	}
+	// Back to chats with the button (no tick; the version of the page it was on).
+	if resp := a.postForm(t, "/account/operator", "action=accept&version=old", sA); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("accepting from a stale page: %d", resp.StatusCode)
+	}
+	a.acceptTerms(t, sA)
+	if got, _, body := servedBy(t, a.rig, keyB, 2); got["from-"+idA] != 2 {
+		t.Fatalf("chat after switching back: %v %s", got, body)
+	}
+}
+
+// Node tokens from before creating a node accepted the operator terms stay science only: the account page
+// shows a banner with one button, and only that button lets them answer chats.
+func TestChatRulesOlderNodesBanner(t *testing.T) {
+	a, _ := rulesRig(t)
+	sA, _ := a.signIn(t, 1)
+	tokA, idA, err := a.store.AddNode("gh:1", "old", time.Now(), nil) // as created before 2026-11-20
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page string
+	waitUntil(t, "the banner", func() bool { // the gateway rereads the accounts file within seconds
+		_, page = a.get(t, "/account", sA)
+		return strings.Contains(page, "terms-banner")
+	})
+	_, keyB := a.apiUser(t, 2)
+	termsNode(t, a.gw.URL, idA, tokA)
+	a.waitNodes(t, 1)
+	if got, code, _ := servedBy(t, a.rig, keyB, 1); len(got) != 0 || code != 503 {
+		t.Fatalf("chat on an older node without the terms: %v %d", got, code)
+	}
+	if got, _, _ := servedBy(t, a.rig, rulesSciKey, 1); got["from-"+idA] != 1 {
+		t.Fatalf("science on an older node: %v", got)
+	}
+	_, page = a.get(t, "/account", sA) // the node row says why, now that it is connected
+	if !strings.Contains(page, "Accept the operator terms to let your nodes answer chats.") || !strings.Contains(page, "science only: accept the operator terms") {
+		t.Fatal("banner text")
+	}
+	if x := snap(a).Find("gh:1"); x.OperatorTerms != nil {
+		t.Fatal("accepted on the account's behalf")
+	}
+	a.acceptTerms(t, sA)
+	if got, _, body := servedBy(t, a.rig, keyB, 2); got["from-"+idA] != 2 {
+		t.Fatalf("chat after the banner's button: %v %s", got, body)
+	}
+	if _, page = a.get(t, "/account", sA); strings.Contains(page, "terms-banner") {
+		t.Error("the banner stays after accepting")
+	}
+	if x := snap(a).Find("gh:1"); x.OperatorTerms == nil || x.OperatorTerms.Via != gateway.ViaAccountPage {
+		t.Fatalf("recorded: %+v", x.OperatorTerms)
 	}
 }
 
@@ -192,9 +252,11 @@ func TestChatRulesDraftTerms(t *testing.T) {
 	gateway.OperatorTermsVersion = "draft-2026-12-01"
 	t.Cleanup(func() { gateway.OperatorTermsVersion = old }) // registered first: runs after the gateway closed
 	a, _ := rulesRig(t)
-	sA, tokA, idA := a.operator(t, 1)
+	sA, tokA, idA := a.operator(t, 1) // creating the node records an acceptance of the draft
 	_, keyB := a.apiUser(t, 2)
-	a.acceptTerms(t, sA)
+	if x := snap(a).Find("gh:1"); x.OperatorTerms == nil || x.OperatorTerms.Version != "draft-2026-12-01" {
+		t.Fatalf("draft acceptance not recorded: %+v", x.OperatorTerms)
+	}
 	termsNode(t, a.gw.URL, idA, tokA)
 	a.waitNodes(t, 1)
 	if got, code, _ := servedBy(t, a.rig, keyB, 1); len(got) != 0 || code != 503 {

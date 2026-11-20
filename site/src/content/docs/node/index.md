@@ -29,7 +29,10 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
   13-14 GB download; building llama.cpp yourself takes about an hour.
 - A **node token**: sign in on [your account page](/account) and choose **Add a node**
   (up to 10 per account; at most 10 of them connected from one internet address). The network
-  takes 25 nodes for now; when it is full, the page says so.
+  takes 25 nodes for now; when it is full, the page says so. Creating the node and running it
+  means you accept the [operator terms (§6)](/about/terms/#6-requests-your-node-answers): then your
+  node answers people's chats as well as science. **Science only on my nodes** on the account page
+  turns chats off for all your nodes.
 
 On Windows (new in v0.5.0), one installer sets up the node as a service with a tray icon, and
 the node's local page walks through the rest: see [Install on Windows](/node/windows/).

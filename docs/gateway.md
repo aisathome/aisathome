@@ -598,17 +598,25 @@ only once its account has accepted the operator terms (GDPR decision D3 of 2026-
 project's key) carries no personal data and is not affected. Trusted nodes and the requester's own
 nodes (not pilots) are outside the rule.
 
-- **Accepting.** On the account page ("Operator terms": the text, section "Requests your node
-  answers" of the operator terms approved on 2026-11-19, and a tick that also confirms 18 or older;
-  withdrawable), or, for a connector's user, through the connector
-  (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below). A config node token counts as
+- **Accepting** (owner, 2026-11-20: on by default, with an opt-out). **Creating a node** on the
+  account page accepts the operator terms (section "Requests your node answers", approved on
+  2026-11-19): the "Add a node" form says "By creating this node and running it you accept the
+  operator terms (§6)" with a link, the new token's panel repeats it, and the creation records
+  `operator_terms` with `via: "node-created"`. There is no pre-ticked box: the action is the
+  acceptance. An account that switched to science only stays so when it adds a node. The account's
+  button accepts too (`via: "account"`): accounts whose nodes came before 2026-11-20 get a banner,
+  "Accept the operator terms to let your nodes answer chats", and their nodes stay science-only until
+  they press it; nothing is accepted on their behalf. For a connector's user, the connector records
+  it (`POST /v1/connectors/{id}/users/{user}/operator-terms`, below; BOINC: the ENROLL consent). A config node token counts as
   accepted if it is trusted or names the version (`"operator_terms": "<version>"`). The version and
   time are recorded in the accounts file (`operator_terms`). Without an acceptance the node serves
   science only.
 - **Versions.** The current version is `2026-11-19`. A new version needs a new acceptance. A version
   starting with `draft-` is accepted by nobody: while one is current, no untrusted node serves
   people's requests.
-- **Withdrawal** is recorded with its time; a connector's record of an acceptance from before it (or
+- **Science only on my nodes** (the account page's switch, when accepted) withdraws the acceptance
+  for all the account's nodes and pilots: they do science only, and chat stops within the call; "Let
+  my nodes answer chats" accepts again. The withdrawal is recorded with its time; a connector's record of an acceptance from before it (or
   from before the account's own acceptance) changes nothing.
 
 When the rule leaves no node free, a request waits for one as any request does and is never sent

@@ -9,6 +9,13 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Creating a node accepts the operator terms.** The "Add a node" form says so, with a link to the
+  terms (§6), and the creation records the acceptance; there is no separate tick. **Science only on my
+  nodes** on the account page withdraws it for all the account's nodes (science goes on), and a new
+  node keeps that choice. Accounts whose nodes came before get a banner with one button; their nodes
+  stay science-only until they press it. BOINC volunteers are unchanged (the connector records their
+  acceptance). (gateway, site)
+
 - **The gateway checks the model of untrusted nodes and pilots (observe-only).** At random times it
   sends secret probe prompts, as ordinary requests, and compares their token probabilities with a
   reference recorded on a trusted card (the method of `aisathome-node modelcheck`). Each node's
