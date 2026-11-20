@@ -127,6 +127,8 @@ type opsData struct {
 	Error       string // a clear that failed
 	ProjectList []string
 	ModelCheck  *opsModelCheck // nil: the model check is off
+	Checks      []opsCheck     // answer checks and signals per node since the start (verify.go)
+	CheckMode   string
 }
 
 // opsModelCheck is the model check card (modelcheck.go).
@@ -143,6 +145,20 @@ type opsMCRow struct {
 	Node, Operator, Model, Result, Checks, WorstKL, Flips, Last, Reasons string
 	Dropped                                                              int
 	Connected, Trusted, Held                                             bool
+}
+
+// opsCheck is one row of the answer checks card.
+type opsCheck struct {
+	Node, Rules, Voided, Length, BadCalls, Discarded, Degenerate string
+	Answers, Failed                                              int
+}
+
+// share is n of all as "n (p%)", or "0".
+func share(n, all int) string {
+	if n == 0 || all <= 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d (%.1f%%)", n, 100*float64(n)/float64(all))
 }
 
 // opsTask is one row of the gateway's task queue.
@@ -361,6 +377,12 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 		d.Holds = append(d.Holds, opsHold{Node: p.Node, Rule: p.Rule, Reason: p.Reason, Since: p.At.UTC().Format("01-02 15:04"),
 			Ago: ago(now.Sub(p.At)), At: p.At.UTC().Format(time.RFC3339Nano), Connected: connected[p.Node], Recorded: recorded[p.Node],
 			Req: p.Req, Evidence: p.CurrentEvidence(now)})
+	}
+	d.CheckMode = g.cfg.Verify.Mode
+	for _, c := range g.checks.snapshot() {
+		d.Checks = append(d.Checks, opsCheck{Node: c.Node, Answers: c.Answers, Failed: c.Failed, Rules: c.rules(),
+			Voided: fmt.Sprintf("%.1f", c.Voided), Length: share(c.Length, c.Answers), BadCalls: share(c.BadCalls, c.ToolCalls),
+			Discarded: share(c.Discarded, c.Answers), Degenerate: share(c.Degenerate, c.Answers)})
 	}
 	g.opsTasks(&d, project, now)
 	d.ModelCheck = g.opsModelCheck(connected, now)
@@ -610,6 +632,12 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <td data-label="Checks">{{.Checks}}</td><td data-label="Largest KL" class="num">{{.WorstKL}}</td><td data-label="Flips" class="num">{{.Flips}}</td>
 <td data-label="Last check">{{.Last}}</td><td data-label="No answer" class="num">{{.Dropped}}</td></tr>{{end}}</table></div>
 {{else}}<p class="mut">No node checked yet.</p>{{end}}</div>{{end}}
+<div class="card" id="checks"><h2>Answer checks</h2>
+<p class="mut small">Since the gateway started, mode <strong data-mode>{{.CheckMode}}</strong>: answers that failed a check (too fast, reasoning past its budget, output past max_tokens; in enforce mode they earn nothing) and the signals that are compared with our own nodes, never a verdict alone. Over days: <code>aisathome-gateway accounts node-checks</code>.</p>
+{{if .Checks}}<div class="table-wrap"><table><tr><th>Node</th><th class="num">Answers</th><th class="num">Failed</th><th>Rules</th><th class="num">Voided</th><th class="num">At max_tokens</th><th class="num">Bad tool calls</th><th class="num">Discarded</th><th class="num">Degenerate</th></tr>
+{{range .Checks}}<tr data-check="{{.Node}}"{{if .Failed}} class="warn"{{end}}><td data-label="Node"><code>{{.Node}}</code></td><td data-label="Answers" class="num">{{.Answers}}</td><td data-label="Failed" class="num" data-failed>{{.Failed}}</td>
+<td data-label="Rules" data-rules>{{.Rules}}</td><td data-label="Voided" class="num">{{.Voided}}</td><td data-label="At max_tokens" class="num">{{.Length}}</td><td data-label="Bad tool calls" class="num">{{.BadCalls}}</td><td data-label="Discarded" class="num">{{.Discarded}}</td><td data-label="Degenerate" class="num">{{.Degenerate}}</td></tr>{{end}}</table></div>
+{{else}}<p class="mut">No answers since the gateway started.</p>{{end}}</div>
 {{if not .Status}}<p class="mut">No status from the runner yet: it posts one every minute (research tools/status_report.py).</p>{{end}}
 {{if gt (len .ProjectList) 1}}<p class="small">Projects: {{range .ProjectList}}<a href="/account/ops?project={{.}}">{{.}}</a> {{end}}</p>{{end}}
 </div>{{end}}

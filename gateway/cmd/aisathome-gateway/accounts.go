@@ -57,6 +57,11 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   model-check [node]   the model check's result per node (pass, suspect, fail, unknown), with each
                        node's latest checks (KL, confident flips, the secret prompts' ids), as of
                        the gateway's last save (every 5 s; needs -config with state_dir)
+  node-checks [days] [node]
+                       answer checks and signals per node over the last days (default 7)
+                       from the usage log (needs -config with usage_log): answers, failed
+                       checks by rule, credit voided, output tok/s, answers cut at
+                       max_tokens, bad tool calls, discarded answers, degenerate texts
   routing trusted-only | any
                        emergency switch: send every request to trusted nodes only, or back
 
@@ -136,6 +141,12 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			node = a[1]
 		}
 		return printModelCheck(out, st, node, time.Now())
+	}
+	if a := fs.Args(); len(a) > 0 && a[0] == "node-checks" {
+		if cfg == nil || cfg.UsageLog == "" {
+			return errors.New("node-checks needs -config with a usage_log")
+		}
+		return nodeChecks(out, cfg.UsageLog, a[1:], time.Now())
 	}
 	if path == "" {
 		if cfg.Accounts == nil || cfg.Accounts.File == "" {

@@ -525,6 +525,7 @@ aisathome-gateway accounts nodes per-account 10   # node tokens per account (max
 aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token
 aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
 aisathome-gateway accounts guard-log [n-1a2b3c4d] # recent stops, holds and flags with what matched (14 days)
+aisathome-gateway accounts node-checks [7] [n-1a2b3c4d] # answer checks and signals per node over the last days
 aisathome-gateway accounts routing trusted-only   # emergency: everything to trusted nodes; "any" to undo
 aisathome-gateway accounts ban gh:12345           # also deletes the account's node tokens
 ```
@@ -538,6 +539,56 @@ forgets the hold. More than 1024 unrecorded holds hold every node until a restar
 
 Beyond `max_nodes` the page says "the network is full for now" (there is no waitlist for
 nodes).
+
+### Answer checks and node signals
+
+The gateway pays per token only for tokens it can show came from the model (node verification,
+owner decision D1 of 2026-11-19). Every answer that can earn credit (`ok`, `cancelled`, `preempted`),
+from any node, trusted or not, and pilots alike, is checked against three rules no honest node
+breaks, all from what the gateway itself counted and timed (`gateway/verify.go`):
+
+| Rule | Fails when | Why no honest node fails it |
+|---|---|---|
+| `speed` | output tokens > `speed_burst` + `speed_rate` × the answer's duration (from sending the request to the node to its end) | Set both from your own nodes' measured speeds per speculative-decoding setting, with a margin for faster cards and speculation (the burst covers short answers the gateway counts in one go). A node that pads without running the model sends thousands of tokens a second. The defaults are deliberately generous; keep the values you deploy private, since an exact ceiling tells a cheater how fast it may pad |
+| `reasoning-budget` | reasoning tokens > the budget + the message forced at it (+ 32 tokens and 2% for counting the text again) | The budget is the request's `thinking_budget_tokens` (or `reasoning_budget_tokens`), else the nodes' default (`node_reasoning_budget`, the installer's 8,192, with its message). llama-server stops thinking there itself |
+| `max-tokens` | output tokens > the request's `max_tokens` (+ 32 tokens and 2%) | llama-server never writes past it. Output past it already earned nothing; now the whole answer is in question |
+
+Without `tokenizer_file` only `speed` runs, on the node's clamped count. A failed answer's usage
+record lists the rules (`checks`), the gateway logs a warning (`answer failed a check`, with node,
+rules, tokens and duration, no content), and the operations page counts it per node. What happens
+next is the switch `verify.mode`:
+
+- `observe` (the default): nothing else; credit is unchanged. Run it on our own nodes first and
+  read `accounts node-checks` before enforcing.
+- `enforce`: the answer's credit is voided: it earns nothing, in the ledger and in a pilot's record,
+  and the record's `voided` says what it would have earned.
+- `off`: no checks.
+
+```json
+"verify": {"mode": "observe", "speed_rate": <tokens per second>, "speed_burst": <tokens>,
+           "node_reasoning_budget": 8192, "node_budget_message": "(Thinking budget reached; answering now.)"}
+```
+
+All keys are optional (the reasoning values shown are the defaults, the installer's;
+`node_reasoning_budget: -1` checks only budgets a request sets). The public wording is "spot-checked".
+
+**Signals** (`gateway/signals.go`, `discard.go`): each usage record also carries `task` (the
+`X-Aisathome-Task` a project's request named, a well-formed task name) and `signals`: `tps` (output tokens per second
+of the gateway's time), `reasoning` (reasoning tokens), `finish` (the node's `finish_reason`; `length`
+is an answer cut at `max_tokens`), `tool_calls` and `bad_calls` (no name, or arguments that are not a
+JSON object), and for generated text of 400 bytes or more `text` (`gz`, compressed over raw size;
+`rep`, the share of repeated word 6-grams; `odd`, the share of unusual characters) and `degenerate`
+(beyond the tails of honest agent text measured on our own prove2me transcripts). A **discarded** answer, one
+whose requester's next prompt starts with the prompt it answered but not with the answer (a retry or
+regenerate), is named in the record of the request that discarded it: `discarded: [{"req_id", "node"}]`. These are numbers only,
+computed in memory; no text is kept. None of them changes credit: they are compared per node with our
+own trusted nodes' rates, and decide what a person, and later the replay sampler, looks at. Honest rates of
+discarded answers and `length` endings are still to be measured on our own nodes.
+
+The operations page (`/account/ops`, card "Answer checks") shows per node since the gateway started:
+answers, failed checks by rule, credit voided, answers at `max_tokens`, bad tool calls, discarded and
+degenerate answers. `accounts node-checks [days] [node]` gives the same from the usage log over days
+(default 7), with credit and output tok/s (median, 99th percentile, max).
 
 ## Chat rules: operator terms
 

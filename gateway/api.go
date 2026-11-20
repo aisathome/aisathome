@@ -389,6 +389,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	g.countPrompt(conv)
 	rt.setPrompt(conv, requestMaxTokens(body, g.cfg.DefaultMaxTokens))
 	rt.who, rt.conv = keyHash(c.userKey), conv.hashes
+	discarded := g.noteDiscards(rt.who, conv.prompt, time.Now()) // answers this prompt throws away (discard.go)
 	// A request that continues a session stays on the model that answered it (session.go).
 	rt.model = g.binds.model(rt.who, conv.prompt, want, time.Now())
 	if c.overWait > 0 { // past the budget, it may only use the requester's own node
@@ -400,7 +401,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	}
 	req := &chatReq{user: c.acct.User, who: c.userKey, charge: c.charge, self: rt.self, want: want,
 		clientStream: clientStream, logprobs: wantsLogprobs(body), body: body, red: red, conv: conv,
-		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project, task: c.task}
+		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project, task: c.task, discarded: discarded}
 	return &chatJob{req: req, rt: rt, reqText: reqText, queueWait: queueWait}, true
 }
 
