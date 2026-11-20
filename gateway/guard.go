@@ -1,6 +1,6 @@
-// Guards on answers from untrusted nodes (decision 0007 addendum). A volunteer can read and
-// change what its node answers; an agent such as opencode may run a tool call without a
-// person reading it. So tool calls from untrusted nodes are held back until complete and
+// Guards on answers from every node but the requester's own (decision 0007 addendum). A
+// volunteer can read and change what its node answers; an agent such as opencode may run a tool
+// call without a person reading it. So tool calls from such nodes are held back until complete and
 // checked before the client sees them: download-and-execute, credential files, encoded
 // commands and uploads of files. A tool call that breaks one of these rules is never released,
 // and the node is held (gets no requests) until the operator looks, unless it only runs an
@@ -649,7 +649,7 @@ const (
 	maxHeldArgs  = 2 << 20
 )
 
-// guard follows one streamed answer of an untrusted node.
+// guard follows one streamed answer of a node that is not the requester's own.
 type guard struct {
 	req        string     // requestText of the request
 	known      knownAddrs // sources known without the request (defaultKnownAddrs)
@@ -658,7 +658,7 @@ type guard struct {
 	flag       guardHit // a flag-only rule a checked tool call broke (ruleUnknownURL)
 	held       int      // bytes of arguments held
 	early      [][]byte // chunks before any content (the role): held, so that an answer made only of
-	// a flagged tool call has sent nothing yet and can be retried on a trusted node
+	// a flagged tool call has sent nothing yet (the client gets a clean 502)
 	begun  bool   // content went out: nothing more is held early
 	finish []byte // the chunk with finish_reason, held until the calls are released
 	meta   map[string]any

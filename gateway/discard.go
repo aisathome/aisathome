@@ -7,7 +7,7 @@
 // a form kept it; any other prompt belongs to another conversation and leaves it open. Each
 // discarded answer is counted on the node that served it and named in the usage record of the
 // request that discarded it ("discarded": [{"req_id", "node"}]), so the log keeps one line per
-// attempt. A signal, compared per node with our trusted nodes' rate; never a verdict. Like the
+// attempt. A signal, compared per node with the maintainer's own nodes' rate; never a verdict. Like the
 // session binds, no text is kept: lengths and hashes only.
 //
 // SPDX-License-Identifier: Apache-2.0

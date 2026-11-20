@@ -48,12 +48,12 @@ func TestUnrecordedHolds(t *testing.T) {
 // warns with its rule and time, not the node. The old fields of /v1/stats stay as they were.
 func TestHeldNodeIsNotOnline(t *testing.T) {
 	s := newStickyRig(t)
-	s.node("a", "op", true, 0)
-	s.node("p", "op", true, 0).paused = true
-	h := s.node("n-heldnode", "vol", false, 0)
+	s.node("a", "op", 0)
+	s.node("p", "op", 0).paused = true
+	h := s.node("n-heldnode", "vol", 0)
 	h.models = []protocol.ModelInfo{{Name: "held-model", Roles: []string{"only-held"}, Slots: 3}}
 	h.inflight = 2
-	h2 := s.node("n-heldtoo", "vol", false, 0)
+	h2 := s.node("n-heldtoo", "vol", 0)
 	h2.paused = true
 
 	at := time.Now()
@@ -105,7 +105,7 @@ func TestHeldNodeIsNotOnline(t *testing.T) {
 // Only held nodes: nothing can answer, and the warning says so.
 func TestOnlyHeldNodesWarnNoNodes(t *testing.T) {
 	s := newStickyRig(t)
-	s.g.holdNode(s.node("h", "vol", false, 0), guardHit{rule: "file-upload"}, "req")
+	s.g.holdNode(s.node("h", "vol", 0), guardHit{rule: "file-upload"}, "req")
 	found := false
 	for _, w := range s.g.healthOf("lab", time.Now()) {
 		found = found || w.Rule == ruleNoNodes
@@ -145,7 +145,7 @@ func TestHistoryLeavesHeldNodesOut(t *testing.T) {
 	g.mu.Lock()
 	g.node["n-heldnode"] = &nodeConn{id: "n-heldnode", held: true, closed: make(chan struct{})}
 	g.mu.Unlock()
-	s.node("a", "op", true, 0)
+	s.node("a", "op", 0)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		d := g.hist.public()

@@ -58,29 +58,31 @@ type Gateway struct {
 	budget   *budgets
 	keys     atomic.Pointer[keyStoreBox]
 	keysMu   sync.Mutex // serialises key store updates (Reload, keys file watcher)
-	keysCfg  Config     // the config the built-in keys came from; guarded by keysMu
-	keysSum  [32]byte   // hash of the keys file last read; guarded by keysMu
-	lim      *limiter
-	shares   []shareEntry    // recent placements, for the share cap; guarded by mu
-	held     sync.Map        // node id → NodeHold: held by a guard, without an accounts file
-	knownSrc knownAddrs      // sources the guards know without the request (guard.go)
-	installs knownAddrs      // official installers: stopped, not held (guard_official.go)
-	glog     guardLog        // recent guard events with their evidence (guard_evidence.go)
-	mc       *modelChecker   // the model check of untrusted nodes (modelcheck.go); nil when off
-	unrec    unrecordedHolds // guard holds the accounts file has not recorded yet
-	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
-	counting chan struct{}   // prompts being counted before routing (countPrompt)
-	pcache   *prefixCache    // what each node served whom lately, for cached prompt tokens
-	binds    *sessionBinds   // which model answered each conversation: a session stays on it (session.go)
-	discards *discardTracker // answers whose requester may still throw them away (discard.go)
-	checks   nodeChecks      // per node: answers, failed checks and signals since the start (verify.go)
-	credit   *creditLedger
-	corrMu   sync.Mutex
-	corrSeen map[string]bool // credit corrections logged in this run (credit_correct.go)
-	statsOut statsCache      // the leaderboard and the BOINC-format exports
-	stop     chan struct{}   // closed by Close: ends background work
-	stopOnce sync.Once
-	bg       sync.WaitGroup
+	// removedWarned: the removed config fields already named in the log (removed.go); guarded by keysMu.
+	removedWarned map[string]bool
+	keysCfg       Config   // the config the built-in keys came from; guarded by keysMu
+	keysSum       [32]byte // hash of the keys file last read; guarded by keysMu
+	lim           *limiter
+	shares        []shareEntry    // recent placements, for the share cap; guarded by mu
+	held          sync.Map        // node id → NodeHold: held by a guard, without an accounts file
+	knownSrc      knownAddrs      // sources the guards know without the request (guard.go)
+	installs      knownAddrs      // official installers: stopped, not held (guard_official.go)
+	glog          guardLog        // recent guard events with their evidence (guard_evidence.go)
+	mc            *modelChecker   // the model check of nodes (modelcheck.go); nil when off
+	unrec         unrecordedHolds // guard holds the accounts file has not recorded yet
+	tok           *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
+	counting      chan struct{}   // prompts being counted before routing (countPrompt)
+	pcache        *prefixCache    // what each node served whom lately, for cached prompt tokens
+	binds         *sessionBinds   // which model answered each conversation: a session stays on it (session.go)
+	discards      *discardTracker // answers whose requester may still throw them away (discard.go)
+	checks        nodeChecks      // per node: answers, failed checks and signals since the start (verify.go)
+	credit        *creditLedger
+	corrMu        sync.Mutex
+	corrSeen      map[string]bool // credit corrections logged in this run (credit_correct.go)
+	statsOut      statsCache      // the leaderboard and the BOINC-format exports
+	stop          chan struct{}   // closed by Close: ends background work
+	stopOnce      sync.Once
+	bg            sync.WaitGroup
 
 	// connCfgs: the config's connectors (connector.go); replaced on reload.
 	connCfgs atomic.Pointer[connectorTable]
@@ -95,6 +97,9 @@ type Gateway struct {
 	pilotRegistered func(pilot string)
 	// sweepMu serialises sweepNodes.
 	sweepMu sync.Mutex
+	// ownOnlyNow: the operator's emergency switch (RoutingOwnOnly) as last read from the accounts file,
+	// which requests that wait for a node check on every try (route.ownOnly).
+	ownOnlyNow atomic.Bool
 	// proxies: Config.TrustedProxies, parsed (clientaddr.go).
 	proxies []netip.Prefix
 	// untrustedXFF: an X-Forwarded-For from a peer not in proxies was logged once (clientaddr.go).

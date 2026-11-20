@@ -20,24 +20,23 @@ func TestRulesFor(t *testing.T) {
 	finalTerms(t)
 	g := newStickyRig(t).g
 	for _, c := range []struct {
-		name    string
-		trusted bool
-		tok     NodeToken
-		terms   bool
+		name  string
+		tok   NodeToken
+		terms bool
 	}{
-		{"config token, nothing", false, NodeToken{}, false},
-		{"trusted counts as accepted", true, NodeToken{}, true},
-		{"accepted by config", false, NodeToken{OperatorTerms: OperatorTermsVersion}, true},
-		{"old terms version", false, NodeToken{OperatorTerms: "old"}, false},
+		{"config token, nothing", NodeToken{}, false},
+		{"a removed trust counts for nothing", NodeToken{LegacyTrust: "trusted"}, false},
+		{"accepted by config", NodeToken{OperatorTerms: OperatorTermsVersion}, true},
+		{"old terms version", NodeToken{OperatorTerms: "old"}, false},
 	} {
-		if r := g.rulesFor(c.trusted, "", c.tok); r.terms != c.terms {
+		if r := g.rulesFor("", c.tok); r.terms != c.terms {
 			t.Errorf("%s: terms %v, want %v", c.name, r.terms, c.terms)
 		}
 	}
 }
 
 // A draft of the operator terms is accepted by nobody: not on the account page, not by config, not by a
-// connector. Only trusted nodes serve people's requests until the final text ships.
+// connector. Only the requester's own nodes serve people's requests until the final text ships.
 func TestDraftTermsNeverCount(t *testing.T) {
 	old := OperatorTermsVersion
 	OperatorTermsVersion = "draft-2026-12-01"
@@ -59,11 +58,8 @@ func TestDraftTermsNeverCount(t *testing.T) {
 		t.Fatalf("connector, draft: applied %v terms %v", applied, terms)
 	}
 	g := newStickyRig(t).g
-	if g.rulesFor(false, "", NodeToken{OperatorTerms: OperatorTermsVersion}).terms {
+	if g.rulesFor("", NodeToken{OperatorTerms: OperatorTermsVersion}).terms {
 		t.Fatal("a config token naming the draft counts")
-	}
-	if !g.rulesFor(true, "", NodeToken{}).terms {
-		t.Fatal("a trusted node needs the terms")
 	}
 }
 
@@ -71,28 +67,28 @@ func TestDraftTermsNeverCount(t *testing.T) {
 func TestChatRulesAllow(t *testing.T) {
 	s := newStickyRig(t)
 	now := time.Now()
-	mk := func(id string, trusted bool, terms bool) *nodeConn {
-		n := s.node(id, "op-"+id, trusted, 0)
+	mk := func(id string, terms bool) *nodeConn {
+		n := s.node(id, "op-"+id, 0)
 		n.rules = nodeRules{terms: terms}
 		return n
 	}
 	nodes := map[string]*nodeConn{
-		"accepted": mk("accepted", false, true),
-		"noterms":  mk("noterms", false, false),
-		"trusted":  mk("trusted", true, true),
-		"own":      mk("own", false, false), // the requester's own node, nothing accepted
+		"accepted": mk("accepted", true),
+		"noterms":  mk("noterms", false),
+		"own":      mk("own", false), // the requester's own node, nothing accepted
 	}
-	order := []string{"accepted", "noterms", "trusted", "own"}
+	order := []string{"accepted", "noterms", "own"}
 	for _, c := range []struct {
 		name    string
 		rt      route
 		allowed []string
 	}{
-		{"chat", route{rules: true, class: ClassChat, self: "op-own"}, []string{"accepted", "trusted", "own"}},
-		{"api", route{rules: true, class: ClassAgent, self: "op-own"}, []string{"accepted", "trusted", "own"}},
-		{"science is not affected", route{rules: true, class: ClassScience}, []string{"accepted", "noterms", "trusted", "own"}},
-		{"rules off", route{class: ClassChat}, []string{"accepted", "noterms", "trusted", "own"}},
-		{"personal data: trusted only, as before", route{rules: true, trusted: true, class: ClassChat}, []string{"trusted"}},
+		{"chat", route{rules: true, class: ClassChat, self: "op-own"}, []string{"accepted", "own"}},
+		{"api", route{rules: true, class: ClassAgent, self: "op-own"}, []string{"accepted", "own"}},
+		{"science is not affected", route{rules: true, class: ClassScience}, []string{"accepted", "noterms", "own"}},
+		{"rules off", route{class: ClassChat}, []string{"accepted", "noterms", "own"}},
+		{"personal data: the requester's own node only", route{rules: true, pii: piiEmail, class: ClassChat, self: "op-own"}, []string{"own"}},
+		{"personal data without an account: none", route{pii: piiEmail, class: ClassChat}, nil},
 	} {
 		s.g.mu.Lock()
 		var got []string
@@ -111,7 +107,7 @@ func TestChatRulesAllow(t *testing.T) {
 // A pilot (a stranger's machine bound to an account) is never "one's own" for the rules either.
 func TestChatRulesPilotNotOwn(t *testing.T) {
 	s := newStickyRig(t)
-	n := s.node("p-000000000001", "op-me", false, 0)
+	n := s.node("p-000000000001", "op-me", 0)
 	n.pilot, n.deadline = "p-000000000001", time.Now().Add(time.Hour)
 	rt := route{rules: true, class: ClassChat, self: "op-me"}
 	s.g.mu.Lock()

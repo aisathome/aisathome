@@ -76,7 +76,7 @@ func (s *stickyRig) next(got chan placed) placed {
 // although they arrived in the opposite order.
 func TestPriorityOrder(t *testing.T) {
 	s := newStickyRig(t)
-	a := s.node("a", "op", true, 0)
+	a := s.node("a", "op", 0)
 	a.inflight = 1 // busy with someone's request
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -103,7 +103,7 @@ func TestPriorityOrder(t *testing.T) {
 // looks before the user request wakes up; a node the user request cannot use stays open to it.
 func TestScienceNeverDelaysWaitingUser(t *testing.T) {
 	s := newStickyRig(t)
-	a := s.node("a", "op", true, 0)
+	a := s.node("a", "op", 0)
 	a.inflight = 1
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -119,7 +119,7 @@ func TestScienceNeverDelaysWaitingUser(t *testing.T) {
 		t.Fatalf("science took %s while a user request waits for it", n.id)
 	}
 	// Another operator's node, which the waiting user request may not use: science may.
-	s.node("b", "other", true, 0)
+	s.node("b", "other", 0)
 	if n, _ := s.g.pick(sci); n == nil || n.id != "b" {
 		t.Fatalf("science on a node no waiting user can use: %v", n)
 	}
@@ -146,8 +146,8 @@ func TestScienceNeverDelaysWaitingUser(t *testing.T) {
 // leave the smaller node idle for it. The larger node still goes to the chat when it frees.
 func TestYieldOnlyNodesTheWaiterWouldTake(t *testing.T) {
 	s := newStickyRig(t)
-	small := s.node("small", "op", true, 81920)
-	big := s.node("big", "op", true, 196608)
+	small := s.node("small", "op", 81920)
+	big := s.node("big", "op", 196608)
 	big.inflight = 1
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -178,7 +178,7 @@ func TestYieldOnlyNodesTheWaiterWouldTake(t *testing.T) {
 func TestProjectShareCap(t *testing.T) {
 	s := newStickyRig(t)
 	for _, id := range []string{"a", "b", "c"} {
-		s.node(id, "op", true, 0)
+		s.node(id, "op", 0)
 	}
 	sci := func() *route { return classRoute(ClassScience, "lab", 0.7) }
 	n1, _ := s.g.pick(sci())
@@ -204,7 +204,7 @@ func TestProjectShareCap(t *testing.T) {
 
 	// One node and a share below 1: the project may still use it when people do not.
 	s1 := newStickyRig(t)
-	s1.node("solo", "op", true, 0)
+	s1.node("solo", "op", 0)
 	if n, _ := s1.g.pick(classRoute(ClassScience, "lab", 0.5)); n == nil {
 		t.Fatal("a capped project never runs on a one-node network")
 	}
@@ -233,7 +233,6 @@ func TestProjectConfigChecked(t *testing.T) {
 		"short key": {ID: "x", KeySHA256: []string{"abc"}},
 		"share":     {ID: "x", KeySHA256: []string{h}, MaxNodeShare: 1.5},
 		"negative":  {ID: "x", KeySHA256: []string{h}, DailyTokens: -1},
-		"trust":     {ID: "x", KeySHA256: []string{h}, MinTrust: "some"},
 	} {
 		if _, err := newProjectTable([]Project{p}); err == nil {
 			t.Errorf("%s: accepted", name)

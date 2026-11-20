@@ -70,8 +70,9 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
                        gateway within seconds, kept in the ledger and listed with its reason on
                        the public leaderboard; it changes totals, not today's credit or the
                        recent average
-  routing trusted-only | any
-                       emergency switch: send every request to trusted nodes only, or back
+  routing own-only | any
+                       emergency switch: send every request only to its sender's own nodes
+                       (no stranger's node serves anything, science neither), or back
 
   chat-on-pilots <id> on | off
                        an account's switch for its connector pilots (BOINC): off = they serve
@@ -314,12 +315,12 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		if err := need(1); err != nil {
 			return err
 		}
-		if a[1] != gateway.RoutingTrustedOnly && a[1] != "any" {
-			return fmt.Errorf("routing is %s or any", gateway.RoutingTrustedOnly)
+		if a[1] != gateway.RoutingOwnOnly && a[1] != "any" {
+			return fmt.Errorf("routing is %s or any", gateway.RoutingOwnOnly)
 		}
 		routing := "" // any
-		if a[1] == gateway.RoutingTrustedOnly {
-			routing = gateway.RoutingTrustedOnly
+		if a[1] == gateway.RoutingOwnOnly {
+			routing = gateway.RoutingOwnOnly
 		}
 		return store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = routing; return nil })
 	case "chat-on-pilots":
@@ -531,8 +532,8 @@ func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 	if f.Settings.NodesClosed {
 		state = "closed"
 	}
-	if f.Settings.Routing != "" {
-		routing = f.Settings.Routing
+	if f.Settings.OwnOnly() { // also "trusted-only", its name before 2026-11-20
+		routing = gateway.RoutingOwnOnly
 	}
 	perAccount := strconv.Itoa(f.Settings.MaxNodesPerAccountOrDefault())
 	if f.Settings.MaxNodesPerAccount == 0 {

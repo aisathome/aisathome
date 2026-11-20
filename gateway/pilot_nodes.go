@@ -14,7 +14,7 @@ import (
 
 // pilotLogin is a pilot's credential resolved for a connection.
 type pilotLogin struct {
-	tok         NodeToken // operator: its account's pseudonym; node id: the pilot id; trust
+	tok         NodeToken // operator: its account's pseudonym; node id: the pilot id
 	account     string
 	pilot       *Pilot
 	conn        *connector
@@ -23,8 +23,8 @@ type pilotLogin struct {
 }
 
 // pilotScienceOnly reports whether a pilot of connector c's user serves science only (connector.go).
-func pilotScienceOnly(c *connector, user string, chatOff, trusted bool) bool {
-	return c.noChat[user] || chatOff || (!c.PilotsChatEnabled && !trusted)
+func pilotScienceOnly(c *connector, user string, chatOff bool) bool {
+	return c.noChat[user] || chatOff || !c.PilotsChatEnabled
 }
 
 // authPilot resolves a pilot credential. A pilot connects only once bound, before its deadline,
@@ -55,12 +55,11 @@ func (g *Gateway) authPilot(cred string) (*pilotLogin, int, string) {
 	if !live {
 		return nil, http.StatusForbidden, "this pilot's account is closed"
 	}
-	// Never trusted, not even for trusted_users: the gateway cannot tell which machine holds a
-	// credential, and one copied in transit must not receive personal data. trusted_users only lets
-	// the maintainer's own pilots serve chat before pilots_chat_enabled.
+	// Never its account's own node (route.own): the gateway cannot tell which machine holds a
+	// credential, and one copied in transit must not receive personal data.
 	tok := NodeToken{Operator: g.pseudonym(p.account), NodeID: p.ID}
 	return &pilotLogin{tok: tok, account: p.account, pilot: p, conn: c, first: first,
-		scienceOnly: pilotScienceOnly(c, p.User, chatOff, c.trusted[p.User])}, 0, ""
+		scienceOnly: pilotScienceOnly(c, p.User, chatOff)}, 0, ""
 }
 
 // pilotReasons are the close reasons a pilot sends (node/pilot) that its record keeps; any other

@@ -749,7 +749,7 @@ func (s *taskStore) list(project string, states, kinds, roles []string, exported
 	return out, counts
 }
 
-// noteNode records that a node of class (trusted, volunteer) served a request of a project's running
+// noteNode records that a node of class (volunteer, pilot) served a request of a project's running
 // task, the task its worker named (nodework.go). In memory only: it reaches the disk with the task's
 // next save (a heartbeat, its end), and a task not loaded or not running is left alone. Information
 // for the public views, never a reason to refuse anything.

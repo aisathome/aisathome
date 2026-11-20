@@ -206,7 +206,7 @@ func TestCreditVolunteerFlow(t *testing.T) {
 	a := newAcctRigNodes(t, 100, nil, func(c *gateway.Config) {
 		c.TokenizerFile = miniTokenizer
 		c.StatsRefresh = time.Nanosecond
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
 	})
 	s1, _ := a.signIn(t, 1)
 	token, nodeID, _ := a.addNode(t, s1, "my 3090")

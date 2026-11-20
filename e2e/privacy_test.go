@@ -1,5 +1,5 @@
 // End-to-end tests for privacy (identity stripping, secret redaction and restoration, no
-// prompts in logs), trust-based routing and per-user limits.
+// prompts in logs), personal-data routing and per-user limits.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e
@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aisathome/aisathome/gateway"
 	"github.com/aisathome/aisathome/protocol"
@@ -171,12 +172,14 @@ func countEngine(t *testing.T, hits *atomic.Int32) *httptest.Server {
 	}))
 }
 
-func trustRig(t *testing.T, homeHits, strangerHits *atomic.Int32) *rig {
+// twoNodeRig has two config-token nodes, the maintainer's ("home") and a volunteer's ("stranger"):
+// both untrusted, as every node is.
+func twoNodeRig(t *testing.T, homeHits, strangerHits *atomic.Int32) *rig {
 	r := newRigCfg(t, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
 		c.NodeTokens["stranger-token"] = gateway.NodeToken{Operator: "volunteer"}
-		c.Keys["chat-key"] = gateway.KeyInfo{User: "chat", MinTrust: "trusted"}
 		c.Keys["own-key"] = gateway.KeyInfo{User: "vol", OnlyOperator: "volunteer"}
+		c.Keys["home-only-key"] = gateway.KeyInfo{User: "owner", OnlyOperator: "owner"}
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -186,32 +189,43 @@ func trustRig(t *testing.T, homeHits, strangerHits *atomic.Int32) *rig {
 	return r
 }
 
-func TestTrustRouting(t *testing.T) {
+// Personal data reaches no node but the requester's own (owner, 2026-11-20): a key without an account
+// has none, so the request is refused at once, with the user rule, whichever nodes are online; the
+// maintainer's config-token node is no exception any more.
+func TestPersonalDataRouting(t *testing.T) {
 	var home, stranger atomic.Int32
-	r := trustRig(t, &home, &stranger)
-	ask := func(key, content string) int {
+	r := twoNodeRig(t, &home, &stranger)
+	ask := func(key, content string) (int, string) {
 		b, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": content}}})
 		resp := r.do(t, "POST", "/v1/chat/completions", key, string(b))
-		io.Copy(io.Discard, resp.Body)
+		out, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return resp.StatusCode
+		return resp.StatusCode, string(out)
 	}
-	for i := 0; i < 6; i++ { // min_trust key: never the stranger
-		if c := ask("chat-key", "hi"); c != 200 {
-			t.Fatalf("chat-key: %d", c)
+	for i := 0; i < 6; i++ { // a plain request may go to either node
+		if c, out := ask("user-key", "hi"); c != 200 {
+			t.Fatalf("plain request: %d %s", c, out)
 		}
 	}
-	if stranger.Load() != 0 {
-		t.Fatalf("a min_trust=trusted request reached an untrusted node (%d)", stranger.Load())
+	if home.Load() == 0 || stranger.Load() == 0 {
+		t.Fatalf("plain requests: home %d stranger %d, want both", home.Load(), stranger.Load())
 	}
 	home.Store(0)
-	for i := 0; i < 6; i++ { // personal data: only trusted nodes, even on a plain key
-		ask("user-key", "my email is ola.nordmann@example.no")
+	stranger.Store(0)
+	for _, content := range []string{"my email is ola.nordmann@example.no", "card 4111 1111 1111 1111", "IBAN NO93 8601 1117 947"} {
+		start := time.Now()
+		c, out := ask("user-key", content)
+		if c != http.StatusBadRequest || !strings.Contains(out, `"code":"personal_data"`) ||
+			!strings.Contains(out, "Personal data isn't allowed in chats on AIs@home: answers are computed on volunteers' machines. Remove it and try again.") {
+			t.Fatalf("%q: %d %s", content, c, out)
+		}
+		if time.Since(start) > 2*time.Second {
+			t.Fatalf("%q: refused only after %v: it waited", content, time.Since(start))
+		}
 	}
-	if stranger.Load() != 0 || home.Load() != 6 {
-		t.Fatalf("PII reached an untrusted node: home %d stranger %d", home.Load(), stranger.Load())
+	if home.Load() != 0 || stranger.Load() != 0 {
+		t.Fatalf("personal data reached a node: home %d stranger %d", home.Load(), stranger.Load())
 	}
-	home.Store(0)
 	for i := 0; i < 4; i++ { // only_operator: only the volunteer's own node
 		ask("own-key", "hi")
 	}
@@ -220,9 +234,45 @@ func TestTrustRouting(t *testing.T) {
 	}
 }
 
+// A config written before trusted nodes were removed (2026-11-20) still starts, from its JSON as the
+// gateway reads it, and its trust fields change nothing: the formerly trusted node gets no personal
+// data, and a key once kept on trusted nodes is served by the volunteer's node too.
+func TestOldTrustConfigStarts(t *testing.T) {
+	var home, stranger atomic.Int32
+	var old gateway.Config
+	if err := json.Unmarshal([]byte(`{"node_tokens": {"home-token": {"operator": "owner", "trust": "trusted"}},
+		"keys": {"chat-key": {"user": "chat", "min_trust": "trusted"}}, "model_check": {"include_trusted": true}}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	r := newRigCfg(t, func(c *gateway.Config) {
+		c.NodeTokens["home-token"] = old.NodeTokens["home-token"]
+		c.NodeTokens["stranger-token"] = gateway.NodeToken{Operator: "volunteer"}
+		c.Keys["chat-key"] = old.Keys["chat-key"]
+		c.ModelCheck = old.ModelCheck
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	r.startNode(ctx, "home", "home-token", countEngine(t, &home), 4)
+	r.startNode(ctx, "stranger", "stranger-token", countEngine(t, &stranger), 4)
+	r.waitNodes(t, 2)
+	for i := 0; i < 6; i++ {
+		if code, out := ask(t, r, "chat-key", chatBody); code != 200 {
+			t.Fatalf("a key with the removed min_trust: %d %s", code, out)
+		}
+	}
+	if stranger.Load() == 0 {
+		t.Fatal("a key with the removed min_trust still stays off the volunteer's node")
+	}
+	before := home.Load() + stranger.Load()
+	pii, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "mail ola.nordmann@example.no"}}})
+	if code, _ := ask(t, r, "chat-key", string(pii)); code != http.StatusBadRequest || home.Load()+stranger.Load() != before {
+		t.Fatalf("personal data: %d; it reached a node: %v", code, home.Load()+stranger.Load() != before)
+	}
+}
+
 // A diff of a new file names git's null hash, eleven zeros that pass the identity number's check.
-// As personal data it waited for a trusted node; on a network of volunteers none comes, and Qwen's
-// reviews of new files stalled (prod, 2026-10-31). Real personal data still waits.
+// As personal data it waited for a trusted node; on a network of volunteers none came, and Qwen's
+// reviews of new files stalled (prod, 2026-10-31). Real personal data is refused.
 func TestNullHashReachesAVolunteerNode(t *testing.T) {
 	r := newRigCfg(t, func(c *gateway.Config) { c.QueueTimeoutSec = 1 }, mockEngine(t, false))
 	ask := func(content string) int {
@@ -236,7 +286,7 @@ func TestNullHashReachesAVolunteerNode(t *testing.T) {
 	if c := ask(diff); c != 200 {
 		t.Fatalf("a diff of a new file: %d", c)
 	}
-	if c := ask(diff + "+-- ola.nordmann@example.no\n"); c != http.StatusServiceUnavailable {
+	if c := ask(diff + "+-- ola.nordmann@example.no\n"); c != http.StatusBadRequest {
 		t.Fatalf("the same diff with an address: %d", c)
 	}
 }

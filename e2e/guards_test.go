@@ -1,5 +1,5 @@
 // Agents on volunteer nodes (decision 0007 addendum, backlog 23): consent per API key,
-// probation, guards on tool calls (also split or malformed ones) and the trusted fallback;
+// probation, guards on tool calls (also split or malformed ones), no retry of a stopped answer;
 // and routing by required context (backlog 17).
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -41,16 +41,24 @@ func (a *acctRig) createKeyAgents(t *testing.T, session string) string {
 }
 
 func TestAgentConsentAndProbation(t *testing.T) {
-	var vol, home atomic.Int32
+	var vol, home, own atomic.Int32
 	a := nodeRig(t, func(c *gateway.AccountsConfig) { c.NodeProbation = "168h" }) // optional; off by default
 	s2, _ := a.signIn(t, 2)
 	token, _, _ := a.addNode(t, s2, "")
+	s1, _ := a.signIn(t, 1)
+	ownToken, _, _ := a.addNode(t, s1, "") // the requester's own node: it serves its agents without consent
+	a.post(t, "/account/nodes/pref", s1, "pref=any")
+	a.store.Update(func(f *gateway.AccountsFile) error { // its own node's probation does not matter
+		old := time.Now().Add(-8 * 24 * time.Hour)
+		f.Find("gh:1").FirstNode = &old
+		return nil
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a.startNode(ctx, "home", "home-token", countEngine(t, &home), 4)
 	a.startTokenNode(ctx, token, countEngine(t, &vol), 4, 32768)
-	a.waitNodes(t, 2)
-	s1, _ := a.signIn(t, 1)
+	a.startTokenNode(ctx, ownToken, countEngine(t, &own), 4, 32768)
+	a.waitNodes(t, 3)
 	_, page := a.createKey(t, s1)
 	plain := keyRe.FindString(page)
 	agents := a.createKeyAgents(t, s1)
@@ -76,7 +84,8 @@ func TestAgentConsentAndProbation(t *testing.T) {
 	vol.Store(0)
 	many(plain, toolsBody, 6) // still no consent
 	pii := strings.Replace(toolsBody, "weather in Oslo?", "mail ola.nordmann@example.no the weather", 1)
-	many(agents, pii, 6)     // personal data: trusted nodes only, consent or not
+	homeBefore := home.Load()
+	many(agents, pii, 6)     // personal data: the requester's own node only, consent or not
 	for i := 0; i < 4; i++ { // the chat (Open WebUI) carries no consent
 		req, _ := http.NewRequest("POST", a.front.URL+"/v1/chat/completions", strings.NewReader(toolsBody))
 		req.Header.Set("Authorization", "Bearer owui-key")
@@ -91,7 +100,12 @@ func TestAgentConsentAndProbation(t *testing.T) {
 	if vol.Load() != 0 {
 		t.Fatalf("%d tool requests without consent, with personal data or from the chat reached the volunteer", vol.Load())
 	}
-	waitFor(t, func() bool { many(plain, chatBody, 3); return vol.Load() > 0 }) // chats without tools do
+	if home.Load() != homeBefore {
+		t.Fatalf("tool requests without consent, with personal data or from the chat reached the maintainer's node")
+	}
+	// Chats without tools do (a key without a node of its own: the account's chat sticks to its own node,
+	// which holds the conversation).
+	waitFor(t, func() bool { many("user-key", chatBody, 3); return vol.Load() > 0 })
 }
 
 // evilEngine answers every request with a tool call that downloads and runs a script.
@@ -179,25 +193,25 @@ func TestGuardStopsDangerousToolCalls(t *testing.T) {
 	if file, _ := os.ReadFile(a.file); strings.Contains(string(file), promptMarker) {
 		t.Fatal("the accounts file holds prompt content")
 	}
-	// A held node gets nothing; a trusted node answers instead.
+	// A held node gets nothing; another node answers instead (guarded too).
 	a.startNode(ctx, "home", "home-token", toolEngine(t), 2)
 	a.waitNodes(t, 2)
 	for i := 0; i < 9; i++ { // enough that the share cap alone would let the volunteer in
 		if code, out := ask(t, a.rig, "agent-key", body(i%2 == 0)); code != 200 || !strings.Contains(out, "get_weather") {
-			t.Fatalf("with a trusted node: %d %s", code, out)
+			t.Fatalf("with another node: %d %s", code, out)
 		}
 	}
 	if evil.Load() != 1 {
 		t.Fatalf("a held node got requests (%d)", evil.Load())
 	}
-	// Cleared by the operator, it serves again; its next flagged answer is retried on the
-	// trusted node, so the client still gets a clean answer.
+	// Cleared by the operator, it serves again; its next flagged answer is stopped again, and not
+	// sent to another node: nothing of it reaches the client.
 	if err := a.store.ClearNode(id); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool {
 		code, out := ask(t, a.rig, "agent-key", body(evil.Load()%2 == 0))
-		if code != 200 || strings.Contains(out, "evil.example") {
+		if strings.Contains(out, "evil.example") || (code != 200 && (code != 502 || !strings.Contains(out, "safety check"))) {
 			t.Fatalf("after clearing: %d %s", code, out)
 		}
 		return evil.Load() > 1
@@ -315,7 +329,7 @@ func TestStandardNodeAloneTakes65k(t *testing.T) {
 	}
 }
 
-// Without consent and with no trusted node online, an agent request fails with a message
+// Without consent and with no own node online, an agent request fails with a message
 // that points at the account page's box (owner, 2026-10-11).
 func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {
 	var vol atomic.Int32
@@ -346,8 +360,7 @@ func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {
 // whether a front end turns ordinary chats into agent requests (Open WebUI did, 2026-10-12).
 func TestUsageLogMarksToolRequests(t *testing.T) {
 	r := newRigCfg(t, func(c *gateway.Config) {
-		c.Keys["agent-key"] = gateway.KeyInfo{User: "agent"}
-		c.NodeTokens["node-token"] = gateway.NodeToken{Operator: "op1", Trust: "trusted"} // may serve agents
+		c.Keys["agent-key"] = gateway.KeyInfo{User: "agent", VolunteerAgents: true} // may use op1's node for agents
 	}, mockEngine(t, false))
 	for _, body := range []string{chatBody, toolsBody} {
 		resp := r.do(t, "POST", "/v1/chat/completions", "agent-key", body)
@@ -493,21 +506,21 @@ func TestGuardPassesHonestToolCalls(t *testing.T) {
 	}
 }
 
-// When a guard stops an answer, the retry on a trusted node keeps the request's restrictions:
-// a key limited to its own operator's nodes (whose secrets are not redacted) never reaches
-// another operator's trusted node.
-func TestGuardFallbackKeepsOperator(t *testing.T) {
+// When a guard stops an answer, the request's restrictions hold: a key limited to its own operator's
+// nodes (whose secrets are not redacted) never reaches another operator's node, the maintainer's
+// config token included.
+func TestGuardStopKeepsOperator(t *testing.T) {
 	var evil, home atomic.Int32
 	var seen atomic.Value
 	seen.Store("")
 	r := newRigCfg(t, func(c *gateway.Config) {
-		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner", Trust: "trusted"}
+		c.NodeTokens["home-token"] = gateway.NodeToken{Operator: "owner"}
 		c.Keys["op1-key"] = gateway.KeyInfo{User: "op1", OnlyOperator: "op1", VolunteerAgents: true}
 		c.QueueTimeoutSec = 2
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r.startNode(ctx, "vol", "node-token", evilEngine(&evil), 2) // operator op1, untrusted
+	r.startNode(ctx, "vol", "node-token", evilEngine(&evil), 2) // operator op1
 	homeEngine := toolEngine(t)
 	r.startNode(ctx, "home", "home-token", httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/health" {
@@ -522,13 +535,13 @@ func TestGuardFallbackKeepsOperator(t *testing.T) {
 		t.Fatalf("the request should first reach op1's node (%d)", evil.Load())
 	}
 	if home.Load() != 0 || code == 200 {
-		t.Fatalf("the fallback reached another operator's node: %d, home %d: %s", code, home.Load(), out)
+		t.Fatalf("the stopped request reached another operator's node: %d, home %d: %s", code, home.Load(), out)
 	}
 }
 
-// The fallback after a stopped answer goes to a trusted node only: it runs without a guard, so
-// another volunteer's node would hand the client what the guard just stopped.
-func TestGuardFallbackIsTrustedOnly(t *testing.T) {
+// A stopped answer is not sent to another node: there is no node it could go to unchecked (there
+// were trusted nodes for that until 2026-11-20), and the client gets the 502 at once.
+func TestGuardStopIsNotRetried(t *testing.T) {
 	var evil atomic.Int32
 	r := newRigCfg(t, func(c *gateway.Config) {
 		c.Keys["vol-key"] = gateway.KeyInfo{User: "dave", VolunteerAgents: true}
@@ -541,7 +554,7 @@ func TestGuardFallbackIsTrustedOnly(t *testing.T) {
 	r.waitNodes(t, 2)
 	code, out := ask(t, r, "vol-key", `{"model":"deep","messages":[{"role":"user","content":"fix my build"}],"tools":[{"type":"function","function":{"name":"bash"}}]}`)
 	if code != 502 || !strings.Contains(out, "safety check") || strings.Contains(out, "evil.example") {
-		t.Fatalf("no trusted node free: %d %s", code, out)
+		t.Fatalf("stopped: %d %s", code, out)
 	}
 	if evil.Load() != 1 {
 		t.Fatalf("%d volunteer nodes saw the request", evil.Load())
@@ -692,7 +705,7 @@ func TestGuardHoldSticksWhenTheFileCannotBeWritten(t *testing.T) {
 	a.waitNodes(t, 2)
 	for i := 0; i < 9; i++ { // enough that the share cap alone would let the volunteer in
 		if code, out := ask(t, a.rig, "agent-key", body(i%2 == 0)); code != 200 || !strings.Contains(out, "get_weather") {
-			t.Fatalf("with a trusted node: %d %s", code, out)
+			t.Fatalf("with another node: %d %s", code, out)
 		}
 	}
 	if evil.Load() != 1 {
@@ -1116,11 +1129,11 @@ func TestGuardEvidence(t *testing.T) {
 		}
 		return nil
 	}
-	// The official installer: stopped (502: no trusted node to answer instead), the volunteer not
-	// held, so it is asked again.
+	// The official installer: stopped (502: no other node answers instead), the volunteer not held,
+	// so it is asked again.
 	waitFor(t, func() bool {
 		if code, out := ask(t, a.rig, "agent-key", body); code != 502 || strings.Contains(out, "sh.rustup.rs") {
-			t.Fatalf("an official installer from an untrusted node: %d %s", code, out)
+			t.Fatalf("an official installer from a volunteer's node: %d %s", code, out)
 		}
 		return hits.Load() >= 2
 	})

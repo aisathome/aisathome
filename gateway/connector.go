@@ -14,20 +14,18 @@
 //	POST /v1/connectors/{id}/requests/{rid}          a request's result
 //
 // Pilots as nodes (decision 0007): a bound pilot is a node of the account its connector user maps to
-// (account_links.go), untrusted, under the same rules as any account node: personal data only to
-// trusted nodes, the share cap per operator, the guards, tools only past the account's probation
-// (or, for a project with pilot_probation_ok, on pilots during it). On top of that a pilot serves
+// (account_links.go), under the same rules as any account node: no personal data, the share cap per
+// operator, the guards, tools only past the account's probation (or, for a project with
+// pilot_probation_ok, on pilots during it). It is never its account's "own" node, not even for
+// personal data: the connector linked it, and the gateway cannot tell which machine holds a pilot
+// credential (one copied in transit must not receive personal data). On top of that a pilot serves
 // science only, not chat, agents or API calls, when:
 //   - its connector user is in no_chat_users (Science United's account: its hosts cannot reach the
 //     switch), or
 //   - its account turned "chat on pilots" off, or
-//   - pilots_chat_enabled is false for its connector (the default) and its user is not in
-//     trusted_users. This keeps the rule that people's prompts reach strangers' machines only after
-//     anti-retention measures and the privacy notice are in place: the operator turns it on then.
-//
-// Pilots of trusted_users are the maintainer's own machines (test hosts): they serve chat before
-// pilots_chat_enabled, but no pilot is ever trusted (a credential copied in transit must not
-// receive personal data).
+//   - pilots_chat_enabled is false for its connector (the default). This keeps the rule that
+//     people's prompts reach strangers' machines only after anti-retention measures and the privacy
+//     notice are in place: the operator turns it on then.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -68,9 +66,8 @@ type Connector struct {
 	PilotsChatEnabled bool `json:"pilots_chat_enabled,omitempty"`
 	// NoChatUsers: its users whose pilots serve science only, whatever else says.
 	NoChatUsers []string `json:"no_chat_users,omitempty"`
-	// TrustedUsers: its users whose pilots are the maintainer's own machines: they serve chat before
-	// PilotsChatEnabled, as untrusted nodes.
-	TrustedUsers []string `json:"trusted_users,omitempty"`
+	// LegacyTrustedUsers is the removed "trusted_users" (removed.go): accepted and ignored.
+	LegacyTrustedUsers []string `json:"trusted_users,omitempty"`
 	// ChatHeadroom: pilots to keep for chat, agents and API calls (demand), counted only while
 	// PilotsChatEnabled.
 	ChatHeadroom int `json:"chat_headroom,omitempty"`
@@ -120,10 +117,9 @@ const (
 // connector is a checked Connector.
 type connector struct {
 	Connector
-	keys    []string // hashes, lower case
-	allow   []netip.Prefix
-	noChat  map[string]bool
-	trusted map[string]bool
+	keys   []string // hashes, lower case
+	allow  []netip.Prefix
+	noChat map[string]bool
 }
 
 func (c *connector) maxCredit() (perPilot, perDay float64) {
@@ -161,7 +157,7 @@ func newConnectorTable(cs []Connector, projects *projectTable) (*connectorTable,
 				return nil, fmt.Errorf("connector %q: credit caps are positive, 0 (default) or -1 (none)", c.ID)
 			}
 		}
-		cc := &connector{Connector: c, noChat: map[string]bool{}, trusted: map[string]bool{}}
+		cc := &connector{Connector: c, noChat: map[string]bool{}}
 		if cc.MintPerHour == 0 {
 			cc.MintPerHour = defaultMintPerHour
 		}
@@ -199,16 +195,11 @@ func newConnectorTable(cs []Connector, projects *projectTable) (*connectorTable,
 			}
 			cc.allow = append(cc.allow, p.Masked())
 		}
-		for _, list := range []struct {
-			users []string
-			set   map[string]bool
-		}{{c.NoChatUsers, cc.noChat}, {c.TrustedUsers, cc.trusted}} {
-			for _, u := range list.users {
-				if !extIDRe.MatchString(u) {
-					return nil, fmt.Errorf("connector %q: user %q: 1-64 letters, digits, '.', '_', ':' or '-'", c.ID, u)
-				}
-				list.set[u] = true
+		for _, u := range c.NoChatUsers {
+			if !extIDRe.MatchString(u) {
+				return nil, fmt.Errorf("connector %q: user %q: 1-64 letters, digits, '.', '_', ':' or '-'", c.ID, u)
 			}
+			cc.noChat[u] = true
 		}
 		if a := c.Accounts; a != nil {
 			if err := a.check(); err != nil {

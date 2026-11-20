@@ -57,7 +57,7 @@ func newAcctRigWith(t *testing.T, maxActive int, mod func(*gateway.AccountsConfi
 	return newAcctRigNodes(t, maxActive, mod, extra, mockEngine(t, false))
 }
 
-// newAcctRigNodes starts one config-token node (operator op1, untrusted) per engine.
+// newAcctRigNodes starts one config-token node (operator op1) per engine.
 func newAcctRigNodes(t *testing.T, maxActive int, mod func(*gateway.AccountsConfig), extra func(*gateway.Config), engines ...*httptest.Server) *acctRig {
 	gh := fakeGitHub(t)
 	t.Cleanup(gh.Close)
@@ -70,7 +70,7 @@ func newAcctRigNodes(t *testing.T, maxActive int, mod func(*gateway.AccountsConf
 	r := newRigCfg(t, func(c *gateway.Config) {
 		c.Accounts = &gateway.AccountsConfig{File: file, PublicURL: "https://site.test", CookieDomain: "site.test",
 			SessionSecret: strings.Repeat("s", 32), GitHubClientID: "gh-id", GitHubClientSecret: "gh-secret",
-			ChatURL: "https://chat.site.test", Limits: gateway.UserLimits{TokensPerDay: 1000}, MinTrust: "any",
+			ChatURL: "https://chat.site.test", Limits: gateway.UserLimits{TokensPerDay: 1000},
 			Admins:        []string{"gh:1"},
 			GitHubAuthURL: gh.URL + "/authorize", GitHubTokenURL: gh.URL + "/token", GitHubUserURL: gh.URL + "/user"}
 		c.Keys["owui-key"] = gateway.KeyInfo{User: "owui", ForwardUsers: true}

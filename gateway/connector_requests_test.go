@@ -346,7 +346,7 @@ func TestWaitlistedCanLink(t *testing.T) {
 		t.Fatalf("the pilot belongs to %q", p.account)
 	}
 	pl, _, why := r.g.authPilot(cred)
-	if pl == nil || pl.account != "gh:7" || pl.tok.Trust == "trusted" {
+	if pl == nil || pl.account != "gh:7" {
 		t.Fatalf("waitlisted account's pilot: %+v %s", pl, why)
 	}
 	if err := r.g.sci.meterPilot(pid, "gh:7", pilotUse{ok: true, credit: 2}, 10, 15, r.clock()); err != nil || r.creditDay("gh:7") != 2 {

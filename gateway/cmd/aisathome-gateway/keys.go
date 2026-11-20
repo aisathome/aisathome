@@ -16,7 +16,7 @@ import (
 
 const keysUsage = `usage: aisathome-gateway keys <command> [flags]
 
-  add <user> [-tokens-per-day N] [-rpm N] [-concurrent N] [-min-trust trusted|any]
+  add <user> [-tokens-per-day N] [-rpm N] [-concurrent N]
         create a key; it is printed once and only its hash is stored
   list  show keys by prefix (never the keys themselves)
   revoke <prefix|key>
@@ -42,7 +42,6 @@ func runKeys(args []string, out, msg io.Writer) error {
 	tpd := fs.Int("tokens-per-day", 2_000_000, "weighted tokens per UTC day (0 = unlimited)")
 	rpm := fs.Int("rpm", 30, "requests per minute (0 = unlimited)")
 	conc := fs.Int("concurrent", 4, "requests in flight (0 = unlimited)")
-	trust := fs.String("min-trust", "trusted", `"trusted": only trusted nodes see this key's requests; "any": all nodes`)
 	pos, err := parseInterspersed(fs, args[1:])
 	if err != nil {
 		return err
@@ -65,13 +64,6 @@ func runKeys(args []string, out, msg io.Writer) error {
 	switch {
 	case cmd == "add" && len(pos) == 1:
 		info := gateway.KeyInfo{User: pos[0], TokensPerDay: *tpd, RPM: *rpm, MaxConcurrent: *conc}
-		switch *trust {
-		case "trusted":
-			info.MinTrust = "trusted"
-		case "any":
-		default:
-			return fmt.Errorf("-min-trust must be trusted or any, not %q", *trust)
-		}
 		// Redaction stays on (it is off only for keys bound to the user's own nodes) and
 		// secrets are not restored into answers; enabling that is a deliberate edit.
 		key, err := kf.Add(info, time.Now())
@@ -85,14 +77,10 @@ func runKeys(args []string, out, msg io.Writer) error {
 		fmt.Fprintln(out, key)
 	case cmd == "list" && len(pos) == 0:
 		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "PREFIX\tUSER\tTOKENS/DAY\tRPM\tCONCURRENT\tTRUST\tCREATED")
+		fmt.Fprintln(tw, "PREFIX\tUSER\tTOKENS/DAY\tRPM\tCONCURRENT\tCREATED")
 		for _, r := range kf.Keys {
-			trust := r.MinTrust
-			if trust == "" {
-				trust = "any"
-			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Prefix, r.User, limit(r.TokensPerDay),
-				limit(r.RPM), limit(r.MaxConcurrent), trust, r.Created.Format("2006-01-02"))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Prefix, r.User, limit(r.TokensPerDay),
+				limit(r.RPM), limit(r.MaxConcurrent), r.Created.Format("2006-01-02"))
 		}
 		return tw.Flush()
 	case cmd == "revoke" && len(pos) == 1:

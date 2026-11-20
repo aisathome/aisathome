@@ -136,7 +136,7 @@ type pressSample struct {
 	QueuePeople  int `json:"queue_people"`  // chat and agent requests waiting for a slot
 	QueueScience int `json:"queue_science"` // science requests waiting for a slot
 	Held         int `json:"held"`          // nodes held by a guard
-	ScienceSlots int `json:"science_slots"` // slots science may use (trust, agents, its share of nodes)
+	ScienceSlots int `json:"science_slots"` // slots science may use (agents, its share of nodes)
 	OpenTasks    int `json:"open_tasks"`    // science tasks queued or running
 	Demand       int `json:"demand"`        // min(open tasks, science slots), per project, capped by the slots of the projects with work
 	Runners      int `json:"runners"`       // science runners that reported in the last runnerFresh
@@ -565,7 +565,7 @@ func (g *Gateway) pressureNow() pressSample {
 			open[i] = g.tasks.openCount(p.ID)
 		}
 	}
-	trustedOnly := g.accounts != nil && g.accounts.Settings().Routing == RoutingTrustedOnly
+	ownOnly := g.accounts != nil && g.accounts.Settings().OwnOnly()
 	s := pressSample{QueuePeople: int(g.queued.Load()), QueueScience: int(g.queuedSc.Load()), Runners: g.press.runnersFresh(time.Now())}
 	now := time.Now()
 	g.mu.Lock()
@@ -598,7 +598,7 @@ func (g *Gateway) pressureNow() pressSample {
 	all, withWork := map[*nodeConn]int{}, map[*nodeConn]int{}
 	capSum, demand := 0, 0
 	for i, p := range projs {
-		rt := &route{tools: true, consent: p.AgentOK, trusted: p.MinTrust == "trusted", trustedOnly: trustedOnly}
+		rt := &route{tools: true, consent: p.AgentOK, pilotProbationOK: p.PilotProbationOK, ownOnlyMode: ownOnly}
 		var sl []int
 		for _, u := range ups {
 			if rt.allows(u.n, now) {

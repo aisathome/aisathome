@@ -199,7 +199,7 @@ type Task struct {
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	StartedAt *time.Time `json:"started_at,omitempty"` // the first claim
-	// NodeClasses: the classes (trusted, volunteer) of the nodes that served the task's model
+	// NodeClasses: the classes (volunteer, pilot; trusted before 2026-11-20) of the nodes that served the task's model
 	// requests, as far as its worker named the task (X-Aisathome-Task, nodework.go).
 	NodeClasses []string `json:"node_classes,omitempty"`
 	// Live: the gateway's own count of the model calls its worker named the task in, this try

@@ -1,6 +1,6 @@
 // Official installers: a download piped into a shell is how rustup, uv, nvm, Deno, Bun, Homebrew
 // and Lean's elan tell people to install them, and a model suggests just that. Such an answer from
-// an untrusted node is still stopped (and retried on a trusted node when nothing went out yet), but
+// a node is still stopped (and not sent to another node: nothing of it reaches the client), but
 // the node is not held: a hold for an official installer cost half the network's capacity for
 // 3.5 hours (2026-11-19).
 //

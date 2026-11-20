@@ -63,7 +63,7 @@ func (s *stickyRig) waitStopped(srs ...*sciRun) *sciRun {
 func TestPreemptLatestScienceOneAtATime(t *testing.T) {
 	s := newStickyRig(t)
 	s.g.cfg.PreemptAfterSec = 1
-	a := s.node("a", "op", true, 0)
+	a := s.node("a", "op", 0)
 	a.models[0].Slots = 3
 	now := time.Now()
 	old := s.runScience(a, now.Add(-time.Hour))
@@ -104,9 +104,9 @@ func TestPreemptLatestScienceOneAtATime(t *testing.T) {
 func TestPreemptOnlyUsableNodes(t *testing.T) {
 	s := newStickyRig(t)
 	s.g.cfg.PreemptAfterSec = 1
-	other := s.node("other", "someone", true, 196608)
-	small := s.node("small", "op", true, 81920)
-	big := s.node("big", "op", true, 196608)
+	other := s.node("other", "someone", 196608)
+	small := s.node("small", "op", 81920)
+	big := s.node("big", "op", 196608)
 	onOther := s.runScience(other, time.Now())
 	onSmall := s.runScience(small, time.Now().Add(-time.Second))
 	onBig := s.runScience(big, time.Now().Add(-time.Hour))

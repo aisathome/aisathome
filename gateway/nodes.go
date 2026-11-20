@@ -1,6 +1,7 @@
 // Self-registered nodes (decision 0007): signed-in accounts create node tokens on the account
-// page, and the gateway routes chats to their nodes as untrusted volunteers. "Trusted" means
-// operated by the maintainer (tokens in the gateway config), not secure.
+// page, and the gateway routes chats to their nodes as untrusted volunteers. Every node is untrusted,
+// config tokens' too (decision 0007, addendum 2026-11-20); only an account's own nodes may get its
+// personal data (routing.go).
 //
 // A node token is "nt-<node id>.<secret>": the gateway assigns the id ("n-<8 hex>"), so a
 // node needs only its token, and the id cannot be chosen or squatted. Only a SHA-256 hash of
@@ -38,8 +39,27 @@ const (
 	maxNodeName               = 40
 )
 
-// RoutingTrustedOnly is the emergency setting: every request goes to trusted nodes only.
-const RoutingTrustedOnly = "trusted-only"
+// RoutingOwnOnly is the emergency setting: every request goes only to its sender's own nodes, so no
+// stranger's node serves anything (science neither: a project has no nodes of its own).
+// routingTrustedOnly is its name before trusted nodes were removed (2026-11-20), still read from an
+// accounts file: it sent every request to trusted nodes only, which with none means the same now.
+const (
+	RoutingOwnOnly     = "own-only"
+	routingTrustedOnly = "trusted-only"
+)
+
+// setOwnOnly records the emergency setting as read now (routeFor, sweepNodes), for requests that wait
+// (route.ownOnly); turned off, they look for a node again.
+func (g *Gateway) setOwnOnly(on bool) {
+	if g.ownOnlyNow.Swap(on) && !on {
+		g.signal()
+	}
+}
+
+// OwnOnly reports whether the emergency setting is on.
+func (s AccountSettings) OwnOnly() bool {
+	return s.Routing == RoutingOwnOnly || s.Routing == routingTrustedOnly
+}
 
 // Node preferences of an account, for its own chat and API requests.
 const (
@@ -564,6 +584,9 @@ func (g *Gateway) recordHolds() {
 func (g *Gateway) sweepNodes() {
 	g.sweepMu.Lock()
 	defer g.sweepMu.Unlock()
+	if g.accounts != nil {
+		g.setOwnOnly(g.accounts.Settings().OwnOnly()) // the emergency switch reaches waiting requests too
+	}
 	g.mu.Lock()
 	conns := make([]*nodeConn, 0, len(g.node))
 	for _, n := range g.node {
@@ -580,17 +603,17 @@ func (g *Gateway) sweepNodes() {
 	for i, n := range conns {
 		st[i].live = true
 		switch {
-		case n.pilot != "": // its account, connector and trust as they are now (connector.go)
+		case n.pilot != "": // its account and connector as they are now (connector.go)
 			var chatOff bool
 			st[i].first, chatOff, st[i].live = g.accounts.pilotAccountState(n.account, n.connector, n.extUser)
 			c := g.connector(n.connector)
 			st[i].live = st[i].live && c != nil
-			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff, c.trusted[n.extUser])
+			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff)
 		case n.account != "":
 			st[i].first, st[i].live = g.accounts.nodeLive(keyHash(n.token))
 		}
 		if n.account != "" { // the chat rules: the account may have accepted or withdrawn (chatrules.go)
-			st[i].rules = g.rulesFor(n.trusted, n.account, NodeToken{})
+			st[i].rules = g.rulesFor(n.account, NodeToken{})
 		}
 	}
 	var drop []*nodeConn
@@ -627,7 +650,7 @@ func (g *Gateway) sweepNodes() {
 	}
 }
 
-// The share cap: no untrusted operator gets more than 1/maxShare of the conversations placed
+// The share cap: no operator gets more than 1/maxShare of the conversations placed
 // in the last shareWindow while other nodes are free (a soft cap: when only its nodes are
 // free, they serve rather than let the request wait). It limits how many people's
 // conversations one bad volunteer sees. A conversation counts once per window, not once per
@@ -674,21 +697,15 @@ func (g *Gateway) overShareLocked(now time.Time, conv uint64) (over, seen func(o
 
 // routeFor builds the placement policy of a chat request.
 func (g *Gateway) routeFor(want string, body map[string]any, acct KeyInfo, reqAcct string, consent bool) *route {
-	rt := &route{want: want, trusted: acct.MinTrust == "trusted", operator: acct.OnlyOperator, consent: consent,
-		exclude: map[*nodeConn]bool{}}
+	rt := &route{want: want, operator: acct.OnlyOperator, consent: consent, exclude: map[*nodeConn]bool{}}
 	if hasTools(body) {
 		rt.tools = true
 	}
-	if kind := piiKind(body); kind != "" {
-		if !rt.trusted {
-			rt.pii = kind
-			rt.why = "requests that look like they contain personal data go only to trusted nodes"
-		}
-		rt.trusted = true
-	}
+	rt.pii = piiKind(body) // personal data: only the requester's own nodes, or refused (routing.go)
 	rt.rules = g.chatRulesOn()
 	if g.accounts != nil {
-		rt.trustedOnly = g.accounts.Settings().Routing == RoutingTrustedOnly
+		g.setOwnOnly(g.accounts.Settings().OwnOnly())
+		rt.ownOnlyNow = &g.ownOnlyNow
 		if reqAcct != "" {
 			rt.self, rt.acct = g.pseudonym(reqAcct), reqAcct
 			switch g.accounts.nodePref(reqAcct) {

@@ -123,7 +123,7 @@ func TestPilotEndToEnd(t *testing.T) {
 		t.Fatalf("chat with pilots_chat_enabled off: %d %s", code, body)
 	}
 	pii := `{"model":"deep","messages":[{"role":"user","content":"mail me at someone@example.org"}]}`
-	if code, _ := ask(t, a.rig, "user-key", pii); code != 503 {
+	if code, _ := ask(t, a.rig, "user-key", pii); code != http.StatusBadRequest {
 		t.Fatalf("personal data reached a pilot: %d", code)
 	}
 	p := a.pilotRecord(t, id)
@@ -170,7 +170,7 @@ func TestPilotEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntil(t, "chat to reach the pilot", func() bool { code, _ := ask(t, a.rig, "user-key", deepBody); return code == 200 })
-	if code, _ := ask(t, a.rig, "user-key", pii); code != 503 {
+	if code, _ := ask(t, a.rig, "user-key", pii); code != http.StatusBadRequest {
 		t.Fatalf("personal data reached a chat pilot: %d", code)
 	}
 	acct := ""

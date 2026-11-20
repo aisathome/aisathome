@@ -45,7 +45,7 @@ func (r *pilotRig) advance(d time.Duration) {
 func testConnectors() []Connector {
 	return []Connector{
 		{ID: "boinc", KeySHA256: []string{keyHash(testConnectorKey)}, MaxPilots: 4, MintPerHour: 6,
-			NoChatUsers: []string{"900"}, TrustedUsers: []string{"1"}, MaxCreditPerPilot: 10, MaxCreditPerAccountDay: 15},
+			NoChatUsers: []string{"900"}, LegacyTrustedUsers: []string{"1"}, MaxCreditPerPilot: 10, MaxCreditPerAccountDay: 15},
 		{ID: "other", KeySHA256: []string{keyHash(otherConnectorKey)}, MaxPilots: 1, AllowFrom: []string{"203.0.113.0/24"}},
 	}
 }
@@ -349,7 +349,7 @@ func (r *pilotRig) pilotNode(cred string, slots int) *nodeConn {
 	if pl == nil {
 		r.t.Fatalf("authPilot: %d %s", status, why)
 	}
-	n := &nodeConn{id: pl.pilot.ID, operator: pl.tok.Operator, token: cred, trusted: pl.tok.Trust == "trusted", account: pl.account,
+	n := &nodeConn{id: pl.pilot.ID, operator: pl.tok.Operator, token: cred, account: pl.account,
 		probEnd: pl.first.Add(r.g.acfg.probation), pilot: pl.pilot.ID, connector: pl.conn.ID, extUser: pl.pilot.User,
 		deadline: pl.pilot.Deadline, scienceOnly: pl.scienceOnly, closed: make(chan struct{}),
 		models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: slots}}}
@@ -368,7 +368,7 @@ func TestPilotCredentialRules(t *testing.T) {
 		t.Errorf("before the bind: %d %s", status, why)
 	}
 	r.bind(id, "5")
-	if pl, _, _ := r.g.authPilot(cred); pl == nil || pl.tok.NodeID != id || pl.tok.Trust != "" {
+	if pl, _, _ := r.g.authPilot(cred); pl == nil || pl.tok.NodeID != id {
 		t.Fatalf("after the bind: %+v", pl)
 	}
 	for _, bad := range []string{"", "pc-", cred[:len(cred)-1] + "x", strings.Replace(cred, "pc-", "nt-", 1), "pc-000000000000." + strings.Repeat("a", 43)} {
@@ -412,25 +412,25 @@ func TestPilotCredentialRules(t *testing.T) {
 	if pl, _, _ := r.g.authPilot(cred2); pl != nil {
 		t.Error("an ended pilot's credential accepted")
 	}
-	// A trusted_users user's pilot serves chat before pilots_chat_enabled, but is never trusted: a copy
-	// of its credential must not receive personal data.
+	// A user once in the removed trusted_users (still in the rig's config, ignored) gets nothing more:
+	// science only before pilots_chat_enabled, and never personal data.
 	id3, cred3 := r.create()
 	r.bind(id3, "1")
 	pl, _, _ := r.g.authPilot(cred3)
-	if pl == nil || pl.tok.Trust != "" || pl.scienceOnly {
-		t.Fatalf("trusted user's pilot: %+v", pl)
+	if pl == nil || !pl.scienceOnly {
+		t.Fatalf("former trusted user's pilot: %+v", pl)
 	}
 	n := r.pilotNode(cred3, 1)
-	if (&route{class: ClassChat, trusted: true, pii: "email"}).allows(n, r.clock()) {
-		t.Error("personal data reached a trusted user's pilot")
+	if (&route{class: ClassChat, pii: piiEmail}).allows(n, r.clock()) {
+		t.Error("personal data reached a former trusted user's pilot")
 	}
-	if !(&route{class: ClassChat}).allows(n, r.clock()) {
-		t.Error("a trusted user's pilot does not serve chat")
+	if (&route{class: ClassChat}).allows(n, r.clock()) {
+		t.Error("a former trusted user's pilot serves chat before pilots_chat_enabled")
 	}
 }
 
 // What a pilot may serve: science always; chat and agents only with chat enabled for its connector,
-// its account's switch on, and its user not in no_chat_users; personal data never (untrusted); tools
+// its account's switch on, and its user not in no_chat_users; personal data never; tools
 // past probation or for a project with pilot_probation_ok.
 func TestPilotRouting(t *testing.T) {
 	now := time.Now()
@@ -441,7 +441,7 @@ func TestPilotRouting(t *testing.T) {
 	agent := &route{class: ClassAgent, tools: true, consent: true}
 	sciTools := &route{class: ClassScience, tools: true, consent: true, project: "lab"}
 	sciToolsOK := &route{class: ClassScience, tools: true, consent: true, project: "lab", pilotProbationOK: true}
-	pii := &route{class: ClassChat, trusted: true, pii: "email"}
+	pii := &route{class: ClassChat, pii: piiEmail}
 	check := func(what string, rt *route, want bool) {
 		t.Helper()
 		if got := rt.allows(pilot, now); got != want {
@@ -467,7 +467,7 @@ func TestPilotRouting(t *testing.T) {
 	check("pilot past probation, agent with consent", agent, true)
 	check("pilot past probation, agent without consent", &route{class: ClassAgent, tools: true}, false)
 	// The own-node exemption is not for pilots: the connector made the link, not the person.
-	own := &route{class: ClassChat, trusted: true, pii: "email", self: pilot.operator}
+	own := &route{class: ClassChat, pii: piiEmail, self: pilot.operator}
 	check("own-account pilot, personal data", own, false)
 	check("own-account pilot, only my own nodes", &route{class: ClassChat, self: pilot.operator, onlySelf: true}, false)
 	ownNode := &nodeConn{id: "n-00000002", operator: pilot.operator, account: "cx:1", probEnd: now}
@@ -481,23 +481,21 @@ func TestPilotRouting(t *testing.T) {
 	check("pilot without a deadline, science", sci, false)
 	pilot.deadline = now.Add(time.Hour)
 
-	// The switches: no_chat_users wins over all; the account's switch; pilots_chat_enabled unless trusted.
-	c := &connector{Connector: Connector{PilotsChatEnabled: true}, noChat: map[string]bool{"900": true}, trusted: map[string]bool{}}
+	// The switches: no_chat_users wins over all; the account's switch; pilots_chat_enabled.
+	c := &connector{Connector: Connector{PilotsChatEnabled: true}, noChat: map[string]bool{"900": true}}
 	for _, tc := range []struct {
-		user             string
-		chatOff, trusted bool
-		enabled, want    bool
+		user          string
+		chatOff       bool
+		enabled, want bool
 	}{
-		{"5", false, false, true, false},
-		{"5", true, false, true, true},
-		{"900", false, false, true, true},
-		{"900", false, true, true, true},
-		{"5", false, false, false, true},
-		{"5", false, true, false, false},
-		{"5", true, true, false, true},
+		{"5", false, true, false},
+		{"5", true, true, true},
+		{"900", false, true, true},
+		{"5", false, false, true},
+		{"5", true, false, true},
 	} {
 		c.PilotsChatEnabled = tc.enabled
-		if got := pilotScienceOnly(c, tc.user, tc.chatOff, tc.trusted); got != tc.want {
+		if got := pilotScienceOnly(c, tc.user, tc.chatOff); got != tc.want {
 			t.Errorf("%+v: science only %v", tc, got)
 		}
 	}
@@ -676,7 +674,7 @@ func TestPilotRecordAcrossRestarts(t *testing.T) {
 func TestPilotDemand(t *testing.T) {
 	r := newPilotRig(t, func(c *Config) {
 		c.Connectors[0].MaxPilots, c.Connectors[0].MintPerHour, c.Connectors[0].UnsentBuffer = 6, 10, 3
-		c.NodeTokens = map[string]NodeToken{"home-token": {Operator: "owner", Trust: "trusted"}}
+		c.NodeTokens = map[string]NodeToken{"home-token": {Operator: "owner"}}
 	})
 	demand := func() map[string]any { return r.want(200, "GET", "/v1/connectors/boinc/demand", testConnectorKey, nil) }
 	num := func(m map[string]any, k string) int { return int(m[k].(float64)) }
@@ -710,9 +708,9 @@ func TestPilotDemand(t *testing.T) {
 	if num(sci, "open_tasks") != 9 || num(sci, "runner_workers") != 5 || num(sci, "sessions") != 5 || num(sci, "pilots") != 3 {
 		t.Fatalf("science: %v", sci)
 	}
-	// One trusted node with one slot online: 5 sessions - 2 = 3 → 2 pilots; buffer 3, none unsent.
+	// One node with one slot online: 5 sessions - 2 = 3 → 2 pilots; buffer 3, none unsent.
 	r.g.mu.Lock()
-	r.g.node["home"] = &nodeConn{id: "home", token: "home-token", operator: "owner", trusted: true, models: []protocol.ModelInfo{{Name: "m", Slots: 1}}}
+	r.g.node["home"] = &nodeConn{id: "home", token: "home-token", operator: "owner", models: []protocol.ModelInfo{{Name: "m", Slots: 1}}}
 	r.g.mu.Unlock()
 	d = demand()
 	if num(d, "target") != 2 || num(d, "pilots_wanted") != 2 || num(d["science"].(map[string]any), "slots_online") != 1 {
@@ -761,10 +759,13 @@ func TestPilotDemand(t *testing.T) {
 	if d = demand(); num(d["science"].(map[string]any), "slots_online") != 1 {
 		t.Fatalf("own pilot counted as a slot: %v", d)
 	}
-	// In trusted-only mode no pilot can serve (pilots are never trusted): none are wanted for science.
-	r.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = RoutingTrustedOnly; return nil })
-	if d = demand(); num(d["science"].(map[string]any), "pilots") != 0 {
-		t.Fatalf("science pilots wanted in trusted-only mode: %v", d)
+	// In own-only mode no pilot can serve (a pilot is nobody's own node): none are wanted for science.
+	// "trusted-only", the switch's name before 2026-11-20, still in an accounts file, is the same.
+	for _, mode := range []string{RoutingOwnOnly, routingTrustedOnly} {
+		r.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = mode; return nil })
+		if d = demand(); num(d["science"].(map[string]any), "pilots") != 0 || num(d["science"].(map[string]any), "slots_online") != 0 {
+			t.Fatalf("science pilots wanted in %s mode: %v", mode, d)
+		}
 	}
 }
 

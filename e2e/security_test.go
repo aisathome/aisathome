@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -113,11 +115,9 @@ func readAnswer(t *testing.T, resp *http.Response, stream bool) (text, args stri
 
 // HIGH 1: a node must not be able to make the gateway put a secret into a URL.
 func TestNoSecretRestoreIntoLinks(t *testing.T) {
-	// A trusted node: on an untrusted one the guards stop this answer before restoring matters
-	// (TestGuardStopsDangerousToolCalls); the restore policy must hold on every node.
-	r := newRigCfg(t, func(c *gateway.Config) {
-		c.NodeTokens["node-token"] = gateway.NodeToken{Operator: "op1", Trust: "trusted"}
-	}, exfilEngine(t))
+	// The guards stop the tool call (TestGuardStopsDangerousToolCalls) but not the text before it,
+	// which is streamed with the restore policy applied; the policy must hold on every node.
+	r := newRigCfg(t, nil, exfilEngine(t))
 	for _, stream := range []bool{true, false} {
 		body, _ := json.Marshal(map[string]any{"model": "deep", "stream": stream,
 			"messages": []any{map[string]any{"role": "user", "content": "my key is " + secret}}})
@@ -208,27 +208,27 @@ func TestUsageIsClamped(t *testing.T) {
 // MEDIUM 5: another token cannot take over a connected node's id.
 func TestNodeIDTakeover(t *testing.T) {
 	var home, stranger atomicCounter
-	r := trustRig(t, &home.n, &stranger.n)
+	r := twoNodeRig(t, &home.n, &stranger.n)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r.startNodeCfg(ctx, node.Config{NodeID: "home", Token: "stranger-token", Upstream: mockEngine(t, false).URL,
 		Models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2}}})
 	time.Sleep(500 * time.Millisecond)
-	// still exactly the two original nodes, and the trusted one serves trusted traffic
+	// still exactly the two original nodes, and the home node still serves its operator's key
 	r.waitNodes(t, 2)
-	resp := r.do(t, "POST", "/v1/chat/completions", "chat-key", chatBody)
+	resp := r.do(t, "POST", "/v1/chat/completions", "home-only-key", chatBody)
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("trusted node lost after takeover attempt: %d", resp.StatusCode)
+	if resp.StatusCode != 200 || home.n.Load() != 1 {
+		t.Fatalf("home node lost after takeover attempt: %d (home served %d)", resp.StatusCode, home.n.Load())
 	}
 }
 
 // MEDIUM 4: secrets in earlier reasoning and tool definitions are redacted too, and personal
-// data in tool arguments keeps the request on trusted nodes.
+// data in tool arguments keeps the request off every node.
 func TestRedactionCoversAllFields(t *testing.T) {
 	var home, stranger atomicCounter
-	r := trustRig(t, &home.n, &stranger.n)
+	r := twoNodeRig(t, &home.n, &stranger.n)
 	body, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{
 		map[string]any{"role": "assistant", "content": "", "reasoning_content": "the key " + secret,
 			"tool_calls": []any{map[string]any{"id": "c1", "type": "function",
@@ -241,9 +241,47 @@ func TestRedactionCoversAllFields(t *testing.T) {
 		resp := r.do(t, "POST", "/v1/chat/completions", "user-key", string(body))
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("personal data in tool arguments: %d", resp.StatusCode)
+		}
 	}
-	if stranger.n.Load() != 0 {
-		t.Fatalf("personal data in tool arguments reached an untrusted node")
+	if stranger.n.Load() != 0 || home.n.Load() != 0 {
+		t.Fatalf("personal data in tool arguments reached a node")
+	}
+	// Without the address the same request reaches a node, and the secrets in the earlier reasoning
+	// and the tool definition do not.
+	var mu sync.Mutex
+	var seen []string
+	inner := mockEngine(t, false)
+	capture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if health(w, req) {
+			return
+		}
+		b, _ := io.ReadAll(req.Body)
+		mu.Lock()
+		seen = append(seen, string(b))
+		mu.Unlock()
+		resp, err := http.Post(inner.URL+req.URL.Path, "application/json", bytes.NewReader(b))
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(capture.Close)
+	r2 := newRig(t, capture)
+	plain := strings.Replace(string(body), "ola.nordmann@example.no", "Ola", 1)
+	resp := r2.do(t, "POST", "/v1/chat/completions", "agent-key", plain) // tools: a key with consent
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if resp.StatusCode != 200 || len(seen) != 1 {
+		t.Fatalf("without the address: %d, %d requests reached the node", resp.StatusCode, len(seen))
+	}
+	if strings.Contains(seen[0], secret) || !strings.Contains(seen[0], "reasoning_content") || !strings.Contains(seen[0], "description") {
+		t.Fatalf("the node got a secret, or not the fields: %s", seen[0])
 	}
 }
 

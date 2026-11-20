@@ -30,8 +30,8 @@ func newStickyRig(t *testing.T) *stickyRig {
 	return &stickyRig{t, g}
 }
 
-func (s *stickyRig) node(id, operator string, trusted bool, ctx int) *nodeConn {
-	n := &nodeConn{id: id, operator: operator, trusted: trusted, pending: map[string]*pendingReq{},
+func (s *stickyRig) node(id, operator string, ctx int) *nodeConn {
+	n := &nodeConn{id: id, operator: operator, pending: map[string]*pendingReq{},
 		closed: make(chan struct{}), models: []protocol.ModelInfo{{Name: "m", Roles: []string{"deep"}, Slots: 1, Ctx: ctx}}}
 	s.g.mu.Lock()
 	s.g.node[id] = n
@@ -72,8 +72,8 @@ func (s *stickyRig) serve(rt *route, prompt string) string {
 // requester's other conversation and another requester's copy of it do not follow it there.
 func TestPickSticky(t *testing.T) {
 	s := newStickyRig(t)
-	s.node("a", "op", true, 0)
-	s.node("b", "op", true, 0)
+	s.node("a", "op", 0)
+	s.node("b", "op", 0)
 	first := s.serve(s.route("alice", turn("proofs", 0)), turn("proofs", 0))
 	for k := 1; k <= 5; k++ {
 		if got := s.serve(s.route("alice", turn("proofs", k)), turn("proofs", k)); got != first {
@@ -103,8 +103,8 @@ func TestPickSticky(t *testing.T) {
 // once instead of waiting; afterwards the conversation follows its longest copy.
 func TestPickStickyBusyGoesElsewhere(t *testing.T) {
 	s := newStickyRig(t)
-	s.node("a", "op", true, 0)
-	s.node("b", "op", true, 0)
+	s.node("a", "op", 0)
+	s.node("b", "op", 0)
 	home := s.serve(s.route("alice", turn("p", 1)), turn("p", 1))
 	busy := s.g.node[home]
 	busy.inflight = 1 // its one slot is taken
@@ -122,7 +122,7 @@ func TestPickStickyBusyGoesElsewhere(t *testing.T) {
 // Short prompts (under stickyMin) are not sticky at all.
 func TestPickStickyLongestAndShort(t *testing.T) {
 	s := newStickyRig(t)
-	a, b := s.node("a", "op", true, 0), s.node("b", "op", true, 0)
+	a, b := s.node("a", "op", 0), s.node("b", "op", 0)
 	now := time.Now()
 	s.g.pcache.served("a", "alice", turn("p", 3), "", now, true)
 	s.g.pcache.served("b", "alice", turn("p", 1), "", now.Add(time.Second), true)
@@ -153,8 +153,8 @@ func TestPickStickyPolicyFirst(t *testing.T) {
 		name string
 		set  func(s *stickyRig, rt *route, holder *nodeConn)
 	}{
-		{"trusted-only switch", func(s *stickyRig, rt *route, h *nodeConn) { rt.trustedOnly = true }},
-		{"trusted (personal data)", func(s *stickyRig, rt *route, h *nodeConn) { rt.trusted = true }},
+		{"own-only switch", func(s *stickyRig, rt *route, h *nodeConn) { rt.ownOnlyMode = true }},
+		{"personal data", func(s *stickyRig, rt *route, h *nodeConn) { rt.pii = piiEmail }},
 		{"own nodes only", func(s *stickyRig, rt *route, h *nodeConn) { rt.onlySelf = true }},
 		{"prefers own nodes", func(s *stickyRig, rt *route, h *nodeConn) { rt.preferSelf = true }},
 		{"only operator", func(s *stickyRig, rt *route, h *nodeConn) { rt.operator = "me" }},
@@ -167,9 +167,9 @@ func TestPickStickyPolicyFirst(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := newStickyRig(t)
-			vol := s.node("vol", "volunteer", false, 16384) // holds the conversation
-			own := s.node("own", "me", true, 32768)         // the requester's own node, trusted, free
-			for i := 0; i < 6; i++ {                        // others served lately: vol is under its share
+			vol := s.node("vol", "volunteer", 16384) // holds the conversation
+			own := s.node("own", "me", 32768)        // the requester's own node, free
+			for i := 0; i < 6; i++ {                 // others served lately: vol is under its share
 				s.g.shares = append(s.g.shares, shareEntry{time.Now(), "someone", 0})
 			}
 			s.g.pcache.served("vol", "alice", prompt, "", time.Now(), true)
@@ -192,8 +192,8 @@ func TestPickStickyPolicyFirst(t *testing.T) {
 // conversation only when no node under it is free.
 func TestPickStickyShareCap(t *testing.T) {
 	s := newStickyRig(t)
-	full := s.node("full", "busyop", false, 0)
-	free := s.node("free", "otherop", false, 0)
+	full := s.node("full", "busyop", 0)
+	free := s.node("free", "otherop", 0)
 	now := time.Now()
 	for i := 0; i < 5; i++ {
 		s.g.shares = append(s.g.shares, shareEntry{now, "busyop", 0})
@@ -213,7 +213,7 @@ func TestPickStickyShareCap(t *testing.T) {
 func TestShareCapCountsConversations(t *testing.T) {
 	s := newStickyRig(t)
 	for _, op := range []string{"a", "b", "c"} {
-		s.node(op, op, false, 0)
+		s.node(op, op, 0)
 	}
 	home := s.serve(s.route("alice", turn("session", 0)), turn("session", 0))
 	got := map[string]int{home: 1} // conversations per node (and operator)
@@ -255,7 +255,7 @@ func TestShareCapCountsConversations(t *testing.T) {
 func TestShareCapNewConversations(t *testing.T) {
 	s := newStickyRig(t)
 	for _, op := range []string{"a", "b", "c"} {
-		s.node(op, op, false, 0)
+		s.node(op, op, 0)
 	}
 	got := map[string]int{}
 	for i := 0; i < 30; i++ {
@@ -273,7 +273,7 @@ func TestShareCapNewConversations(t *testing.T) {
 // share stays a count of the conversations it saw lately; short prompts count every time.
 func TestShareCapOncePerWindow(t *testing.T) {
 	s := newStickyRig(t)
-	s.node("a", "a", false, 0)
+	s.node("a", "a", 0)
 	shares := func() int { s.g.mu.Lock(); defer s.g.mu.Unlock(); return len(s.g.shares) }
 	for k := 0; k <= 3; k++ {
 		s.serve(s.route("alice", turn("session", k)), turn("session", k))
@@ -348,47 +348,118 @@ func BenchmarkHeld(b *testing.B) {
 	}
 }
 
-// piiRoute is the route of a message with an email address, on a key that may use any node.
-func (s *stickyRig) piiRoute() *route {
-	body := map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "write to ola.nordmann@example.no"}}}
-	return s.g.routeFor("deep", body, KeyInfo{User: "alice", MinTrust: "any"}, "", false)
+// newOwnRig is a stickyRig with accounts: account "gh:1" (operator name "me" in routes) has one
+// registered node, which is not connected.
+func newOwnRig(t *testing.T) *stickyRig {
+	dir := t.TempDir()
+	g, err := New(Config{StateDir: dir, Accounts: &AccountsConfig{File: dir + "/accounts.json", PublicURL: "https://site.test",
+		SessionSecret: strings.Repeat("s", 32), GitHubClientID: "id", GitHubClientSecret: "secret"}},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { g.Close() })
+	if err := g.accounts.Update(func(f *AccountsFile) error {
+		f.Accounts = append(f.Accounts, &Account{ID: "gh:1", Status: StatusActive, Created: time.Now(),
+			Nodes: []AccountNode{{ID: "n-00000001", Created: time.Now()}}})
+		f.Accounts = append(f.Accounts, &Account{ID: "gh:2", Status: StatusActive, Created: time.Now()})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return &stickyRig{t, g}
 }
 
-// Personal data does not wait for a trusted node that is not there: the 503 and its reason come
-// at once, and no untrusted node ever gets it. A long wait here is the bug, so the deadline is
-// far off; a trusted node that is only busy keeps the wait.
-func TestPersonalDataFailsFast(t *testing.T) {
+// piiRoute is the route of a message with an email address from account acct ("" = a key without
+// an account), whose own nodes have the operator name "me".
+func (s *stickyRig) piiRoute(acct string) *route {
+	body := map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "write to ola.nordmann@example.no"}}}
+	rt := s.g.routeFor("deep", body, KeyInfo{User: "alice"}, "", false)
+	if acct != "" {
+		rt.self, rt.acct = "me", acct
+	}
+	return rt
+}
+
+// Personal data goes only to the requester's own node (owner, 2026-11-20): never to any other node,
+// sticky or under its share, and the own node serves it even when the account prefers no node.
+func TestPersonalDataOnlyToOwnNode(t *testing.T) {
+	s := newOwnRig(t)
+	prompt := turn("p", 3)
+	vol := s.node("vol", "volunteer", 0) // holds the conversation
+	s.g.pcache.served("vol", "alice", prompt, "", time.Now(), true)
+	pilot := s.node("pilot", "me", 0) // the account's pilot: the connector linked it, not "own"
+	pilot.pilot, pilot.deadline = "p-1", time.Now().Add(time.Hour)
+	own := s.node("own", "me", 0)
+	rt := s.piiRoute("gh:1")
+	rt.who, rt.conv = "alice", s.g.pcache.blockHashes(prompt+"next")
+	if rt.pii != piiEmail || rt.preferSelf {
+		t.Fatalf("route: pii %q, preferSelf %v", rt.pii, rt.preferSelf)
+	}
+	if n, _ := s.g.pick(rt); n != own {
+		t.Fatalf("picked %v, want the requester's own node", n)
+	}
+	if n, _ := s.g.pick(rt); n != nil { // its one slot is taken: nothing else may take it
+		t.Fatalf("picked %v with the own node busy", n)
+	}
+	if vol.inflight != 0 || pilot.inflight != 0 {
+		t.Fatalf("personal data reached another node: vol %d, pilot %d", vol.inflight, pilot.inflight)
+	}
+	// Without personal data the same request may go to the volunteer that holds it.
+	plain := s.route("alice", prompt+"next")
+	plain.self, plain.acct = "me", "gh:1"
+	if n, _ := s.g.pick(plain); n != vol {
+		t.Fatalf("control: picked %v", n)
+	}
+}
+
+// Personal data with no own node to take it is refused at once with the user rule, never waits and
+// never reaches another node. A long wait here is the bug, so the deadline is far off.
+func TestPersonalDataRefusedAtOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name string
+		acct string
 		set  func(*stickyRig)
 	}{
-		{"only untrusted nodes", func(s *stickyRig) { s.node("v", "vol", false, 0) }},
-		{"the trusted node is held", func(s *stickyRig) {
-			s.node("v", "vol", false, 0)
-			s.node("t", "op", true, 0).held = true
+		{"only strangers' nodes, no own node registered", "gh:2", func(s *stickyRig) { s.node("v", "vol", 0) }},
+		{"the own node is offline", "gh:1", func(s *stickyRig) { s.node("v", "vol", 0) }},
+		{"the own node is held", "gh:1", func(s *stickyRig) {
+			s.node("v", "vol", 0)
+			s.node("own", "me", 0).held = true
+		}},
+		{"a key without an account", "", func(s *stickyRig) { s.node("v", "vol", 0) }},
+		{"right after a start, no own node registered", "gh:2", func(s *stickyRig) {
+			s.g.start = time.Now()
+			s.node("v", "vol", 0)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newStickyRig(t)
+			s := newOwnRig(t)
 			s.g.start = time.Now().Add(-2 * startupGrace)
 			tc.set(s)
-			rt := s.piiRoute()
+			s.g.known["deep"] = time.Now()
+			rt := s.piiRoute(tc.acct)
 			start := time.Now()
 			n, _, why := s.g.pickWait(context.Background(), rt, start.Add(time.Minute))
-			if n != nil || time.Since(start) > 5*time.Second {
-				t.Fatalf("node %v after %v", n, time.Since(start))
+			if n != nil || why != personal || time.Since(start) > 5*time.Second {
+				t.Fatalf("node %v, why %q after %v", n, why, time.Since(start))
 			}
 			var logs strings.Builder
 			s.g.log = slog.New(slog.NewTextHandler(&logs, nil))
 			w := httptest.NewRecorder()
 			s.g.unavailable(w, rt, why)
-			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "60" ||
-				!strings.Contains(w.Body.String(), "no trusted node serving") || !strings.Contains(w.Body.String(), "personal data") {
-				t.Fatalf("HTTP %d: %s", w.Code, w.Body)
+			body := w.Body.String()
+			if w.Code != http.StatusBadRequest || w.Header().Get("Retry-After") != "" ||
+				!strings.Contains(body, `"code":"personal_data"`) || !strings.Contains(body, `"type":"invalid_request_error"`) {
+				t.Fatalf("HTTP %d: %s", w.Code, body)
 			}
-			// It names what it found, so a false positive is not mistaken for an outage (2026-11-07)
-			if !strings.Contains(w.Body.String(), "(an email address)") {
-				t.Fatalf("the answer does not say what was found: %s", w.Body)
+			// The user rule, and what was found, so a false positive is not mistaken for an outage (2026-11-07)
+			for _, want := range []string{"This looks like personal data (an email address).",
+				"Personal data isn't allowed in chats on AIs@home: answers are computed on volunteers' machines.",
+				"Remove it and try again."} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("the answer lacks %q: %s", want, body)
+				}
 			}
 			// and the refusal leaves a trace, by reason, without the text
 			if l := logs.String(); !strings.Contains(l, `msg="request refused" reason=personal_data`) ||
@@ -396,48 +467,120 @@ func TestPersonalDataFailsFast(t *testing.T) {
 				t.Fatalf("refusal log: %q", l)
 			}
 			if v := s.g.node["v"]; v.inflight != 0 {
-				t.Fatalf("an untrusted node got personal data: %d in flight", v.inflight)
+				t.Fatalf("another node got personal data: %d in flight", v.inflight)
 			}
 		})
 	}
 }
 
-// The wait stays where something can still come: a busy trusted node, the minutes after a
-// restart while trusted nodes reconnect, and a key's own min_trust.
-func TestPersonalDataWaitsForWhatCanCome(t *testing.T) {
-	wait := func(t *testing.T, s *stickyRig, rt *route, d time.Duration) {
-		t.Helper()
-		start := time.Now()
-		n, _, _ := s.g.pickWait(context.Background(), rt, start.Add(d))
-		if n != nil || time.Since(start) < d {
-			t.Fatalf("node %v after %v, want the whole wait of %v", n, time.Since(start), d)
+// The wait stays where the requester's own node can still take it: an own node that is only busy,
+// and the minutes after a gateway start while a registered own node reconnects.
+func TestPersonalDataWaitsForOwnNode(t *testing.T) {
+	t.Run("a busy own node", func(t *testing.T) {
+		s := newOwnRig(t)
+		s.g.start = time.Now().Add(-2 * startupGrace)
+		s.node("v", "vol", 0)
+		s.node("own", "me", 0).inflight = 1
+		start, d := time.Now(), 200*time.Millisecond
+		n, _, why := s.g.pickWait(context.Background(), s.piiRoute("gh:1"), start.Add(d))
+		if n != nil || why != timedOut || time.Since(start) < d {
+			t.Fatalf("node %v, why %q after %v, want the whole wait of %v", n, why, time.Since(start), d)
 		}
-	}
-	t.Run("a busy trusted node", func(t *testing.T) {
-		s := newStickyRig(t)
-		s.g.start = time.Now().Add(-2 * startupGrace)
-		s.node("t", "op", true, 0).inflight = 1
-		wait(t, s, s.piiRoute(), 200*time.Millisecond)
-	})
-	t.Run("a key's min_trust", func(t *testing.T) {
-		s := newStickyRig(t)
-		s.g.start = time.Now().Add(-2 * startupGrace)
-		s.node("v", "vol", false, 0)
-		wait(t, s, &route{want: "deep", trusted: true, exclude: map[*nodeConn]bool{}}, 200*time.Millisecond)
 	})
 	t.Run("after a restart", func(t *testing.T) { // a volunteer's node reconnected first
-		s := newStickyRig(t)
-		s.node("v", "vol", false, 0)
+		s := newOwnRig(t)
+		s.node("v", "vol", 0)
 		got := make(chan *nodeConn, 1)
 		go func() {
-			n, _, _ := s.g.pickWait(context.Background(), s.piiRoute(), time.Now().Add(10*time.Second))
+			n, _, _ := s.g.pickWait(context.Background(), s.piiRoute("gh:1"), time.Now().Add(10*time.Second))
 			got <- n
 		}()
 		time.Sleep(100 * time.Millisecond)
-		trusted := s.node("t", "op", true, 0)
+		own := s.node("own", "me", 0)
 		s.g.signal()
-		if n := <-got; n != trusted {
-			t.Fatalf("got %v, want the trusted node that reconnected", n)
+		if n := <-got; n != own {
+			t.Fatalf("got %v, want the own node that reconnected", n)
 		}
 	})
+	for _, others := range []bool{true, false} { // with no node at all serving the model, too
+		t.Run(fmt.Sprintf("the own node left while it waited, other nodes %v", others), func(t *testing.T) {
+			s := newOwnRig(t)
+			if others {
+				s.node("v", "vol", 0)
+			}
+			w := httptest.NewRecorder()
+			s.g.unavailable(w, s.piiRoute("gh:1"), timedOut)
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "personal_data") {
+				t.Fatalf("HTTP %d: %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+// An account's own node counts for no share and is never capped, but without the account's
+// preference ("any node") it is not preferred either: other nodes under their share take turns with
+// it. Before 2026-11-20 the share step let the own node through always, so it took every request.
+func TestOwnNodeNotPreferredWithoutPreference(t *testing.T) {
+	s := newStickyRig(t)
+	own := s.node("a-own", "me", 0)
+	others := []*nodeConn{s.node("b", "op-b", 0), s.node("c", "op-c", 0)}
+	served := map[string]int{}
+	for i := 0; i < 9; i++ {
+		rt := &route{want: "deep", self: "me", exclude: map[*nodeConn]bool{}}
+		n, _ := s.g.pick(rt)
+		if n == nil {
+			t.Fatalf("request %d: no node", i)
+		}
+		served[n.id]++
+		n.inflight = 0
+	}
+	if served[others[0].id]+served[others[1].id] == 0 || served[own.id] == 9 {
+		t.Fatalf("served %v: the own node took everything", served)
+	}
+	// With the preference it does take everything while free.
+	for i := 0; i < 3; i++ {
+		rt := &route{want: "deep", self: "me", preferSelf: true, exclude: map[*nodeConn]bool{}}
+		if n, _ := s.g.pick(rt); n != own {
+			t.Fatalf("prefer own: picked %v", n)
+		}
+		own.inflight = 0
+	}
+}
+
+// The emergency switch reaches requests that already wait for a node (Codex review of 8596f41): turned
+// on meanwhile, it keeps the stranger's node that frees up from them; turned off, they get it.
+func TestOwnOnlyReachesWaitingRequests(t *testing.T) {
+	s := newOwnRig(t)
+	s.g.start = time.Now().Add(-2 * startupGrace)
+	vol := s.node("vol", "volunteer", 0)
+	vol.rules = nodeRules{terms: true}
+	vol.inflight = 1 // busy: the request waits
+	body := map[string]any{"messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	got := make(chan *nodeConn, 1)
+	go func() {
+		n, _, _ := s.g.pickWait(context.Background(), s.g.routeFor("deep", body, KeyInfo{User: "alice"}, "", false), time.Now().Add(700*time.Millisecond))
+		got <- n
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if err := s.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = RoutingOwnOnly; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	s.g.sweepNodes()
+	s.g.mu.Lock()
+	vol.inflight = 0
+	s.g.mu.Unlock()
+	s.g.signal()
+	if n := <-got; n != nil {
+		t.Fatalf("a waiting request went to %v after the switch was turned on", n.id)
+	}
+	go func() {
+		n, _, _ := s.g.pickWait(context.Background(), s.g.routeFor("deep", body, KeyInfo{User: "alice"}, "", false), time.Now().Add(5*time.Second))
+		got <- n
+	}()
+	time.Sleep(100 * time.Millisecond)
+	s.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = ""; return nil })
+	s.g.sweepNodes()
+	if n := <-got; n != vol {
+		t.Fatalf("after the switch was turned off: %v", n)
+	}
 }

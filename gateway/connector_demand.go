@@ -1,6 +1,6 @@
 // Pilots wanted (GET /v1/connectors/{id}/demand): how many pilots a connector should create now.
 //
-//	science  = Σ over projects whose agents may use pilots (agent_ok, not min_trust trusted):
+//	science  = Σ over projects whose agents may use pilots (agent_ok):
 //	           min(open tasks, runner workers active now)        the sessions runners can feed now
 //	have     = sessions_per_slot × the GPU slots online that those projects may use, pilots of this
 //	           connector left out (held and paused nodes too)
@@ -60,18 +60,18 @@ type demandChat struct {
 func (g *Gateway) scienceDemand(c *connector, now time.Time) demandScience {
 	d := demandScience{SessionsPerSlot: c.SessionsPerSlot}
 	var routes []*route
-	trustedOnly := g.accounts != nil && g.accounts.Settings().Routing == RoutingTrustedOnly
+	ownOnly := g.accounts != nil && g.accounts.Settings().OwnOnly()
 	if pt := g.projects.Load(); pt != nil {
 		for _, id := range pt.ids {
 			p := pt.byID[id]
-			if !p.AgentOK || p.MinTrust == "trusted" {
+			if !p.AgentOK {
 				continue // its agents never reach a pilot
 			}
 			open, workers := g.tasks.scienceLoad(p.ID)
 			d.OpenTasks += open
 			d.Workers += workers
 			d.Sessions += min(open, workers)
-			routes = append(routes, &route{tools: true, consent: true, class: ClassScience, trustedOnly: trustedOnly,
+			routes = append(routes, &route{tools: true, consent: true, class: ClassScience, ownOnlyMode: ownOnly,
 				pilotProbationOK: p.PilotProbationOK})
 		}
 	}
@@ -94,7 +94,7 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) demandScience {
 		}
 	}
 	g.mu.Unlock()
-	if gap := d.Sessions - d.SlotsOnline*d.SessionsPerSlot; gap > 0 && !trustedOnly { // pilots are never trusted
+	if gap := d.Sessions - d.SlotsOnline*d.SessionsPerSlot; gap > 0 && !ownOnly { // a pilot is nobody's own node
 		d.Pilots = (gap + d.SessionsPerSlot - 1) / d.SessionsPerSlot
 	}
 	return d
