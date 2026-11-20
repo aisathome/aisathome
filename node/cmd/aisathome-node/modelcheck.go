@@ -177,12 +177,12 @@ func progress(stderr io.Writer) func(done, total int) {
 	}
 }
 
-func writeRef(path string, r *modelcheck.Reference) (string, error) {
+func writeRef(path string, r *modelcheck.Reference, mode os.FileMode) (string, error) {
 	b, err := r.Encode(strings.HasSuffix(path, ".gz"))
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, b, 0o644); err != nil {
+	if err := os.WriteFile(path, b, mode); err != nil {
 		return "", err
 	}
 	return modelcheck.SHA256(b), nil
@@ -268,7 +268,7 @@ func (e mcEnv) check(ctx context.Context, args []string, stdout, stderr io.Write
 	}
 	run := runOf(p, gpu, ref.Request, e.now(), results)
 	if *out != "" {
-		if _, err := writeRef(*out, run); err != nil {
+		if _, err := writeRef(*out, run, 0o644); err != nil {
 			fmt.Fprintln(stderr, "modelcheck:", err)
 		} else {
 			fmt.Fprintf(stderr, "Saved this run to %s\n", *out)
@@ -475,7 +475,11 @@ func (e mcEnv) record(ctx context.Context, args []string, stdout, stderr io.Writ
 		fmt.Fprintln(stderr, "modelcheck record:", err)
 		return mcFail
 	}
-	sum, err := writeRef(*out, ref)
+	mode := os.FileMode(0o644)
+	if *promptsFile != "" { // the secret pool and its answers: readable by its owner only
+		mode = 0o600
+	}
+	sum, err := writeRef(*out, ref, mode)
 	if err != nil {
 		fmt.Fprintln(stderr, "modelcheck record:", err)
 		return mcCannot

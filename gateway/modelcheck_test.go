@@ -127,7 +127,7 @@ func TestModelCheckEvaluate(t *testing.T) {
 		}
 		return mcAnswer{id: ref.Results[i].ID, toks: toks}
 	})
-	if c := mc.evaluate(r, nolp, now); c.Verdict != modelcheck.Fail || len(c.Reasons) != 1 || !strings.Contains(c.Reasons[0], "1 of 4 answers came without logprobs") {
+	if c := mc.evaluate(r, nolp, now); c.Verdict != modelcheck.Fail || len(c.Reasons) != 1 || !strings.Contains(c.Reasons[0], "1 of 4 answers unusable: an answer without logprobs") {
 		t.Errorf("no logprobs: %+v", c)
 	}
 	// Positions that are not log-probabilities cannot pass.
@@ -302,10 +302,16 @@ func TestModelCheckSaved(t *testing.T) {
 		t.Errorf("saved %+v", st)
 	}
 	// A restart keeps the observing start: the 3 days are not counted again.
-	now = start.Add(48 * time.Hour)
+	now = start.Add(2 * time.Hour)
 	again := testChecker(t, cfg, dir)
 	if !again.st.ObservingSince.Equal(start) || again.st.Nodes["n-1"] == nil {
 		t.Errorf("after a restart: since %v, nodes %v", again.st.ObservingSince, again.st.Nodes)
+	}
+	// A check that was off for more than a day starts observing again.
+	now = start.Add(48 * time.Hour)
+	later := testChecker(t, cfg, dir)
+	if !later.st.ObservingSince.Equal(now) {
+		t.Errorf("after two days off: observing since %v, want %v", later.st.ObservingSince, now)
 	}
 	// The file holds prompt ids, never their text.
 	b, _ := os.ReadFile(filepath.Join(dir, ModelCheckFile))
@@ -358,6 +364,10 @@ func TestModelCheckCover(t *testing.T) {
 	other := &nodeConn{id: "c", models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q3", Slots: 1}}}
 	chat := map[string]any{"messages": []any{}}
 	tools := map[string]any{"messages": []any{}, "tools": []any{map[string]any{"type": "function"}}}
+	if mc.coverFor(checked, chat) {
+		t.Error("cover on a node that has not passed a check (its engine may refuse logprobs)")
+	}
+	mc.st.Nodes["a"] = &ModelCheckNode{Node: "a", Pass: 1}
 	if !mc.coverFor(checked, chat) {
 		t.Error("no cover on a chat to a checked node at share 1")
 	}
@@ -380,6 +390,7 @@ func TestModelCheckCover(t *testing.T) {
 	}
 	// The default share is a fraction: about defaultCoverShare of 2000 requests.
 	def := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}}, "")
+	def.st.Nodes["a"] = &ModelCheckNode{Node: "a", Pass: 1}
 	n := 0
 	for i := 0; i < 2000; i++ {
 		if def.coverFor(checked, chat) {
@@ -388,5 +399,83 @@ func TestModelCheckCover(t *testing.T) {
 	}
 	if n < 300 || n > 500 {
 		t.Errorf("default cover on %d of 2000", n)
+	}
+}
+
+// A probe the node answers with an error counts as a bad answer; one it never answered (it left,
+// stalled, a person took the slot) does not count. A group never mixes two models' prompts: a node
+// that came back with another model starts its group again (code review, 2026-11-20: mixing them
+// crashed the comparison).
+func TestModelCheckAnswers(t *testing.T) {
+	big, ref := testMCRef(t, 20)
+	small, _ := testMCRef(t, 20)
+	small.Model = "qwen3.8-27b-q3"
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{big, small}}, "")
+	g := &Gateway{mc: mc, log: quietLog()}
+	n := &nodeConn{id: "n-1", operator: "op"}
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	s := &ModelCheckNode{Node: "n-1"}
+	rb, rs := mc.refs["qwen3.8-27b"], mc.refs["qwen3.8-27b-q3"]
+	ans := func(i int, model string) mcAnswer {
+		return mcAnswer{id: ref.Results[i].ID, model: model, toks: ref.Results[i].Tokens}
+	}
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	g.mcAnswerLocked(n, s, rb, ans(0, "qwen3.8-27b"), true, "", now)
+	g.mcAnswerLocked(n, s, rb, ans(1, "qwen3.8-27b"), false, "node left", now)
+	if len(mc.pending["n-1"]) != 1 || s.Dropped != 1 {
+		t.Fatalf("pending %d, dropped %d", len(mc.pending["n-1"]), s.Dropped)
+	}
+	// Back with the standard tier's model: the big tier's answer is dropped from the group.
+	g.mcAnswerLocked(n, s, rs, ans(2, "qwen3.8-27b-q3"), true, "", now)
+	if p := mc.pending["n-1"]; len(p) != 1 || p[0].model != "qwen3.8-27b-q3" {
+		t.Fatalf("mixed group: %+v", p)
+	}
+	g.mcAnswerLocked(n, s, rs, ans(3, "qwen3.8-27b-q3"), false, mcNodeError+"engine returned 400", now)
+	g.mcAnswerLocked(n, s, rs, ans(4, "qwen3.8-27b-q3"), true, "", now)
+	g.mcAnswerLocked(n, s, rs, ans(5, "qwen3.8-27b-q3"), true, "", now)
+	if len(s.Checks) != 1 || s.Checks[0].Verdict != modelcheck.Fail || !strings.Contains(s.Checks[0].Reasons[0], "answered with an error") {
+		t.Fatalf("a group with an error answer: %+v", s.Checks)
+	}
+	// An answer whose prompt the reference lacks is never compared (no crash).
+	c := mc.evaluate(rb, []mcAnswer{{id: "not-in-the-pool", model: "qwen3.8-27b"}, ans(0, "qwen3.8-27b"), ans(1, "qwen3.8-27b"), ans(2, "qwen3.8-27b")}, now)
+	if c.Verdict != modelcheck.Fail || len(c.Reasons) == 0 {
+		t.Errorf("a group of 3 comparable answers: %+v", c)
+	}
+}
+
+// When a node's list starts again, the check in progress still gets no prompt twice.
+func TestModelCheckNoRepeatInAGroup(t *testing.T) {
+	entry, _ := testMCRef(t, 16)
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}}, "")
+	r := mc.refs["qwen3.8-27b"]
+	s := &ModelCheckNode{Node: "n-1"}
+	for i := 0; i < 15; i++ {
+		mc.pickPromptLocked(s, r)
+	}
+	last := mc.pickPromptLocked(s, r) // the 16th: the pool is used up
+	mc.pending["n-1"] = []mcAnswer{{id: last}}
+	for i := 0; i < 40; i++ {
+		s.Used = append([]string(nil), r.ids...) // used up again
+		if id := mc.pickPromptLocked(s, r); id == last {
+			t.Fatalf("prompt %s twice in one group after the list started again", id)
+		}
+	}
+}
+
+// A request waiting for a node that could use this one stops a probe on it.
+func TestModelCheckYields(t *testing.T) {
+	n := &nodeConn{id: "n-1", models: []protocol.ModelInfo{{Name: "qwen3.8-27b", Roles: []string{"deep"}, Slots: 1, Ctx: 8192}}}
+	g := &Gateway{node: map[string]*nodeConn{"n-1": n}, waiting: map[*route]struct{}{}}
+	if g.mcWanted(n) {
+		t.Error("wanted with nothing waiting")
+	}
+	g.waiting[&route{want: "deep", class: ClassScience}] = struct{}{}
+	if !g.mcWanted(n) {
+		t.Error("a waiting science request that could use the node does not stop the probe")
+	}
+	g.waiting = map[*route]struct{}{{want: "other-model", class: ClassChat}: {}}
+	if g.mcWanted(n) {
+		t.Error("a request for another model stops the probe")
 	}
 }

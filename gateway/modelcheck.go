@@ -100,6 +100,8 @@ const (
 	mcMaxAnswer = 4096
 	// mcKeepNodes: a node not seen for this long is forgotten (it holds an operator name).
 	mcKeepNodes = 30 * 24 * time.Hour
+	// mcGap: a results file last saved longer ago than this was left by a check that was off.
+	mcGap = 24 * time.Hour
 	// ModelCheckFile is the result file in state_dir.
 	ModelCheckFile = "model-check.json"
 	// defaultCoverShare: see ModelCheckConfig.CoverShare.
@@ -178,6 +180,7 @@ func (s *ModelCheckNode) Status(th modelcheck.Thresholds) (verdict string, worst
 // ModelCheckState is the result file (state_dir/model-check.json).
 type ModelCheckState struct {
 	ObservingSince time.Time                  `json:"observing_since"`
+	LastSaved      time.Time                  `json:"last_saved"` // a gap of more than mcGap means the check was off: observing starts again
 	Thresholds     modelcheck.Thresholds      `json:"thresholds"`
 	Withhold       bool                       `json:"withhold"` // the switch as configured (not whether it is in effect yet)
 	Nodes          map[string]*ModelCheckNode `json:"nodes"`
@@ -206,9 +209,10 @@ type mcRef struct {
 
 // mcAnswer is one probe prompt's answer, waiting for the rest of its group.
 type mcAnswer struct {
-	id   string
-	toks []modelcheck.Token
-	bad  string // why the answer cannot be compared (no logprobs), "" if it can
+	id    string
+	model string // the reference it answers: a group never mixes two (a node may come back with another model)
+	toks  []modelcheck.Token
+	bad   string // why the answer cannot be compared (no logprobs, an error), "" if it can
 }
 
 // modelChecker runs the check. Its state is guarded by mu.
@@ -298,8 +302,15 @@ func newModelChecker(cfg ModelCheckConfig, stateDir string, log *slog.Logger) (*
 			log.Error("model check results not read; starting afresh", "err", err)
 		}
 	}
+	now := mc.now()
+	if !mc.st.ObservingSince.IsZero() && now.Sub(mc.st.LastSaved) > mcGap {
+		// The check was off (or the gateway down) for a while: the 3 days of observing before
+		// withholding count from now, not from a period long past (code review, 2026-11-20).
+		log.Info("model check: off since its last save; observing starts again", "last_saved", mc.st.LastSaved)
+		mc.st.ObservingSince = time.Time{}
+	}
 	if mc.st.ObservingSince.IsZero() {
-		mc.st.ObservingSince = mc.now().UTC()
+		mc.st.ObservingSince = now.UTC()
 	}
 	mc.st.Thresholds, mc.st.Withhold = mc.th, cfg.Withhold
 	mc.dirty = true
@@ -324,16 +335,18 @@ func (mc *modelChecker) save() error {
 		return nil
 	}
 	mc.mu.Lock()
-	if !mc.dirty {
+	now := mc.now()
+	for id, s := range mc.st.Nodes { // also when nothing else changed: an old record goes
+		if now.Sub(s.LastSeen) > mcKeepNodes && !mc.running[id] {
+			delete(mc.st.Nodes, id)
+			mc.dirty = true
+		}
+	}
+	if !mc.dirty && now.Sub(mc.st.LastSaved) < time.Hour {
 		mc.mu.Unlock()
 		return nil
 	}
-	now := mc.now()
-	for id, s := range mc.st.Nodes {
-		if now.Sub(s.LastSeen) > mcKeepNodes {
-			delete(mc.st.Nodes, id)
-		}
-	}
+	mc.st.LastSaved = now.UTC()
 	b, err := json.MarshalIndent(mc.st, "", " ")
 	mc.dirty = false
 	mc.mu.Unlock()
@@ -422,13 +435,18 @@ func (mc *modelChecker) checks(n *nodeConn) bool {
 }
 
 // coverFor reports whether a person's request to n also asks for the probes' logprobs: a share of
-// the requests without tools to nodes the check is for.
+// the requests without tools to nodes the check is for and that have passed a check.
 func (mc *modelChecker) coverFor(n *nodeConn, body map[string]any) bool {
 	if mc == nil || mc.cover <= 0 || hasTools(body) || !mc.checks(n) {
 		return false
 	}
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
+	// Only a node that has passed a check, so its engine is known to answer with logprobs: one
+	// that refused them would fail a person's request (code review, 2026-11-20).
+	if s := mc.st.Nodes[n.id]; s == nil || s.Pass == 0 {
+		return false
+	}
 	return mc.rng.Float64() < mc.cover
 }
 
@@ -439,6 +457,10 @@ func (mc *modelChecker) pickPromptLocked(s *ModelCheckNode, r *mcRef) string {
 	for _, id := range s.Used {
 		used[id] = true
 	}
+	inGroup := map[string]bool{} // the check in progress never has one prompt twice, also when the list starts again
+	for _, a := range mc.pending[s.Node] {
+		inGroup[a.id] = true
+	}
 	var free []string
 	for _, id := range r.ids {
 		if !used[id] {
@@ -448,7 +470,11 @@ func (mc *modelChecker) pickPromptLocked(s *ModelCheckNode, r *mcRef) string {
 	if len(free) == 0 {
 		mc.log.Info("model check: a node has had every probe prompt; its list starts again", "node", s.Node, "prompts", len(r.ids))
 		s.Used = nil
-		free = slices.Clone(r.ids)
+		for _, id := range r.ids {
+			if !inGroup[id] {
+				free = append(free, id)
+			}
+		}
 	}
 	least := math.MaxInt
 	for _, id := range free {
@@ -508,7 +534,7 @@ func (g *Gateway) mcTick() {
 			continue
 		}
 		if !s.HeldAt.IsZero() {
-			if held {
+			if held || mc.running[n.id] { // held, or its hold is being applied
 				mc.mu.Unlock()
 				continue
 			}
@@ -572,45 +598,85 @@ func (g *Gateway) mcReserve(n *nodeConn, model string) bool {
 	return true
 }
 
+// mcWanted reports whether a request waiting for a node could use n.
+func (g *Gateway) mcWanted(n *nodeConn) bool {
+	now := time.Now()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for w := range g.waiting {
+		if w.usable(n, now, g.thresholdLocked(w, now)) {
+			return true
+		}
+	}
+	return false
+}
+
 // mcProbe sends one probe prompt to n on the slot mcReserve took, and files the answer.
 func (g *Gateway) mcProbe(n *nodeConn, model string, r *mcRef, id string) {
 	mc := g.mc
 	res := r.byID[id]
 	toks, ok, why := g.mcSend(n, model, r.ref.Request, res)
 	now := mc.now()
+	hold := ""
 	mc.mu.Lock()
-	defer mc.mu.Unlock()
-	mc.running[n.id] = false
-	s := mc.st.Nodes[n.id]
-	if s == nil { // forgotten meanwhile (not seen for mcKeepNodes): nothing to file
-		return
+	if s := mc.st.Nodes[n.id]; s != nil { // nil: forgotten meanwhile (not seen for mcKeepNodes)
+		hold = g.mcAnswerLocked(n, s, r, mcAnswer{id: id, model: model, toks: toks}, ok, why, now)
 	}
-	if !ok {
-		s.Dropped++
-		mc.dirty = true
-		mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id)))
-		mc.log.Debug("model check: probe prompt got no answer", "node", n.id, "why", why)
-		return
+	if hold == "" {
+		mc.running[n.id] = false
 	}
-	a := mcAnswer{id: id, toks: toks}
-	if len(toks) == 0 { // an honest llama-server answers a probe with text and its logprobs
-		a.bad = "an answer without logprobs"
+	mc.mu.Unlock()
+	if hold != "" {
+		// Outside mc.mu (holding takes other locks); the node counts as running until it is held,
+		// so the scheduler does not take the hold as cleared meanwhile.
+		g.holdNode(n, guardHit{rule: ruleModelCheck, why: hold}, "")
+		mc.mu.Lock()
+		mc.running[n.id] = false
+		mc.mu.Unlock()
 	}
-	mc.pending[n.id] = append(mc.pending[n.id], a)
-	if len(mc.pending[n.id]) >= mc.th.GroupSize {
-		group := mc.pending[n.id]
-		delete(mc.pending, n.id)
-		c := mc.evaluate(r, group, now)
-		g.mcFileLocked(n, s, c)
-	}
-	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id)))
-	mc.dirty = true
 }
 
-// mcFileLocked adds a check to the node's record, logs it and, when withholding is in effect and
-// the node's result is fail, holds it (also a node that was failing before withholding began).
-// Caller holds mc.mu.
-func (g *Gateway) mcFileLocked(n *nodeConn, s *ModelCheckNode, c ModelCheckResult) {
+// mcAnswerLocked files one probe answer (ok false: none came) and, once a group is complete, its
+// check. It returns the reason to hold the node, or "". Caller holds mc.mu.
+func (g *Gateway) mcAnswerLocked(n *nodeConn, s *ModelCheckNode, r *mcRef, a mcAnswer, ok bool, why string, now time.Time) string {
+	mc := g.mc
+	mc.dirty = true
+	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id)))
+	switch {
+	case !ok && strings.HasPrefix(why, mcNodeError):
+		// The node answered with an error. An engine that refuses logprobs, or one that fails only
+		// on probes, must not stay "unknown" or keep an old pass: it counts as a bad answer.
+		a.toks, a.bad = nil, "answered with an error"
+	case !ok: // no answer to judge: it left, stalled, or a person took the slot
+		s.Dropped++
+		mc.log.Debug("model check: probe prompt got no answer", "node", n.id, "why", why)
+		return ""
+	case len(a.toks) == 0: // an honest llama-server answers a probe with text and its logprobs
+		a.bad = "an answer without logprobs"
+	}
+	// A group is one model's: answers to another reference's prompts (the node came back with
+	// another model) are dropped.
+	kept := mc.pending[n.id][:0]
+	for _, p := range mc.pending[n.id] {
+		if p.model == a.model {
+			kept = append(kept, p)
+		}
+	}
+	mc.pending[n.id] = append(kept, a)
+	if len(mc.pending[n.id]) < mc.th.GroupSize {
+		return ""
+	}
+	group := mc.pending[n.id]
+	delete(mc.pending, n.id)
+	hold := g.mcFileLocked(n, s, mc.evaluate(r, group, now))
+	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id))) // after a failed check, the re-check comes soon
+	return hold
+}
+
+// mcFileLocked adds a check to the node's record and logs it. When withholding is in effect and
+// the node's result is fail (also a node that was failing before withholding began), it marks the
+// node held and returns why, for the caller to hold it; otherwise "". Caller holds mc.mu.
+func (g *Gateway) mcFileLocked(n *nodeConn, s *ModelCheckNode, c ModelCheckResult) string {
 	mc := g.mc
 	before, _, _ := s.Status(mc.th)
 	s.Checks = append(s.Checks, c)
@@ -626,22 +692,21 @@ func (g *Gateway) mcFileLocked(n *nodeConn, s *ModelCheckNode, c ModelCheckResul
 	mc.log.Info("model check", "node", n.id, "operator", n.operator, "check", c.Verdict, "kl", fmt.Sprintf("%.4f", c.KL),
 		"flips", c.Flips, "result", after, "worst_kl", fmt.Sprintf("%.4f", worst), "window_flips", flips)
 	if after != MCFail {
-		return
+		return ""
 	}
 	if !mc.withholdingLocked() {
 		if before != MCFail { // once, as it turns to fail
 			mc.log.Warn("model check: node failed (observe-only: not held)", "node", n.id, "operator", n.operator,
 				"reasons", strings.Join(c.Reasons, "; "))
 		}
-		return
+		return ""
 	}
 	if !s.HeldAt.IsZero() {
-		return
+		return ""
 	}
 	s.HeldAt = mc.now().UTC()
-	why := fmt.Sprintf("failed the model check: largest KL %.4f (limit %.4f), %d confident flips in %d checks", worst,
+	return fmt.Sprintf("failed the model check: largest KL %.4f (limit %.4f), %d confident flips in %d checks", worst,
 		mc.th.MaxCheckKL, flips, len(s.Checks))
-	go g.holdNode(n, guardHit{rule: ruleModelCheck, why: why}, "") // outside mc.mu: holding takes other locks
 }
 
 // ruleModelCheck is the hold rule of a node the model check stopped.
@@ -658,10 +723,17 @@ func (mc *modelChecker) evaluate(r *mcRef, group []mcAnswer, now time.Time) Mode
 	sub.Results = nil
 	run := modelcheck.Reference{Format: modelcheck.Format, Kind: modelcheck.KindRun, Request: r.ref.Request}
 	bad := 0
+	var why []string
 	for _, a := range group {
 		ref := r.byID[a.id]
+		if ref == nil { // not this reference's prompt: never compared (mcAnswerLocked keeps groups to one model)
+			continue
+		}
 		if a.bad != "" {
 			bad++
+			if !slices.Contains(why, a.bad) {
+				why = append(why, a.bad)
+			}
 			continue
 		}
 		sub.Results = append(sub.Results, *ref)
@@ -679,7 +751,7 @@ func (mc *modelChecker) evaluate(r *mcRef, group []mcAnswer, now time.Time) Mode
 	}
 	if bad > 0 {
 		c.Verdict = modelcheck.Fail
-		c.Reasons = append(c.Reasons, fmt.Sprintf("%d of %d answers came without logprobs", bad, len(group)))
+		c.Reasons = append(c.Reasons, fmt.Sprintf("%d of %d answers unusable: %s", bad, len(group), strings.Join(why, ", ")))
 		return c
 	}
 	th := mc.th
@@ -760,6 +832,10 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 	}
 	limit := len(res.Tokens) + 1
 	chunks := 0
+	// A waiting request of any class that could use this node stops the probe: preemption covers
+	// people only, and science must not wait behind a probe either (code review, 2026-11-20).
+	yield := time.NewTicker(time.Second)
+	defer yield.Stop()
 	broken := false // a logprob entry that is not one (no logprob, no alternatives)
 	stall := time.NewTimer(time.Duration(g.cfg.FirstChunkTimeoutSec) * time.Second)
 	defer stall.Stop()
@@ -771,6 +847,11 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 		case <-sr.stop:
 			ok, why = stop("a person's request took the slot")
 			return nil, ok, why
+		case <-yield.C:
+			if g.mcWanted(n) {
+				ok, why = stop("a waiting request wants the slot")
+				return nil, ok, why
+			}
 		case <-g.stop:
 			ok, why = stop("gateway stopping")
 			return nil, ok, why
@@ -781,7 +862,7 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 			switch m.Type {
 			case protocol.TypeError:
 				free()
-				return nil, false, "node error: " + errCategory(m.Error)
+				return nil, false, mcNodeError + errCategory(m.Error)
 			case protocol.TypeDone:
 				if broken {
 					return nil, true, "" // judged as an answer without (usable) logprobs
@@ -808,6 +889,9 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 		}
 	}
 }
+
+// mcNodeError starts the reason of a probe the node answered with an error.
+const mcNodeError = "node error: "
 
 // mcStart starts the check's scheduler.
 func (g *Gateway) mcStart() {
