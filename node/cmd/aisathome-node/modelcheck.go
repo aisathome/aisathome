@@ -370,6 +370,7 @@ func (e mcEnv) record(ctx context.Context, args []string, stdout, stderr io.Writ
 	tierName := fl.String("tier", "", "the node tier the engine runs (default: from the model file)")
 	spec := fl.String("speculation", setup.SpecOff, "the engine's speculative decoding: off, mtp or dflash2")
 	limit := fl.Int("limit", 0, "only the first N prompts (for testing; a published reference has all)")
+	promptsFile := fl.String("prompts", "", "a private prompt set (JSON list of {id, text}) instead of the public one: the gateway's secret model-check reference, never published")
 	if err := fl.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -438,6 +439,12 @@ func (e mcEnv) record(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 	}
 	prompts := modelcheck.Prompts()
+	if *promptsFile != "" {
+		if prompts, err = modelcheck.LoadPrompts(*promptsFile); err != nil {
+			fmt.Fprintln(stderr, "modelcheck record:", err)
+			return mcCannot
+		}
+	}
 	if *limit > 0 && *limit < len(prompts) {
 		prompts = prompts[:*limit]
 		fmt.Fprintf(stderr, "warning: -limit %d: a test reference, not one to publish\n", *limit)
@@ -474,6 +481,10 @@ func (e mcEnv) record(ctx context.Context, args []string, stdout, stderr io.Writ
 		return mcCannot
 	}
 	fmt.Fprintf(stdout, "Wrote %s\n  %s\n  sha256 %s\n", *out, ref.Label(), sum)
+	if *promptsFile != "" { // a secret set: never shipped in the node program or published
+		fmt.Fprintf(stdout, "A reference of a private prompt set: keep it with the gateway's secrets (model_check.references), never in a repository.\n")
+		return mcPass
+	}
 	// The built-ins are the gzipped files themselves, pinned by the SHA-256 of those bytes.
 	if file := filepath.Base(*out); strings.HasSuffix(file, ".json.gz") {
 		fmt.Fprintf(stdout, "To ship it, copy it to node/modelcheck/references/ and add to modelcheck.Builtins:\n")

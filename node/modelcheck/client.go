@@ -152,13 +152,15 @@ type chatEntry struct {
 	Logprob *float64 `json:"logprob"` // nil: missing or null, which is an error
 }
 
+type logprobEntry struct {
+	chatEntry
+	Top []chatEntry `json:"top_logprobs"`
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Logprobs struct {
-			Content []struct {
-				chatEntry
-				Top []chatEntry `json:"top_logprobs"`
-			} `json:"content"`
+			Content []logprobEntry `json:"content"`
 		} `json:"logprobs"`
 	} `json:"choices"`
 }
@@ -176,6 +178,40 @@ func keyOf(e chatEntry) string {
 		return hex.EncodeToString([]byte(e.Token))
 	}
 	return fmt.Sprintf("id:%d", e.ID)
+}
+
+// tokensOf turns llama-server's logprob entries into positions, refusing an entry without a
+// logprob or without alternatives.
+func tokensOf(entries []logprobEntry, from int) ([]Token, error) {
+	var toks []Token
+	for _, e := range entries {
+		t := Token{Key: keyOf(e.chatEntry)}
+		for _, a := range e.Top {
+			if a.Logprob == nil {
+				return nil, fmt.Errorf("position %d: an alternative without a logprob", from+len(toks))
+			}
+			t.Top = append(t.Top, Alt{Key: keyOf(a), LP: *a.Logprob})
+		}
+		if len(t.Top) == 0 {
+			return nil, fmt.Errorf("position %d: no top logprobs", from+len(toks))
+		}
+		toks = append(toks, t)
+	}
+	return toks, nil
+}
+
+// ChunkTokens returns the positions one streamed chat.completion.chunk carries
+// (choices[0].logprobs.content, as llama-server streams them; usually one), in Answer's form.
+// A chunk without logprobs gives none and no error. from numbers the positions in errors.
+func ChunkTokens(data []byte, from int) ([]Token, error) {
+	var c chatResponse
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	if len(c.Choices) == 0 {
+		return nil, nil
+	}
+	return tokensOf(c.Choices[0].Logprobs.Content, from)
 }
 
 // Answer sends one check prompt and returns the greedy answer's positions.
@@ -196,19 +232,9 @@ func (c *Client) Answer(ctx context.Context, text string, rq Request) ([]Token, 
 	if len(r.Choices) == 0 || len(r.Choices[0].Logprobs.Content) == 0 {
 		return nil, errors.New("the answer has no logprobs (llama-server answers with them; another engine may not)")
 	}
-	var toks []Token
-	for _, e := range r.Choices[0].Logprobs.Content {
-		t := Token{Key: keyOf(e.chatEntry)}
-		for _, a := range e.Top {
-			if a.Logprob == nil {
-				return nil, fmt.Errorf("position %d: an alternative without a logprob", len(toks))
-			}
-			t.Top = append(t.Top, Alt{Key: keyOf(a), LP: *a.Logprob})
-		}
-		if len(t.Top) == 0 {
-			return nil, errors.New("the answer has no top logprobs")
-		}
-		toks = append(toks, t)
+	toks, err := tokensOf(r.Choices[0].Logprobs.Content, 0)
+	if err != nil {
+		return nil, err
 	}
 	if err := checkTokens(toks); err != nil {
 		return nil, fmt.Errorf("unusable logprobs: %w", err)

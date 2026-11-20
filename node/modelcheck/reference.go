@@ -365,6 +365,38 @@ type Prompt struct {
 	Text string `json:"text"`
 }
 
+// maxPrompts bounds a private prompt set (LoadPrompts): a reference of that many prompts stays
+// well under maxFile.
+const maxPrompts = 5000
+
+// LoadPrompts reads a prompt set from a JSON file, a list of {"id", "text"}: a private set, such as
+// the gateway's secret model-check pool (docs/modelcheck.md), recorded with `modelcheck record
+// -prompts`. Ids must be unique and neither field empty.
+func LoadPrompts(path string) ([]Prompt, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var ps []Prompt
+	if err := json.Unmarshal(b, &ps); err != nil {
+		return nil, fmt.Errorf("%s: want a JSON list of {\"id\", \"text\"}: %w", path, err)
+	}
+	if len(ps) == 0 || len(ps) > maxPrompts {
+		return nil, fmt.Errorf("%s: %d prompts (1-%d)", path, len(ps), maxPrompts)
+	}
+	seen := map[string]bool{}
+	for i, p := range ps {
+		if p.ID == "" || strings.TrimSpace(p.Text) == "" {
+			return nil, fmt.Errorf("%s: prompt %d has no id or text", path, i)
+		}
+		if seen[p.ID] {
+			return nil, fmt.Errorf("%s: prompt id %s twice", path, p.ID)
+		}
+		seen[p.ID] = true
+	}
+	return ps, nil
+}
+
 // Prompts is the check prompt set new references are recorded with: 100 short, generated
 // prompts whose greedy answers are mostly stable, the same set as the published references.
 func Prompts() []Prompt {
