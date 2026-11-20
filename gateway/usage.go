@@ -60,6 +60,17 @@ type usageRecord struct {
 	Counted string        `json:"counted,omitempty"`
 	Tokens  *creditTokens `json:"tokens,omitempty"`
 	Credit  float64       `json:"credit,omitempty"`
+	// Task is the task a project's request named (X-Aisathome-Task, nodework.go requestTask).
+	Task string `json:"task,omitempty"`
+	// Checks are the answer checks it failed (verify.go); Voided the credit it would have earned,
+	// voided by them in enforce mode. Signals are its per-answer signals (signals.go).
+	Checks  []string       `json:"checks,omitempty"`
+	Voided  float64        `json:"voided,omitempty"`
+	Signals *answerSignals `json:"signals,omitempty"`
+	// Discarded names the earlier answers this request's prompt threw away (discard.go), in the
+	// first record of the request only.
+	Discarded []discardRef `json:"discarded,omitempty"`
+	facts     answerFacts  // what the checks read, from countOutput
 }
 
 // textLen is the number of generated characters in a streamed chunk (for budget bounds).

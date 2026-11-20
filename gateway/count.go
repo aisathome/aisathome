@@ -304,6 +304,7 @@ type meter struct {
 	args      templateArgs
 	hashes    []uint64 // the prompt's block hashes, when rendered before routing (nil = not)
 	promptIDs []int32  // with a tokenizer
+	forms     []string // an ended answer's conversation as later prompts start (conversations), once metered
 
 	genOut // all the output the node sent
 }
@@ -313,6 +314,7 @@ type genOut struct {
 	reasoning, content strings.Builder
 	calls              []*toolCall
 	size               int
+	finish             string // the last finish_reason the node sent (signals.go)
 }
 
 // empty: no generated text at all.
@@ -356,10 +358,16 @@ func (m *genOut) chunk(data []byte) {
 					} `json:"function"`
 				} `json:"tool_calls"`
 			} `json:"delta"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if json.Unmarshal(data, &c) != nil {
 		return
+	}
+	for _, ch := range c.Choices {
+		if ch.FinishReason != "" && len(ch.FinishReason) <= 32 {
+			m.finish = ch.FinishReason
+		}
 	}
 	// The bound counts the text kept, not the chunk: logprobs (top_logprobs 20 is about 1.5 kB
 	// a token) stopped the count of a long answer after some 700 tokens.

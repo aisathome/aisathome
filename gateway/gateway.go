@@ -72,6 +72,8 @@ type Gateway struct {
 	counting chan struct{}   // prompts being counted before routing (countPrompt)
 	pcache   *prefixCache    // what each node served whom lately, for cached prompt tokens
 	binds    *sessionBinds   // which model answered each conversation: a session stays on it (session.go)
+	discards *discardTracker // answers whose requester may still throw them away (discard.go)
+	checks   nodeChecks      // per node: answers, failed checks and signals since the start (verify.go)
 	credit   *creditLedger
 	statsOut statsCache    // the leaderboard and the BOINC-format exports
 	stop     chan struct{} // closed by Close: ends background work
@@ -127,6 +129,11 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	if cfg.MaxMaxTokens == 0 {
 		cfg.MaxMaxTokens = 32768
 	}
+	verify, err := cfg.Verify.withDefaults()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Verify = verify
 	if cfg.FirstChunkTimeoutSec == 0 {
 		cfg.FirstChunkTimeoutSec = 330
 	}
@@ -158,7 +165,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	// nothing can fail any more, so a gateway that does not start leaves no goroutine or file behind.
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
 		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), press: newPressure(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
-		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), credit: newCreditLedger(), knownSrc: known, installs: installs,
+		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), discards: newDiscardTracker(), credit: newCreditLedger(), knownSrc: known, installs: installs,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
 	g.tasks.compactAge = g.taskCompactAge

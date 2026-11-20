@@ -95,7 +95,8 @@ func (g *Gateway) meterRecord(rec *usageRecord, mt *meter, sent *delivered, n *n
 	}
 	matched := g.pcache.servedHashed(n.id, keyHash(who), mt.hashes, mt.prompt, tail, now, rec.Outcome != outcomeBlocked)
 	if ended {
-		g.bindSession(keyHash(who), mt, tail, n.modelInfo(rec.Model), now)
+		mt.forms = mt.conversations(tail)
+		g.binds.bind(keyHash(who), mt.forms, n.modelInfo(rec.Model), now)
 	}
 	if g.tok != nil {
 		b := 0
@@ -132,18 +133,24 @@ func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, node
 		closeThink = out.content.Len() > 0 || len(out.calls) > 0
 	}
 	t := *rec.Tokens
+	rec.facts.reasoning = -1
 	if g.tok != nil {
 		gen, _ := mt.render(out, closeThink)
 		t.Completion = g.tok.Count(gen)
 		if ended {
 			t.Completion++ // <|im_end|>
 		}
+		rec.facts.out = t.Completion
 		t.Completion = min(t.Completion, maxTokens+1)
+		if mt.args.thinking {
+			rec.facts.reasoning = g.tok.Count(out.reasoning.String())
+		}
 	} else {
 		t.Completion = nodeU.CompletionTokens
 		if cancelled {
 			t.Completion = min(t.Completion, sent.chunks) // about a token per chunk
 		}
+		rec.facts.out = t.Completion
 	}
 	rec.Tokens = &t
 	rec.Credit = 0

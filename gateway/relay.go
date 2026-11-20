@@ -33,6 +33,7 @@ type chatReq struct {
 	class        string         // workload class: chat, agent or science (project.go)
 	project      string         // the science project, or ""
 	task         string         // the project's task the request names (nodework.go), or ""
+	discarded    []discardRef   // earlier answers its prompt threw away (discard.go): in its first usage record
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
@@ -312,7 +313,7 @@ func (rl *relay) meter(outcome string, u protocol.Usage, estimated bool) *usageR
 	rec := &usageRecord{Time: time.Now().UTC(), User: req.user, Node: n.id, Operator: n.operator,
 		Model: rl.model, Requested: req.want, Usage: u, ReqID: rl.reqID, Outcome: outcome, Relayed: rl.relayed,
 		Estimated: estimated, Clamped: clamped, SelfServed: req.self != "" && n.operator == req.self, Guard: rl.flag,
-		Tools: hasTools(req.body), Class: req.class, Project: req.project}
+		Tools: hasTools(req.body), Class: req.class, Project: req.project, Task: req.task}
 	rl.g.meterRecord(rec, rl.mt, &rl.sent, n, req.who, u, rl.maxTokens, rec.Time)
 	return rec
 }
@@ -324,9 +325,16 @@ func (rl *relay) undelivered(rec *usageRecord) {
 	rl.g.countOutput(rec, rl.mt, &rl.sent, rec.Usage, rl.maxTokens)
 }
 
-// commit logs the record, grants its credit and charges the budgets.
+// commit checks the answer (verify.go), logs the record, grants its credit and charges the budgets.
 func (rl *relay) commit(rec *usageRecord) {
 	g, n, req := rl.g, rl.n, rl.req
+	rec.Discarded, req.discarded = req.discarded, nil
+	rec.Signals = signalsOf(&rl.mt.genOut, rec.facts.out, rec.facts.reasoning, rec.Usage.DurationMs)
+	g.checkAnswer(rec, req.body, rl.maxTokens) // in enforce mode a failed answer's credit is voided here
+	g.checks.add(rec)
+	if rec.Outcome == "ok" { // it reached the client: its next prompt shows whether it kept it (discard.go)
+		g.discards.answered(keyHash(req.who), rl.mt.prompt, rl.mt.forms, n.id, n.operator, rec.ReqID, rec.Time)
+	}
 	if n.pilot != "" { // into the pilot's record, never the public ledger (pilots.go)
 		g.pilotServed(n, rec)
 	} else if (rec.Outcome == "ok" || rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted) && !rec.SelfServed {

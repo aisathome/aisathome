@@ -44,6 +44,11 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
     at most one token per chunk written to the client.
 - **No credit** for self-served answers (an account's own node), failed or blocked answers.
   They are metered in full (`tokens`) for the usage log and statistics.
+- **No credit for answers that fail a check** (with `verify.mode` `enforce`; `docs/gateway.md` "Answer
+  checks and node signals"): an answer faster than any GPU writes, with reasoning past its budget,
+  or with output past `max_tokens` earns nothing; the usage record keeps the failed rules (`checks`)
+  and the credit it would have earned (`voided`). In the default mode, `observe`, the checks are
+  recorded and counted and credit is unchanged.
 - **Ledger** per account, per node and per config-token operator (the maintainer's nodes,
   kept apart from accounts): today (UTC), total and BOINC's `expavg_credit`
   (`update_average` from `lib/util.cpp`, 7-day half-life; the first grant is spread over the
@@ -63,7 +68,7 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
 
 - **Same formula, other ledger.** Each answer a pilot serves is metered exactly as above (counted
   by the gateway, cache decided by it, nothing for self-served, failed, blocked or undelivered
-  answers) into **the pilot's record** in `state_dir/science.db`, not into the ledger behind
+  answers, nor in enforce mode for answers that fail a check) into **the pilot's record** in `state_dir/science.db`, not into the ledger behind
   `/v1/stats/credit` and `/stats/`: pilot credit is granted through the connector (BOINC grants it
   and exports it in its own statistics), so it is counted once. The record keeps `metered_credit`
   (the formula) and `credit` (after the caps), with the requests, failed and self-served answers
