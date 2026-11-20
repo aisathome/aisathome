@@ -5,7 +5,7 @@ The site is the build in site/dist (CI builds it first; locally `cd site && npm 
 small static server. Every request the pages make to the gateway (/v1/...) or for the project's data document
 (/data/prove2me/current.json) is answered by the test: a fixed document, an HTTP error, or the gateway's public records
 as they were on 2026-11-18 (site/tests/fixtures). Checked here: "Working on now" live from the data document or the
-newest trial campaign and the tasks; each leaf's outlines and holes in words; the headline numbers, the submissions,
+trial campaigns not finished (a block each) and the tasks; each leaf's outlines and holes in words; the headline numbers, the submissions,
 the trials table and each trial's list from trial 6 on live from the records (decision 0021, step D6), with tokens
 computed leading; the home page's line and the /science/ card; and the build's copy when a source fails.
 
@@ -510,6 +510,50 @@ def test_working_on_now_keeps_the_build_copy_when_a_source_fails(pages, site, da
     if cur and cur.get("state") != "preparing":
         expect(box.locator("li[data-current-leaf]")).to_have_count(len(cur["leaves"]))
         expect(box.locator("[data-now-asof]")).to_contain_text("copy from the site’s last build")
+
+
+@pytest.mark.parametrize("width", (1280, 390))
+def test_working_on_now_shows_every_trial_not_finished(pages, site, records, width):
+    """Bug (owner, 2026-11-20): trial 10 was posted while trial 9 still ran, and "Working on now" showed trial 10 only.
+    Every trial campaign not finished has its own block, oldest first, each with its head, its own text and budget and
+    its leaves with their tasks; a leaf both trials list keeps its #leaf- anchor on its first row only. When trial 8
+    ends, the next minute's refresh shows trial 9 alone. At 390 px nothing scrolls sideways."""
+    rec = _two_open(records)
+    t9 = rec["campaigns"]["campaigns"][0]
+    t9["text"] = "Trial nine's own text."
+    t9["labels"]["budget"] = "one round of 120 steps / 120 min"
+    page = _page(pages, width=width, live=(404, rec["tasks"]), records={"campaigns": rec["campaigns"], "results": rec["results"]})
+    page.clock.install()     # time runs as usual; the end moves it on to the page's minute refresh
+    page.goto(site + PAGE)
+    now = page.locator("[data-p2m-now][data-source=live][data-trial='t8 t9']")
+    expect(now).to_be_visible()
+    blocks = now.locator("[data-now-trial]")
+    expect(blocks).to_have_count(2)
+    assert [b.get_attribute("data-now-trial") for b in blocks.all()] == ["t8", "t9"]
+    b8, b9 = now.locator("[data-now-trial=t8]"), now.locator("[data-now-trial=t9]")
+    expect(b8.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
+    expect(b9.locator("[data-now-head]")).to_have_text("Trial 9, since 18 November 2026 · scaffold v10")
+    expect(b8.locator("[data-now-budget]")).to_contain_text("Budget: one round of 110 steps")
+    expect(b9.locator("[data-now-budget]")).to_have_text("Budget: one round of 120 steps / 120 min.")
+    expect(b9.locator("[data-now-about]")).to_have_text("Trial nine's own text.")
+    expect(b8.locator("li[data-current-leaf]")).to_have_count(6)
+    expect(b9.locator("li[data-current-leaf]")).to_have_count(6)
+    leaf = b8.locator("li[data-current-leaf]").first.get_attribute("data-leaf-id")
+    expect(page.locator(f"#leaf-{leaf}")).to_have_count(1)
+    expect(b8.locator(f"li#leaf-{leaf}")).to_have_count(1)
+    expect(now.locator("[data-now-asof]")).to_have_text("Live from the gateway’s records of the trials and their tasks, updated 14:58 UTC. It refreshes every minute.")
+    assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
+    # trial 8 ends: the next refresh shows trial 9 alone
+    for c in rec["campaigns"]["campaigns"]:
+        if c["id"] == "t8":
+            c["status"] = "finished"
+    page.unroute("**/v1/projects/prove2me/campaigns?*")
+    _serve(page, "**/v1/projects/prove2me/campaigns?*", rec["campaigns"])
+    page.clock.run_for(60_000)
+    one = page.locator("[data-p2m-now][data-source=live][data-trial=t9]")
+    expect(one.locator("[data-now-trial]")).to_have_count(1, timeout=15_000)
+    expect(one.locator("[data-now-head]")).to_have_text("Trial 9, since 18 November 2026 · scaffold v10")
+    expect(page.locator(f"[data-now-trial=t9] li#leaf-{leaf}")).to_have_count(1)
 
 
 # ---- the gateway's records: numbers, submissions, trials (decision 0021, step D6)

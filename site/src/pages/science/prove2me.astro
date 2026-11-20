@@ -233,45 +233,48 @@ const leafCols = [
 	<script is:inline type="application/json" data-p2m-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
 	{/* The build's copy; the browser replaces it with the project's data document and the gateway's tasks (see the script). */}
 	<section class="p2m-now not-content" data-p2m-now data-trial={cur && !preparing ? `t${cur.trial}` : ''} data-preparing={preparing ? `t${cur!.trial}` : undefined} data-source="build">
-		<p class="head" data-now-head>
-			{cur && preparing && <>Trial {cur.trial} is being prepared · scaffold {cur.scaffold}</>}
-			{cur && !preparing && <>Trial {cur.trial}, since {day(cur.start ?? p2m.generated_at)} · scaffold {cur.scaffold}</>}
-			{!cur && 'No trial is running.'}
-		</p>
-		<div class="probes" data-now-probes hidden>
-			<p class="probes-head" data-probes-head></p>
-			<ul data-probes-list></ul>
+		{/* One block per trial that has not finished, oldest first (the build knows one); the outline probes sit under the newest's head. */}
+		<div class="now-trial" data-now-trial={cur ? `t${cur.trial}` : ''}>
+			<p class="head" data-now-head>
+				{cur && preparing && <>Trial {cur.trial} is being prepared · scaffold {cur.scaffold}</>}
+				{cur && !preparing && <>Trial {cur.trial}, since {day(cur.start ?? p2m.generated_at)} · scaffold {cur.scaffold}</>}
+				{!cur && 'No trial is running.'}
+			</p>
+			<div class="probes" data-now-probes hidden>
+				<p class="probes-head" data-probes-head></p>
+				<ul data-probes-list></ul>
+			</div>
+			<div class="about" data-now-about hidden={!cur?.summary} set:html={cur?.summary ? mdLightHTML(cur.summary) : ''} />
+			<p class="caps" data-now-budget hidden={!cur?.caps}>{cur?.caps && `Budget: ${cur.caps}.`}</p>
+			<ul data-now-leaves>
+				{cur && !preparing && cur.leaves.map((l) => {
+					const d = details[l.leaf];
+					const plan = leafPlan(d, [], reuseOf[l.theorem]);
+					const progress = d.rows.length ? plan.summary : leafProgress(l);
+					const words = d.rows.length ? plan.summary : `${stateLabel[l.state] ?? l.state}${progress ? `: ${progress}` : ''}`;
+					return (
+						<li id={`leaf-${leafIds[l.theorem] ?? l.leaf}`} data-current-leaf={l.leaf} data-leaf-id={leafIds[l.theorem]} data-state={l.state}>
+							<span class="leaf">{leafIds[l.theorem] ?? l.leaf}</span>
+							{leafIds[l.theorem] && <span class="alias" id={`leaf-${l.leaf}`} title="The id the trials used" data-alias>{l.leaf}</span>}
+							<a href={safe(l.url)} class="thm-name">{l.theorem}</a>
+							<span class="meta">
+								<span>{groupLabel[l.group] ?? l.group} leaf</span>
+								{l.earlier.length > 0 && <span>{earlierText(l.earlier)}</span>}
+								{d.rows.length > 0 && (
+									<span data-tokens={d.total} data-computed={d.computed} data-exact={String(d.exact)}>
+										{leafTokensText(d, l.state === 'running' || l.state === 'queued')}
+									</span>
+								)}
+							</span>
+							<span class:list={['state', `state-${l.state}`]} data-progress={progress} data-leaf-summary>{words}</span>
+							<Fragment set:html={leafPlanHTML(l.leaf, plan)} />
+							<Fragment set:html={taskTableHTML(l.leaf, d, 'Every task')} />
+						</li>
+					);
+				})}
+			</ul>
+			<p class="meta" data-now-subs hidden></p>
 		</div>
-		<div class="about" data-now-about hidden={!cur?.summary} set:html={cur?.summary ? mdLightHTML(cur.summary) : ''} />
-		<p class="caps" data-now-budget hidden={!cur?.caps}>{cur?.caps && `Budget: ${cur.caps}.`}</p>
-		<ul data-now-leaves>
-			{cur && !preparing && cur.leaves.map((l) => {
-				const d = details[l.leaf];
-				const plan = leafPlan(d, [], reuseOf[l.theorem]);
-				const progress = d.rows.length ? plan.summary : leafProgress(l);
-				const words = d.rows.length ? plan.summary : `${stateLabel[l.state] ?? l.state}${progress ? `: ${progress}` : ''}`;
-				return (
-					<li id={`leaf-${leafIds[l.theorem] ?? l.leaf}`} data-current-leaf={l.leaf} data-leaf-id={leafIds[l.theorem]} data-state={l.state}>
-						<span class="leaf">{leafIds[l.theorem] ?? l.leaf}</span>
-						{leafIds[l.theorem] && <span class="alias" id={`leaf-${l.leaf}`} title="The id the trials used" data-alias>{l.leaf}</span>}
-						<a href={safe(l.url)} class="thm-name">{l.theorem}</a>
-						<span class="meta">
-							<span>{groupLabel[l.group] ?? l.group} leaf</span>
-							{l.earlier.length > 0 && <span>{earlierText(l.earlier)}</span>}
-							{d.rows.length > 0 && (
-								<span data-tokens={d.total} data-computed={d.computed} data-exact={String(d.exact)}>
-									{leafTokensText(d, l.state === 'running' || l.state === 'queued')}
-								</span>
-							)}
-						</span>
-						<span class:list={['state', `state-${l.state}`]} data-progress={progress} data-leaf-summary>{words}</span>
-						<Fragment set:html={leafPlanHTML(l.leaf, plan)} />
-						<Fragment set:html={taskTableHTML(l.leaf, d, 'Every task')} />
-					</li>
-				);
-			})}
-		</ul>
-		<p class="meta" data-now-subs hidden></p>
 		<p class="meta" data-now-asof>
 			{cur && preparing && <>No task of trial {cur.trial} has started yet. Trial {trials.at(-1)?.trial} has ended: its results are under <a href={`#trial-${trials.at(-1)?.trial}`}>Trials</a>.</>}
 			{cur && !preparing && <>As of {day(p2m.generated_at)}, {hhmm(p2m.generated_at)}. The page updates this list from the trial’s published data and the gateway’s task list every minute; without them it shows this copy from the site’s last build.</>}
@@ -576,7 +579,7 @@ const leafCols = [
 	import { attachTaskTable, workText, type TaskTableRow } from '../../data/task-table';
 	import { p2mTaskOptions, taskResult, type LeafInfo } from '../../data/prove2me-tasks';
 	import { CURRENT_URL, day, fetchAllTasks, hhmm, mdLightHTML, parseCurrent, probeRound, refutedOutlines, roleLabel, submissionText, taskTableRows, theoremURL, trialQueue } from '../../data/prove2me-current';
-	import { CAMPAIGNS_URL, RESULTS_URL, getJSON, parseCampaigns, parseResults, pickDoc, scienceView, trialDetails, type History, type Records } from '../../data/prove2me-records';
+	import { CAMPAIGNS_URL, RESULTS_URL, getJSON, nowDocs, parseCampaigns, parseResults, scienceView, trialDetails, type History, type Records } from '../../data/prove2me-records';
 	import { kpisHTML, plainHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialRowHTML, trialsFootHTML } from '../../data/prove2me-view';
 	import { walkPages } from '../../data/prove2me-current';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
@@ -860,9 +863,10 @@ const leafCols = [
 		}
 		taskTable?.setLive(taskTableRows(tasks, doc, taskKnown.leafIds, taskKnown.holes));
 	};
-	const showNow = (doc: CurrentDoc, tasks: TasksView) => {
-		showProbes(doc, tasks);
-		if (!nowBox) return;
+	/** One trial's block of "Working on now": its head, its text, its budget, its leaves (each with its tasks) and the
+	 * submissions of leaves it does not list. `taken`: the leaf anchors an older trial's block has (a leaf two open
+	 * trials share, the calibration leaf, keeps #leaf-<id> on its first row only). */
+	const trialBlock = (doc: CurrentDoc, tasks: TasksView, taken: Set<string>) => {
 		const t = doc.trial;
 		const sameTrial = t.id === known.trial;
 		const q = trialQueue(tasks, doc);
@@ -871,43 +875,69 @@ const leafCols = [
 			...doc.leaves.map((l) => leafItem(doc, l, live.find((x) => x.leaf === l.alias), sameTrial)),
 			...live.filter((x) => !doc.leaves.some((l) => l.alias === x.leaf)).map((x) => leafItem(doc, undefined, x, sameTrial)),
 		];
-		nowBox.querySelector<HTMLElement>('[data-now-head]')!.textContent = headText(t);
-		const about = nowBox.querySelector<HTMLElement>('[data-now-about]')!;
+		for (const e of items.flatMap((li) => [li, ...li.querySelectorAll<HTMLElement>('[id]')]))
+			if (e.id && taken.has(e.id)) e.removeAttribute('id');
+			else if (e.id) taken.add(e.id);
+		const block = el('div', 'now-trial');
+		block.dataset.nowTrial = t.id;
+		block.dataset.status = t.status;
+		const head = el('p', 'head', headText(t));
+		head.dataset.nowHead = '';
+		const about = el('div', 'about');
+		about.dataset.nowAbout = '';
 		// escaped first: the document's Markdown-light (prove2me-current.ts), a campaign's plain text (prove2me-view.ts)
 		about.innerHTML = doc.schema === 'campaign' ? plainHTML(t.description) : mdLightHTML(t.description);
 		about.hidden = !t.description.trim();
-		const budget = nowBox.querySelector<HTMLElement>('[data-now-budget]')!;
-		budget.textContent = t.budget ? `Budget: ${t.budget}.` : '';
+		const budget = el('p', 'caps', t.budget ? `Budget: ${t.budget}.` : '');
+		budget.dataset.nowBudget = '';
 		budget.hidden = !t.budget;
-		const list = nowBox.querySelector<HTMLElement>('[data-now-leaves]')!;
-		// a leaf's task table stays open across the minute's refresh
-		const opened = new Set([...list.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]')].filter((d) => d.open).map((d) => d.dataset.leafTasks));
-		list.replaceChildren(...items);
-		list.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]').forEach((d) => (d.open = opened.has(d.dataset.leafTasks)));
+		const list = el('ul');
+		list.dataset.nowLeaves = '';
+		list.append(...items);
 		// the trial's submissions of leaves it does not list (a leaf closed by reuse while the trial was prepared)
 		const others = doc.submissions.filter((s) => !doc.leaves.some((l) => l.id === s.leaf));
-		const subs = nowBox.querySelector<HTMLElement>('[data-now-subs]')!;
-		subs.textContent = others.length
+		const subs = el('p', 'meta', others.length
 			? `Also from this trial: ${others.map((s) => `${s.leaf} (${s.alias}), ${submissionText(s)} on ${day(s.verdict_at ?? s.submitted_at, false)}`).join('; ')}.`
-			: '';
+			: '');
+		subs.dataset.nowSubs = '';
 		subs.hidden = !others.length;
+		block.append(head, about, budget, list, subs);
+		return block;
+	};
+	/** "Working on now": one block per trial that has not finished, oldest first (prove2me-records.ts nowDocs). */
+	const showNow = (docs: CurrentDoc[], tasks: TasksView) => {
+		if (!nowBox || !docs.length) return;
+		const newest = docs[docs.length - 1];
+		const probes = nowBox.querySelector<HTMLElement>('[data-now-probes]')!;
+		// a leaf's task table stays open across the minute's refresh
+		const key = (d: HTMLDetailsElement) => `${d.closest<HTMLElement>('[data-now-trial]')?.dataset.nowTrial}|${d.dataset.leafTasks}`;
+		const opened = new Set([...nowBox.querySelectorAll<HTMLDetailsElement>('[data-now-trial] details[data-leaf-tasks]')].filter((d) => d.open).map(key));
+		const taken = new Set<string>();
+		const blocks = docs.map((doc) => trialBlock(doc, tasks, taken));
 		const asof = nowBox.querySelector<HTMLElement>('[data-now-asof]')!;
+		const old = [...nowBox.querySelectorAll<HTMLElement>(':scope > [data-now-trial]')];
+		(old[0] ?? asof).before(...blocks);
+		old.forEach((b) => b.remove());
+		// the next trial's outline probes under the newest trial's head, as before
+		blocks[blocks.length - 1].querySelector('[data-now-head]')!.after(probes);
+		showProbes(newest, tasks);
+		nowBox.querySelectorAll<HTMLDetailsElement>('[data-now-trial] details[data-leaf-tasks]').forEach((d) => (d.open = opened.has(key(d))));
 		asof.hidden = false;
-		asof.textContent =
-			doc.schema === 'campaign'
-				? `Live from the gateway’s records of the trial and its tasks, updated ${hhmm(tasks.updated)}. It refreshes every minute.`
-				: `Live: the trial’s data as published ${day(doc.updated_at, false)}, ${hhmm(doc.updated_at)}; its tasks from the gateway, ` +
-					`updated ${hhmm(tasks.updated)}. It refreshes every minute.`;
+		const own = docs.filter((d) => d.schema !== 'campaign');
+		asof.textContent = !own.length
+			? `Live from the gateway’s records of the ${docs.length > 1 ? 'trials and their' : 'trial and its'} tasks, updated ${hhmm(tasks.updated)}. It refreshes every minute.`
+			: `Live: the trial’s data as published ${day(own[0].updated_at, false)}, ${hhmm(own[0].updated_at)}; its tasks from the gateway, ` +
+				`updated ${hhmm(tasks.updated)}. It refreshes every minute.`;
 		nowBox.dataset.source = 'live';
-		nowBox.dataset.trial = t.id;
-		nowBox.dataset.status = t.status;
+		nowBox.dataset.trial = docs.map((d) => d.trial.id).join(' ');
+		nowBox.dataset.status = newest.trial.status;
 		markLeaf();
 	};
 	const loadNow = async () => {
 		if (!window.fetch) return;
 		// each source on its own: the task list (every page of it) feeds the task table without the rest; with the
-		// campaigns and results too, the numbers, submissions and trials; "Working on now" from the document or the newest
-		// trial campaign
+		// campaigns and results too, the numbers, submissions and trials; "Working on now" from the trial campaigns that
+		// have not finished and the document
 		const [d, ts, cs, rs] = await Promise.allSettled([
 			getJSON(CURRENT_URL),
 			fetchAllTasks(getJSON),
@@ -944,10 +974,8 @@ const leafCols = [
 				// keep what the page shows
 			}
 		}
-		const now = pickDoc(doc, live);
-		if (!now) return;
 		try {
-			showNow(now, tasks);
+			showNow(nowDocs(doc, live), tasks);
 		} catch {
 			// keep what the page shows
 		}
@@ -1209,6 +1237,7 @@ const leafCols = [
 	.p2m-now p { margin: 0.5rem 0 0; }
 	.p2m-now p[hidden] { display: none; }
 	.p2m-now .head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+	.p2m-now .now-trial + .now-trial { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--sl-color-gray-5); }
 	.p2m-now [data-now-leaves] { margin: 0.75rem 0 0; padding: 0; list-style: none; }
 	.p2m-now [data-now-leaves] > li + li { margin-top: 0.9rem; }
 	.p2m-now li:target, .p2m-now li.target { outline: 2px solid var(--sl-color-accent); outline-offset: 0.3rem; border-radius: 0.2rem; }
