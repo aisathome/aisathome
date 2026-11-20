@@ -267,6 +267,30 @@ func TestModelcheckRecord(t *testing.T) {
 	if code, _, errs := runMC(t, env, "record", "-server", srv.URL, "-out", path, "-engine-build", "b12323"); code != mcCannot || !strings.Contains(errs, "engine says") {
 		t.Errorf("contradicting -engine-build: %d %s", code, errs)
 	}
+	// A private prompt set (the gateway's secret pool): recorded under its own ids, and no Builtins
+	// entry is offered for it.
+	var private []modelcheck.Prompt
+	for i, r := range ref.Results[:5] {
+		private = append(private, modelcheck.Prompt{ID: fmt.Sprintf("secret-%d", i), Text: r.Text})
+	}
+	pfile := filepath.Join(t.TempDir(), "pool.json")
+	b, _ := json.Marshal(private)
+	os.WriteFile(pfile, b, 0o600)
+	secret := filepath.Join(t.TempDir(), "secret.json.gz")
+	if code, out, errs := runMC(t, env, "record", "-server", srv.URL, "-out", secret, "-prompts", pfile); code != mcPass ||
+		strings.Contains(out, "Builtins") || !strings.Contains(out, "never in a repository") {
+		t.Errorf("record -prompts: %d\n%s\n%s", code, out, errs)
+	}
+	if s, err := modelcheck.LoadFile(secret, ""); err != nil || len(s.Results) != 5 || s.Results[4].ID != "secret-4" {
+		t.Errorf("secret reference: %v %+v", err, s)
+	}
+	for _, bad := range []string{`[]`, `[{"id":"a","text":"x"},{"id":"a","text":"y"}]`, `[{"id":"","text":"x"}]`, `{"id":"a"}`} {
+		os.WriteFile(pfile, []byte(bad), 0o600)
+		if code, _, _ := runMC(t, env, "record", "-server", srv.URL, "-out", secret, "-prompts", pfile); code != mcCannot {
+			t.Errorf("prompts file %s: exit %d, want %d", bad, code, mcCannot)
+		}
+	}
+
 	// A failed prompt writes no reference.
 	fake.alter = func(i int, toks []modelcheck.Token) []modelcheck.Token {
 		if i == 2 {

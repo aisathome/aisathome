@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -155,5 +156,54 @@ func TestPick(t *testing.T) {
 	}
 	if _, err := Pick(refs, Props{ModelPath: "/m/other.gguf", ModelFtype: "Q8_0"}); err == nil {
 		t.Error("picked a reference for another model")
+	}
+}
+
+// TestChunkTokensRealStream parses a streamed answer of llama-server b12342 (UD-IQ4_XS, a rented
+// RTX 4090, 2026-11-20) to the first public prompt, asked as the gateway's probes ask (stream,
+// max_tokens 16384, greedy, top-20 logprobs, thinking off): its first 32 positions are the
+// published reference's, recorded non-streamed with max_tokens 32 on another 4090.
+func TestChunkTokensRealStream(t *testing.T) {
+	b, err := os.ReadFile("testdata/stream-b12342-rtx4090.sse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toks []Token
+	for _, line := range strings.Split(string(b), "\n") {
+		data, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		got, err := ChunkTokens([]byte(data), len(toks))
+		if err != nil {
+			t.Fatal(err)
+		}
+		toks = append(toks, got...)
+	}
+	ref, err := LoadBuiltin("qwen3.8-27b-iq4xs-b12342-rtx4090")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ref.Results[0]
+	if len(toks) <= len(want.Tokens) {
+		t.Fatalf("%d positions streamed, want more than the reference's %d", len(toks), len(want.Tokens))
+	}
+	run := &Reference{Format: Format, Kind: KindRun, Request: ref.Request,
+		Results: []Result{{ID: want.ID, Text: want.Text, Tokens: toks[:len(want.Tokens)]}}}
+	sub := *ref
+	sub.Results = []Result{want}
+	rep := Compare(&sub, run, Thresholds{MaxCheckKL: DefaultThresholds.MaxCheckKL, MaxFlips: 0, Margin: 0.5, GroupSize: 1})
+	if rep.Verdict != Pass || rep.KLMean > 1e-6 || rep.Diverged != 0 {
+		t.Errorf("the stream against the reference: %+v", rep)
+	}
+	// A chunk without logprobs gives none; one with a broken entry is an error.
+	if got, err := ChunkTokens([]byte(`{"choices":[{"delta":{"content":"x"}}]}`), 0); err != nil || len(got) != 0 {
+		t.Errorf("no logprobs: %v %v", got, err)
+	}
+	if _, err := ChunkTokens([]byte(`{"choices":[{"logprobs":{"content":[{"token":"x","logprob":-1,"top_logprobs":[{"token":"x"}]}]}}]}`), 0); err == nil {
+		t.Error("an alternative without a logprob was accepted")
+	}
+	if _, err := ChunkTokens([]byte(`{"choices":[{"logprobs":{"content":[{"token":"x","logprob":-1,"top_logprobs":[]}]}}]}`), 0); err == nil {
+		t.Error("a position without alternatives was accepted")
 	}
 }
