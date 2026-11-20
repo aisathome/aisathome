@@ -1,7 +1,11 @@
 ---
 title: Run a node
-description: Give your GPU to AIs@home. What you need, what the node does, and what you are responsible for.
+description: Give your GPU to AIs@home. Download the node for Windows or install it on Linux; what you need, what the node does, and what you are responsible for.
 ---
+
+import NodeDownload from '../../../components/NodeDownload.astro';
+
+<NodeDownload />
 
 A node is a computer with a strong NVIDIA GPU that serves the model to AIs@home users. It
 runs two services: `llama-server` (the model, on `127.0.0.1` only) and `aisathome-node`, a
@@ -35,7 +39,8 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
   turns chats off for all your nodes.
 
 On Windows (new in v0.5.0), one installer sets up the node as a service with a tray icon, and
-the node's local page walks through the rest: see [Install on Windows](/node/windows/).
+the node's local page walks through the rest: see [Install on Windows](/node/windows/). On Linux,
+the [prebuilt bundle](/node/install/) installs it with one command.
 
 ## Tested systems
 

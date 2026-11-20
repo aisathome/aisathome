@@ -40,13 +40,21 @@ git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
 The workflow runs the CI checks, builds the Go binaries, `llama-server` with CUDA, the
 bundle and the Windows installer (on a Windows runner; its agent must be byte-identical to
 `aisathome-node-windows-amd64.exe`), writes `SHA256SUMS`, and attaches everything to a
-**draft** release. The installer is not signed yet: Windows shows a SmartScreen warning. Review the
+**draft** release. The installer is attached twice, as `AIsAtHome-node-setup-<version>.exe` and
+as `AIsAtHome-node-setup.exe` (the same bytes), so that the site's download button
+(`releases/latest/download/AIsAtHome-node-setup.exe`) follows every release. The installer is not
+signed yet: Windows shows a SmartScreen warning. Review the
 draft (files, sizes, `BUILD-INFO`, generated notes). Tags with a `-` (for example
 `v0.2.0-rc1`) become pre-releases.
 
 **Release notes:** move `CHANGELOG.md`'s Unreleased entries into a new section for the
 version (with the date and the update commands for a node), and use that text as the
 release's notes. The owner approves the text before the draft is published; then publish it.
+
+**After publishing:** set the version and the installer's size in bytes in
+`site/src/data/node-release.ts` (the download block on `/node/` shows them) and deploy the site.
+The first time a release carries `AIsAtHome-node-setup.exe`, also set `versionFreeInstaller: true`
+there: the button then links to `releases/latest/download` and needs no change per release.
 
 ## Changing what is built
 

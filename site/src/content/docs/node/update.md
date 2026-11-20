@@ -53,8 +53,8 @@ example with `--node-release latest`.
 
 ## On Windows
 
-Download the newer `AIsAtHome-node-setup-<version>.exe`, check it as on
-[Install on Windows](/node/windows/#1-download-and-check) and run it over the installed one. It
+Download the newer installer from [Install on Windows](/node/windows/) (you can
+[check it](/node/windows/#check-the-download) there) and run it over the installed one. It
 keeps the settings and the token, the local password and the node's state, and closes the tray
 icon while it updates.
 

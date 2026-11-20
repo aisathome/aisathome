@@ -3,8 +3,12 @@ title: Install on Windows
 description: Install an AIs@home node on Windows 10 or 11 with one installer, step by step.
 ---
 
+import NodeDownload from '../../../components/NodeDownload.astro';
+
 New in v0.5.0: one installer sets up the node as a Windows service with a tray icon, and the
 node's own page walks you through the rest.
+
+<NodeDownload os="windows" />
 
 ## What you need
 
@@ -18,29 +22,21 @@ node's own page walks you through the rest.
   into `%ProgramData%\AIsAtHome`.
 - A node token from [your account page](/account) (**Add a node**).
 
-## 1. Download and check
+## 1. Download and run the installer
 
-Download `AIsAtHome-node-setup-v0.5.0.exe` and `SHA256SUMS` from the
-[latest release](https://github.com/aisathome/aisathome/releases/latest) (the file name carries
-the version). In PowerShell, in your Downloads folder:
-
-```powershell
-Get-FileHash AIsAtHome-node-setup-v0.5.0.exe
-```
-
-The hash must match the installer's line in `SHA256SUMS`. That catches a broken download, not
-someone who takes over the release itself; see [checking a download](/node/binaries/#checking-a-download).
-
-## 2. Run the installer
+Download the installer with the button above (it is `AIsAtHome-node-setup` with or without the
+version in its name, from the project's [GitHub releases](https://github.com/aisathome/aisathome/releases/latest))
+and run it.
 
 **The installer is not code-signed yet.** SmartScreen, Defender or your browser may warn when
-you download or start it. Once the hash matches, choose **More info → Run anyway**, then
-accept the one administrator prompt.
+you download or start it. Choose **More info → Run anyway** (in the browser, **Keep**), then
+accept the one administrator prompt. To make sure the download is complete and intact before you
+run it, [check the download](#check-the-download) first.
 
 It installs the node under Program Files as the service `aisathome-node`, with its own
 service account, and the tray icon. At the end it opens the node's page.
 
-## 3. Set up on the node's page
+## 2. Set up on the node's page
 
 The page is `http://127.0.0.1:7381/`, on your PC only; the tray and the Start-menu entry
 **AIs@home node** open it signed in. It walks through four steps:
@@ -82,8 +78,8 @@ why, usually other GPU work or locked clocks.
 
 ## Update and uninstall
 
-- **Update:** download the newer installer, check it the same way and run it over the old
-  one. It keeps the settings and the token, the local password and the node's state.
+- **Update:** download the newer installer ([check it](#check-the-download) if you like) and
+  run it over the old one. It keeps the settings and the token, the local password and the node's state.
 - **Uninstall:** Settings → Apps → **AIs@home node** → Uninstall. It removes the service and
   the program and asks whether to delete the data folder (the model and settings).
 
@@ -92,6 +88,23 @@ why, usually other GPU work or locked clocks.
 One RTX 4090 on Windows, with a pre-release build of the installer: on 2026-11-13 it served
 151 requests on the live network, none failed, at about 40-46 tokens/s. **RTX 30 and RTX 50
 cards and the 16 GB tier have not run on Windows yet.** Tell us what worked for you.
+
+## Check the download
+
+Optional: to check that the installer arrived complete and intact. Each release lists the
+SHA-256 of every file in `SHA256SUMS`, next to the installer on the
+[latest release](https://github.com/aisathome/aisathome/releases/latest). In PowerShell, in your
+Downloads folder:
+
+```powershell
+Get-FileHash .\AIsAtHome-node-setup*.exe
+```
+
+The hash must match the installer's line in `SHA256SUMS` (the file with and without the version
+in its name are the same bytes). That catches a broken or incomplete download, not someone who
+takes over the release itself: `SHA256SUMS` comes from the same release page, the installer is
+**not code-signed yet**, and signed releases are planned, not done. See
+[checking a download](/node/binaries/#checking-a-download).
 
 ## Privacy
 
