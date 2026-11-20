@@ -168,6 +168,14 @@ func (f *AccountsFile) nodeIDUsed(id string) bool {
 // AddNode creates a node token for an active account and returns it (shown once) and the
 // node id. valid checks the form's one-time token against NodeSeq, as AddKey does.
 func (s *AccountStore) AddNode(id, name string, now time.Time, valid func(seq int) bool) (token, nodeID string, err error) {
+	token, nodeID, _, err = s.addNode(id, name, now, valid, false)
+	return token, nodeID, err
+}
+
+// addNode is AddNode; with terms (the form showed the line that creating the node accepts the current
+// operator terms) it records that acceptance in the same write, as acceptOnNodeCreate would
+// (chatrules.go), and reports whether it did.
+func (s *AccountStore) addNode(id, name string, now time.Time, valid func(seq int) bool, terms bool) (token, nodeID string, recorded bool, err error) {
 	err = s.Update(func(f *AccountsFile) error {
 		a := f.find(id)
 		switch {
@@ -198,9 +206,13 @@ func (s *AccountStore) AddNode(id, name string, now time.Time, valid func(seq in
 		}
 		a.Nodes = append(a.Nodes, AccountNode{ID: nodeID, Name: cleanNodeName(name), Hash: keyHash(token),
 			Prefix: token[:len("nt-")+len(nodeID)+1+4], Created: t})
+		recorded = terms && a.acceptOnNodeCreate(t)
 		return nil
 	})
-	return token, nodeID, err
+	if err != nil {
+		recorded = false
+	}
+	return token, nodeID, recorded, err
 }
 
 // RevokeNode deletes a node token. account "" finds the node in any account (operator).
