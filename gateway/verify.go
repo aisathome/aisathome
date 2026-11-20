@@ -1,5 +1,5 @@
-// Answer checks (node verification, BACKLOG 11c; review docs/reviews/2026-11-20-node-verification.md
-// in the research repo): the gateway pays per token only for tokens it can show came from the model.
+// Answer checks (node verification, BACKLOG 11c): the gateway pays per token only for tokens it can
+// show came from the model.
 // Every credited answer (ok, cancelled or preempted) is checked against three rules that no honest
 // node breaks, all from what the gateway itself saw:
 //
