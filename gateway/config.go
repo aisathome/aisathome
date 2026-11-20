@@ -69,6 +69,9 @@ type Config struct {
 	TokenizerFile string `json:"tokenizer_file"`
 	// TokenizerSHA256, if set, must match the tokenizer file (hex), or the gateway won't start.
 	TokenizerSHA256 string `json:"tokenizer_sha256"`
+	// Verify sets the answer checks (verify.go): mode observe (default), enforce or off, the
+	// speed ceiling and the nodes' default reasoning budget.
+	Verify VerifyConfig `json:"verify"`
 	// HeartbeatTimeout drops nodes that stay silent for longer than this.
 	HeartbeatTimeout time.Duration `json:"-"`
 	// GuardKnownAddresses are web addresses the guards (guard.go) count as known (not flagged) in tool

@@ -72,6 +72,9 @@ type NodeHold struct {
 	// Evidence is what matched in the node's answer (guard_evidence.go): a fragment, secrets
 	// redacted, never the request. Dropped EvidenceKeep after At; the hold stays.
 	Evidence *GuardEvidence `json:"evidence,omitempty"`
+	// Account is the node's account, for a hold by the answer checks (verify_escalate.go): enough
+	// of them on one account's nodes hold the account.
+	Account string `json:"account,omitempty"`
 }
 
 type nodeRef struct {
@@ -430,6 +433,16 @@ func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
 	g.glog.add(ev)
 	evidence := ev.GuardEvidence
 	p := NodeHold{Node: n.id, Operator: n.operator, Rule: hit.rule, Reason: hit.why, At: ev.At, Req: reqID, Evidence: &evidence}
+	why := "guard: " + hit.rule
+	if hit.rule == ruleModelCheck {
+		why = "model check"
+	}
+	g.recordHold(n, p, why)
+}
+
+// recordHold records hold p of node n (in the accounts file, retried from memory while it cannot be
+// written), stops the node, and withholds its pilot's credit for withhold.
+func (g *Gateway) recordHold(n *nodeConn, p NodeHold, withhold string) {
 	if g.accounts != nil {
 		if err := g.accounts.HoldNode(p); err != nil {
 			g.log.Error("HOLD NOT RECORDED: writing the node's hold to the accounts file failed; it is held in "+
@@ -450,11 +463,7 @@ func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
 		g.press.hold(time.Now())
 	}
 	if n.pilot != "" {
-		why := "guard: " + hit.rule
-		if hit.rule == ruleModelCheck {
-			why = "model check"
-		}
-		g.withholdPilotCredit(n.pilot, why)
+		g.withholdPilotCredit(n.pilot, withhold)
 	}
 }
 
@@ -589,7 +598,7 @@ func (g *Gateway) sweepNodes() {
 			drop = append(drop, n)
 			continue
 		}
-		p := g.nodeHeld(n.id) // read under g.mu: a pause set meanwhile is not undone
+		p := g.nodeHeld(n.id) || g.accountHeld(n.account) // read under g.mu: a pause set meanwhile is not undone
 		cleared = cleared || (n.held && !p)
 		n.held = p
 		if n.account != "" {

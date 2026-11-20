@@ -205,6 +205,7 @@ func (s *AccountStore) claimLink(target, connector, user string, link AccountLin
 		}
 		t.PilotChatOff = t.PilotChatOff || o.PilotChatOff
 		mergeOperatorTerms(t, o)
+		f.moveCheckHolds(o.ID, t.ID) // a held unclaimed account stays held as the claimant (account_holds.go)
 		f.Accounts = slices.DeleteFunc(f.Accounts, func(a *Account) bool { return a == o })
 		from = o.ID
 		return nil

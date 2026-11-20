@@ -304,6 +304,7 @@ type meter struct {
 	args      templateArgs
 	hashes    []uint64 // the prompt's block hashes, when rendered before routing (nil = not)
 	promptIDs []int32  // with a tokenizer
+	forms     []string // an ended answer's conversation as later prompts start (conversations), once metered
 
 	genOut // all the output the node sent
 }
@@ -313,6 +314,7 @@ type genOut struct {
 	reasoning, content strings.Builder
 	calls              []*toolCall
 	size               int
+	finish             string // the last finish_reason the node sent (signals.go)
 }
 
 // empty: no generated text at all.
@@ -356,10 +358,16 @@ func (m *genOut) chunk(data []byte) {
 					} `json:"function"`
 				} `json:"tool_calls"`
 			} `json:"delta"`
+			FinishReason json.RawMessage `json:"finish_reason"` // raw: a wrong type must not hide the chunk's text
 		} `json:"choices"`
 	}
 	if json.Unmarshal(data, &c) != nil {
 		return
+	}
+	for _, ch := range c.Choices {
+		if f := finishOf(ch.FinishReason); f != "" {
+			m.finish = f
+		}
 	}
 	// The bound counts the text kept, not the chunk: logprobs (top_logprobs 20 is about 1.5 kB
 	// a token) stopped the count of a long answer after some 700 tokens.
@@ -379,6 +387,20 @@ func (m *genOut) chunk(data []byte) {
 			m.size += len(tc.Function.Name) + len(tc.Function.Arguments)
 		}
 	}
+}
+
+// finishOf is a chunk's finish_reason as the usage log may keep it: one of the values engines
+// send, "other" for any other text (never the node's own words), "" for none.
+func finishOf(raw json.RawMessage) string {
+	var f string
+	if len(raw) == 0 || json.Unmarshal(raw, &f) != nil || f == "" {
+		return ""
+	}
+	switch f {
+	case "stop", "length", "tool_calls", "content_filter", "function_call":
+		return f
+	}
+	return "other"
 }
 
 // output is what the model generated after the prompt (reasoning, the end of thinking, the

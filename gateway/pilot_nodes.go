@@ -55,6 +55,9 @@ func (g *Gateway) authPilot(cred string) (*pilotLogin, int, string) {
 	if !live {
 		return nil, http.StatusForbidden, "this pilot's account is closed"
 	}
+	if g.accountHeld(p.account) {
+		return nil, http.StatusForbidden, heldAccountMsg
+	}
 	// Never trusted, not even for trusted_users: the gateway cannot tell which machine holds a
 	// credential, and one copied in transit must not receive personal data. trusted_users only lets
 	// the maintainer's own pilots serve chat before pilots_chat_enabled.

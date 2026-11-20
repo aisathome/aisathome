@@ -33,6 +33,7 @@ type chatReq struct {
 	class        string         // workload class: chat, agent or science (project.go)
 	project      string         // the science project, or ""
 	task         string         // the project's task the request names (nodework.go), or ""
+	discarded    []discardRef   // earlier answers its prompt threw away (discard.go): in its first usage record
 	body         map[string]any // redacted; forNode picks what a node may see
 	red          *redactor
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
@@ -312,21 +313,31 @@ func (rl *relay) meter(outcome string, u protocol.Usage, estimated bool) *usageR
 	rec := &usageRecord{Time: time.Now().UTC(), User: req.user, Node: n.id, Operator: n.operator,
 		Model: rl.model, Requested: req.want, Usage: u, ReqID: rl.reqID, Outcome: outcome, Relayed: rl.relayed,
 		Estimated: estimated, Clamped: clamped, SelfServed: req.self != "" && n.operator == req.self, Guard: rl.flag,
-		Tools: hasTools(req.body), Class: req.class, Project: req.project}
+		Tools: hasTools(req.body), Class: req.class, Project: req.project, Task: req.task}
 	rl.g.meterRecord(rec, rl.mt, &rl.sent, n, req.who, u, rl.maxTokens, rec.Time)
+	if outcome == "ok" { // before the end goes out: the next prompt shows whether the client kept it (discard.go)
+		rl.g.discards.answered(keyHash(req.who), rl.mt.prompt, rl.mt.forms, n.id, n.operator, rec.ReqID, rec.Time)
+	}
 	return rec
 }
 
 // undelivered turns the record of an ok answer whose end never reached the client into that
 // of a cancelled one, credited for what did reach it.
 func (rl *relay) undelivered(rec *usageRecord) {
+	rl.g.discards.forget(keyHash(rl.req.who), rec.ReqID)
 	rec.Outcome = "cancelled"
 	rl.g.countOutput(rec, rl.mt, &rl.sent, rec.Usage, rl.maxTokens)
 }
 
-// commit logs the record, grants its credit and charges the budgets.
+// commit checks the answer (verify.go), logs the record, grants its credit and charges the budgets.
 func (rl *relay) commit(rec *usageRecord) {
 	g, n, req := rl.g, rl.n, rl.req
+	rec.Discarded, req.discarded = req.discarded, nil
+	rec.Signals = signalsOf(&rl.mt.genOut, rec.facts.out, rec.facts.reasoning, rec.Usage.DurationMs)
+	if g.checkAnswer(rec, req.body, rl.maxTokens) { // in enforce mode a failed answer's credit is voided here
+		defer g.escalate(n, rec) // after its record and credit: a hold withholds a pilot's credit
+	}
+	g.checks.add(rec)
 	if n.pilot != "" { // into the pilot's record, never the public ledger (pilots.go)
 		g.pilotServed(n, rec)
 	} else if (rec.Outcome == "ok" || rec.Outcome == "cancelled" || rec.Outcome == outcomePreempted) && !rec.SelfServed {
