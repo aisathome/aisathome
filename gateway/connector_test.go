@@ -822,6 +822,7 @@ func TestPilotNotOwnForPlacement(t *testing.T) {
 	id, cred := r.create()
 	r.bind(id, "5")
 	n := r.pilotNode(cred, 1)
+	n.deadline = time.Now().Add(time.Hour) // pick checks the deadline against the real clock, not the rig's
 	rt := &route{want: "m", class: ClassScience, project: "lab", self: n.operator, preferSelf: true, exclude: map[*nodeConn]bool{}}
 	got, _ := r.g.pick(rt)
 	if got != n {
