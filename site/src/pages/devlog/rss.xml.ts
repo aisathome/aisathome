@@ -26,7 +26,7 @@ export const GET: APIRoute = async ({ site }) => {
     <title>${esc(feed.title)}</title>
     <link>${esc(base)}/devlog/</link>
     <atom:link href="${esc(base + feed.path)}" rel="self" type="application/rss+xml"/>
-    <description>Notes from building AIs@home: open AI models on volunteers’ GPUs.</description>
+    <description>Notes from building AIs@home: open-weight AI on volunteers’ GPUs.</description>
     <language>en</language>
     <lastBuildDate>${updated.toUTCString()}</lastBuildDate>
 ${items.join('\n')}

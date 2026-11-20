@@ -5,7 +5,7 @@ description: Who handles your data on AIs@home and its BOINC project, and what a
 
 *Last changed: 2026-11-20.*
 
-AIs@home is an experiment: open AI models running on volunteers' GPUs instead of a big company's data centre. This page
+AIs@home is an experiment: open-weight AI running on volunteers' GPUs instead of a big company's data centre. This page
 covers the chat (chat.aisathome.org), the API, the website, running a node, and our BOINC project
 (boinc.aisathome.org). Read it before you type anything you care about.
 

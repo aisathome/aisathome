@@ -14,7 +14,7 @@ export const links = {
 };
 
 export const hero = {
-	title: 'Open AI models on volunteers’ GPUs',
+	title: 'Open-weight AI on volunteers’ GPUs',
 	lead:
 		'AIs@home runs open-weight AI models on GPUs that volunteers contribute: AI that does not have to go through a handful of big companies.',
 	status: 'Early experiment. Non-commercial and open source. Things will break.',
