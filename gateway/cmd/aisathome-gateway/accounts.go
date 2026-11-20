@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -53,6 +54,9 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   guard-log [node]     the guards' recent stops, holds and flags (at most 200, of the past 14
                        days) with what matched: a piece of the node's answer, secrets redacted;
                        as of the gateway's last save (every 5 s; needs -config with state_dir)
+  model-check [node]   the model check's result per node (pass, suspect, fail, unknown), with each
+                       node's latest checks (KL, confident flips, the secret prompts' ids), as of
+                       the gateway's last save (every 5 s; needs -config with state_dir)
   routing trusted-only | any
                        emergency switch: send every request to trusted nodes only, or back
 
@@ -111,6 +115,27 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return err
 		}
 		return printGuardLog(out, es, node)
+	}
+	// model-check reads the state_dir only, like guard-log.
+	if a := fs.Args(); len(a) > 0 && a[0] == "model-check" {
+		if len(a) > 2 {
+			fs.Usage()
+			return errors.New("model-check takes at most one argument, a node")
+		}
+		if cfg == nil || cfg.StateDir == "" {
+			return errors.New("model-check needs -config with a state_dir: the gateway keeps its results there")
+		}
+		st, err := gateway.ReadModelCheckState(cfg.StateDir)
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("no model check results: model_check is off, or the gateway has not saved any yet")
+		} else if err != nil {
+			return err
+		}
+		node := ""
+		if len(a) == 2 {
+			node = a[1]
+		}
+		return printModelCheck(out, st, node, time.Now())
 	}
 	if path == "" {
 		if cfg.Accounts == nil || cfg.Accounts.File == "" {
@@ -378,6 +403,68 @@ func printGuardLog(out io.Writer, es []gateway.GuardEvent, node string) error {
 		fmt.Fprint(out, evidenceLines(&e.GuardEvidence, e.Req))
 	}
 	fmt.Fprintf(out, "\n%d guard event(s) of the past 14 days (UTC); what matched is a piece of the node's answer, secrets redacted\n", n)
+	return nil
+}
+
+// printModelCheck prints the model check's result per node, failing nodes first; with node set,
+// that node's checks one per line.
+func printModelCheck(out io.Writer, st *gateway.ModelCheckState, node string, now time.Time) error {
+	th := st.Thresholds
+	mode := "observe-only"
+	if from := st.ObservingSince.Add(gateway.ModelCheckObserveFirst); st.Withhold && now.Before(from) {
+		mode = "observe-only, withholding from " + from.UTC().Format("2006-01-02 15:04") + " UTC"
+	} else if st.Withhold {
+		mode = "withholding (a failing node is held)"
+	}
+	fmt.Fprintf(out, "model check: %s, observing since %s UTC; limits KL %.4f per check of %d prompts, %d confident flips over the window\n\n",
+		mode, st.ObservingSince.UTC().Format("2006-01-02 15:04"), th.MaxCheckKL, th.GroupSize, th.MaxFlips)
+	ids := make([]string, 0, len(st.Nodes))
+	for id := range st.Nodes {
+		if node == "" || id == node {
+			ids = append(ids, id)
+		}
+	}
+	if node != "" && len(ids) == 0 {
+		return fmt.Errorf("no model check results for node %s", node)
+	}
+	rank := map[string]int{gateway.MCFail: 0, gateway.MCSuspect: 1, gateway.MCPass: 2, gateway.MCUnknown: 3}
+	res := map[string]string{}
+	for _, id := range ids {
+		res[id], _, _ = st.Nodes[id].Status(th)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if rank[res[ids[i]]] != rank[res[ids[j]]] {
+			return rank[res[ids[i]]] < rank[res[ids[j]]]
+		}
+		return ids[i] < ids[j]
+	})
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "NODE\tOPERATOR\tMODEL\tRESULT\tCHECKS\tLARGEST KL\tFLIPS\tNO ANSWER\tLAST CHECK")
+	for _, id := range ids {
+		n := st.Nodes[id]
+		r, worst, flips := n.Status(th)
+		if !n.HeldAt.IsZero() {
+			r += " (held)"
+		}
+		last := "-"
+		if len(n.Checks) > 0 {
+			c := n.Checks[len(n.Checks)-1]
+			last = c.Verdict + " " + c.At.UTC().Format("01-02 15:04")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d pass, %d fail\t%.4f\t%d\t%d\t%s\n", id, n.Operator, n.Model, r, n.Pass, n.Fail, worst, flips, n.Dropped, last)
+	}
+	tw.Flush()
+	if node != "" {
+		fmt.Fprintf(out, "\nlatest checks of %s, oldest first:\n", node)
+		for _, c := range st.Nodes[node].Checks {
+			fmt.Fprintf(out, "%s  %s  KL %.4f  flips %d  positions %d  diverged %d  prompts %s", c.At.UTC().Format("2006-01-02 15:04:05"),
+				c.Verdict, c.KL, c.Flips, c.Positions, c.Diverged, strings.Join(c.Prompts, ","))
+			if len(c.Reasons) > 0 {
+				fmt.Fprintf(out, "  (%s)", strings.Join(c.Reasons, "; "))
+			}
+			fmt.Fprintln(out)
+		}
+	}
 	return nil
 }
 

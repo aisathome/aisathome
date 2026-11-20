@@ -22,7 +22,7 @@
 // capped per pilot and per account and UTC day, and never into the public ledger: pilot credit is
 // granted through the connector (BOINC's own statistics), not the gateway's /stats/ exports. It
 // becomes final pilotCreditHold after the pilot's last disconnect, once it has ended; it is withheld
-// (final 0) if a guard held the pilot, and the gateway-side model check, when it comes, withholds it the same way
+// (final 0) if a guard held the pilot, and the gateway's model check (modelcheck.go), when it withholds, the same way
 // (withholdPilotCredit).
 //
 // The records live in the science database (science_db.go, migration 2).
