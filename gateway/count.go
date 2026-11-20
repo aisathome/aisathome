@@ -305,8 +305,43 @@ type meter struct {
 	hashes    []uint64 // the prompt's block hashes, when rendered before routing (nil = not)
 	promptIDs []int32  // with a tokenizer
 	forms     []string // an ended answer's conversation as later prompts start (conversations), once metered
+	prefill   *prefill // the request ends with an assistant message the engine continues, or nil
 
 	genOut // all the output the node sent
+}
+
+// prefill is a request's last message when it is the assistant's (opencode's notice at its step
+// limit, for one): llama-server continues that message (prefill_assistant, its default) instead
+// of starting a new answer, and llama.cpp v0.5.0 (b11146) streams the message back at the start
+// of the answer, as if generated; b12342 does not. That text came with the request: it is not
+// output. Its parts are as the template renders them.
+type prefill struct {
+	reasoning, content string
+	thinking           bool // only reasoning was given: the engine goes on with it, the answer's thinking is open
+}
+
+// prefillOf is body's prefill, chosen as llama-server does (continue_final_message "auto"; a node
+// is never sent that field): a last message from the assistant without tool calls (with them the
+// engine refuses the request). It continues the reasoning when the message has reasoning and no
+// content, else the content.
+func prefillOf(body map[string]any) *prefill {
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) == 0 {
+		return nil
+	}
+	m, _ := msgs[len(msgs)-1].(map[string]any)
+	if r, _ := m["role"].(string); r != "assistant" {
+		return nil
+	}
+	if calls, _ := m["tool_calls"].([]any); len(calls) > 0 {
+		return nil
+	}
+	reasoning, _ := m["reasoning_content"].(string)
+	p := &prefill{reasoning: strings.TrimSpace(reasoning), content: strings.TrimSpace(renderContent(m["content"]))}
+	parts, _ := m["content"].([]any)
+	c, _ := m["content"].(string)
+	p.thinking = reasoning != "" && c == "" && len(parts) == 0
+	return p
 }
 
 // genOut is generated output (reasoning, answer, tool calls) gathered from streamed chunks.
@@ -324,7 +359,7 @@ func (m *genOut) empty() bool {
 
 // newMeter starts metering nb; cp is its conversation if already rendered (nil = render it).
 func newMeter(nb map[string]any, cp *convPrint, tok *Tokenizer) *meter {
-	m := &meter{ready: make(chan struct{})}
+	m := &meter{ready: make(chan struct{}), prefill: prefillOf(nb)}
 	if cp != nil {
 		m.prompt, m.args, m.hashes, m.promptIDs = cp.prompt, cp.args, cp.hashes, cp.ids
 	}
@@ -459,6 +494,27 @@ func withoutReasoning(p string) string {
 	}
 	b.WriteString(p)
 	return b.String()
+}
+
+// generated is o as the engine generated it after this prompt, for counting: as render gives it,
+// but after a prefill without the prefill streamed back and without an end of thinking the
+// prompt already holds.
+func (m *meter) generated(o *genOut, closeThink bool) string {
+	p := m.prefill
+	if p == nil {
+		gen, _ := m.render(o, closeThink)
+		return gen
+	}
+	calls := make([]toolCall, len(o.calls))
+	for i, c := range o.calls {
+		calls[i] = *c
+	}
+	gen := strings.TrimPrefix(o.reasoning.String(), p.reasoning)
+	if p.thinking && closeThink {
+		gen += "\n</think>\n\n"
+	}
+	all := o.content.String()
+	return gen + strings.TrimPrefix(all, p.content) + renderCalls(all, calls)
 }
 
 // render is o as the model generated it after this prompt. closeThink: the end of thinking

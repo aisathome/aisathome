@@ -135,8 +135,7 @@ func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, node
 	t := *rec.Tokens
 	rec.facts.reasoning = -1
 	if g.tok != nil {
-		gen, _ := mt.render(out, closeThink)
-		t.Completion = g.tok.Count(gen)
+		t.Completion = g.tok.Count(mt.generated(out, closeThink))
 		if ended {
 			t.Completion++ // <|im_end|>
 		}
