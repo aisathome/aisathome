@@ -66,6 +66,7 @@ type Gateway struct {
 	knownSrc knownAddrs      // sources the guards know without the request (guard.go)
 	installs knownAddrs      // official installers: stopped, not held (guard_official.go)
 	glog     guardLog        // recent guard events with their evidence (guard_evidence.go)
+	mc       *modelChecker   // the model check of untrusted nodes (modelcheck.go); nil when off
 	unrec    unrecordedHolds // guard holds the accounts file has not recorded yet
 	tok      *Tokenizer      // the gateway's own token counts; nil = the node's (credit.go)
 	counting chan struct{}   // prompts being counted before routing (countPrompt)
@@ -216,6 +217,13 @@ func (g *Gateway) setup(cfg Config) (err error) {
 	if err := g.sci.recoverPilots(); err != nil { // connections a stopped gateway left open
 		return err
 	}
+	if mcc := cfg.ModelCheck; mcc != nil && mcc.Enabled {
+		if g.mc, err = newModelChecker(*mcc, cfg.StateDir, log); err != nil {
+			return err
+		}
+		log.Info("model check on", "references", len(mcc.References), "withhold", mcc.Withhold,
+			"withholding_now", g.mc.withholding(), "observing_since", g.mc.st.ObservingSince)
+	}
 	if cfg.StateDir != "" {
 		g.budget.path = filepath.Join(cfg.StateDir, BudgetsFile)
 		g.budget.load(time.Now(), log)
@@ -277,6 +285,9 @@ func (g *Gateway) startBackground() {
 			if err := g.glog.save(time.Now()); err != nil {
 				log.Warn("saving the guard log failed", "err", err)
 			}
+			if err := g.mc.save(); err != nil {
+				log.Warn("saving the model check's results failed", "err", err)
+			}
 		})
 		g.every(pressureSaveEvery, func() {
 			if err := g.press.save(); err != nil {
@@ -291,6 +302,9 @@ func (g *Gateway) startBackground() {
 	}
 	g.every(sample, func() { g.hist.sample(g.nodesOnline(), time.Now()) })
 	g.every(pressureSampleEvery, func() { g.press.sample(g.pressureNow(), time.Now()) })
+	if g.mc != nil {
+		g.mcStart()
+	}
 }
 
 // closeFiles closes what New opened: the usage log and the science database.
@@ -331,5 +345,5 @@ func (g *Gateway) every(d time.Duration, f func()) {
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
 	g.bg.Wait()
-	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.glog.save(time.Now()), g.closeFiles())
+	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.glog.save(time.Now()), g.mc.save(), g.closeFiles())
 }

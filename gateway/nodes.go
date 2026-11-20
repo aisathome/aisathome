@@ -420,7 +420,11 @@ func (g *Gateway) nodeHeld(id string) bool {
 // holdNode stops n after a guard fired on its answer. The log line holds no content; the record
 // and the guard log keep the evidence (guard_evidence.go).
 func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
-	g.log.Warn("guard stopped a node's answer; node held", "node", n.id, "operator", n.operator, "rule", hit.rule,
+	msg := "guard stopped a node's answer; node held"
+	if hit.rule == ruleModelCheck {
+		msg = "model check failed; node held"
+	}
+	g.log.Warn(msg, "node", n.id, "operator", n.operator, "rule", hit.rule,
 		"reason", hit.why, "req", reqID)
 	ev := guardEvent(n, hit, reqID, GuardHeld, time.Now().UTC())
 	g.glog.add(ev)
@@ -446,7 +450,11 @@ func (g *Gateway) holdNode(n *nodeConn, hit guardHit, reqID string) {
 		g.press.hold(time.Now())
 	}
 	if n.pilot != "" {
-		g.withholdPilotCredit(n.pilot, "guard: "+hit.rule)
+		why := "guard: " + hit.rule
+		if hit.rule == ruleModelCheck {
+			why = "model check"
+		}
+		g.withholdPilotCredit(n.pilot, why)
 	}
 }
 

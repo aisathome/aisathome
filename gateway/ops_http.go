@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aisathome/aisathome/node/modelcheck"
 )
 
 // recentUse remembers the last science requests (time, node, token counts), so the page can
@@ -124,6 +126,23 @@ type opsData struct {
 	SignedOut   bool
 	Error       string // a clear that failed
 	ProjectList []string
+	ModelCheck  *opsModelCheck // nil: the model check is off
+}
+
+// opsModelCheck is the model check card (modelcheck.go).
+type opsModelCheck struct {
+	Mode    string // "observe-only" or "withholding"
+	Since   string // observing since
+	Limits  string
+	Rows    []opsMCRow
+	Failing int
+}
+
+// opsMCRow is one node's model check result.
+type opsMCRow struct {
+	Node, Operator, Model, Result, Checks, WorstKL, Flips, Last, Reasons string
+	Dropped                                                              int
+	Connected, Trusted, Held                                             bool
 }
 
 // opsTask is one row of the gateway's task queue.
@@ -344,7 +363,55 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 			Req: p.Req, Evidence: p.CurrentEvidence(now)})
 	}
 	g.opsTasks(&d, project, now)
+	d.ModelCheck = g.opsModelCheck(connected, now)
 	return d
+}
+
+// opsModelCheck builds the model check card: failing nodes first, then by node id.
+func (g *Gateway) opsModelCheck(connected map[string]bool, now time.Time) *opsModelCheck {
+	if g.mc == nil {
+		return nil
+	}
+	st := g.mc.snapshot()
+	th := st.Thresholds
+	mc := &opsModelCheck{Mode: "observe-only", Since: st.ObservingSince.UTC().Format("2006-01-02 15:04") + " UTC",
+		Limits: fmt.Sprintf("KL %.4f per check of %d prompts, %d confident flips over %d checks", th.MaxCheckKL, th.GroupSize, th.MaxFlips, mcWindow)}
+	if g.mc.withholding() {
+		mc.Mode = "withholding"
+	} else if st.Withhold {
+		mc.Mode = "observe-only (withholding from " + st.ObservingSince.Add(mcObserveFirst).UTC().Format("2006-01-02 15:04") + " UTC)"
+	}
+	rank := map[string]int{MCFail: 0, MCSuspect: 1, MCPass: 2, MCUnknown: 3}
+	for _, s := range st.Nodes {
+		res, worst, flips := s.Status(th)
+		row := opsMCRow{Node: s.Node, Operator: s.Operator, Model: s.Model, Result: res, Dropped: s.Dropped,
+			Checks: fmt.Sprintf("%d pass · %d fail", s.Pass, s.Fail), Connected: connected[s.Node], Trusted: s.Trusted,
+			Held: !s.HeldAt.IsZero(), Last: "–"}
+		if len(s.Checks) > 0 {
+			last := s.Checks[len(s.Checks)-1]
+			row.WorstKL = fmt.Sprintf("%.4f", worst)
+			row.Flips = fmt.Sprintf("%d", flips)
+			row.Last = last.Verdict + ", " + ago(now.Sub(last.At))
+			for _, c := range slices.Backward(s.Checks) {
+				if c.Verdict != modelcheck.Pass {
+					row.Reasons = strings.Join(c.Reasons, "; ")
+					break
+				}
+			}
+		}
+		if res == MCFail {
+			mc.Failing++
+		}
+		mc.Rows = append(mc.Rows, row)
+	}
+	sort.Slice(mc.Rows, func(i, j int) bool {
+		a, b := mc.Rows[i], mc.Rows[j]
+		if rank[a.Result] != rank[b.Result] {
+			return rank[a.Result] < rank[b.Result]
+		}
+		return a.Node < b.Node
+	})
+	return mc
 }
 
 // opsAdmin: id may use /account/ops (accounts.admins, and the account active).
@@ -450,6 +517,17 @@ code.frag{display:block;white-space:pre-wrap;overflow-wrap:anywhere;margin-botto
 </style>`
 
 var opsTmpl = newPage("ops", template.FuncMap{
+	"mcbadge": func(result string) string {
+		switch result {
+		case MCPass:
+			return "online"
+		case MCFail:
+			return "held"
+		case MCSuspect:
+			return "paused"
+		}
+		return "offline"
+	},
 	"sub": func(a, b int) int { return a - b },
 	"badge": func(state string) string {
 		switch state {
@@ -476,7 +554,7 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{if .Warnings}}<div class="card err" role="alert" id="warnings"><h2>Warnings</h2><ul class="warn-list">{{range .Warnings}}<li data-rule="{{.Rule}}">{{.Text}}</li>{{end}}</ul></div>
 {{else}}<div class="card ok" id="warnings"><p>No warnings.</p></div>{{end}}
 {{if .Holds}}<div class="card" id="holds"><h2>Held nodes ({{len .Holds}})</h2>
-<p class="mut small">A guard stopped their answers: they serve nothing until cleared, here after reading the rule and what it matched, or with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>. What matched is a piece of the node's answer, secrets redacted, kept 14 days (<code>accounts guard-log</code> lists recent stops and flags).</p>
+<p class="mut small">A guard (or, when it withholds, the model check) stopped them: they serve nothing until cleared, here after reading the rule and what it matched, or with <code>aisathome-gateway accounts node-clear &lt;node&gt;</code>. What matched is a piece of the node's answer, secrets redacted, kept 14 days (<code>accounts guard-log</code> lists recent stops and flags).</p>
 <div class="table-wrap"><table><tr><th>Node</th><th>Rule</th><th>What matched</th><th>Held since</th><th></th></tr>
 {{range .Holds}}<tr data-hold="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if not .Connected}} <span class="badge offline">offline</span>{{end}}</td><td data-label="Rule">{{.Rule}}{{if .Reason}}<br><span class="mut small" data-reason>{{.Reason}}</span>{{end}}</td>
 <td data-label="What matched"><div class="ev">{{with .Evidence}}{{with .Fragment}}<code class="frag" data-fragment>{{.}}</code>{{end}}<span class="mut small">{{.Where}}{{with .Host}} · host <code data-host>{{.}}</code>{{end}}</span>{{else}}<span class="mut small">not kept (older than 14 days, or held before evidence was kept)</span>{{end}}{{with .Req}}<br><span class="mut small">request <code data-req>{{.}}</code></span>{{end}}</div></td>
@@ -524,6 +602,14 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <td data-label="Busy" class="num">{{.Load}}</td><td data-label="Science" class="num">{{.Science}}</td><td data-label="Connected">{{.Since}} UTC</td>
 <td data-label="Contract ends">{{if .Contract}}{{.Contract}} UTC{{else}}<span class="mut">–</span>{{end}}</td></tr>{{end}}</table></div>
 {{else}}<p class="mut">No node is online.</p>{{end}}</div>
+{{with .ModelCheck}}<div class="card" id="model-check"><div class="card-head"><h2>Model check</h2><span class="badge {{if eq .Mode "withholding"}}held{{else}}paused{{end}}" data-mode>{{.Mode}}</span></div>
+<p class="mut small">Secret probe prompts compared with the reference's logprobs; observing since {{.Since}}. A node fails with two failed checks, or too many confident flips, among its last checks. Limits: {{.Limits}}. <code>aisathome-gateway accounts model-check [node]</code> lists the checks.</p>
+{{if .Rows}}<div class="table-wrap"><table><tr><th>Node</th><th>Result</th><th>Checks</th><th class="num">Largest KL</th><th class="num">Flips</th><th>Last check</th><th class="num">No answer</th></tr>
+{{range .Rows}}<tr data-mc-node="{{.Node}}"><td data-label="Node"><code>{{.Node}}</code>{{if .Trusted}} <span class="mut small">trusted</span>{{end}}{{if not .Connected}} <span class="badge offline">offline</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}<br><span class="mut small">{{.Operator}} · {{.Model}}</span></td>
+<td data-label="Result"><span class="badge {{mcbadge .Result}}" data-result>{{.Result}}</span>{{with .Reasons}}<br><span class="mut small">{{.}}</span>{{end}}</td>
+<td data-label="Checks">{{.Checks}}</td><td data-label="Largest KL" class="num">{{.WorstKL}}</td><td data-label="Flips" class="num">{{.Flips}}</td>
+<td data-label="Last check">{{.Last}}</td><td data-label="No answer" class="num">{{.Dropped}}</td></tr>{{end}}</table></div>
+{{else}}<p class="mut">No node checked yet.</p>{{end}}</div>{{end}}
 {{if not .Status}}<p class="mut">No status from the runner yet: it posts one every minute (research tools/status_report.py).</p>{{end}}
 {{if gt (len .ProjectList) 1}}<p class="small">Projects: {{range .ProjectList}}<a href="/account/ops?project={{.}}">{{.}}</a> {{end}}</p>{{end}}
 </div>{{end}}

@@ -97,6 +97,9 @@ type Config struct {
 	// Connectors bring machines as pilots (connector.go): BOINC's bridge is the first. They need
 	// accounts (pilots serve as accounts' nodes) and a state_dir for their records.
 	Connectors []Connector `json:"connectors,omitempty"`
+	// ModelCheck is the gateway's model check of untrusted nodes (modelcheck.go): secret probe
+	// prompts compared with a reference. Absent or not enabled: off.
+	ModelCheck *ModelCheckConfig `json:"model_check,omitempty"`
 	// HistorySample, if set, replaces how often the number of nodes online is sampled for the
 	// daily history (a minute). For tests.
 	HistorySample time.Duration `json:"-"`

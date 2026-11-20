@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aisathome/aisathome/node/modelcheck"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -92,6 +93,12 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	nb["model"] = model
 	nb["stream"] = true
 	nb["stream_options"] = map[string]any{"include_usage": true}
+	// Cover for the model check's probes (modelcheck.go): some requests without tools ask for the
+	// same logprobs, which never reach the client (onChunk drops them). Streaming clients only: a
+	// non-streaming answer is collected whole, and logprobs would swell it.
+	if !req.logprobs && req.clientStream && g.mc.coverFor(n, nb) {
+		nb["logprobs"], nb["top_logprobs"] = true, modelcheck.DefaultRequest.TopLogprobs
+	}
 	raw, _ := json.Marshal(nb)
 	rl := &relay{g: g, w: w, ctx: r.Context(), req: req, n: n, model: model, gd: gd, reqID: reqID, raw: raw}
 	rl.mt = newMeter(nb, req.conv, g.tok)

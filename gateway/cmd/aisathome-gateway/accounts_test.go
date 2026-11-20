@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/gateway"
+	"github.com/aisathome/aisathome/node/modelcheck"
 )
 
 func TestAccountsCommand(t *testing.T) {
@@ -442,5 +443,50 @@ func TestAccountsGuardLog(t *testing.T) {
 	}
 	if err := runAccounts([]string{"-file", file, "guard-log"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "state_dir") {
 		t.Fatalf("without a state_dir: %v", err)
+	}
+}
+
+// model-check prints the gateway's saved model check results, failing nodes first, and one node's
+// checks when asked; it needs the config's state_dir.
+func TestAccountsModelCheck(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	os.Mkdir(state, 0o700)
+	cfgFile := filepath.Join(dir, "gateway.json")
+	raw, _ := json.Marshal(gateway.Config{StateDir: state})
+	os.WriteFile(cfgFile, raw, 0o600)
+	run := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		err := runAccounts(append([]string{"-config", cfgFile}, args...), &out, &bytes.Buffer{})
+		return out.String(), err
+	}
+	if _, err := run("model-check"); err == nil || !strings.Contains(err.Error(), "no model check results") {
+		t.Fatalf("without results: %v", err)
+	}
+	now := time.Now().UTC()
+	pass := gateway.ModelCheckResult{At: now, Verdict: "pass", KL: 0.0012, Positions: 128, Prompts: []string{"s1", "s2", "s3", "s4"}}
+	fail := gateway.ModelCheckResult{At: now, Verdict: "fail", KL: 0.0311, Flips: 3, Positions: 90, Diverged: 2, Prompts: []string{"s5", "s6", "s7", "s8"},
+		Reasons: []string{"KL divergence 0.0311 in a group of 4 prompts is above the limit 0.0085"}}
+	st := gateway.ModelCheckState{ObservingSince: now.Add(-time.Hour), Thresholds: modelcheck.DefaultThresholds, Withhold: true,
+		Nodes: map[string]*gateway.ModelCheckNode{
+			"n-good": {Node: "n-good", Operator: "alice", Model: "qwen3.8-27b", Pass: 5, Checks: []gateway.ModelCheckResult{pass}},
+			"p-bad":  {Node: "p-bad", Operator: "bob", Model: "qwen3.8-27b", Pass: 1, Fail: 2, Dropped: 1, Checks: []gateway.ModelCheckResult{fail, pass, fail}},
+		}}
+	raw, _ = json.Marshal(st)
+	os.WriteFile(filepath.Join(state, gateway.ModelCheckFile), raw, 0o600)
+	out, err := run("model-check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "observe-only, withholding from") || strings.Index(out, "p-bad") > strings.Index(out, "n-good") ||
+		!strings.Contains(out, "fail") || !strings.Contains(out, "0.0311") || !strings.Contains(out, "1 pass, 2 fail") {
+		t.Fatalf("model-check:\n%s", out)
+	}
+	if out, err := run("model-check", "p-bad"); err != nil || strings.Contains(out, "n-good") || !strings.Contains(out, "prompts s5,s6,s7,s8") ||
+		!strings.Contains(out, "above the limit") {
+		t.Fatalf("model-check p-bad: %v\n%s", err, out)
+	}
+	if _, err := run("model-check", "n-none"); err == nil {
+		t.Fatal("an unknown node gave no error")
 	}
 }
