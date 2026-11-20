@@ -202,6 +202,7 @@ import LiveStats from '../components/LiveStats.astro';
 		<p class="board-empty" data-empty hidden>No volunteer has chosen a username yet.</p>
 		<p class="board-note" data-anon hidden></p>
 		<p class="board-note" data-maint hidden></p>
+		<ul class="board-note" data-corrections hidden></ul>
 		<p class="board-note">Updated <time data-updated></time> UTC.</p>
 	</section>
 
@@ -642,6 +643,19 @@ import LiveStats from '../components/LiveStats.astro';
 				const m = d?.maintainer;
 				maint.hidden = !(ok(m?.credit) && m.credit > 0 && ok(m?.nodes));
 				if (!maint.hidden) maint.textContent = `The maintainer’s own nodes: ${fmt(m.credit)} credit (in the totals, not in the list).`;
+				const corr = box.querySelector('[data-corrections]');
+				const cs = (Array.isArray(d?.corrections) ? d.corrections : []).filter(
+					(c) => typeof c?.credit === 'number' && Number.isFinite(c.credit) && typeof c?.reason === 'string' && !Number.isNaN(new Date(c?.time).getTime()),
+				);
+				corr.replaceChildren(
+					...cs.map((c) => {
+						const li = document.createElement('li');
+						const sign = c.credit < 0 ? '−' : '+';
+						li.textContent = `Correction ${new Date(c.time).toISOString().slice(0, 10)}: ${sign}${fmt(Math.abs(c.credit))} credit (${c.reason}), in the totals.`;
+						return li;
+					}),
+				);
+				corr.hidden = cs.length === 0;
 				const t = box.querySelector('[data-updated]');
 				t.textContent = `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
 				t.dateTime = at.toISOString();
@@ -777,5 +791,7 @@ import LiveStats from '../components/LiveStats.astro';
 	.board :global(.num) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 	.board :global(:is(th, td):last-child) { padding-right: 0; }
 	.board-note, .board-empty { margin: 0.75rem 0 0; font-size: 0.9rem; color: var(--sl-color-gray-3); }
+	ul.board-note { padding-left: 1.25rem; }
+	ul.board-note[hidden] { display: none; }
 	.board table[hidden] { display: none; }
 </style>
