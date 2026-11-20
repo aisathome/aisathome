@@ -518,7 +518,7 @@ func (m *meter) generated(o *genOut, closeThink bool) string {
 	for i, c := range o.calls {
 		calls[i] = *c
 	}
-	gen := strings.TrimPrefix(o.reasoning.String(), p.reasoning)
+	gen := m.generatedReasoning(o)
 	if p.thinking && closeThink {
 		gen += "\n</think>\n\n"
 	}
@@ -528,6 +528,14 @@ func (m *meter) generated(o *genOut, closeThink bool) string {
 		content = strings.TrimPrefix(all, p.parts)
 	}
 	return gen + content + renderCalls(all, calls)
+}
+
+// generatedReasoning is o's reasoning without a continued message's reasoning streamed back.
+func (m *meter) generatedReasoning(o *genOut) string {
+	if m.prefill == nil {
+		return o.reasoning.String()
+	}
+	return strings.TrimPrefix(o.reasoning.String(), m.prefill.reasoning)
 }
 
 // render is o as the model generated it after this prompt. closeThink: the end of thinking

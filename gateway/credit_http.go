@@ -143,7 +143,7 @@ func (g *Gateway) countOutput(rec *usageRecord, mt *meter, sent *delivered, node
 		rec.facts.out = t.Completion
 		t.Completion = min(t.Completion, maxTokens+1)
 		if mt.args.thinking {
-			rec.facts.reasoning = g.tok.Count(out.reasoning.String())
+			rec.facts.reasoning = g.tok.Count(mt.generatedReasoning(out))
 		}
 	} else {
 		t.Completion = nodeU.CompletionTokens
