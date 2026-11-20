@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // The Go rendering of the chat template must equal jinja2's (scripts/template-fixture.py).
@@ -147,3 +149,70 @@ func TestReasoningBudgetLeavesPromptAlone(t *testing.T) {
 		t.Fatalf("budget fields changed the prompt:\n%q\n%q", plain, with)
 	}
 }
+
+// A request that ends with an assistant message has the engine continue that message
+// (llama-server's prefill_assistant). llama.cpp b11146 streams the message back first, as if
+// generated (opencode's step-limit notice: one token sampled, 166 counted); b12342 does not.
+// Either way only what the engine generated after it is output.
+func TestPrefillIsNotOutput(t *testing.T) {
+	g := newTestGateway(t, Config{TokenizerFile: "testdata/qwen38-mini-tokenizer.json"})
+	defer g.Close()
+	const notice = "CRITICAL - MAXIMUM STEPS REACHED\n\nThe maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only."
+	history := `{"role":"user","content":"Read notes.txt."},` +
+		`{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"read","arguments":"{\"path\":\"notes.txt\"}"}}]},` +
+		`{"role":"tool","tool_call_id":"c1","content":"The notes say: buy milk."}`
+	delta := func(field, s string) string {
+		return `{"choices":[{"delta":{` + mustJSONString(field) + `:` + mustJSONString(s) + `}}]}`
+	}
+	count := func(last, outcome string, chunks ...string) int {
+		t.Helper()
+		var body map[string]any
+		if err := json.Unmarshal([]byte(`{"tools":[{"type":"function","function":{"name":"read"}}],"messages":[`+history+last+`]}`), &body); err != nil {
+			t.Fatal(err)
+		}
+		m := newMeter(body, nil, g.tok)
+		<-m.ready
+		sent := &delivered{}
+		for _, c := range chunks {
+			m.chunk([]byte(c))
+			sent.chunk([]byte(c))
+		}
+		rec := &usageRecord{Outcome: outcome, Tokens: &creditTokens{}}
+		g.countOutput(rec, m, sent, protocol.Usage{}, 4096)
+		return rec.Tokens.Completion
+	}
+	asked := `,{"role":"assistant","content":` + mustJSONString(notice) + `}`
+	// Only the end of the turn was sampled, streamed back (b11146) or not (b12342).
+	if got := count(asked, "ok", delta("content", notice)); got != 1 {
+		t.Errorf("the notice streamed back: %d tokens, want 1 (the end of the turn)", got)
+	}
+	if got := count(asked, "ok"); got != 1 {
+		t.Errorf("the notice not streamed back: %d tokens, want 1", got)
+	}
+	// The engine went on after the prefill: the first chunk holds the prefill and the first
+	// token. No end of thinking either: the prompt holds it.
+	started := `,{"role":"assistant","content":"The notes say to buy"}`
+	want := g.tok.Count(" milk.") + 1
+	if got := count(started, "ok", delta("content", "The notes say to buy milk"), delta("content", ".")); got != want {
+		t.Errorf("continued, streamed back: %d tokens, want %d", got, want)
+	}
+	if got := count(started, "ok", delta("content", " milk"), delta("content", ".")); got != want {
+		t.Errorf("continued, not streamed back: %d tokens, want %d", got, want)
+	}
+	if got := count(started, "cancelled", delta("content", "The notes say to buy milk")); got != g.tok.Count(" milk") {
+		t.Errorf("cancelled: %d tokens, want %d", got, g.tok.Count(" milk"))
+	}
+	// Reasoning alone is continued as reasoning: its end of thinking is generated.
+	thought := `,{"role":"assistant","content":"","reasoning_content":"The user wants a summary."}`
+	want = g.tok.Count(" Short.\n</think>\n\nMilk.") + 1
+	if got := count(thought, "ok", delta("reasoning_content", "The user wants a summary. Short."), delta("content", "Milk.")); got != want {
+		t.Errorf("reasoning continued: %d tokens, want %d", got, want)
+	}
+	// A new answer counts as before.
+	want = g.tok.Count("Fine.\n</think>\n\nMilk.") + 1
+	if got := count("", "ok", delta("reasoning_content", "Fine."), delta("content", "Milk.")); got != want {
+		t.Errorf("a new answer: %d tokens, want %d", got, want)
+	}
+}
+
+func mustJSONString(s string) string { return string(mustJSON(s)) }

@@ -239,6 +239,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **An assistant message at the end of a request no longer counts as output.** llama-server
+  continues such a message (opencode sends its step-limit notice that way), and llama.cpp b11146
+  streams it back at the start of the answer as if generated: the gateway credited the notice's
+  165 tokens as output when the engine had sampled one. The output count now leaves out the
+  message streamed back, and the end of thinking the prompt already holds. Budgets were not
+  affected (they use the node's count). (gateway)
 - **Pilots are never trusted, and a report always drops one.** A connector's `trusted_users` now only
   lets those pilots serve chat before `pilots_chat_enabled`; they no longer receive personal data
   (a credential copied on its way to a host must not). A ban, unlink or chat switch made while a
