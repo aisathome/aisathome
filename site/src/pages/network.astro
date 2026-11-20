@@ -601,6 +601,7 @@ import LiveStats from '../components/LiveStats.astro';
 		const num = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
 		const small = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
 		const fmt = (n) => (n < 100 ? small : num).format(n);
+		const exact = new Intl.NumberFormat('en', { maximumFractionDigits: 3 }); // corrections: as recorded
 		const ok = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 		const hide = () => (box.hidden = true);
 		const load = async () => {
@@ -651,7 +652,7 @@ import LiveStats from '../components/LiveStats.astro';
 					...cs.map((c) => {
 						const li = document.createElement('li');
 						const sign = c.credit < 0 ? '−' : '+';
-						li.textContent = `Correction ${new Date(c.time).toISOString().slice(0, 10)}: ${sign}${fmt(Math.abs(c.credit))} credit (${c.reason}), in the totals.`;
+						li.textContent = `Correction ${new Date(c.time).toISOString().slice(0, 10)}: ${sign}${exact.format(Math.abs(c.credit))} credit (${c.reason}), in the totals.`;
 						return li;
 					}),
 				);

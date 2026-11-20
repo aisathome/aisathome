@@ -4,6 +4,7 @@ package gateway
 import (
 	"encoding/json"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,10 @@ func TestCreditCorrection(t *testing.T) {
 	if len(reqs) != 1 {
 		t.Fatalf("the request file keeps %d requests, want the 1 pending", len(reqs))
 	}
+	// Applied requests may still be in the file (a request written before the ledger was saved):
+	// a restart must not apply them again.
+	all := append(append([]CreditCorrection{}, applied...), reqs...)
+	os.WriteFile(dir+"/"+CreditCorrectionsFile, mustJSON(all), 0o600)
 
 	// A restarted gateway applies the pending one at start, and the old ones not again.
 	g = newTestGateway(t, Config{StateDir: dir})
