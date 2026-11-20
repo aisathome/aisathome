@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -284,7 +285,7 @@ func TestModelcheckRecord(t *testing.T) {
 	if s, err := modelcheck.LoadFile(secret, ""); err != nil || len(s.Results) != 5 || s.Results[4].ID != "secret-4" {
 		t.Errorf("secret reference: %v %+v", err, s)
 	}
-	if fi, err := os.Stat(secret); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(secret); runtime.GOOS != "windows" && (err != nil || fi.Mode().Perm() != 0o600) { // no Unix modes on Windows
 		t.Errorf("secret reference mode: %v %v (want 0600: the pool and its answers are secret)", err, fi.Mode())
 	}
 	for _, bad := range []string{`[]`, `[{"id":"a","text":"x"},{"id":"a","text":"y"}]`, `[{"id":"","text":"x"}]`, `{"id":"a"}`} {
