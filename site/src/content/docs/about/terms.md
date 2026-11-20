@@ -34,8 +34,8 @@ is answering. We make keeping it harder, less valuable, traceable and punishable
 - Nodes never receive your identity (name, email, account id). Well-known secret formats
   (API keys, private keys) are hidden from nodes and, by default, not put back into the
   answer, so you may see a placeholder instead. Messages containing things like email
-  addresses, card or account numbers, IBANs or national ID numbers only go to trusted
-  nodes. **Detection is incomplete.**
+  addresses, card or account numbers, IBANs or national ID numbers are refused unless your
+  own node answers. **Detection is incomplete.**
 - Nodes can be anywhere in the world, including outside Europe.
 - **Don't put personal data (yours or other people's) into chats: answers are computed on
   volunteers' machines.** Don't send passwords or secrets either. Do not send anything you

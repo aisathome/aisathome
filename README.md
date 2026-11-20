@@ -7,7 +7,7 @@ nodes. Anyone can run a gateway. Site and docs: <https://aisathome.org>.
 
 **Hardened, not confidential.** Whoever runs a node can read the prompts it serves. The
 gateway strips identities, hides well-known secret formats, sends requests that look like
-personal data only to trusted nodes, and stores no prompts or answers (only the short piece of
+personal data only to the requester's own nodes (otherwise it refuses them), and stores no prompts or answers (only the short piece of
 a volunteer's answer that a guard stopped or flagged, for 14 days). Not production-ready.
 
 ## Use it

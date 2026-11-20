@@ -47,7 +47,7 @@ check (below) uses a secret set.
 
 ## The gateway's check (`model_check`)
 
-The gateway checks untrusted nodes and pilots itself (`gateway/modelcheck.go`, BACKLOG 11): it sends
+The gateway checks every node and pilot itself (`gateway/modelcheck.go`, BACKLOG 11): it sends
 **secret** probe prompts at random times and compares the answers with a reference by the method
 above (KL per group of 4 prompts, confident flips, the same limits).
 
@@ -84,8 +84,9 @@ above (KL per group of 4 prompts, confident flips, the same limits).
   `accounts node-clear` lets it serve again with a fresh window. It takes effect only once the
   check has observed for 3 days (`observing_since` in the results file survives restarts; after
   more than a day without the check running, observing starts again), so
-  the limits are first seen to hold on our own honest nodes (`include_trusted: true` checks those
-  too). Turn it on only after a clean observe-only period on 3090, 4090 and 5090 nodes.
+  the limits are first seen to hold on our own honest nodes, which it checks as any other
+  (`include_trusted`, which once opted them in, is ignored since 2026-11-20). Turn it on only
+  after a clean observe-only period on 3090, 4090 and 5090 nodes.
 
 Config (`model_check` in the gateway config; the reference files are secrets, kept with the
 gateway's secrets and pinned):
@@ -95,7 +96,7 @@ gateway's secrets and pinned):
   "enabled": true,
   "references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-iq4xs.json.gz", "sha256": "<64 hex>"}],
   "interval_seconds": 1800, "recheck_seconds": 300,
-  "include_trusted": false, "withhold": false, "cover_share": 0.2
+  "withhold": false, "cover_share": 0.2
 }
 ```
 
