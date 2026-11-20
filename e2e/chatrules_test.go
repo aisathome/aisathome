@@ -204,6 +204,33 @@ func TestChatRulesNodeCreateAccepts(t *testing.T) {
 	}
 }
 
+// A node created from a form that did not show the acceptance line for the current terms (opened before
+// the deploy, or before a new version) accepts nothing: the node stays science-only and the banner asks.
+func TestChatRulesStaleNodeFormAcceptsNothing(t *testing.T) {
+	a, _ := rulesRig(t)
+	sA, _ := a.signIn(t, 1)
+	_, page := a.get(t, "/account", sA)
+	m := nodeOnceRe.FindStringSubmatch(page)
+	if m == nil {
+		t.Fatal("no add-a-node form")
+	}
+	for _, extra := range []string{"", "&terms=2026-01-01"} {
+		form := "once=" + m[1] + "&name=old" + extra
+		_, page = a.post(t, "/account/nodes", sA, form)
+		if !nodeTokenRe.MatchString(page) {
+			t.Fatalf("%s: no node created", form)
+		}
+		if x := snap(a).Find("gh:1"); x.OperatorTerms != nil {
+			t.Fatalf("%s: accepted %+v", form, x.OperatorTerms)
+		}
+		_, page = a.get(t, "/account", sA)
+		if !strings.Contains(page, "terms-banner") {
+			t.Fatalf("%s: no banner", form)
+		}
+		m = nodeOnceRe.FindStringSubmatch(page)
+	}
+}
+
 // Node tokens from before creating a node accepted the operator terms stay science only: the account page
 // shows a banner with one button, and only that button lets them answer chats.
 func TestChatRulesOlderNodesBanner(t *testing.T) {

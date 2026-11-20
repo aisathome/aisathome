@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -31,6 +32,7 @@ import (
 var (
 	nodeTokenRe = regexp.MustCompile(`nt-(n-[0-9a-f]{8})\.[A-Za-z0-9_-]{43}`)
 	nodeOnceRe  = regexp.MustCompile(`action="/account/nodes"><input type="hidden" name="once" value="([0-9a-f]+)"`)
+	nodeTermsRe = regexp.MustCompile(`<input type="hidden" name="terms" value="([^"]+)">`)
 )
 
 // addNode adds a node on the account page the way a browser does; it returns the token and
@@ -42,7 +44,11 @@ func (a *acctRig) addNode(t *testing.T, session, name string) (token, id, page s
 	if m := nodeOnceRe.FindStringSubmatch(page); m != nil {
 		once = m[1]
 	}
-	_, page = a.post(t, "/account/nodes", session, "once="+once+"&name="+name)
+	form := "once=" + once + "&name=" + name
+	if m := nodeTermsRe.FindStringSubmatch(page); m != nil { // the line that creating the node accepts the terms
+		form += "&terms=" + url.QueryEscape(m[1])
+	}
+	_, page = a.post(t, "/account/nodes", session, form)
 	if m := nodeTokenRe.FindStringSubmatch(page); m != nil {
 		return m[0], m[1], page
 	}

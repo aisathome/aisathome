@@ -526,9 +526,12 @@ func (g *Gateway) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	once := r.FormValue("once")
-	token, nodeID, err := g.accounts.AddNode(id, r.FormValue("name"), time.Now(), func(seq int) bool {
+	// Creating the node accepts the operator terms (chatrules.go) only from a form that showed the line
+	// saying so, for the current version: a form opened before (another version, or none) accepts nothing.
+	terms := g.chatRulesOn() && r.FormValue("terms") == OperatorTermsVersion
+	token, nodeID, recorded, err := g.accounts.addNode(id, r.FormValue("name"), time.Now(), func(seq int) bool {
 		return hmac.Equal([]byte(once), []byte(g.nodeFormToken(id, seq)))
-	})
+	}, terms)
 	if errors.Is(err, errStaleForm) {
 		http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
 		return
@@ -540,12 +543,8 @@ func (g *Gateway) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.log.Info("node token created", "node", nodeID, "operator", g.pseudonym(id))
-	if g.chatRulesOn() { // creating the node, under the line that says so, accepts the operator terms (chatrules.go)
-		if recorded, aerr := g.accounts.acceptOnNodeCreate(id, time.Now()); aerr != nil {
-			g.log.Error("operator terms not recorded at node creation", "err", aerr)
-		} else if recorded {
-			g.sweepNodes() // the account's other nodes may answer chats now
-		}
+	if recorded {
+		g.sweepNodes() // the account's other nodes may answer chats now
 		d = g.accountData(id)
 	}
 	d.NewNode, d.NewNodeID = token, nodeID

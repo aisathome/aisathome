@@ -140,20 +140,16 @@ func (s *AccountStore) WithdrawOperatorTerms(id string) error {
 // optedOut reports whether a switched its nodes to science only: a withdrawal, and no acceptance since.
 func (a *Account) optedOut() bool { return a.TermsWithdrawn != nil && a.OperatorTerms == nil }
 
-// acceptOnNodeCreate records the operator terms for account id, which just created a node under the line
-// that says so, unless it has accepted the current version already or switched to science only (that
-// choice stands until it switches back). It reports whether it recorded an acceptance.
-func (s *AccountStore) acceptOnNodeCreate(id string, now time.Time) (bool, error) {
-	recorded := false
-	err := s.Update(func(f *AccountsFile) error {
-		a := f.find(id)
-		if a == nil || a.Status != StatusActive || a.OperatorTerms.current(OperatorTermsVersion) || a.optedOut() {
-			return nil
-		}
-		a.OperatorTerms, recorded = &Acceptance{Version: OperatorTermsVersion, At: now.UTC(), Via: ViaNodeCreated}, true
-		return nil
-	})
-	return recorded, err
+// acceptOnNodeCreate records the operator terms for a, which is creating a node under the line that says
+// so (AccountStore.addNode, in the same write), unless it has accepted the current version already or
+// switched to science only (that choice stands until it switches back). It reports whether it recorded
+// an acceptance.
+func (a *Account) acceptOnNodeCreate(now time.Time) bool {
+	if a.Status != StatusActive || a.OperatorTerms.current(OperatorTermsVersion) || a.optedOut() {
+		return false
+	}
+	a.OperatorTerms = &Acceptance{Version: OperatorTermsVersion, At: now.UTC(), Via: ViaNodeCreated}
+	return true
 }
 
 // operatorTerms reports whether account id has accepted the current operator terms.
@@ -402,7 +398,7 @@ const accountChatRulesTmpl = `
 {{if .TermsOutdated}}The operator terms changed since you accepted them. {{end}}Until then your nodes do science only.</p>
 {{template "terms-accept" .}}</div>{{end}}{{end}}
 {{define "terms-on-create"}}{{if .RulesOn}}{{if .TermsOptedOut}}<p class="hint" id="terms-on-create">Your nodes do science only, as you chose; a new node does too.</p>
-{{else}}<p class="hint" id="terms-on-create">By creating this node and running it you accept the {{template "terms-link" .}}.</p>{{end}}{{end}}{{end}}
+{{else}}<input type="hidden" name="terms" value="{{.TermsVersion}}"><p class="hint" id="terms-on-create">By creating this node and running it you accept the {{template "terms-link" .}}.</p>{{end}}{{end}}{{end}}
 {{define "operator"}}{{if .RulesOn}}<div class="card" id="operator"><div class="card-head"><h2>Operator terms</h2>{{if .TermsAccepted}}<span class="badge on">Chats and science</span>{{else}}<span class="badge off">Science only</span>{{end}}</div>
 {{if .TermsDraft}}<p role="status"><strong>These terms are a draft.</strong> Your nodes serve science only until the final terms are published and you accept them.</p>{{end}}
 {{if .TermsAccepted}}<p>Your nodes{{if .Account.Links}} and pilots{{end}} answer chats and science (operator terms accepted {{day .TermsSince}}).</p>
