@@ -299,7 +299,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		refuse(fmt.Sprintf("at most %d nodes per address", maxNodesPerIP), true)
 		return
 	}
-	n.held = g.nodeHeld(n.id)
+	n.held = g.nodeHeld(n.id) || g.accountHeld(n.account)
 	n.registering = pl != nil
 	g.node[n.id] = n
 	now := time.Now()

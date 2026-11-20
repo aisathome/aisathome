@@ -55,6 +55,11 @@ and **(site)** are live on aisathome.org once deployed.
   (numbers only, never text), and the answers a request discarded (its requester sent the same prompt
   again: `discarded`). `aisathome-gateway accounts node-checks` sums them per node over days; the
   operations page shows them since the start. They change no credit. (gateway)
+- **Repeated failed answer checks hold the node, then its account** (enforce mode, untrusted nodes and
+  pilots): three failed answers in 24 hours hold the node like a guard hold (a pilot's credit is
+  withheld); two such holds on one account hold the account: its nodes and pilots stop, new pilots are
+  refused with how to reach us, and its pilots' credit that is not final yet is withheld. Holds, not
+  bans. `accounts account-clear` lifts an account's hold; the operations page lists held accounts. (gateway)
 
 - **Evidence for guard holds.** Every guard stop, hold and flag keeps what matched: a fragment of
   the node's answer (at most 300 bytes around the match, never the request, secrets redacted),

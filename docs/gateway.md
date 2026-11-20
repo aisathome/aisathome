@@ -523,6 +523,7 @@ aisathome-gateway accounts nodes limit 25         # node tokens over all account
 aisathome-gateway accounts nodes per-account 10   # node tokens per account (max_nodes_per_account, default 10; "default" unsets it)
 aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token
 aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
+aisathome-gateway accounts account-clear gh:12345 # lift an account's hold by the answer checks
 aisathome-gateway accounts guard-log [n-1a2b3c4d] # recent stops, holds and flags with what matched (14 days)
 aisathome-gateway accounts node-checks [7] [n-1a2b3c4d] # answer checks and signals per node over the last days
 aisathome-gateway accounts routing trusted-only   # emergency: everything to trusted nodes; "any" to undo
@@ -570,6 +571,25 @@ next is the switch `verify.mode`:
 
 All keys are optional (the reasoning values shown are the defaults, the installer's;
 `node_reasoning_budget: -1` checks only budgets a request sets). The public wording is "spot-checked".
+
+**Escalation** (`gateway/verify_escalate.go`, `account_holds.go`; enforce mode only, untrusted nodes
+only; pilots are never trusted): `escalate.node_after` failed answers of one node within
+`escalate.window_hours` (defaults 3 and 24) **hold the node** with rule `answer-checks` and a reason in
+the gateway's words ("3 answers failed the answer checks within 24 hours (the last: speed)"), like a
+guard hold: it serves nothing until cleared (`accounts node-clear`, or "Clear hold" on the operations
+page), and a pilot's credit is withheld. `escalate.account_after` such holds on one account's nodes and
+pilots (default 2; each pilot is a node of its own, so a BOINC user's second held pilot counts) **hold the
+account**: all its nodes and pilots stop, new pilots are refused with a message that it is a hold, not a
+ban, and how to reach us, and the credit of its pilots that is not final yet is withheld. Lift it with
+`accounts account-clear <id>` (withheld credit stays withheld, as after a guard hold). Holds are never
+bans: a ban is decided by a person after looking at the evidence (`accounts ban`), with the appeal of the
+operator terms. In observe mode the gateway only logs that it would have held the node. `-1` turns a
+level off; the failure counts live in memory (a restart starts them again), the holds in the accounts
+file.
+
+```json
+"verify": {"mode": "enforce", "escalate": {"node_after": 3, "window_hours": 24, "account_after": 2}}
+```
 
 **Signals** (`gateway/signals.go`, `discard.go`): each usage record also carries `task` (the
 `X-Aisathome-Task` a project's request named, a well-formed task name) and `signals`: `tps` (output tokens per second

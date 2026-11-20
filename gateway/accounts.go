@@ -238,6 +238,9 @@ type AccountsFile struct {
 	Settings  AccountSettings `json:"settings"`
 	Accounts  []*Account      `json:"accounts"`
 	NodeHolds []NodeHold      `json:"node_holds,omitempty"` // nodes stopped by a guard, until the operator clears them
+	// AccountHolds are accounts held for review after repeated failed answer checks
+	// (verify_escalate.go), until the operator clears them.
+	AccountHolds []AccountHold `json:"account_holds,omitempty"`
 }
 
 // promote lets waiting accounts in, oldest first, while there is room.

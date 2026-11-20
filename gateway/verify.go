@@ -24,7 +24,7 @@
 // logs it and counts it per node, and changes no credit. "enforce" also voids that answer's credit:
 // it earns nothing ("voided" in the record says what it would have earned), in the ledger and in a
 // pilot's record alike. "off" checks nothing. A failed check is never a verdict on the operator by
-// itself.
+// itself; repeated failures hold the node, then its account, for review (verify_escalate.go).
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -75,6 +75,8 @@ type VerifyConfig struct {
 	// NodeBudgetMessage the text they force at it.
 	NodeReasoningBudget int    `json:"node_reasoning_budget,omitempty"`
 	NodeBudgetMessage   string `json:"node_budget_message,omitempty"`
+	// Escalate sets when repeated failures hold a node, then its account (verify_escalate.go).
+	Escalate EscalateConfig `json:"escalate"`
 }
 
 // withDefaults fills in the defaults, and refuses what makes no sense.
@@ -101,7 +103,9 @@ func (v VerifyConfig) withDefaults() (VerifyConfig, error) {
 	if v.SpeedRate < 0 || math.IsNaN(v.SpeedRate) || math.IsInf(v.SpeedRate, 0) || v.SpeedBurst < 0 || v.NodeReasoningBudget < -1 {
 		return v, fmt.Errorf("verify: speed_rate and speed_burst must be positive, node_reasoning_budget -1 or more")
 	}
-	return v, nil
+	var err error
+	v.Escalate, err = v.Escalate.withDefaults()
+	return v, err
 }
 
 // answerFacts is what the checks read about one answer, all as the gateway counted or timed it.
@@ -214,6 +218,7 @@ type NodeCheckStats struct {
 	Discarded  int
 	Tasks      int // answers to a request that named its task
 	Last       time.Time
+	fails      []time.Time // failed answers in the escalation window (verify_escalate.go)
 }
 
 func (c *nodeChecks) get(node, operator string, now time.Time) *NodeCheckStats {

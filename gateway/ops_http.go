@@ -128,6 +128,7 @@ type opsData struct {
 	ProjectList []string
 	ModelCheck  *opsModelCheck // nil: the model check is off
 	Checks      []opsCheck     // answer checks and signals per node since the start (verify.go)
+	HeldAccts   []opsHold      // accounts held by the answer checks (account_holds.go); Node is the account
 	CheckMode   string
 }
 
@@ -379,6 +380,12 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 			Req: p.Req, Evidence: p.CurrentEvidence(now)})
 	}
 	d.CheckMode = g.cfg.Verify.Mode
+	if g.accounts != nil {
+		for _, h := range g.accounts.accountHolds() {
+			d.HeldAccts = append(d.HeldAccts, opsHold{Node: h.Account, Rule: h.Rule, Reason: h.Reason,
+				Since: h.At.UTC().Format("01-02 15:04"), Ago: ago(now.Sub(h.At))})
+		}
+	}
 	for _, c := range g.checks.snapshot() {
 		d.Checks = append(d.Checks, opsCheck{Node: c.Node, Answers: c.Answers, Failed: c.Failed, Rules: c.rules(),
 			Voided: fmt.Sprintf("%.1f", c.Voided), Length: share(c.Length, c.Answers), BadCalls: share(c.BadCalls, c.ToolCalls),
@@ -633,11 +640,14 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <td data-label="Last check">{{.Last}}</td><td data-label="No answer" class="num">{{.Dropped}}</td></tr>{{end}}</table></div>
 {{else}}<p class="mut">No node checked yet.</p>{{end}}</div>{{end}}
 <div class="card" id="checks"><h2>Answer checks</h2>
-<p class="mut small">Since the gateway started, mode <strong data-mode>{{.CheckMode}}</strong>: answers that failed a check (too fast, reasoning past its budget, output past max_tokens; in enforce mode they earn nothing) and the signals that are compared with our own nodes, never a verdict alone. Over days: <code>aisathome-gateway accounts node-checks</code>.</p>
+<p class="mut small">Since the gateway started, mode <strong data-mode>{{.CheckMode}}</strong>: answers that failed a check (too fast, reasoning past its budget, output past max_tokens; in enforce mode they earn nothing, and repeated failures hold the node, then its account) and the signals that are compared with our own nodes, never a verdict alone. Over days: <code>aisathome-gateway accounts node-checks</code>.</p>
 {{if .Checks}}<div class="table-wrap"><table><tr><th>Node</th><th class="num">Answers</th><th class="num">Failed</th><th>Rules</th><th class="num">Voided</th><th class="num">At max_tokens</th><th class="num">Bad tool calls</th><th class="num">Discarded</th><th class="num">Degenerate</th></tr>
 {{range .Checks}}<tr data-check="{{.Node}}"{{if .Failed}} class="warn"{{end}}><td data-label="Node"><code>{{.Node}}</code></td><td data-label="Answers" class="num">{{.Answers}}</td><td data-label="Failed" class="num" data-failed>{{.Failed}}</td>
 <td data-label="Rules" data-rules>{{.Rules}}</td><td data-label="Voided" class="num">{{.Voided}}</td><td data-label="At max_tokens" class="num">{{.Length}}</td><td data-label="Bad tool calls" class="num">{{.BadCalls}}</td><td data-label="Discarded" class="num">{{.Discarded}}</td><td data-label="Degenerate" class="num">{{.Degenerate}}</td></tr>{{end}}</table></div>
-{{else}}<p class="mut">No answers since the gateway started.</p>{{end}}</div>
+{{else}}<p class="mut">No answers since the gateway started.</p>{{end}}
+{{if .HeldAccts}}<h3>Accounts held for review ({{len .HeldAccts}})</h3>
+<p class="mut small">Repeated holds by the answer checks: their nodes and pilots serve nothing, new pilots are refused, and pilot credit that was not final is withheld. Not a ban. Lift with <code>aisathome-gateway accounts account-clear &lt;id&gt;</code>.</p>
+<ul>{{range .HeldAccts}}<li data-held-account="{{.Node}}"><code>{{.Node}}</code>: {{.Reason}} <span class="mut small">since {{.Since}} UTC, {{.Ago}}</span></li>{{end}}</ul>{{end}}</div>
 {{if not .Status}}<p class="mut">No status from the runner yet: it posts one every minute (research tools/status_report.py).</p>{{end}}
 {{if gt (len .ProjectList) 1}}<p class="small">Projects: {{range .ProjectList}}<a href="/account/ops?project={{.}}">{{.}}</a> {{end}}</p>{{end}}
 </div>{{end}}

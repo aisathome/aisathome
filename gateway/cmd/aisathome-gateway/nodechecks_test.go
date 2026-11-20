@@ -77,3 +77,33 @@ func TestAccountsNodeChecks(t *testing.T) {
 		t.Fatalf("no usage_log: %v", err)
 	}
 }
+
+// accounts nodes lists held accounts; account-clear lifts a hold and refuses an account that has none.
+func TestAccountsAccountClear(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "accounts.json")
+	store, err := gateway.OpenAccountStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HoldAccount(gateway.AccountHold{Account: "gh:5", Rule: "answer-checks", Reason: "2 of its nodes were held by the answer checks",
+		At: time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)})
+	run := func(args ...string) (string, error) {
+		var out, msg bytes.Buffer
+		err := runAccounts(append([]string{"-file", file}, args...), &out, &msg)
+		return out.String(), err
+	}
+	out, err := run("nodes")
+	if err != nil || !strings.Contains(out, "gh:5  answer-checks since 2026-11-20 09:30 UTC: 2 of its nodes were held by the answer checks") {
+		t.Fatalf("nodes: %v\n%s", err, out)
+	}
+	if _, err := run("account-clear", "gh:5"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := run("nodes"); strings.Contains(out, "gh:5") {
+		t.Fatalf("still listed:\n%s", out)
+	}
+	if _, err := run("account-clear", "gh:5"); err == nil {
+		t.Fatal("cleared an account that is not held")
+	}
+}

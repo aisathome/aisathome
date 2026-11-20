@@ -50,7 +50,9 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   nodes per-account <n> | default
                        at most n node tokens per account (default 10)
   node-revoke <node>   delete a node token (e.g. n-1a2b3c4d); the node is dropped
-  node-clear <node>    let a node that a guard held serve again
+  node-clear <node>    let a node that a guard or the answer checks held serve again
+  account-clear <id>   lift an account's hold by the answer checks (its nodes and pilots serve
+                       again; withheld pilot credit stays withheld)
   guard-log [node]     the guards' recent stops, holds and flags (at most 200, of the past 14
                        days) with what matched: a piece of the node's answer, secrets redacted;
                        as of the gateway's last save (every 5 s; needs -config with state_dir)
@@ -259,6 +261,11 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return err
 		}
 		return store.ClearNode(a[1])
+	case "account-clear":
+		if err := need(1); err != nil {
+			return err
+		}
+		return store.ClearAccountHold(a[1])
 	case "username-clear":
 		if err := need(1); err != nil {
 			return err
@@ -506,6 +513,12 @@ func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 		}
 	}
 	tw.Flush()
+	if len(f.AccountHolds) > 0 {
+		fmt.Fprintln(out, "\nAccounts held for review (accounts account-clear <id>):")
+		for _, h := range f.AccountHolds {
+			fmt.Fprintf(out, "  %s  %s since %s: %s\n", h.Account, h.Rule, h.At.UTC().Format("2006-01-02 15:04 UTC"), h.Reason)
+		}
+	}
 	if len(f.NodeHolds) > 0 {
 		fmt.Fprintln(out, "\nWhat the guards matched (a piece of the node's answer, secrets redacted, kept 14 days):")
 		for _, q := range f.NodeHolds {

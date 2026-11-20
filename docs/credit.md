@@ -84,7 +84,10 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
 - **Withheld.** If a guard holds the pilot, its credit is withheld (`withheld: "guard: <rule>"`)
   and its final credit is 0. The gateway's model check withholds it the same way (`withheld: "model
   check"`) once its `withhold` switch is on (off: observe-only; [modelcheck.md](modelcheck.md)). Its
-  probe prompts earn nothing.
+  probe prompts earn nothing. So do repeated failed answer checks that hold it (`"answer checks"`),
+  and for every pilot of an account the checks held whose credit is not final yet
+  (`"answer checks: account held"`; enforce mode only, `docs/gateway.md` "Answer checks and node
+  signals").
 - **Idle earns nothing**: credit comes only from metered answers.
 
 **The tokenizer file.** Qwen3.8's `tokenizer.json` (12.8 MB, not in the repo):
