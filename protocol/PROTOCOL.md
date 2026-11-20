@@ -76,6 +76,10 @@ The `protocol` field (`"0.1"`) is frozen: gateways before versions refuse a node
 - **Metering:** one usage record per completed request (user, node, operator, model,
   tokens, duration), with tokens as reported by the node. Verification of reported usage
   comes later.
+- **Model check:** the gateway sends some requests of its own (probes: greedy, with `logprobs`),
+  as ordinary `request` messages; a node answers them as any other. A request may also ask for
+  `logprobs` although its client did not; the gateway removes them from the answer. Nodes need not
+  know either (`docs/modelcheck.md`, "The gateway's check").
 - Users get OpenAI-compatible streaming (SSE) or non-streaming responses. A request with
   `"logprobs": true` (and `top_logprobs`) gets the node's logprobs: in each streamed chunk as
   the node sent it, or joined into `choices[0].logprobs.content` of a non-streaming answer.
@@ -83,7 +87,7 @@ The `protocol` field (`"0.1"`) is frozen: gateways before versions refuse a node
 
 ## Not yet (planned)
 
-- Sampled verification of node output.
+- Sampled verification of node output (the replay of answers; the model check above checks the model, not each answer).
 - Honeytokens.
 - Reputation.
 - Signed node identity (gateway key pinning).

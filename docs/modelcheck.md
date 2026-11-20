@@ -42,7 +42,87 @@ quant of the same model fails most checks; close quants are not reliably told ap
 why a tier never mixes model files.
 
 The prompt set (`node/modelcheck/prompts.json`) is public. It checks an operator's own setup and
-the release; it must never be the prompt set of a check the network runs on nodes.
+the release; it must never be the prompt set of a check the network runs on nodes. The gateway's
+check (below) uses a secret set.
+
+## The gateway's check (`model_check`)
+
+The gateway checks untrusted nodes and pilots itself (`gateway/modelcheck.go`, BACKLOG 11): it sends
+**secret** probe prompts at random times and compares the answers with a reference by the method
+above (KL per group of 4 prompts, confident flips, the same limits).
+
+- **What a node sees.** A `request` like any other: a fresh request id, streamed, the gateway's
+  default `max_tokens`, one user message, temperature 0, `logprobs` with `top_logprobs` 20,
+  `enable_thinking` false, no tools, nothing in the protocol that marks it. The answer runs to its
+  end (at most 4,096 tokens); its first positions are compared (as many as the reference has, plus
+  one to see whether it went on). A share of people's streamed requests without tools
+  (`cover_share`, default 0.2) asks for the same logprobs, which the gateway removes before the
+  client sees them, so "logprobs" alone does not mark a probe. On a rented RTX 4090 (2026-11-20,
+  b12342, UD-IQ4_XS) the probe's shape gave exactly the reference's numbers: 20 of 20 public
+  prompts the same 32 tokens streamed with `max_tokens` 16384 as non-streamed with 32, largest
+  logprob difference 0; the full public set on that card against the published b12342 reference
+  (recorded on another 4090): KL 0.0000, no flip. `node/modelcheck/testdata/stream-b12342-rtx4090.sse`
+  is that card's stream of the first prompt, which the parser's test reads.
+- **When.** Per node, one prompt at a time, exponential waits: a mean of `recheck_seconds` (300)
+  until its first check of 4 prompts is complete and after a failed check, `interval_seconds`
+  (1800, a check about every 2 hours) otherwise. A probe takes only a free slot that no waiting
+  request could use, and a person's request that waits for the node stops it, as it stops science.
+  A node gets no prompt twice until it has had the whole pool; among those it has not had, the
+  ones sent least often over all nodes come first.
+- **Result.** Each check is pass or fail; an answer without logprobs (a proxy, or an engine that
+  is not llama-server) fails it. A node's result is judged on its last 25 checks: **fail** with
+  two failed checks, or more than 2 confident flips over them (the published 100-prompt limit);
+  **suspect** with one (its re-check comes within minutes); **pass** otherwise; **unknown**
+  before its first check. Results are on `/account/ops` (admins) and `aisathome-gateway accounts
+  model-check [node]`, saved in `state_dir/model-check.json` (prompt ids, never their text; a node
+  not seen for 30 days is dropped). Probes earn no credit and are in no usage record, budget or
+  statistic.
+- **Observe-only, then withholding.** `withhold` is off. When it is on, a node whose result is
+  fail is held like a guard hit (rule `model-check`; a pilot's credit is withheld), and
+  `accounts node-clear` lets it serve again with a fresh window. It takes effect only once the
+  check has observed for 3 days (`observing_since` in the results file survives restarts), so
+  the limits are first seen to hold on our own honest nodes (`include_trusted: true` checks those
+  too). Turn it on only after a clean observe-only period on 3090, 4090 and 5090 nodes.
+
+Config (`model_check` in the gateway config; the reference files are secrets, kept with the
+gateway's secrets and pinned):
+
+```json
+"model_check": {
+  "enabled": true,
+  "references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-iq4xs.json.gz", "sha256": "<64 hex>"}],
+  "interval_seconds": 1800, "recheck_seconds": 300,
+  "include_trusted": false, "withhold": false, "cover_share": 0.2
+}
+```
+
+One reference per model name nodes announce (the big tier's `qwen3.8-27b`; the standard tier's
+`qwen3.8-27b-q3` needs its own). The gateway refuses to start with a missing file, a wrong pin, a
+reference recorded with thinking or other logprobs, or a pool under 16 prompts.
+
+**Recording the secret reference.** Generate a few hundred fresh prompts (real-user-shaped requests
+from many templates with random content, each asking for several sentences so the greedy answer
+runs past 32 tokens) into a JSON list of `{"id", "text"}`, then, on a maintainer's own card of the
+reference class with the release's engine, exactly as for a published reference:
+
+```bash
+aisathome-node modelcheck record -prompts pool.json -out modelcheck-iq4xs.json.gz \
+  -name qwen3.8-27b-iq4xs-b12342-rtx4090-secret -note "Gateway model check, secret pool."
+```
+
+Never record it on a rented machine (its host can read the disk) or commit the pool, its
+generator or the reference to any repository. Re-record at every release that changes llama.cpp
+or a tier's model file, as for the published references, and replace the pool when it may have
+leaked or nodes have seen most of it (each node sees a check about every 2 hours: a pool of 700
+prompts lasts a node about two weeks before it repeats).
+
+**What it catches and what not.** It catches a wrong model file (another quant: Q3 and below fail
+clearly; neighbouring 4-bit files often pass), another model, and a proxy without logprobs. It does
+not catch a node agent modified to recognise probes and route them to the real model: a probe is
+greedy, asks for top-20 logprobs and has no tools, which few real requests do (science traffic
+always has tools, so on a science-only pilot a chat-shaped request stands out). The cover share
+removes "logprobs" as a sign but not the rest. The check proves that the right model was reachable
+when probed, not that it wrote the other answers: that is the replay's job (BACKLOG 11f).
 
 ## File format
 

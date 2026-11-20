@@ -77,8 +77,9 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   it has ended (`GET /v1/connectors/{id}/pilots/{pid}/credit` says `final` and `final_at`; the
   connector passes the final number on). Until then it can still be withheld.
 - **Withheld.** If a guard holds the pilot, its credit is withheld (`withheld: "guard: <rule>"`)
-  and its final credit is 0. The gateway-side model check, when it comes, will withhold it the same
-  way when it is built.
+  and its final credit is 0. The gateway's model check withholds it the same way (`withheld: "model
+  check"`) once its `withhold` switch is on (off: observe-only; [modelcheck.md](modelcheck.md)). Its
+  probe prompts earn nothing.
 - **Idle earns nothing**: credit comes only from metered answers.
 
 **The tokenizer file.** Qwen3.8's `tokenizer.json` (12.8 MB, not in the repo):

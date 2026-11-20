@@ -7,6 +7,19 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+### Added
+
+- **The gateway checks the model of untrusted nodes and pilots (observe-only).** At random times it
+  sends secret probe prompts, as ordinary requests, and compares their token probabilities with a
+  reference recorded on a trusted card (the method of `aisathome-node modelcheck`). Each node's
+  result (pass, suspect, fail) is on the operations page and in `aisathome-gateway accounts
+  model-check`. Probes earn no credit and cost nobody anything. Failing nodes are only recorded for
+  now; the switch that holds them (and withholds a pilot's credit) is off and works only after 3 days
+  of observing. Some requests without tools now ask the node for logprobs, which never reach the
+  client. Config `model_check` (`docs/modelcheck.md`). (gateway)
+- **`aisathome-node modelcheck record -prompts FILE`** records a reference of a private prompt set,
+  for the gateway's secret check. (node)
+
 ### Changed
 
 - **Connector review fixes.** A second withdrawal of the operator terms never moves the first one back
