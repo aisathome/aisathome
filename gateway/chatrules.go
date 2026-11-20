@@ -5,8 +5,11 @@
 // personal data and is not affected; trusted nodes (the maintainer's own, by config) and the requester's
 // own nodes are outside the rule. Where a node runs makes no difference (owner, 2026-11-19, revising D4).
 //
-// Accepted on the account page (a tick under the terms text), or, for a connector's user (a BOINC
-// volunteer), by the connector when the user accepted there (handleConnectorTerms: the BOINC bridge, once
+// Accepted when the account creates a node on the account page (owner, 2026-11-20: the form says that
+// creating and running the node accepts the terms, and the creation records it, via "node-created"; an
+// account that switched to "science only" stays so), with the account page's button (accounts whose
+// nodes came before, or that switched back), or, for a connector's user (a BOINC volunteer), by the
+// connector when the user accepted there (handleConnectorTerms: the BOINC bridge, once
 // BOINC records the user's ENROLL consent to terms_of_use.txt, which holds the operator terms verbatim,
 // D8). A config node token counts as accepted when it is trusted, or when it names the version it
 // accepted ("operator_terms").
@@ -77,8 +80,12 @@ func termsFinal() bool { return !strings.HasPrefix(OperatorTermsVersion, "draft-
 // How an acceptance was recorded (Acceptance.Via).
 const (
 	ViaAccountPage = "account"
-	viaConnector   = "connector:" // + the connector's id
+	ViaNodeCreated = "node-created" // the account created a node, under the line that says it accepts the terms
+	viaConnector   = "connector:"   // + the connector's id
 )
+
+// OperatorTermsURL is where the site shows the operator terms' section on requests nodes answer.
+const OperatorTermsURL = "/about/terms/#6-requests-your-node-answers"
 
 // Acceptance records that an account accepted a text: which version, when, and how.
 type Acceptance struct {
@@ -128,6 +135,25 @@ func (s *AccountStore) WithdrawOperatorTerms(id string) error {
 		a.OperatorTerms, a.TermsWithdrawn = nil, &t
 		return nil
 	})
+}
+
+// optedOut reports whether a switched its nodes to science only: a withdrawal, and no acceptance since.
+func (a *Account) optedOut() bool { return a.TermsWithdrawn != nil && a.OperatorTerms == nil }
+
+// acceptOnNodeCreate records the operator terms for account id, which just created a node under the line
+// that says so, unless it has accepted the current version already or switched to science only (that
+// choice stands until it switches back). It reports whether it recorded an acceptance.
+func (s *AccountStore) acceptOnNodeCreate(id string, now time.Time) (bool, error) {
+	recorded := false
+	err := s.Update(func(f *AccountsFile) error {
+		a := f.find(id)
+		if a == nil || a.Status != StatusActive || a.OperatorTerms.current(OperatorTermsVersion) || a.optedOut() {
+			return nil
+		}
+		a.OperatorTerms, recorded = &Acceptance{Version: OperatorTermsVersion, At: now.UTC(), Via: ViaNodeCreated}, true
+		return nil
+	})
+	return recorded, err
 }
 
 // operatorTerms reports whether account id has accepted the current operator terms.
@@ -217,6 +243,9 @@ func (g *Gateway) chatView(account, id string) string {
 	case !termsFinal():
 		return "science only: the operator terms are not final yet"
 	}
+	if a, _, ok := g.accounts.Get(account); ok && a.optedOut() {
+		return "science only, as you chose"
+	}
 	return "science only: accept the operator terms below to serve chat"
 }
 
@@ -290,7 +319,8 @@ func validVersion(v string) bool {
 
 // ---------------------------------------------------------------- HTTP: the account page
 
-// handleOperatorTerms takes the account page's operator form: accept (the tick) or withdraw.
+// handleOperatorTerms takes the account page's operator forms: accept (the button under the line that
+// says it accepts the terms) or withdraw ("Science only on my nodes").
 func (g *Gateway) handleOperatorTerms(w http.ResponseWriter, r *http.Request) {
 	id, ok := g.session(r)
 	if !ok || !g.sameOrigin(r) {
@@ -302,8 +332,8 @@ func (g *Gateway) handleOperatorTerms(w http.ResponseWriter, r *http.Request) {
 	switch r.FormValue("action") {
 	case "accept":
 		switch {
-		case r.FormValue("accept") != "1" || r.FormValue("version") != OperatorTermsVersion:
-			msg = "Tick the box to accept the operator terms. If the terms changed while the page was open, read them again."
+		case r.FormValue("version") != OperatorTermsVersion:
+			msg = "The operator terms changed while the page was open. Read them again, then accept."
 		case !g.accounts.active(id):
 			msg = "Only an active account can accept the operator terms."
 		default:
@@ -334,9 +364,16 @@ func (g *Gateway) chatRulesData(d *pageData) {
 	d.TermsVersion, d.TermsDraft = OperatorTermsVersion, !termsFinal()
 	d.TermsAccepted = a.OperatorTerms.current(OperatorTermsVersion)
 	d.TermsOutdated = a.OperatorTerms != nil && !d.TermsAccepted
-	if d.TermsAccepted {
+	d.TermsOptedOut, d.TermsURL = a.optedOut(), OperatorTermsURL
+	switch {
+	case d.TermsAccepted:
 		d.TermsSince = a.OperatorTerms.At
+	case d.TermsOptedOut:
+		d.TermsSince = *a.TermsWithdrawn
 	}
+	// Nodes from before acceptance came with creating one (2026-11-20), or a changed version: a banner
+	// until the account accepts or switches to science only. Never accepted on the account's behalf.
+	d.TermsBanner = d.RulesOn && len(a.Nodes) > 0 && !d.TermsAccepted && !d.TermsOptedOut
 }
 
 // chatRulesPage is the account page's data for the chat rules (part of pageData).
@@ -348,20 +385,33 @@ type chatRulesPage struct {
 	TermsVersion                 string
 	TermsDraft                   bool // the terms are a draft: no acceptance counts yet
 	TermsAccepted, TermsOutdated bool
-	TermsSince                   time.Time
+	TermsOptedOut                bool      // the account switched its nodes to science only
+	TermsSince                   time.Time // when it accepted, or switched to science only
+	TermsBanner                  bool      // nodes, but no acceptance and no choice yet: the banner
+	TermsURL                     string    // the operator terms on the site
 }
 
-// accountChatRulesTmpl holds the account page's card for the chat rules (part of accountTmpl).
+// accountChatRulesTmpl holds the account page's parts for the chat rules (part of accountTmpl): the
+// operator card, the banner for nodes without an acceptance, and the acceptance lines by the node forms.
 const accountChatRulesTmpl = `
-{{define "operator"}}{{if .RulesOn}}<div class="card" id="operator"><div class="card-head"><h2>Operator terms</h2>{{if .TermsAccepted}}<span class="badge on">Accepted</span>{{else}}<span class="badge off">Not accepted</span>{{end}}</div>
-<p>Your nodes{{if .Account.Links}} and pilots{{end}} serve people's chats and API requests only once you accept the operator terms; until then they serve science only.</p>
+{{define "terms-link"}}<a href="{{.TermsURL}}">operator terms (§6)</a>{{end}}
+{{define "terms-accept"}}<form class="form" method="post" action="/account/operator"><input type="hidden" name="action" value="accept"><input type="hidden" name="version" value="{{.TermsVersion}}">
+<p class="small">By pressing it you accept the {{template "terms-link" .}} for all your nodes, and confirm that you are 18 or older.</p>
+<div class="actions"><button class="btn secondary">{{if .TermsOptedOut}}Let my nodes answer chats{{else}}Accept the operator terms{{end}}</button></div></form>{{end}}
+{{define "terms-banner"}}{{if .TermsBanner}}<div class="card accent" id="terms-banner" role="status"><p><strong>Accept the operator terms to let your nodes answer chats.</strong>
+{{if .TermsOutdated}}The operator terms changed since you accepted them. {{end}}Until then your nodes do science only.</p>
+{{template "terms-accept" .}}</div>{{end}}{{end}}
+{{define "terms-on-create"}}{{if .RulesOn}}{{if .TermsOptedOut}}<p class="hint" id="terms-on-create">Your nodes do science only, as you chose; a new node does too.</p>
+{{else}}<p class="hint" id="terms-on-create">By creating this node and running it you accept the {{template "terms-link" .}}.</p>{{end}}{{end}}{{end}}
+{{define "operator"}}{{if .RulesOn}}<div class="card" id="operator"><div class="card-head"><h2>Operator terms</h2>{{if .TermsAccepted}}<span class="badge on">Chats and science</span>{{else}}<span class="badge off">Science only</span>{{end}}</div>
 {{if .TermsDraft}}<p role="status"><strong>These terms are a draft.</strong> Your nodes serve science only until the final terms are published and you accept them.</p>{{end}}
-{{if .TermsAccepted}}<p>You accepted version <code>{{.TermsVersion}}</code> on {{day .TermsSince}}.</p>
-<form method="post" action="/account/operator"><input type="hidden" name="action" value="withdraw"><button class="btn ghost">Withdraw: science only</button></form>
-{{else}}{{if .TermsOutdated}}<p role="status"><strong>The operator terms changed.</strong> Accept the new version to keep serving chat.</p>{{end}}
-<div class="terms" id="operator-terms" tabindex="0"><p>{{.TermsIntro}}</p>
+{{if .TermsAccepted}}<p>Your nodes{{if .Account.Links}} and pilots{{end}} answer chats and science (operator terms accepted {{day .TermsSince}}).</p>
+<form method="post" action="/account/operator"><input type="hidden" name="action" value="withdraw"><button class="btn ghost">Science only on my nodes</button></form>
+{{else if .TermsOptedOut}}<p>Your nodes{{if .Account.Links}} and pilots{{end}} do science only, as you chose on {{day .TermsSince}}.</p>
+{{template "terms-accept" .}}
+{{else}}<p>Your nodes{{if .Account.Links}} and pilots{{end}} answer people's chats and API requests only once you accept the operator terms; until then they do science only.
+Creating a node accepts them.</p>
+{{if .Nodes}}{{template "terms-accept" .}}{{end}}{{end}}
+<details><summary>Read the operator terms</summary><div class="terms" id="operator-terms"><p>{{.TermsIntro}}</p>
 <ol>{{range .TermsPoints}}<li>{{.}}</li>{{end}}</ol>
-<p>{{.TermsClose}}</p></div>
-<form class="form" method="post" action="/account/operator"><input type="hidden" name="action" value="accept"><input type="hidden" name="version" value="{{.TermsVersion}}">
-<label class="check"><input type="checkbox" name="accept" value="1" required><span>I have read and accept the operator terms (version <code>{{.TermsVersion}}</code>), and I am 18 or older.</span></label>
-<div class="actions"><button class="btn secondary">Accept</button></div></form>{{end}}</div>{{end}}{{end}}`
+<p>{{.TermsClose}}</p><p class="small">Version <code>{{.TermsVersion}}</code>. All of the terms: <a href="/about/terms/">Terms of use</a>.</p></div></details></div>{{end}}{{end}}`

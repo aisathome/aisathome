@@ -286,3 +286,42 @@ func TestClientIPTrustedProxies(t *testing.T) {
 		t.Error("a bad trusted_proxies entry was accepted")
 	}
 }
+
+// Creating a node accepts the operator terms, unless the account has accepted the current version
+// already or switched to science only; an outdated acceptance is renewed.
+func TestAcceptOnNodeCreate(t *testing.T) {
+	s, err := OpenAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	s.SignIn("gh:1", t0)
+	s.SetStatus("gh:1", StatusActive)
+	if ok, err := s.acceptOnNodeCreate("gh:1", t0); err != nil || !ok {
+		t.Fatalf("first node: %v %v", ok, err)
+	}
+	a, _, _ := s.Get("gh:1")
+	if a.OperatorTerms == nil || a.OperatorTerms.Via != ViaNodeCreated || !a.OperatorTerms.At.Equal(t0) || !s.operatorTerms("gh:1") {
+		t.Fatalf("record: %+v", a.OperatorTerms)
+	}
+	if ok, _ := s.acceptOnNodeCreate("gh:1", t0.Add(time.Hour)); ok {
+		t.Fatal("an acceptance of the current version was renewed")
+	}
+	s.Update(func(f *AccountsFile) error { f.find("gh:1").OperatorTerms.Version = "older"; return nil })
+	if ok, _ := s.acceptOnNodeCreate("gh:1", t0.Add(2*time.Hour)); !ok || !s.operatorTerms("gh:1") {
+		t.Fatal("an outdated acceptance was not renewed by a new node")
+	}
+	s.WithdrawOperatorTerms("gh:1") // "Science only on my nodes"
+	if ok, _ := s.acceptOnNodeCreate("gh:1", time.Now().Add(time.Hour)); ok || s.operatorTerms("gh:1") {
+		t.Fatal("a new node undid science only")
+	}
+	s.AcceptOperatorTerms("gh:1", OperatorTermsVersion, ViaAccountPage, time.Now().Add(time.Minute))
+	if ok, _ := s.acceptOnNodeCreate("gh:1", time.Now().Add(time.Hour)); ok {
+		t.Fatal("renewed after switching back")
+	}
+	s.SignIn("gh:2", t0) // waitlisted: no nodes, no acceptance
+	s.SetStatus("gh:2", StatusWaitlisted)
+	if ok, _ := s.acceptOnNodeCreate("gh:2", t0); ok {
+		t.Fatal("accepted for an account that is not active")
+	}
+}

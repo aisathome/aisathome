@@ -540,6 +540,14 @@ func (g *Gateway) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.log.Info("node token created", "node", nodeID, "operator", g.pseudonym(id))
+	if g.chatRulesOn() { // creating the node, under the line that says so, accepts the operator terms (chatrules.go)
+		if recorded, aerr := g.accounts.acceptOnNodeCreate(id, time.Now()); aerr != nil {
+			g.log.Error("operator terms not recorded at node creation", "err", aerr)
+		} else if recorded {
+			g.sweepNodes() // the account's other nodes may answer chats now
+		}
+		d = g.accountData(id)
+	}
 	d.NewNode, d.NewNodeID = token, nodeID
 	g.accountPage(w, r, http.StatusOK, d) // shown once: rendered here, never stored
 }
@@ -785,9 +793,12 @@ below and manage your pilots. The chat, the API and keys open when your account 
 {{else if .NewNode}}<section aria-labelledby="secret-title">
 {{template "secret" (secretView "Your new node token" .NewNode)}}
 <p>Paste it when the node installer asks for it. The node takes its id (<code>{{.NewNodeID}}</code>) from the token.</p>
+{{if .RulesOn}}{{if .TermsAccepted}}<p class="small" id="terms-created">Running this node means you accept the {{template "terms-link" .}} (accepted {{day .TermsSince}}). You can switch your nodes to science only on your account page.</p>
+{{else if .TermsOptedOut}}<p class="small" id="terms-created">Your nodes do science only, as you chose; this one too.</p>{{end}}{{end}}
 <form method="get" action="/account#nodes"><button class="btn">Done</button></form></section>
 {{else}}
 <h1>Your account</h1>
+{{template "terms-banner" .}}
 <div class="card"><p><a class="btn" href="{{.ChatURL}}">Open the chat</a></p>
 <p class="small" id="user-rule">{{.UserRule}}</p>
 <p class="mut">Today: {{.Used}}{{if .Budget}} of {{.Budget}}{{end}} tokens (resets 00:00 UTC; chat and API share it).</p></div>
@@ -835,7 +846,8 @@ requests only, never what they asked.</p>
 {{else if .NetworkFull}}<p class="mut">The network is full for now: no new nodes are being added.</p>
 {{else}}<form class="form" method="post" action="/account/nodes"><input type="hidden" name="once" value="{{.NodeOnce}}">
 <div class="field"><label for="nodename">Name (optional, only you see it)</label>
-<div class="row"><input id="nodename" name="name" maxlength="40"><button class="btn secondary">Add a node</button></div></div></form>{{end}}
+<div class="row"><input id="nodename" name="name" maxlength="40"><button class="btn secondary">Add a node</button></div></div>
+{{template "terms-on-create" .}}</form>{{end}}
 {{if or .Nodes .Account.NodePref}}<form class="form" method="post" action="/account/nodes/pref"><div class="field"><label for="pref">Your own chats and API requests go to</label>
 <div class="row"><select id="pref" name="pref"><option value=""{{if eq .Account.NodePref ""}} selected{{end}}>my own nodes first, then any</option>
 <option value="only"{{if eq .Account.NodePref "only"}} selected{{end}}>only my own nodes</option>

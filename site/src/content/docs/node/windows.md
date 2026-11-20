@@ -51,7 +51,8 @@ The page is `http://127.0.0.1:7381/`, on your PC only; the tray and the Start-me
 3. **The speed test:** the card must write at least **20 tokens/s** after a 32,000-token
    prompt. Stop BOINC GPU tasks, games and overclocking tools while it runs.
 4. **The node token:** create a node on [your account page](https://aisathome.org/account) and
-   paste its token. The gateway is aisathome.org; **Other gateway** is only for testing.
+   paste its token. Creating and running the node means you accept the
+   [operator terms (§6)](/about/terms/#6-requests-your-node-answers). The gateway is aisathome.org; **Other gateway** is only for testing.
 
 The node then starts and connects. **Your nodes** on the account page shows it.
 
