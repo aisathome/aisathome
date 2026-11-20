@@ -100,6 +100,9 @@ type Gateway struct {
 	// ownOnlyNow: the operator's emergency switch (RoutingOwnOnly) as last read from the accounts file,
 	// which requests that wait for a node check on every try (route.ownOnly).
 	ownOnlyNow atomic.Bool
+	// noChat rate-limits the WARN line for people's requests refused while no node may serve them
+	// (servecap.go).
+	noChat noChatLog
 	// proxies: Config.TrustedProxies, parsed (clientaddr.go).
 	proxies []netip.Prefix
 	// untrustedXFF: an X-Forwarded-For from a peer not in proxies was logged once (clientaddr.go).

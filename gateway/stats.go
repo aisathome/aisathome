@@ -217,6 +217,9 @@ func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
 	sort.Strings(roles)
 
 	now := time.Now().UTC()
+	// What may serve whom right now (servecap.go): a network with nodes online and 0 for chat refuses
+	// every chat (2026-11-20). Counts only.
+	serve, _, _ := g.serveCapacity(now)
 	g.stats.mu.Lock()
 	today := map[string]any{"date": now.Format(time.DateOnly), "requests": 0, "completed": 0,
 		"prompt_tokens": 0, "completion_tokens": 0}
@@ -245,6 +248,7 @@ func (g *Gateway) handleStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"updated": now.Format(time.RFC3339),
 		"nodes":   map[string]any{"online": nodes, "slots": slots, "busy": busy, "paused": paused, "held": held},
+		"serve":   serve, // a top-level key: clients read nodes as a map of numbers
 		"models":  roles,
 		"today":   today,
 		"total":   total,

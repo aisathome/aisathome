@@ -44,6 +44,7 @@ const (
 	ruleCIBackoff    = "ci-backoff"
 	ruleContract     = "contract"
 	ruleNoNodes      = "no-nodes"
+	ruleNoChat       = "no-chat-nodes" // nodes online, none may serve people's requests (servecap.go)
 	ruleNodeHeld     = "node-held"
 	ruleCandidate    = "candidate-waiting"
 	ruleStatusStale  = "status-stale"
@@ -155,5 +156,7 @@ func holdWarnings(holds []NodeHold) []healthWarning {
 
 // healthOf is the warnings for project id now.
 func (g *Gateway) healthOf(id string, now time.Time) []healthWarning {
-	return append(holdWarnings(g.holds()), health(g.pstatus.get(id), g.nodesOnline(), now)...)
+	c, online, why := g.serveCapacity(now)
+	out := append(holdWarnings(g.holds()), capacityWarning(c, online, why)...)
+	return append(out, health(g.pstatus.get(id), online, now)...)
 }

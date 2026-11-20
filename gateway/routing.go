@@ -599,6 +599,7 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 		if reason != "" && g.log != nil {
 			g.log.Info("request refused", "reason", reason, "model", want, "personal_data", rt.pii,
 				"class", rt.class, "project", rt.project, "session_model", rt.model)
+			g.noChatDemand(rt.class) // a WARN if no node online may serve people's requests (servecap.go)
 		}
 	}()
 	switch why {

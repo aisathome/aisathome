@@ -114,8 +114,9 @@ type opsData struct {
 	CISince     string
 	Candidates  []opsCandidate
 	Nodes       []opsNode
-	Online      int       // of Nodes, not held
-	Holds       []opsHold // every hold on record, connected or not
+	Online      int           // of Nodes, not held
+	Serve       serveCapacity // of the nodes online, how many may serve each kind of request (servecap.go)
+	Holds       []opsHold     // every hold on record, connected or not
 	Cost        string
 	CostNote    string
 	Now         string
@@ -360,6 +361,7 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 		}
 	}
 	d.Nodes = g.opsNodes(contracts)
+	d.Serve, _, _ = g.serveCapacity(now)
 	connected := map[string]bool{}
 	for _, n := range d.Nodes {
 		connected[n.ID] = true
@@ -618,6 +620,7 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{range .Finished}}<tr data-attempt="{{.Attempt}}"><td data-label="Attempt"><code>{{.Attempt}}</code>{{if .TaskType}} <span class="mut small">{{.TaskType}}</span>{{end}}</td><td data-label="State"><span class="badge {{badge .State}}">{{.State}}</span></td>
 <td data-label="Steps" class="num">{{.Steps}}{{if .StepCap}} of {{.StepCap}}{{end}}</td><td data-label="Minutes" class="num">{{.Used}}</td><td data-label="Outcome">{{.Outcome}}</td></tr>{{end}}</table></div></div>{{end}}
 <div class="card" id="nodes"><h2>Nodes online ({{.Online}}){{if gt (len .Nodes) .Online}} · {{sub (len .Nodes) .Online}} held{{end}}</h2>
+{{if .Nodes}}<p class="small" id="serve">May serve: <strong data-serve-chat>{{.Serve.Chat}}</strong> people's chats and API requests, <span data-serve-tools>{{.Serve.Tools}}</span> agents (tools), <span data-serve-science>{{.Serve.Science}}</span> science.</p>{{end}}
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Version</th><th>Protocol</th><th class="num">Busy</th><th class="num">Science</th><th>Connected</th><th>Contract ends</th></tr>
 {{range .Nodes}}<tr data-node="{{.ID}}"><td data-label="Node"><code>{{.ID}}</code>{{if .Paused}} <span class="badge paused">paused</span>{{end}}{{if .Held}} <span class="badge held">held</span>{{end}}</td>
 <td data-label="Version">{{if .Version}}<code>{{.Version}}</code>{{else}}<span class="mut">unknown</span>{{end}}</td><td data-label="Protocol">{{.Protocol}}</td>
