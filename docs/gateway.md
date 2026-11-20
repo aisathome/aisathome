@@ -325,7 +325,14 @@ a record's content.
 Without authentication, for the website (aggregates only: never users, keys, nodes or
 operators):
 
-- `GET /v1/stats`: nodes online, slots, busy, paused and held now (a held node counts only in `held`); today's (UTC) requests and tokens,
+- `GET /v1/stats`: nodes online, slots, busy, paused and held now (a held node counts only in `held`); `serve`, how many
+  of the nodes online may serve each kind of request from someone who is not their operator right now: `chat` (people's
+  chats and API requests without tools), `tools` (agents: `chat` and past probation) and `science` (a project's requests
+  without tools). They ask the placement rule itself, so the operator terms, a draft of them, the own-only switch and a
+  pilot's science-only switch all count; context and free slots do not. Nodes online with `chat` 0 refuse every chat and
+  API request (2026-11-20, `reason=operator_terms` for 8 hours): the operations page then shows a `no-chat-nodes` health
+  warning with the reasons (counts), and the log a `WARN` line "no online node may serve people's requests" when such a
+  request is refused (at most once per 10 minutes, with the refusals since the last line). Today's (UTC) requests and tokens,
   in all, per class (`today.classes`) and per project (`today.projects`, with `node_seconds`),
   each with `preempted` (of its requests, those stopped for a person's) when not zero; totals
   since the usage log began (`total`, with `total.projects`). Here `prompt_tokens` includes the

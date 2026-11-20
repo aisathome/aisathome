@@ -9,6 +9,12 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **What may serve whom, at a glance.** `/v1/stats` has `serve`: of the nodes online, how many may
+  serve people's chats and API requests (`chat`), agents (`tools`) and science (`science`) right now,
+  counts only. With nodes online and none for chat, the operations page shows a `no-chat-nodes` warning
+  with the reasons and the gateway logs a rate-limited `WARN` when such a request is refused: on
+  2026-11-20 every chat was refused for 8 hours (no operator had accepted the terms yet) while science
+  and every check were green. (gateway)
 - **Creating a node accepts the operator terms.** The "Add a node" form says so, with a link to the
   terms (§6), and the creation records the acceptance; there is no separate tick. **Science only on my
   nodes** on the account page withdraws it for all the account's nodes (science goes on), and a new
