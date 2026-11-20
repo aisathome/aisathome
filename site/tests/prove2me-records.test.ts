@@ -9,9 +9,9 @@ import assert from 'node:assert/strict';
 import raw from '../src/data/science/prove2me.json';
 import fixture from './fixtures/prove2me-records-2026-11-18.json';
 import type { Prove2me } from '../src/data/prove2me';
-import { parseCurrent, type PublicTask } from '../src/data/prove2me-current';
+import { parseCurrent, type CurrentDoc, type PublicTask } from '../src/data/prove2me-current';
 import {
-	builtDetail, builtTaskRows, docFromCampaign, fetchRecords, historyOf, liveSummary, parseCampaigns, parseResults, pickDoc, scienceView, trialDetails,
+	builtDetail, builtTaskRows, docFromCampaign, fetchRecords, historyOf, liveSummary, nowDocs, parseCampaigns, parseResults, scienceView, trialDetails,
 	type Campaign, type Records,
 } from '../src/data/prove2me-records';
 import { cardNumbers, homeLine, kpisHTML, plainHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
@@ -159,24 +159,48 @@ test('a trial’s list: generated facts, the campaign’s own text as plain text
 	assert.deepEqual(trialDetails([b7], null, h), [b7]);
 });
 
-test('"Working on now": the data document while it names the newest trial, else the newest trial campaign', () => {
-	const r = records();
-	const doc = (n: number) =>
+test('"Working on now": every trial not finished, oldest first; the data document for its own trial or a newer one', () => {
+	const r = records(); // t8 runs, every other trial campaign has finished
+	const doc = (n: number, status = 'running') =>
 		parseCurrent({
 			schema: 'prove2me-current/2', project: 'prove2me', updated_at: '2026-11-17T15:47:29Z',
-			trial: { id: `t${n}`, number: n, scaffold: 'v9', start: '2026-11-17', status: 'running', description: '', budget: '' }, leaves: [], submissions: [],
+			trial: { id: `t${n}`, number: n, scaffold: 'v9', start: '2026-11-17', status, description: '', budget: '' }, leaves: [], submissions: [],
 		});
-	assert.equal(pickDoc(doc(8), r)!.schema, 'prove2me-current/2');
-	assert.equal(pickDoc(doc(9), r)!.trial.id, 't9');
-	const fromCampaign = pickDoc(doc(7), r)!;
+	const ids = (ds: CurrentDoc[]) => ds.map((d) => `${d.trial.id}:${d.schema}`);
+	assert.deepEqual(ids(nowDocs(doc(8), r)), ['t8:prove2me-current/2'], 'the document stands for its own trial');
+	assert.deepEqual(ids(nowDocs(doc(9), r)), ['t8:campaign', 't9:prove2me-current/2'], 'a newer document joins the open campaign');
+	assert.deepEqual(ids(nowDocs(doc(9, 'finished'), r)), ['t8:campaign']);
+	const [fromCampaign, ...rest] = nowDocs(doc(7), r);
+	assert.equal(rest.length, 0, 'an older document is left out');
 	assert.equal(fromCampaign.schema, 'campaign');
 	assert.deepEqual(fromCampaign.trial, { id: 't8', number: 8, scaffold: 'v9', start: '2026-11-16', status: 'running', description: '', budget: r.campaigns[0].labels.budget });
 	assert.equal(fromCampaign.leaves.length, 6);
 	assert.deepEqual(fromCampaign.leaves[0], { id: 'p2m-3ad60f', alias: 'C07', role: 'calibration', theorem: 'WilliamsonShmoys.planar_drawing_maximal_supergraph__p2m_97829890_428d_4657_a899_f7e200a68a7c_a4', url: 'https://prove2.me/theorems/3ad60fc3-1bed-4725-aaf6-264d650d407f' });
 	assert.deepEqual(fromCampaign.submissions.map((s) => [s.leaf, s.verdict]), [['p2m-527634', 'accepted']]);
-	assert.equal(pickDoc(null, r)!.schema, 'campaign');
-	assert.equal(pickDoc(null, null), null);
-	assert.equal(pickDoc(doc(8), null)!.trial.id, 't8');
+	assert.deepEqual(ids(nowDocs(null, r)), ['t8:campaign']);
+	assert.deepEqual(nowDocs(null, null), []);
+	assert.deepEqual(ids(nowDocs(doc(8), null)), ['t8:prove2me-current/2'], 'without the campaigns, the document alone');
+
+	// Bug (owner, 2026-11-20): trial 10 was posted while trial 9 still ran; only trial 10 was shown. Both now, oldest first,
+	// each with its own text and budget; the stale document of trial 8 (no longer written) stays out.
+	const t8 = r.campaigns.find((c) => c.id === 't8')!;
+	const later = (n: number, status: Campaign['status'], text: string) => ({ ...t8, id: `t${n}`, title: `Trial ${n}`, status, text, labels: { ...t8.labels, budget: `budget ${n}` } });
+	const two = { ...r, campaigns: [later(10, 'running', 'Trial ten.'), later(9, 'running', 'Trial nine.'), { ...t8, status: 'finished' as const }, ...r.campaigns.filter((c) => c.id !== 't8')] };
+	const both = nowDocs(doc(8), two);
+	assert.deepEqual(ids(both), ['t9:campaign', 't10:campaign']);
+	assert.deepEqual(both.map((d) => [d.trial.description, d.trial.budget]), [['Trial nine.', 'budget 9'], ['Trial ten.', 'budget 10']]);
+	// trial 9 ends: it leaves "Working on now" (its list is under Trials)
+	two.campaigns[1] = { ...two.campaigns[1], status: 'finished' };
+	assert.deepEqual(ids(nowDocs(doc(8), two)), ['t10:campaign']);
+	// a trial being prepared counts as not finished; the probe rounds never do
+	two.campaigns.unshift({ ...later(11, 'preparing', ''), started_at: null }, { ...later(11, 'running', ''), id: 't11p', labels: { ...t8.labels, kind: 'probes' } });
+	assert.deepEqual(ids(nowDocs(null, two)), ['t10:campaign', 't11:campaign']);
+	// every trial ended: the newest, ended, as before (the next trial's outline probes show under it)
+	two.campaigns = two.campaigns.map((c) => ({ ...c, status: 'finished' as const }));
+	const ended = nowDocs(null, two);
+	assert.deepEqual(ids(ended), ['t11:campaign']);
+	assert.equal(ended[0].trial.status, 'finished');
+
 	const t6 = docFromCampaign(r.campaigns.find((c) => c.id === 't6')!, r.results);
 	assert.deepEqual(t6.submissions.find((s) => s.kind === 'reuse')!.reuses, { theorem: 'NestedSeatAlloc.IntPolicy.eq27_er1_clbi', url: '', relation: 'part' });
 });

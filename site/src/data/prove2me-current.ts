@@ -16,6 +16,11 @@
 // so the table of every task and the trials table take every such trial from it, not only the document's (trial 7's
 // tasks vanished from the page when trial 8 started). Trials 1 to 5 stay the build's frozen history.
 //
+// Since step D7 (2026-11-18) the research tooling no longer writes the document (the host still serves its last copy,
+// trial 8): "Working on now" is one block per trial campaign of the gateway that has not finished, oldest first, the
+// document standing in only for its own trial or a newer one (prove2me-records.ts nowDocs; owner, 2026-11-20: trial 9
+// vanished from it when trial 10 was posted).
+//
 // When either is missing or not what it should be, the page keeps the copy the build rendered. Pure functions, no
 // data, so the browser's bundle stays small.
 //

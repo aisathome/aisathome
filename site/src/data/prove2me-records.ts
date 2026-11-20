@@ -562,14 +562,22 @@ export function builtTaskRows(p: Prove2me): TaskTableRow[] {
 	return p.tasks.map((r) => ({ ...r, tokens: computed.get(r.id) ?? null, tokens_with_cache: r.tokens }));
 }
 
-/** "Working on now"'s trial: the project's data document while it names the newest trial (it alone has each outline's
- * holes), else the gateway's newest trial campaign as one (decision 0021: the document retires). Null with neither. */
-export function pickDoc(doc: CurrentDoc | null, live: Records | null): CurrentDoc | null {
-	const camps = (live?.campaigns ?? []).filter((c) => liveCampaign(c) && !trialOf(c.id)!.probe);
-	const newest = camps.sort((a, b) => trialOf(b.id)!.number - trialOf(a.id)!.number)[0];
-	if (!newest) return doc;
-	if (doc && doc.trial.number >= trialOf(newest.id)!.number) return doc;
-	return docFromCampaign(newest, live!.results);
+/** "Working on now": every trial that has not finished (preparing or running), oldest first (owner, 2026-11-20: trial 9
+ * dropped out of it when trial 10 was posted, with six of its tasks still open). Each is the gateway's trial campaign as
+ * a document (decision 0021: the gateway is the record), or the project's data document instead when it names that
+ * trial (it alone has each outline's holes) or a newer one the gateway has no campaign of yet. With no trial open, the
+ * newest trial as before (it has ended; the next trial's outline probes show under it). Without the campaigns, the
+ * document alone; empty with neither. */
+export function nowDocs(doc: CurrentDoc | null, live: Records | null): CurrentDoc[] {
+	const num = (c: Campaign) => trialOf(c.id)!.number;
+	const camps = (live?.campaigns ?? []).filter((c) => liveCampaign(c) && !trialOf(c.id)!.probe).sort((a, b) => num(a) - num(b));
+	const newest = camps[camps.length - 1];
+	if (!newest) return doc ? [doc] : [];
+	const asDoc = (c: Campaign) => (doc && doc.trial.id === c.id ? doc : docFromCampaign(c, live!.results));
+	const open = camps.filter((c) => c.status !== 'finished').map(asDoc);
+	if (doc && doc.trial.number > num(newest) && doc.trial.status !== 'finished') open.push(doc);
+	if (open.length) return open;
+	return [doc && doc.trial.number >= num(newest) ? doc : asDoc(newest)];
 }
 
 /** A URL's JSON in the browser, within `ms`; throws on an HTTP error, a timeout or a body that is not JSON. */
