@@ -7,7 +7,8 @@
 // (2026-11-21).
 //
 // So for an interpreter the guard reads the rest of its command as the shell would (words,
-// quotes, redirections, substitutions) and lets the pipe pass only if the program is an argument:
+// quotes, redirections, substitutions, line ends, and the end of the command's string: the
+// call's other keys and values are no arguments of it; callTexts) and lets the pipe pass only if the program is an argument:
 // python's -c or -m, node's -e/-p/--eval/--print, ruby's and perl's -e (perl -E), php's -r/-R/-F/-f,
 // or a script path. Everything else still holds: no program ("| python3", "| node"), "-" or
 // /dev/stdin, an interactive flag (-i, node --interactive, php -a), a module that reads code from
@@ -53,22 +54,27 @@ var (
 // maxSubstDepth bounds nested substitutions; deeper text counts as unreadable.
 const maxSubstDepth = 32
 
-// pipedExec reads a match m of the pipe pattern ("a download piped into a shell or interpreter").
+// pipedExec reads a match m of the pipe pattern ("a download piped into a shell or interpreter") in
+// shell, the call as the shell reads it (callTexts), at the offsets of the text the pattern read.
 // hold says whether it runs a download; end is where the hit ends: m[1], or the command word of a
-// later stage that runs it. walked is how far the reading went when it holds nothing: a later
-// match that starts before it is a stage (or a quoted word) of the same pipeline, already read.
-func pipedExec(text string, m []int) (end int, hold bool, walked int) {
-	loc := pipeInterp.FindStringIndex(text[m[0]:m[1]])
+// later stage that runs it. When it holds nothing, from lists where it read on from: the end of
+// each interpreter's name in the pipeline. A later match of the pattern that ends at one of them
+// would read the same and is not read again, which keeps the work linear.
+func pipedExec(shell string, m []int) (end int, hold bool, from []int) {
+	if shell == "" {
+		return m[1], true, nil // arguments that do not parse: no shell view, held as before
+	}
+	loc := pipeInterp.FindStringIndex(shell[m[0]:m[1]])
 	if loc == nil {
-		return m[1], true, 0 // a shell or PowerShell
+		return m[1], true, nil // a shell or PowerShell
 	}
 	// The interpreter's name must be the whole command word ("php-cgi", "python3-config" are other
 	// programs, but were held as before).
-	if m[1] < len(text) && !strings.ContainsRune(" \t\n|;&<>)", rune(text[m[1]])) {
-		return m[1], true, 0
+	if m[1] < len(shell) && !strings.ContainsRune(" \t\n|;&<>)", rune(shell[m[1]])) {
+		return m[1], true, nil
 	}
-	lang := langOf(text[m[0]+loc[0] : m[1]])
-	return walkPipe(text, m[1], lang)
+	lang := langOf(shell[m[0]+loc[0] : m[1]])
+	return walkPipe(shell, m[1], lang)
 }
 
 // langOf is the language of an interpreter's command word: python, node, ruby, perl or php.
@@ -82,28 +88,30 @@ func langOf(name string) string {
 
 // walkPipe reads an interpreter's stage from i (after its name), then the stages that follow it
 // in the pipeline; see pipedExec.
-func walkPipe(text string, i int, lang string) (end int, hold bool, walked int) {
+func walkPipe(text string, i int, lang string) (end int, hold bool, from []int) {
+	from = []int{i}
 	for {
 		words, op, j, ok := stageWords(text, i)
 		if !ok || !programInArgs(lang, words) {
-			return i, true, 0
+			return i, true, nil
 		}
 		if op != "|" && op != "|&" {
-			return j, false, j
+			return j, false, from
 		}
-		// The next stage: past assignments and sudo, env, exec, nohup, command or time, its command word.
+		// The next stage: past assignments and wrappers such as sudo and env, its command word.
 		cmd, k, ok := commandWord(text, j)
 		if !ok {
-			return j, true, 0
+			return j, true, nil
 		}
 		base := commandName(cmd.word)
 		switch {
 		case cmd.subst:
-			return k, true, 0
+			return k, true, nil
 		case shellName.MatchString(base):
-			return k, true, 0
+			return k, true, nil
 		case interpName.MatchString(base):
 			lang, i = langOf(base), k
+			from = append(from, k)
 		default: // a filter such as grep, tee or head: read past it to the next stage
 			lang, i = "", k
 		}
@@ -219,6 +227,9 @@ func (a *argReader) next() (string, bool) {
 	return w.word, !w.subst
 }
 
+// done: no arguments are left.
+func (a *argReader) done() bool { return a.i >= len(a.words) }
+
 // value is an option's value: the rest of its word, else the next argument.
 func (a *argReader) value(rest string) (string, bool) {
 	if rest != "" {
@@ -284,7 +295,8 @@ func pythonProgram(words []shTok) bool {
 }
 
 // nodeProgram: node [options] (-e code | -p code | script | -) [args]. An option it does not know
-// may take the next word as its value, so a script must come after another word then.
+// may take the next word as its value, so a script must come after another word then. Every -e
+// and -p is read, not only the first (code review, 2026-11-21).
 func nodeProgram(words []shTok) bool {
 	a := &argReader{words: words}
 	valued := wordSet("--require", "-r", "--import", "--loader", "--experimental-loader", "--conditions", "-C",
@@ -298,18 +310,22 @@ func nodeProgram(words []shTok) bool {
 		"--pending-deprecation", "--throw-deprecation", "--no-experimental-fetch", "--frozen-intrinsics", "-v", "--version",
 		"-h", "--help", "-c", "--check", "--test")
 	unsure := false // the last option might have taken the word after it
+	prog := false   // an inline program was given: later words are its arguments
 	for {
+		if a.done() {
+			return prog
+		}
 		w, ok := a.next()
 		if !ok {
-			return false
+			return false // a substitution could be any words
 		}
 		name, _, hasVal := strings.Cut(w, "=")
 		switch {
 		case w == "--":
 			s, ok := a.next()
-			return ok && script(s)
+			return prog || ok && script(s)
 		case w == "-":
-			return false
+			return prog
 		case name == "-e" || name == "--eval" || name == "-p" || name == "--print" || name == "-pe" || name == "-ep":
 			code, ok := "", true
 			if hasVal {
@@ -317,7 +333,10 @@ func nodeProgram(words []shTok) bool {
 			} else {
 				code, ok = a.next()
 			}
-			return ok && inline("node", code)
+			if !ok || !inline("node", code) {
+				return false
+			}
+			prog = true
 		case name == "-i" || name == "--interactive":
 			return false
 		case valued[name]:
@@ -331,6 +350,8 @@ func nodeProgram(words []shTok) bool {
 			unsure = false
 		case strings.HasPrefix(w, "-"):
 			unsure = true
+		case prog:
+			return true
 		case unsure:
 			unsure = false // perhaps the option's value
 		default:
@@ -341,22 +362,32 @@ func nodeProgram(words []shTok) bool {
 
 // rubyPerlProgram: ruby or perl [switches] (-e code | script | -) [args]. Their short switches
 // combine ("-ne", "-lane", "-rjson -e"); some take a value, attached or as the next word, some an
-// optional attached one.
+// optional attached one. Both run every -e given, so each is read (code review, 2026-11-21).
 func rubyPerlProgram(lang string, words []shTok) bool {
 	code, valued, attached, flags := "e", "IrCEFX", "0xTWK", "nplaswvdcyUhS"
 	if lang == "perl" {
 		code, valued, attached, flags = "eE", "IMm", "0xliCdDVF", "npaswWXtTcuUvhS"
 	}
 	a := &argReader{words: words}
+	prog := false // an inline program was given: later words are its arguments
 	for {
+		if a.done() {
+			return prog
+		}
 		w, ok := a.next()
 		if !ok {
-			return false
+			return false // a substitution could be any words
 		}
 		switch {
-		case w == "--":
-			s, ok := a.next()
-			return ok && script(s)
+		case w == "--" || w == "-" || !strings.HasPrefix(w, "-"):
+			if prog {
+				return true
+			}
+			if w == "--" {
+				s, ok := a.next()
+				return ok && script(s)
+			}
+			return script(w)
 		case strings.HasPrefix(w, "--"):
 			name, _, hasVal := strings.Cut(w, "=")
 			if !hasVal && name != "--version" && name != "--help" && name != "--verbose" && name != "--yjit" && name != "--jit" && name != "--copyright" {
@@ -367,8 +398,11 @@ func rubyPerlProgram(lang string, words []shTok) bool {
 				c := w[k]
 				switch {
 				case strings.IndexByte(code, c) >= 0:
-					prog, ok := a.value(w[k+1:])
-					return ok && inline(lang, prog)
+					p, ok := a.value(w[k+1:])
+					if !ok || !inline(lang, p) {
+						return false
+					}
+					prog, k = true, len(w)
 				case strings.IndexByte(valued, c) >= 0:
 					if _, ok := a.value(w[k+1:]); !ok {
 						return false
@@ -381,26 +415,28 @@ func rubyPerlProgram(lang string, words []shTok) bool {
 					return false
 				}
 			}
-		default:
-			return script(w)
 		}
 	}
 }
 
 // phpProgram: php [options] (-r code | -R code | -F file | -f file | file) [args]. php with no file
-// runs standard input, also after "--".
+// runs standard input, also after "--". Every program option is read (-R with -B and -E).
 func phpProgram(words []shTok) bool {
 	long := map[string]byte{"--run": 'r', "--process-code": 'R', "--process-file": 'F', "--file": 'f',
 		"--interactive": 'a', "--define": 'd', "--php-ini": 'c', "--no-php-ini": 'n', "--process-begin": 'B',
 		"--process-end": 'E', "--zend-extension": 'z', "--no-header": 'q'}
 	a := &argReader{words: words}
+	prog := false // a program was given: later words are its arguments
 	for {
-		w, ok := a.next()
-		if !ok || w == "--" || w == "-" {
-			return false
+		if a.done() {
+			return prog
 		}
-		if !strings.HasPrefix(w, "-") {
-			return script(w)
+		w, ok := a.next()
+		if !ok {
+			return false // a substitution could be any words
+		}
+		if w == "--" || w == "-" || !strings.HasPrefix(w, "-") {
+			return prog || w != "--" && w != "-" && script(w)
 		}
 		opt := w[1:]
 		if strings.HasPrefix(w, "--") {
@@ -417,14 +453,20 @@ func phpProgram(words []shTok) bool {
 		for k := 0; k < len(opt); k++ {
 			switch c := opt[k]; {
 			case c == 'r' || c == 'R':
-				prog, ok := a.value(opt[k+1:])
-				return ok && inline("php", prog)
+				p, ok := a.value(opt[k+1:])
+				if !ok || !inline("php", p) {
+					return false
+				}
+				prog, k = true, len(opt)
 			case c == 'F' || c == 'f':
 				s, ok := a.value(opt[k+1:])
-				return ok && script(s)
+				if !ok || !script(s) {
+					return false
+				}
+				prog, k = true, len(opt)
 			case c == 'B' || c == 'E':
-				prog, ok := a.value(opt[k+1:])
-				if !ok || !inline("php", prog) {
+				p, ok := a.value(opt[k+1:])
+				if !ok || !inline("php", p) {
 					return false
 				}
 				k = len(opt)
