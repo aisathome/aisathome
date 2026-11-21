@@ -283,6 +283,17 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **A download piped into an interpreter's data no longer holds a node.** The guard stopped
+  `curl … | python3 -c '…'` and `curl … | python3 parse.py`, where the download is only data on
+  standard input, as if it ran the download, and held the owner's node for five hours for an agent
+  that cleaned up a web page that way. Piped into python, node, ruby, perl or php, a download now
+  counts only when the interpreter gets no program from its arguments (`| python3`, `| python3 -`,
+  `/dev/stdin`, an interactive flag, `python -m code`, an inline program that itself runs code such
+  as `exec(sys.stdin.read())`, a substitution where the program goes, or a later stage of the
+  pipeline that is a shell). Shells count as before (`| sh`, `| bash -s -- …`, `| sudo bash`),
+  and `python3 <(curl …)`, `node -e "$(curl …)"` and `sudo -u user` before the interpreter now
+  count too. (gateway)
+
 - **Credit counted by mistake is corrected, visibly.** `accounts credit-adjust <node> <credit>
   "<reason>"` adds a signed correction the gateway applies once to the node and its owner; the
   leaderboard (`/v1/stats/credit`, network page) lists each correction with its reason, never

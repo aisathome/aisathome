@@ -70,24 +70,31 @@ var commandRules = []struct {
 // what a hold record keeps to say which pattern fired: fixed text, never the call's own (the
 // evidence, guard_evidence.go, keeps a fragment of the call). installer: the pattern can run an
 // official installer (guard_official.go), which stops the answer without holding the node.
+// refine, if set, reads a match further (pipedExec, guard_interp.go): it can drop the match or
+// move its end.
 var guardRules = []struct {
 	rule, why string
 	installer bool
 	re        *regexp.Regexp
+	refine    func(text string, m []int) (end int, hold bool, walked int)
 }{
-	{ruleDownloadExec, "a download piped into a shell or interpreter", true, regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`)},
-	{ruleDownloadExec, "a shell running a download", true, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`)},
-	{ruleDownloadExec, "PowerShell running a download", false, regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`)},
-	{ruleCredentials, "a credential file or folder the request does not name", false, regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`)},
-	{ruleEncoded, "base64 decoded into a shell or interpreter", false, regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`)},
-	{ruleEncoded, "a shell running base64-decoded text", false, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|eval)\b[^\n]*(?:\$\(|` + "`" + `)[^\n]*\bbase64\s+(?:-d|-D|--decode)\b`)},
-	{ruleEncoded, "PowerShell with an encoded command", false, regexp.MustCompile(`(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]*\s-(?:e|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}`)},
-	{ruleEncoded, "exec or eval of base64-decoded code", false, regexp.MustCompile(`(?i)\b(?:exec|eval)\s*\(\s*(?:__import__\(\s*["']base64["']\s*\)\.|base64\.)?b64decode\b`)},
-	{ruleUpload, "curl sending a file as form or data", false, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`)},
-	{ruleUpload, "curl uploading a file", false, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`)},
-	{ruleUpload, "wget posting a file", false, regexp.MustCompile(`\bwget\b[^\n]*--post-file`)},
-	{ruleUpload, "socat sending a file", false, regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`)},
-	{ruleUpload, "scp or rsync to a remote host", false, regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`)},
+	{ruleDownloadExec, "a download piped into a shell or interpreter", true, regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:(?-i:-[ugCDhpRrTU])\s+[^\s|;&-]\S*\s+|-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`), pipedExec},
+	{ruleDownloadExec, "a shell running a download", true, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`), nil},
+	// "python3 <(curl …)", "node -e "$(curl …)"": the download is the program. Only options may come
+	// before it ("python3 parse.py <(curl …)" reads it as data), with the values of python's -W and
+	// -X, ruby's -r, -I, -C, perl's -M and -I.
+	{ruleDownloadExec, "an interpreter running a download", true, regexp.MustCompile(`(?i)\b(?:python[0-9.]*|perl|ruby|node|php)\s+(?:(?-i:-[WXIrCM])\s+[^\s<$` + "`" + `]\S*\s+|-\S+\s+)*["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`), nil},
+	{ruleDownloadExec, "PowerShell running a download", false, regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`), nil},
+	{ruleCredentials, "a credential file or folder the request does not name", false, regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`), nil},
+	{ruleEncoded, "base64 decoded into a shell or interpreter", false, regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`), nil},
+	{ruleEncoded, "a shell running base64-decoded text", false, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|eval)\b[^\n]*(?:\$\(|` + "`" + `)[^\n]*\bbase64\s+(?:-d|-D|--decode)\b`), nil},
+	{ruleEncoded, "PowerShell with an encoded command", false, regexp.MustCompile(`(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]*\s-(?:e|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}`), nil},
+	{ruleEncoded, "exec or eval of base64-decoded code", false, regexp.MustCompile(`(?i)\b(?:exec|eval)\s*\(\s*(?:__import__\(\s*["']base64["']\s*\)\.|base64\.)?b64decode\b`), nil},
+	{ruleUpload, "curl sending a file as form or data", false, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form)\s*["']?(?:[\w.-]+=)?@`), nil},
+	{ruleUpload, "curl uploading a file", false, regexp.MustCompile(`\bcurl\b[^\n]*\s(?:-T|--upload-file)\s`), nil},
+	{ruleUpload, "wget posting a file", false, regexp.MustCompile(`\bwget\b[^\n]*--post-file`), nil},
+	{ruleUpload, "socat sending a file", false, regexp.MustCompile(`\bsocat\s(?:[^\n|;&<]|\d*>&|&>)*<\s*\S`), nil},
+	{ruleUpload, "scp or rsync to a remote host", false, regexp.MustCompile(`\b(?:scp|rsync)\b[^\n]*\s(?:[\w.-]+@)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}:`), nil},
 }
 
 // urlHostRe finds the host of a web address; bareHostRe a host given to curl or wget without
@@ -502,9 +509,21 @@ func checkCall(name, args, req string, known, installers knownAddrs) guardHit {
 	text := callText(name, args)
 	var official guardHit
 	for _, r := range guardRules {
+		walked := 0 // refine read the text up to here and found nothing to stop
 		for _, m := range r.re.FindAllStringIndex(text, -1) {
 			if r.rule == ruleCredentials && strings.Contains(req, strings.ToLower(strings.Trim(text[m[0]:m[1]], " \t\n\"'=:(/~);,"))) {
 				continue
+			}
+			if r.refine != nil {
+				if m[0] < walked {
+					continue
+				}
+				end, hold, w := r.refine(text, m)
+				if !hold {
+					walked = w
+					continue
+				}
+				m = []int{m[0], end}
 			}
 			h := guardHit{rule: r.rule, why: r.why, text: text, at: [2]int{m[0], m[1]}, where: where, host: matchHost(text, m, r.installer)}
 			if r.installer && officialInstall(text, m[0], m[1], installers) {
