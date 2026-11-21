@@ -70,13 +70,13 @@ var commandRules = []struct {
 // what a hold record keeps to say which pattern fired: fixed text, never the call's own (the
 // evidence, guard_evidence.go, keeps a fragment of the call). installer: the pattern can run an
 // official installer (guard_official.go), which stops the answer without holding the node.
-// refine, if set, reads a match further (pipedExec, guard_interp.go): it can drop the match or
-// move its end.
+// refine, if set, reads a match further in the shell's view of the call (callTexts; pipedExec,
+// guard_interp.go): it can drop the match or move its end.
 var guardRules = []struct {
 	rule, why string
 	installer bool
 	re        *regexp.Regexp
-	refine    func(text string, m []int) (end int, hold bool, walked int)
+	refine    func(shell string, m []int) (end int, hold bool, from []int)
 }{
 	{ruleDownloadExec, "a download piped into a shell or interpreter", true, regexp.MustCompile(`(?i)\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;&]*\|\s*(?:sudo\s+(?:(?-i:-[ugCDhpRrTU])\s+[^\s|;&-]\S*\s+|-\S+\s+)*)?(?:env\s+)?(?:(?:ba|z|da|k|c|tc|fi)?sh|python[0-9.]*|perl|ruby|node|php|iex|invoke-expression)\b`), pipedExec},
 	{ruleDownloadExec, "a shell running a download", true, regexp.MustCompile(`(?i)\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-c\s+)?["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`), nil},
@@ -470,10 +470,23 @@ var (
 // command has none (2 of 4,535 recorded calls, one being Python's `\nc = open(...)`), and
 // quoting could hide a pattern. Arguments that do not parse are read as they came.
 func callText(name, args string) string {
+	text, _ := callTexts(name, args)
+	return text
+}
+
+// shellLines is flatLines keeping line ends, each as one "\n" where flatLines puts its space, so
+// the two texts have the same length and offsets.
+var shellLines = strings.NewReplacer("\\\r\n", "", "\\\n", "", "\r\n", "\n", "\n", "\n", "\r", "\n")
+
+// callTexts is callText and, at the same offsets, the text as the shell reads it: line ends kept,
+// and each key, string and number of the arguments ending in a line end instead of a space, so a
+// command ends with its string: the description after it is no argument of its last command
+// (code review, 2026-11-21). shell is "" for arguments that do not parse.
+func callTexts(name, args string) (text, shell string) {
 	if !json.Valid([]byte(args)) {
-		return name + "\n" + flatEscapes.Replace(args)
+		return name + "\n" + flatEscapes.Replace(args), ""
 	}
-	var b strings.Builder
+	var b, sh strings.Builder
 	d := json.NewDecoder(strings.NewReader(args))
 	d.UseNumber()
 	for {
@@ -481,16 +494,26 @@ func callText(name, args string) string {
 		if err != nil {
 			break
 		}
-		switch v := t.(type) {
+		v := ""
+		switch x := t.(type) {
 		case string:
-			b.WriteString(v)
-			b.WriteByte(' ')
+			v = x
 		case json.Number:
-			b.WriteString(v.String())
-			b.WriteByte(' ')
+			v = x.String()
+		default:
+			continue
 		}
+		b.WriteString(v)
+		b.WriteByte(' ')
+		sh.WriteString(shellLines.Replace(v))
+		sh.WriteByte('\n')
 	}
-	return name + "\n" + flatLines.Replace(b.String())
+	text = name + "\n" + flatLines.Replace(b.String())
+	shell = name + "\n" + sh.String()
+	if len(shell) != len(text) {
+		return text, "" // cannot happen: the replacers match the same places
+	}
+	return text, shell
 }
 
 // checkToolCall returns what a tool call breaks; hit.rule is "" if nothing. A hit that blocks
@@ -506,21 +529,23 @@ func checkToolCall(name, args, req string, known knownAddrs) guardHit {
 // call goes before.
 func checkCall(name, args, req string, known, installers knownAddrs) guardHit {
 	where := "tool call " + name
-	text := callText(name, args)
+	text, shell := callTexts(name, args)
 	var official guardHit
 	for _, r := range guardRules {
-		walked := 0 // refine read the text up to here and found nothing to stop
+		read := map[int]bool{} // where refine read on from and found nothing to stop
 		for _, m := range r.re.FindAllStringIndex(text, -1) {
 			if r.rule == ruleCredentials && strings.Contains(req, strings.ToLower(strings.Trim(text[m[0]:m[1]], " \t\n\"'=:(/~);,"))) {
 				continue
 			}
 			if r.refine != nil {
-				if m[0] < walked {
+				if read[m[1]] {
 					continue
 				}
-				end, hold, w := r.refine(text, m)
+				end, hold, from := r.refine(shell, m)
 				if !hold {
-					walked = w
+					for _, i := range from {
+						read[i] = true
+					}
 					continue
 				}
 				m = []int{m[0], end}
