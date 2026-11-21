@@ -12,8 +12,9 @@
 // A command counts as an official install only if every word of the download command is either an
 // https:// address of the list (one plain shell word, as for guard_known_addresses) or one of a few
 // flags that only quieten or follow redirects (installerFlags); any other word (a second address,
-// a proxy, a config file, -k) and the node is held as before. Read for the first two patterns of
-// download-and-execute: "curl … | sh" and "sh -c "$(curl …)"" (or "bash <(curl …)").
+// a proxy, a config file, -k) and the node is held as before. Read for the patterns of
+// download-and-execute that pipe or substitute a download: "curl … | sh" and "sh -c "$(curl …)""
+// (or "bash <(curl …)", "python3 <(curl …)").
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -74,6 +75,9 @@ func officialInstall(text string, m0, m1 int, list knownAddrs) bool {
 	}
 	seg := text[m0:m1]
 	if i := strings.IndexByte(seg, '|'); i >= 0 { // curl … | sh
+		if strings.IndexByte(seg[i+1:], '|') >= 0 {
+			return false // a later stage runs it ("curl … | python3 -c … | sh", pipedExec): no installer's own command
+		}
 		seg = seg[:i]
 	} else { // sh -c "$(curl …)": the download command runs from the match's last word to the end of the substitution
 		w := downloadWord.FindStringIndex(seg)
