@@ -1,6 +1,6 @@
 ---
 title: Docs
-description: Everything about using AIs@home and running a node, in one place.
+description: "Every AIs@home doc in one place: the chat, the OpenAI-compatible API, running a node on Windows or Linux, credit, privacy and terms."
 ---
 
 ## Use it

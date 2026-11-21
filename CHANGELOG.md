@@ -9,6 +9,13 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Findable by search engines and AI answer engines.** `/robots.txt` lets every crawler read the
+  public site (AI crawlers too; only `/account`, `/v1/`, `/stats/` are left out) and names the
+  sitemap, `/sitemap-index.xml`, which `/sitemap.xml` now redirects to. `/llms.txt` sums up the
+  project for language models, with the main links. The home page's title names the brand once
+  ("AIs@home: open-weight AI on volunteers’ GPUs") and carries structured data (JSON-LD: the project,
+  the website, the node software). Every page has a share image (`/og.png`, 1200 x 630) and its own
+  description. `npm run check` checks all of it in the build. (site)
 - **Download for Windows, in one click.** `/node/` opens with a download block: the requirements
   that make an install fail first (NVIDIA 16 GB+, the driver, the disk, and that slower 16 GB cards
   fail the speed test), a **Download for Windows** button straight to the installer, its version and

@@ -1,6 +1,6 @@
 ---
 title: Terms of use
-description: Terms for using AIs@home and for running a node.
+description: "Terms for using the AIs@home chat and API and for running a node: an experiment, not confidential, acceptable use, what node operators agree to."
 ---
 
 *Last changed: 2026-11-19.*
