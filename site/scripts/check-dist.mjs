@@ -2,11 +2,13 @@
 // party, the live network strip and the leaderboard start hidden (they show themselves
 // only with real data), and every page shares the theme choice with the account pages (the
 // theme script runs before Starlight's). Also the dev log: drafts and the feed (below).
-// And the science data: public fields only, matching the page and the home page.
+// And the science data: public fields only, matching the page and the home page. And what search
+// engines read: robots.txt, the sitemap, llms.txt, titles, descriptions, the share image, the JSON-LD.
 // SPDX-License-Identifier: Apache-2.0
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
+import { jsonLdProblems, llmsProblems, pngSize, robotsProblems } from './seo-checks.mjs';
 
 const dist = new URL('../dist/', import.meta.url).pathname;
 const files = (dir) => readdirSync(dir).flatMap((f) => {
@@ -141,6 +143,78 @@ if (existsSync(sciFile)) {
 	const merged = sci.prs.filter((p) => p.state === 'merged').length;
 	const shown = readFileSync(join(dist, 'index.html'), 'utf8').match(/data-home-science-merged[^>]*>(\d+)</);
 	if (merged > 0 && Number(shown?.[1]) !== merged) errors.push(`index.html: the science section shows ${shown?.[1]} merged, the JSON ${merged}`);
+}
+
+// Search engines and AI answer engines (src/data/seo.ts, astro.config.mjs). The deploy builds with
+// PUBLIC_DOMAIN (staging.aisathome.org on staging), and every absolute address follows it.
+const origin = `https://${process.env.PUBLIC_DOMAIN || 'aisathome.org'}`;
+const exists = (url) => {
+	const t = join(dist, new URL(url).pathname);
+	return existsSync(t) && (statSync(t).isFile() || existsSync(join(t, 'index.html')));
+};
+const robotsFile = join(dist, 'robots.txt');
+if (!existsSync(robotsFile)) errors.push('robots.txt: missing');
+else for (const p of robotsProblems(readFileSync(robotsFile, 'utf8'), origin)) errors.push(`robots.txt: ${p}`);
+// The sitemap robots.txt names (Caddy redirects /sitemap.xml to it): every public page, nothing else.
+const locs = (f) => [...readFileSync(f, 'utf8').matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+const indexFile = join(dist, 'sitemap-index.xml');
+if (!existsSync(indexFile)) errors.push('sitemap-index.xml: missing');
+else {
+	const maps = locs(indexFile);
+	if (!maps.length) errors.push('sitemap-index.xml: lists no sitemap');
+	const pages = [];
+	for (const m of maps) {
+		if (!m.startsWith(`${origin}/`) || !exists(m)) errors.push(`sitemap-index.xml: ${m} is not a file of this build`);
+		else pages.push(...locs(join(dist, new URL(m).pathname)));
+	}
+	const want = html.map((f) => relative(dist, f)).filter((f) => f !== '404.html').map((f) => `${origin}/${f.replace(/index\.html$/, '')}`).sort();
+	const got = [...pages].sort();
+	for (const u of got) if (!want.includes(u)) errors.push(`sitemap: ${u} is not a page of this build`);
+	for (const u of want) if (!got.includes(u)) errors.push(`sitemap: ${u} is missing`);
+}
+const llmsFile = join(dist, 'llms.txt');
+if (!existsSync(llmsFile)) errors.push('llms.txt: missing');
+else {
+	const llms = readFileSync(llmsFile, 'utf8');
+	for (const p of llmsProblems(llms, origin)) errors.push(`llms.txt: ${p}`);
+	for (const [, u] of llms.matchAll(/\]\((https:\/\/[^)\s]+)\)/g)) if (u.startsWith(`${origin}/`) && !exists(u)) errors.push(`llms.txt: broken link ${u}`);
+}
+// The share image: on every page, with its true size, and a description of its own on each page.
+const meta = (text, key) => text.match(new RegExp(`<meta (?:name|property)="${key.replace(/[.:]/g, '\\$&')}" content="([^"]*)"`))?.[1];
+const ogFile = join(dist, 'og.png');
+const og = existsSync(ogFile) ? pngSize(readFileSync(ogFile)) : null;
+if (!og) errors.push('og.png: missing or not a PNG');
+else if (statSync(ogFile).size > 1_000_000) errors.push('og.png: over 1 MB');
+const titles = new Map();
+const descriptions = new Map();
+for (const f of html) {
+	const page = relative(dist, f);
+	if (page === '404.html') continue;
+	const text = readFileSync(f, 'utf8');
+	if (meta(text, 'og:image') !== `${origin}/og.png`) errors.push(`${page}: og:image is ${meta(text, 'og:image')}`);
+	if (og && (meta(text, 'og:image:width') !== String(og.width) || meta(text, 'og:image:height') !== String(og.height))) errors.push(`${page}: og:image size is not the PNG's ${og.width}x${og.height}`);
+	if (!meta(text, 'og:image:alt')) errors.push(`${page}: no og:image:alt`);
+	const title = text.match(/<title>([^<]*)<\/title>/)?.[1] ?? '';
+	if ((title.match(/AIs@home/g) ?? []).length > 1 && page !== 'index.html') errors.push(`${page}: the title names the brand twice: ${title}`);
+	const desc = meta(text, 'description') ?? '';
+	if (desc.length < 50) errors.push(`${page}: no description of its own (${desc})`);
+	for (const [m, v] of [[titles, title], [descriptions, desc]]) {
+		if (m.has(v)) errors.push(`${page}: the same ${m === titles ? 'title' : 'description'} as ${m.get(v)}`);
+		m.set(v, page);
+	}
+}
+if (home.match(/<title>([^<]*)<\/title>/)?.[1].match(/AIs@home/g)?.length !== 1) errors.push('index.html: the title does not name the brand exactly once');
+const ld = [...home.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+if (ld.length !== 1) errors.push(`index.html: ${ld.length} JSON-LD scripts (one expected)`);
+else {
+	try {
+		const data = JSON.parse(ld[0][1]);
+		for (const p of jsonLdProblems(data, origin)) errors.push(`index.html: JSON-LD: ${p}`);
+		const logo = data['@graph']?.find((n) => n['@type'] === 'Organization')?.logo?.url;
+		if (logo && !exists(logo)) errors.push(`index.html: JSON-LD logo ${logo} is not in the build`);
+	} catch (e) {
+		errors.push(`index.html: JSON-LD does not parse: ${e.message}`);
+	}
 }
 
 if (errors.length) {

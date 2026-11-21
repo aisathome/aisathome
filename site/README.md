@@ -25,6 +25,15 @@ strip (`src/components/LiveStats.astro`) reads the gateway's public `/v1/stats` 
 hidden when that fails. The network page's daily charts (`src/pages/network.astro`) read
 `/v1/stats/history` and stay hidden the same way, and until there are two days with numbers.
 
+Search engines and AI answer engines: `src/data/seo.ts` writes the home page's title and JSON-LD,
+`/robots.txt` and `/llms.txt` (`src/pages/*.txt.ts`); the sitemap is Starlight's
+(`/sitemap-index.xml`; Caddy redirects `/sitemap.xml` there). The share image of every page
+(`public/og.png`, tags in `astro.config.mjs`) and the logo of the JSON-LD (`public/logo-512.png`)
+are drawn by `scripts/share-image.mjs` with headless Chrome from the site's fonts and committed;
+run it again after changing their copy or design. `npm run check` checks them in the build
+(`scripts/seo-checks.mjs`, also used by `tests/seo.test.ts`), and that every page has a
+description of its own: give new pages a specific `description`.
+
 Dev log (`/devlog/`, feed `/devlog/rss.xml`, the newest two also on the home page): one
 Markdown file per post in `src/content/devlog/`, named `<number>-<slug from the title>.md`
 (the file name is the URL), with frontmatter `title`, `number` (1, 2, 3, ...: shown as

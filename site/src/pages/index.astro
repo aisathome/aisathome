@@ -9,6 +9,7 @@ import { science } from '../data/science';
 import { p2m } from '../data/prove2me';
 import { historyOf, scienceView } from '../data/prove2me-records';
 import { homeLine } from '../data/prove2me-view';
+import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
 // The newest dev log posts (design C of three, owner 2026-10-19), with the dev log's own publish
 // filter: drafts only in a build with DEVLOG_DRAFTS=1.
@@ -34,7 +35,14 @@ const icons: Record<string, string> = {
 <StarlightPage
 	frontmatter={{
 		title: 'AIs@home',
-		description: 'Open-weight AI on volunteers’ GPUs. Non-commercial and open source.',
+		description,
+		// The brand once (Starlight's would be "AIs@home | AIs@home"), and what search engines read about the project.
+		head: [
+			{ tag: 'title', content: homeTitle },
+			{ tag: 'meta', attrs: { property: 'og:title', content: homeTitle } },
+			{ tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
+			{ tag: 'script', attrs: { type: 'application/ld+json' }, content: jsonLdScript(homeJsonLd()) },
+		],
 		template: 'splash',
 		hero: { title: hero.title },
 	}}
@@ -174,6 +182,7 @@ const icons: Record<string, string> = {
 	// build's line stays.
 	import { liveSummary, type History } from '../data/prove2me-records';
 	import { homeLine } from '../data/prove2me-view';
+import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
 	const box = document.querySelector<HTMLElement>('[data-home-prove2me]');
 	const load = async () => {

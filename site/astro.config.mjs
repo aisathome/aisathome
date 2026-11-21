@@ -12,15 +12,24 @@ const themeSync = readFileSync(new URL('./src/scripts/theme-sync.js', import.met
 	.replace(/^(\/\/.*\n)+/, '')
 	.trim();
 
+const site = `https://${process.env.PUBLIC_DOMAIN || 'aisathome.org'}`;
+// The share image of every page (scripts/share-image.mjs draws it; npm run check compares its size).
+const shareImage = [
+	['og:image', `${site}/og.png`],
+	['og:image:type', 'image/png'],
+	['og:image:width', '1200'],
+	['og:image:height', '630'],
+	['og:image:alt', 'AIs@home: open-weight AI on volunteers’ GPUs. Non-commercial, open source.'],
+].map(([property, content]) => ({ tag: 'meta', attrs: { property, content } }));
+
 export default defineConfig({
-	site: `https://${process.env.PUBLIC_DOMAIN || 'aisathome.org'}`,
+	site,
 	// No image processing (no native sharp dependency); the site has almost no images.
 	image: { service: passthroughImageService() },
 	integrations: [
 		starlight({
 			title: 'AIs@home',
-			description:
-				'Open AI models on volunteers’ GPUs, in the spirit of BOINC. Non-commercial and open source.',
+			description: 'Open-weight AI on volunteers’ GPUs. Non-commercial and open source.',
 			logo: { src: './src/assets/logo.svg', alt: 'AIs@home' },
 			favicon: '/favicon.svg',
 			head: [
@@ -29,6 +38,8 @@ export default defineConfig({
 					tag: 'link',
 					attrs: { rel: 'alternate', type: 'application/rss+xml', title: 'AIs@home dev log', href: '/devlog/rss.xml' },
 				},
+				...shareImage,
+				{ tag: 'meta', attrs: { name: 'twitter:image:alt', content: shareImage[4].attrs.content } },
 			],
 			// global.css wires Tailwind 4 and Starlight to one theme (fonts, accent, grays).
 			customCss: ['./src/styles/global.css', './src/styles/brand.css'],

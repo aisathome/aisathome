@@ -1,6 +1,6 @@
 ---
 title: Mission
-description: Why AIs@home exists and who runs it.
+description: "Why AIs@home serves open-weight AI from volunteers' GPUs, who runs it (one volunteer maintainer, non-commercial) and how to reach the project."
 ---
 
 > Distributed AI inference so that the megacorps do not get a total monopoly.

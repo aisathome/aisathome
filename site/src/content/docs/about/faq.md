@@ -1,6 +1,6 @@
 ---
 title: FAQ
-description: Common questions about AIs@home.
+description: "Short answers about AIs@home: is it free, is it private, which model runs (Qwen3.8 27B), whether volunteers are paid, Windows and 16 GB GPUs, and BOINC."
 ---
 
 ## Is it free?

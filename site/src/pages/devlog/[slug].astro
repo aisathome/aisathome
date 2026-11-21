@@ -12,12 +12,18 @@ export async function getStaticPaths() {
 const { post } = Astro.props as { post: Post };
 const { Content, headings } = await render(post);
 const draft = !post.data.publish;
+// A title that names the project already is the whole <title> (not "AIs@home's ... | AIs@home").
+const head = [
+	...(post.data.title.includes('AIs@home') ? [{ tag: 'title' as const, content: post.data.title }] : []),
+	{ tag: 'meta' as const, attrs: { property: 'article:published_time', content: isoDate(post.data.date) } },
+];
 ---
 
 <StarlightPage
 	frontmatter={{
 		title: post.data.title,
 		description: post.data.summary,
+		head,
 		...(draft ? { banner: { content: 'Draft: not published. Only staging builds show it.' } } : {}),
 	}}
 	headings={headings}

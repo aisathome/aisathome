@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: Use the AIs@home chat at chat.aisathome.org.
+description: "Chat with Qwen3.8 27B on volunteers' GPUs at chat.aisathome.org: sign in with GitHub or Google; chats are temporary unless you save them."
 ---
 
 The chat runs [Open WebUI](https://openwebui.com) at
