@@ -139,8 +139,7 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 		info.Name = *name
 	}
 	c := e.client(base)
-	var cfgGW string
-	json.Unmarshal(cfg["gateway_url"], &cfgGW)
+	cfgGW := configGateway(t.config) // as the agent reads it (any case of gateway_url)
 	if tok := t.installedToken(cfg); node.Anonymous(tok) && (cfgGW == "" || cfgGW == gw) {
 		// Only to the gateway that issued it: -gateway to another one starts a plain link there.
 		c.Token = tok // the gateway deletes its identity without an account once it is linked
