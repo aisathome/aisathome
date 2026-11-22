@@ -530,10 +530,12 @@ minutes, and at least a minute after the approval) is revoked. Limits, in memory
 address in 10 minutes and 60 an hour, 300 an hour over the gateway, 500 pending at once; 10 wrong codes
 per account an hour and 30 per address; only an active account looks a code up (a waitlisted one is
 told to come back). Caddy must send `<domain>/link` to the gateway (the ops repo's Caddyfile does).
-The risk that stays is RFC 8628's remote phishing: someone sends a person their code, and the person
-approves it; that adds the sender's machine to the person's account as one of its nodes (it may then
-get the person's own requests, as any own node does). The page says so; chat stays behind the operator
-terms exactly as for any node.
+Against RFC 8628's remote phishing (someone sends a person their code, and the person approves it), a
+linked node is **not the account's own node until its owner confirms it once** on the account page
+("This is my machine", recorded as `"confirmed"` with its time; owner 2026-11-22). Until then it gets
+none of the account's personal data (such a request is refused as with no own node), and the account's
+other requests reach it only as they would a stranger's node. The account page and the approval page
+say so. Chat stays behind the operator terms exactly as for any node.
 
 Routing and protections:
 

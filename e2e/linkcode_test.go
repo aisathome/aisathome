@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -439,5 +440,81 @@ func TestLinkWrongCodes(t *testing.T) {
 	st = linkStart(t, a, protocol.LinkInfo{})
 	if _, page := a.get(t, "/link?code="+st.UserCode, s); !strings.Contains(page, ">Approve<") {
 		t.Fatal("an hour later")
+	}
+}
+
+// A node linked with a code is not its account's own node until the owner confirms it on the account page
+// ("This is my machine"): a code someone else sent may have linked a stranger's machine. Until then the
+// account's personal data is refused as with no own node, at once, and reaches no node; once confirmed
+// (with the time recorded), it goes to that node. Another account cannot confirm it.
+func TestLinkedNodeNeedsConfirmation(t *testing.T) {
+	var own, stranger atomic.Int32
+	a := nodeRig(t, func(c *gateway.AccountsConfig) { c.Limits.TokensPerDay = 0 })
+	s, _ := a.signIn(t, 1)
+	_, page := a.createKey(t, s)
+	key := keyRe.FindString(page)
+	st := linkStart(t, a, protocol.LinkInfo{Name: "maybe-mine"})
+	if _, page := approveLink(t, a, s, st.UserCode, "approve"); !strings.Contains(page, "One more step: confirm that it is your machine") {
+		t.Fatalf("the approval does not ask for the confirmation: %s", page)
+	}
+	p := linkPoll(t, a, st.DeviceCode)
+	if p.Status != protocol.LinkApproved {
+		t.Fatalf("poll: %+v", p)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.startNode(ctx, "stranger", "node-token", countEngine(t, &stranger), 4)
+	a.startTokenNode(ctx, p.Token, countEngine(t, &own), 4, 32768)
+	a.waitNodes(t, 2)
+	_, page = a.get(t, "/account", s)
+	for _, want := range []string{`id="nodes-unconfirmed"`, "A node you linked with a code waits for you to confirm that it is your machine",
+		"Linked with a code: is this your machine?", ">This is my machine<"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("account page lacks %q", want)
+		}
+	}
+	pii, _ := json.Marshal(map[string]any{"model": "deep", "messages": []any{map[string]any{"role": "user", "content": "write to ola.nordmann@example.no"}}})
+	start := time.Now()
+	code, out := ask(t, a.rig, key, string(pii))
+	if code != http.StatusBadRequest || !strings.Contains(out, `"code":"personal_data"`) {
+		t.Fatalf("personal data, only an unconfirmed linked node: %d %s", code, out)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("refused only after %v: it waited for a node", d)
+	}
+	if own.Load()+stranger.Load() != 0 {
+		t.Fatalf("personal data reached a node: linked %d, stranger %d", own.Load(), stranger.Load())
+	}
+
+	req, _ := http.NewRequest("POST", a.gw.URL+"/account/nodes/confirm", strings.NewReader("id="+p.NodeID))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", s)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	if resp, err := noRedirect.Do(req); err == nil {
+		resp.Body.Close()
+	}
+	s2, _ := a.signIn(t, 2)
+	a.post(t, "/account/nodes/confirm", s2, "id="+p.NodeID)
+	a.store.Refresh()
+	if acct, _, _ := a.store.Get("gh:1"); acct.Nodes[0].Confirmed != nil {
+		t.Fatal("a cross-site post or another account confirmed the node")
+	}
+	if resp, _ := a.post(t, "/account/nodes/confirm", s, "id="+p.NodeID); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("confirm: %d", resp.StatusCode)
+	}
+	a.store.Refresh()
+	acct, _, _ := a.store.Get("gh:1")
+	if c := acct.Nodes[0].Confirmed; c == nil || time.Since(*c) > time.Minute {
+		t.Fatalf("confirmation not recorded with its time: %v", c)
+	}
+	_, page = a.get(t, "/account", s)
+	if strings.Contains(page, `id="nodes-unconfirmed"`) || !strings.Contains(page, "you confirmed it as your machine on "+time.Now().UTC().Format("2006-01-02")) {
+		t.Fatal("the account page still asks for the confirmation")
+	}
+	if code, out := ask(t, a.rig, key, string(pii)); code != 200 {
+		t.Fatalf("personal data, confirmed own node: %d %s", code, out)
+	}
+	if own.Load() != 1 || stranger.Load() != 0 {
+		t.Fatalf("after the confirmation: linked %d, stranger %d", own.Load(), stranger.Load())
 	}
 }

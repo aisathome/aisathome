@@ -4,6 +4,7 @@ package gateway
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -342,5 +343,51 @@ func TestLinkInfoClean(t *testing.T) {
 	i := cleanLinkInfo(LinkInfo{Name: strings.Repeat("n", 100), GPU: "<b>\x00RTX</b>", VRAMMiB: -5, OS: strings.Repeat("o", 200), Agent: "a\nb"})
 	if len([]rune(i.Name)) != maxNodeName || i.GPU != "<b>RTX</b>" || i.VRAMMiB != 0 || len(i.OS) != 80 || i.Agent != "ab" {
 		t.Errorf("cleaned %+v", i)
+	}
+}
+
+// A linked node is not its account's own until confirmed; the confirmation is recorded once, with its
+// time; a node from "Add a node" never needs one.
+func TestLinkedNodeConfirmation(t *testing.T) {
+	s, err := OpenAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	s.SignIn("gh:1", t0)
+	s.SetStatus("gh:1", StatusActive)
+	added, addedID, _, _ := s.addNodeVia("gh:1", "", t0, nil, false, "")
+	linked, linkedID, _, _ := s.addNodeVia("gh:1", "", t0, nil, false, ViaNodeLink)
+	if _, unc, ok := s.nodeLive(keyHash(added)); !ok || unc {
+		t.Fatalf("an added node: live %v, unconfirmed %v", ok, unc)
+	}
+	if _, unc, ok := s.nodeLive(keyHash(linked)); !ok || !unc {
+		t.Fatalf("a linked node: live %v, unconfirmed %v", ok, unc)
+	}
+	if err := s.ConfirmNode("gh:2", linkedID, t0); err == nil {
+		t.Fatal("another account confirmed it")
+	}
+	if err := s.ConfirmNode("gh:1", linkedID, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	s.ConfirmNode("gh:1", linkedID, t0.Add(2*time.Hour))
+	a, _, _ := s.Get("gh:1")
+	if c := a.Nodes[1].Confirmed; c == nil || !c.Equal(t0.Add(time.Hour)) || a.Nodes[0].Confirmed != nil {
+		t.Fatalf("confirmed %v (added node %v)", c, a.Nodes[0].Confirmed)
+	}
+	if _, unc, _ := s.nodeLive(keyHash(linked)); unc {
+		t.Fatal("still unconfirmed after the confirmation")
+	}
+	_ = addedID
+
+	// The route: an unconfirmed linked node of the requester is not its own, so personal data never goes there.
+	rt := &route{self: "op-1", pii: "an email address", exclude: map[*nodeConn]bool{}}
+	n := &nodeConn{operator: "op-1", unconfirmed: true}
+	if rt.own(n) || rt.allows(n, time.Now()) {
+		t.Fatal("an unconfirmed linked node took the requester's personal data")
+	}
+	n.unconfirmed = false
+	if !rt.own(n) || !rt.allows(n, time.Now()) {
+		t.Fatal("a confirmed own node refused")
 	}
 }

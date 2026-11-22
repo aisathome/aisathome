@@ -78,7 +78,16 @@ type AccountNode struct {
 	// Via says how the node came: ViaNodeLink (approved on /link, nodelink.go), or "" (the account page's
 	// "Add a node").
 	Via string `json:"via,omitempty"`
+	// Confirmed is when the account confirmed on its account page that a linked node is its own machine
+	// ("This is my machine"). Until then a linked node is not the account's own node (unconfirmed).
+	Confirmed *time.Time `json:"confirmed,omitempty"`
 }
+
+// unconfirmed reports whether n came by a link (a code someone may have sent the account's owner) and
+// its owner has not yet confirmed that it is their machine. Such a node is not the account's own: it gets
+// none of the account's personal data, and serves the account's requests only as a stranger's node would
+// (route.own). Owner, 2026-11-22.
+func (n AccountNode) unconfirmed() bool { return n.Via == ViaNodeLink && n.Confirmed == nil }
 
 // NodeHold records a node stopped by a guard (guard.go). It gets no requests until the
 // operator clears it (`accounts node-clear`).
@@ -335,19 +344,55 @@ func (s *AccountStore) nodeToken(token string) (account, nodeID string, ok bool)
 	return r.acct.ID, r.node.ID, true
 }
 
-// nodeLive reports whether the node token with hash still exists for an active account, and
-// when that account's probation started.
-func (s *AccountStore) nodeLive(tokenHash string) (first time.Time, ok bool) {
+// nodeLive reports whether the node token with hash still exists for an active account, when that
+// account's probation started, and whether the node is a linked one its owner has not confirmed yet.
+func (s *AccountStore) nodeLive(tokenHash string) (first time.Time, unconfirmed, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, found := s.byNode[tokenHash]
 	if !found || r.acct.Status != StatusActive {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
 	if r.acct.FirstNode != nil {
 		first = *r.acct.FirstNode
 	}
-	return first, true
+	return first, r.node.unconfirmed(), true
+}
+
+// ConfirmNode records that account id confirmed its linked node nodeID as its own machine (once; a second
+// confirmation keeps the first time).
+func (s *AccountStore) ConfirmNode(id, nodeID string, now time.Time) error {
+	return s.Update(func(f *AccountsFile) error {
+		a := f.find(id)
+		if a == nil || a.Status != StatusActive {
+			return errors.New("only active accounts can confirm nodes")
+		}
+		for i := range a.Nodes {
+			if n := &a.Nodes[i]; n.ID == nodeID {
+				if n.Confirmed == nil {
+					t := now.UTC()
+					n.Confirmed = &t
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("no node %s", nodeID)
+	})
+}
+
+// confirmedNodes reports whether account id has registered nodes that are its own (not a linked node
+// waiting for its owner's confirmation).
+func (s *AccountStore) confirmedNodes(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a := s.f.find(id); a != nil {
+		for _, n := range a.Nodes {
+			if !n.unconfirmed() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isHeld reports whether a guard holds the node.
@@ -609,6 +654,7 @@ func (g *Gateway) sweepNodes() {
 	type state struct {
 		live        bool
 		first       time.Time
+		unconfirmed bool
 		scienceOnly bool
 		rules       nodeRules
 	}
@@ -623,7 +669,7 @@ func (g *Gateway) sweepNodes() {
 			st[i].live = st[i].live && c != nil
 			st[i].scienceOnly = c == nil || pilotScienceOnly(c, n.extUser, chatOff)
 		case n.account != "":
-			st[i].first, st[i].live = g.accounts.nodeLive(keyHash(n.token))
+			st[i].first, st[i].unconfirmed, st[i].live = g.accounts.nodeLive(keyHash(n.token))
 		}
 		if n.account != "" { // the chat rules: the account may have accepted or withdrawn (chatrules.go)
 			st[i].rules = g.rulesFor(n.account, NodeToken{})
@@ -642,6 +688,10 @@ func (g *Gateway) sweepNodes() {
 		n.held = p
 		if n.account != "" {
 			n.probEnd = st[i].first.Add(g.acfg.probation)
+		}
+		if n.account != "" && n.pilot == "" {
+			cleared = cleared || (n.unconfirmed && !st[i].unconfirmed) // confirmed: its owner's waiting requests may go to it
+			n.unconfirmed = st[i].unconfirmed
 		}
 		if n.pilot != "" {
 			cleared = cleared || (n.scienceOnly && !st[i].scienceOnly)
