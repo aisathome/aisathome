@@ -860,7 +860,8 @@ read_token() {
 # token is that gateway's and must never be sent to the new one. It is moved aside (token.env.unlinked,
 # with the installed node.json copied to node.json.unlinked) BEFORE the new node.json is installed, so
 # at no point do the new node.json and the old token.env sit side by side: the node's unit
-# (ConditionFileNotEmpty) stays off until `aisathome-node link` writes the new token.
+# (ConditionFileNotEmpty) stays off until `aisathome-node link` writes the new token. The node is then
+# stopped, still before the new node.json: a start already under way may have read the old token.env.
 # set_aside_before_link <config dir> <new node.json>: does that when the gateways differ.
 set_aside_before_link() {
   local was now
@@ -871,6 +872,7 @@ set_aside_before_link() {
   [[ ! -e "$1/node.json" ]] || cp -p "$1/node.json" "$1/node.json.unlinked"
   mv -f "$1/token.env" "$1/token.env.unlinked"
   token_aside=1
+  systemctl stop aisathome-node 2>/dev/null || true
   echo "The installed token is for ${was:-another gateway}, not $now: moved aside to $1/token.env.unlinked until the node is linked." >&2
 }
 
@@ -885,6 +887,20 @@ restore_unlinked() {
   mv -f "$1/node.json.unlinked" "$1/node.json"
   mv -f "$1/token.env.unlinked" "$1/token.env"
   echo "The install stopped before linking: the installed token and its node.json are back in $1." >&2
+}
+
+# check_kept_token <config dir> <new node.json>: an installed token that is kept (Enter, --keep-token)
+# is the gateway's it was made for: with another gateway in the new node.json the install stops before
+# it changes anything, so that token is never sent there.
+check_kept_token() {
+  local old was now
+  [[ -n "$token" && -r "$1/token.env" ]] || return 0
+  old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1/token.env" | head -n 1)"
+  [[ "$token" = "$old" ]] || return 0
+  was="$(installed_value "$1/node.json" gateway_url)"
+  now="$(installed_value "$2" gateway_url)"
+  [[ "$was" != "$now" ]] || return 0
+  die "the installed token is for ${was:-another gateway}, not $now, and is never sent there: link the node to your account instead (--link), or paste a node token for $now" 2
 }
 
 # link_node: the last step without a token: `aisathome-node link` shows a link and a code, waits for
@@ -972,6 +988,7 @@ if [[ -z "$node_config" ]]; then
   [[ -z "$old_id$old_gw" ]] || echo "node.json: node id $node_id, gateway $gateway_url" >&2
   workdir; node_config="$work/node.json"; gen_node_config > "$node_config"
 fi
+check_kept_token "$conf" "$node_config"
 
 # 1. Unprivileged system user without a login shell.
 id aisathome >/dev/null 2>&1 || useradd --system --home-dir /var/lib/aisathome-node --shell /usr/sbin/nologin aisathome

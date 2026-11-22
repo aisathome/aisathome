@@ -442,8 +442,8 @@ ok "flags over installed"; has "flags over installed" '"node_id": "n2"'; has "fl
 # new node.json is installed (so the new node.json and the old token never sit side by side, and the
 # old token is never sent to the new gateway), and comes back with its node.json only if the install
 # stops before its link step.
-eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_before_link() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
-declare -F set_aside_before_link restore_unlinked on_exit >/dev/null || fail "set_aside_before_link, restore_unlinked or on_exit not found"
+eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_before_link() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^check_kept_token() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
+declare -F set_aside_before_link restore_unlinked check_kept_token on_exit >/dev/null || fail "set_aside_before_link, restore_unlinked, check_kept_token or on_exit not found"
 oldtok="nt-n-0123abcd.$(printf 'O%.0s' {1..43})"
 # aside_dir <dir> <installed gateway>: a fake /etc/aisathome-node with node.json and token.env.
 aside_dir() {
@@ -483,6 +483,26 @@ aside_dir "$aside" "$oldgw"; rm "$aside/node.json"; token_aside=0
 set_aside_before_link "$aside" "$tmp/new.json" 2>/dev/null; cp "$tmp/new.json" "$aside/node.json"
 restore_unlinked "$aside" 2>/dev/null
 [[ ! -e "$aside/token.env" && -s "$aside/token.env.unlinked" ]] || fail "no installed node.json: the token came back beside the new gateway"
+# The node is stopped once the token is aside, still beside the old node.json: a start already under way
+# may have read the old token.env, and must be gone before the new node.json is installed.
+aside_dir "$aside" "$oldgw"; token_aside=0
+systemctl() { echo "systemctl $* token.env:$([[ -e "$aside/token.env" ]] && echo here || echo aside) gw:$(installed_value "$aside/node.json" gateway_url)" >> "$tmp/systemctl.log"; }
+: > "$tmp/systemctl.log"; set_aside_before_link "$aside" "$tmp/new.json" 2>/dev/null
+[[ "$(cat "$tmp/systemctl.log")" = "systemctl stop aisathome-node token.env:aside gw:$oldgw" ]] ||
+  fail "set aside: the node is not stopped after the token went aside: $(cat "$tmp/systemctl.log")"
+: > "$tmp/systemctl.log"; aside_dir "$aside" "$oldgw"; set_aside_before_link "$aside" "$tmp/same.json" 2>/dev/null
+[[ ! -s "$tmp/systemctl.log" ]] || fail "same gateway: the node was stopped"
+unset -f systemctl
+# A kept installed token (Enter, --keep-token) with another gateway in the new node.json: the install
+# stops (exit 2) before it changes anything; a pasted token, or the same gateway, goes on.
+kept() { out="$( (token="$1"; die() { echo "$1" >&2; exit "${2:-1}"; }; check_kept_token "$aside" "$2"; echo "went on") 2>&1)"; code=$?; }
+aside_dir "$aside" "$oldgw"
+kept "$oldtok" "$tmp/new.json"
+usage_err "kept token, another gateway"; has "kept token, another gateway" "--link"; lacks "kept token, another gateway" "$oldtok"; lacks "kept token, another gateway" "went on"
+kept "$oldtok" "$tmp/same.json"; ok "kept token, same gateway"; has "kept token, same gateway" "went on"
+kept "nt-n-0000000b.$(printf 'P%.0s' {1..43})" "$tmp/new.json"; ok "pasted token, another gateway"; has "pasted token, another gateway" "went on"
+kept "" "$tmp/new.json"; ok "linking, another gateway"; has "linking, another gateway" "went on"
+[[ -s "$aside/token.env" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" ]] || fail "check_kept_token changed the install"
 # on_exit puts the token back when the installer ends early: an error exit and a signal (TERM).
 for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
   aside_dir "$aside" "$oldgw"
@@ -492,7 +512,7 @@ for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
   [[ "$(cat "$aside/token.env" 2>/dev/null)" = "AISATHOME_NODE_TOKEN=$oldtok" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" ]] ||
     fail "on_exit ($how) before linking: the old token and node.json are not back"
 done
-unset -f installed_value set_aside_before_link restore_unlinked on_exit aside_dir
+unset -f installed_value set_aside_before_link restore_unlinked check_kept_token on_exit aside_dir kept
 # In the installer: the token goes aside (when linking) before the new node.json is installed, the EXIT
 # trap is on_exit, and token_aside is cleared just before the link step (and only there).
 n_aside="$(grep -n '^\[\[ -n "\$token" \]\] || set_aside_before_link "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
@@ -503,6 +523,9 @@ n_speed="$(grep -n '^speed_check$' "$installer" | cut -d: -f1)"
 [[ -n "$n_aside" && -n "$n_json" && $n_aside -lt $n_json ]] || fail "the old token is not moved aside before the new node.json is installed"
 [[ -n "$n_clear" && $(wc -l <<<"$n_clear") -eq 1 && -n "$n_link" && -n "$n_speed" && $n_speed -lt $n_clear && $n_clear -lt $n_link && $((n_link - n_clear)) -le 2 ]] ||
   fail "token_aside is not cleared right before the link step"
+n_kept="$(grep -n '^check_kept_token "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
+n_user="$(grep -n '^id aisathome >/dev/null' "$installer" | cut -d: -f1)"
+[[ -n "$n_kept" && -n "$n_user" && $n_kept -lt $n_user ]] || fail "a kept token is not checked against the gateway before the install changes anything"
 grep -q '^trap on_exit EXIT$' "$installer" || fail "no EXIT trap on_exit"
 [[ $(grep -c '^ *trap .* EXIT' "$installer") -eq 1 ]] || fail "another EXIT trap would replace on_exit"
 ! grep -q 'set_aside_token' "$installer" || fail "the old after-the-fact set_aside_token is still called"
