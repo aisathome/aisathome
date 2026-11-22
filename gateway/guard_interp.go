@@ -25,6 +25,7 @@
 package gateway
 
 import (
+	"path"
 	"regexp"
 	"strings"
 )
@@ -37,8 +38,13 @@ var (
 	interpName = regexp.MustCompile(`(?i)^(?:python[0-9.]*|perl|ruby|node|php)$`)
 	shellName  = regexp.MustCompile(`(?i)^(?:(?:ba|z|da|k|c|tc|fi)?sh|iex|invoke-expression)$`)
 	assignWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	// stdinPath is a script path that is standard input itself.
-	stdinPath = regexp.MustCompile(`^(?:/dev/stdin|/dev/fd/0|/proc/[^/]+/fd/0)$`)
+	// stdinPath is a script path that is standard input itself, after path.Clean: /dev/stdin,
+	// /dev/fd/0, /proc/<pid>/fd/0, and the same reached through a relative path ("../../dev/stdin").
+	stdinPath = regexp.MustCompile(`(?:^|/)(?:stdin|fd/0+)$`)
+	// launchers run the command named in their arguments, which can get their standard input
+	// ("xargs sh -c", "busybox sh", "socat - EXEC:sh").
+	launchers = wordSet("xargs", "parallel", "busybox", "toybox", "su", "runuser", "doas", "setsid", "flock", "chroot",
+		"unshare", "nsenter", "ssh", "watch", "strace", "ltrace", "script", "expect", "socat", "systemd-run", "firejail", "bwrap")
 	// runsCode: an inline program that runs other code (its standard input, say), per language.
 	runsCode = map[string]*regexp.Regexp{
 		"python": regexp.MustCompile(`\b(?:exec|eval|execfile|system|popen|Popen|spawn[lv]?p?e?|exec[lv]p?e?|interact|startfile)\s*\(|\b(?:subprocess|runpy|pty|InteractiveConsole)\b`),
@@ -86,13 +92,25 @@ func langOf(name string) string {
 	return n
 }
 
+// hasSubst: a word holds a command or process substitution. In a stage of the pipeline it runs in
+// that stage's subshell and reads the pipe ("| python3 parse.py "$(sh)"", "| tee >(sh)"), and it
+// could expand to anything (code review, 2026-11-22).
+func hasSubst(words []shTok) bool {
+	for _, w := range words {
+		if w.subst {
+			return true
+		}
+	}
+	return false
+}
+
 // walkPipe reads an interpreter's stage from i (after its name), then the stages that follow it
 // in the pipeline; see pipedExec.
 func walkPipe(text string, i int, lang string) (end int, hold bool, from []int) {
 	from = []int{i}
 	for {
 		words, op, j, ok := stageWords(text, i)
-		if !ok || !programInArgs(lang, words) {
+		if !ok || hasSubst(words) || !programInArgs(lang, words) {
 			return i, true, nil
 		}
 		if op != "|" && op != "|&" {
@@ -105,13 +123,15 @@ func walkPipe(text string, i int, lang string) (end int, hold bool, from []int) 
 		}
 		base := commandName(cmd.word)
 		switch {
-		case cmd.subst:
+		case cmd.subst || cmd.dyn: // "| $SH", "| $(echo sh)": any command
 			return k, true, nil
 		case shellName.MatchString(base):
 			return k, true, nil
 		case interpName.MatchString(base):
 			lang, i = langOf(base), k
 			from = append(from, k)
+		case launchers[base]:
+			lang, i = "launcher", k
 		default: // a filter such as grep, tee or head: read past it to the next stage
 			lang, i = "", k
 		}
@@ -135,7 +155,7 @@ func commandWord(text string, i int) (shTok, int, bool) {
 		}
 		i, words = j, words+1
 		switch {
-		case t.subst:
+		case t.subst || t.dyn:
 			return t, j, true
 		case assignWord.MatchString(t.word):
 		case wrapper != "" && strings.HasPrefix(t.word, "-"):
@@ -190,7 +210,7 @@ func stageWords(text string, i int) (words []shTok, op string, j int, ok bool) {
 			return nil, t.op, i, false
 		default: // a redirection: its target is no argument
 			w, k, more := shLex(text, i, 0)
-			if !more || w.op != "" || w.bad {
+			if !more || w.op != "" || w.bad || w.subst { // "> >(sh)" reads what the command writes
 				return nil, t.op, i, false
 			}
 			i = k
@@ -204,6 +224,8 @@ func programInArgs(lang string, words []shTok) bool {
 	switch lang {
 	case "":
 		return true
+	case "launcher":
+		return !launches(words)
 	case "python":
 		return pythonProgram(words)
 	case "node":
@@ -222,14 +244,16 @@ type argReader struct {
 	i     int
 }
 
-// next returns the next argument; ok is false at the end or at a substitution, which could be anything.
+// next returns the next argument; ok is false at the end, at a substitution or at an unquoted
+// expansion, which could be any words or none (code review, 2026-11-22: "| python3 $X" with X
+// empty runs standard input).
 func (a *argReader) next() (string, bool) {
 	if a.i >= len(a.words) {
 		return "", false
 	}
 	w := a.words[a.i]
 	a.i++
-	return w.word, !w.subst
+	return w.word, !w.subst && !w.dyn
 }
 
 // done: no arguments are left.
@@ -244,7 +268,19 @@ func (a *argReader) value(rest string) (string, bool) {
 }
 
 // script: w is a script path that is not standard input.
-func script(w string) bool { return w != "-" && !stdinPath.MatchString(w) }
+func script(w string) bool { return w != "-" && !stdinPath.MatchString(path.Clean(w)) }
+
+// launches: the words of a launcher's stage name a shell or an interpreter, which can get the
+// pipe's data (code review, 2026-11-22).
+func launches(words []shTok) bool {
+	for _, w := range words {
+		name := w.word[strings.LastIndexAny(w.word, ":=")+1:] // socat's EXEC:sh, SYSTEM:sh
+		if base := commandName(name); shellName.MatchString(base) || interpName.MatchString(base) {
+			return true
+		}
+	}
+	return false
+}
 
 // inline: code, an inline program of lang, does not run other code.
 func inline(lang, code string) bool { return !runsCode[lang].MatchString(code) }
@@ -494,6 +530,7 @@ type shTok struct {
 	op    string // "|", "&&", ">", "2>", "<<", ... or "" for a word
 	word  string
 	subst bool // a command or process substitution, or a backquote, is part of the word
+	dyn   bool // an unquoted parameter expansion is: the word may vanish or split ("$X" quoted may not)
 	bad   bool // the word does not end (an open quote or substitution) or nests too deep
 }
 
@@ -522,7 +559,7 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 		c := s[i]
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '|' || c == '&' || c == ';' || c == '(' || c == ')':
-			return shTok{word: b.String(), subst: t.subst}, i, true
+			return shTok{word: b.String(), subst: t.subst, dyn: t.dyn}, i, true
 		case (c == '<' || c == '>') && i+1 < len(s) && s[i+1] == '(':
 			end := skipParens(s, i+2, depth+1)
 			if end < 0 {
@@ -535,7 +572,7 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 				op := b.String() + shOp(s, i)
 				return shTok{op: op}, i + len(op) - b.Len(), true
 			}
-			return shTok{word: b.String(), subst: t.subst}, i, true
+			return shTok{word: b.String(), subst: t.subst, dyn: t.dyn}, i, true
 		case c == '\\':
 			if i+1 < len(s) {
 				b.WriteByte(s[i+1])
@@ -548,7 +585,7 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 			end := strings.IndexByte(s[i+1:], '\'')
 			if end < 0 {
 				b.WriteString(s[i+1:])
-				return shTok{word: b.String(), subst: t.subst, bad: true}, len(s), true
+				return shTok{word: b.String(), subst: t.subst, dyn: t.dyn, bad: true}, len(s), true
 			}
 			b.WriteString(s[i+1 : i+1+end])
 			i += end + 2
@@ -556,7 +593,7 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 			i++
 			for {
 				if i >= len(s) {
-					return shTok{word: b.String(), subst: t.subst, bad: true}, len(s), true
+					return shTok{word: b.String(), subst: t.subst, dyn: t.dyn, bad: true}, len(s), true
 				}
 				d := s[i]
 				if d == '"' {
@@ -586,6 +623,9 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 			}
 			b.WriteString(s[i:end])
 			t.subst, i = true, end
+		case c == '$' && i+1 < len(s) && strings.IndexByte("{_@*#?$!-0123456789", s[i+1]) >= 0 || c == '$' && i+1 < len(s) && isNameStart(s[i+1]):
+			b.WriteByte(c) // an unquoted expansion: kept as written
+			t.dyn, i = true, i+1
 		case c == '$' && i+1 < len(s) && s[i+1] == '\'': // $'…', ANSI-C quoting
 			k := i + 2
 			for k < len(s) && s[k] != '\'' {
@@ -596,7 +636,7 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 			}
 			if k >= len(s) {
 				b.WriteString(s[i+2:])
-				return shTok{word: b.String(), subst: t.subst, bad: true}, len(s), true
+				return shTok{word: b.String(), subst: t.subst, dyn: t.dyn, bad: true}, len(s), true
 			}
 			b.WriteString(s[i+2 : k])
 			i = k + 1
@@ -608,8 +648,11 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 			digits = false
 		}
 	}
-	return shTok{word: b.String(), subst: t.subst}, i, true
+	return shTok{word: b.String(), subst: t.subst, dyn: t.dyn}, i, true
 }
+
+// isNameStart: c can start a shell variable name.
+func isNameStart(c byte) bool { return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
 // shOp is the operator at s[i], or "".
 func shOp(s string, i int) string {

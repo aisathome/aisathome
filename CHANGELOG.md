@@ -287,6 +287,12 @@ and **(site)** are live on aisathome.org once deployed.
   word comments out the rest of the line, so `curl … | python3 # x.py` runs the download (no
   script) and holds; and a pipeline that goes on after `|` and a line end (or a comment) is read
   to its next command, as the shell does. (gateway)
+- **More of what still runs a download through an interpreter holds.** An unquoted expansion where
+  the program goes (`| python3 $X`, which runs standard input when X is empty), standard input
+  spelled another way (`/dev/./stdin`, `../../dev/stdin`, `/dev/fd/00`), a later launcher that
+  starts a shell (`| xargs sh -c`, `| busybox sh`, `| socat - EXEC:sh`), and a command or process
+  substitution in a stage, which reads its pipe (`"$(sh)"`, `| tee >(sh)`). And
+  `python3 -c'…' <(curl …)`, which reads the download as data, no longer holds. (gateway)
 - **The Linux install command stops at any failed download** and checks the bundle's own line in
   `SHA256SUMS`, so it never unpacks a bundle that was not checked (also on Install and Update on
   Linux). (site)

@@ -83,7 +83,7 @@ var guardRules = []struct {
 	// "python3 <(curl …)", "node -e "$(curl …)"": the download is the program. Only options may come
 	// before it ("python3 parse.py <(curl …)" reads it as data), with the values of python's -W and
 	// -X, ruby's -r, -I, -C, perl's -M and -I.
-	{ruleDownloadExec, "an interpreter running a download", true, regexp.MustCompile(`(?i)\b(?:python[0-9.]*|perl|ruby|node|php)\s+(?:(?-i:-[WXIrCM])\s+[^\s<$` + "`" + `]\S*\s+|-\S+\s+)*["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`), nil},
+	{ruleDownloadExec, "an interpreter running a download", true, regexp.MustCompile(`(?i)\b(?:python[0-9.]*|perl|ruby|node|php)\s+(?:(?-i:-[WXIrCM])\s+[^\s<$` + "`" + `'"]\S*\s+|-[^\s'"]+\s+)*["']?(?:<\(|\$\(|` + "`" + `)\s*(?:curl|wget|fetch)\b`), nil},
 	{ruleDownloadExec, "PowerShell running a download", false, regexp.MustCompile(`(?i)\b(?:iex|invoke-expression)\b[^\n]*\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b`), nil},
 	{ruleCredentials, "a credential file or folder the request does not name", false, regexp.MustCompile(`(?i)(?:^|[\s"'=:(/~])\.(?:ssh|aws|gnupg|kube|docker)(?:/|\b)|\bid_(?:rsa|dsa|ecdsa|ed25519)\b|\.git-credentials\b|(?:^|[\s"'=:(/~])\.netrc\b|/etc/shadow\b|(?:^|[\s"'=:(/~])\.env(?:\.[a-z]+)?(?:$|[\s"'):;,])`), nil},
 	{ruleEncoded, "base64 decoded into a shell or interpreter", false, regexp.MustCompile(`(?i)\bbase64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|eval)\b`), nil},
