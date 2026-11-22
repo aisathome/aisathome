@@ -192,5 +192,6 @@ input[type='password'], input[type='text'] {
 .step .row { margin-top: 0.75rem; }
 .facts-line { margin: 0.4rem 0 0; color: var(--strong); overflow-wrap: anywhere; }
 details.adv { margin-top: 0.75rem; }
+code.code { font-size: 1.5em; letter-spacing: 0.08em; }
 details.adv summary { cursor: pointer; color: var(--muted); }
 .wide { flex: 1 1 22rem; max-width: 34rem; }

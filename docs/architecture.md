@@ -64,6 +64,9 @@ The agent is the same code on both; packaging differs.
   llama.cpp build) as a child process in a Job object, so the engine never outlives the agent.
   The setup steps (card, model download, speed test, token) run on the node's local page
   (`node/setup`, `node/setupflow`).
+- Both get their node token by **linking to an account** (`node/accountlink`, `gateway/nodelink.go`):
+  the node asks the gateway for a code, the person approves it on `<domain>/link` signed in, and the
+  node's poll gets the token once (a pasted token from the account page still works).
 
 Every node runs one request at a time. The model and context are fixed per tier, not tuned per
 machine: 24 GB cards and up run the 4-bit file with 192k context, 16 GB cards the 3-bit file

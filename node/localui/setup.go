@@ -10,7 +10,8 @@ import (
 )
 
 // setupRoutes are the setup page's actions; each needs the local password, like every control.
-// The token travels only in Start's and ChangeToken's request bodies and is never sent back.
+// The token travels only in Start's and ChangeToken's request bodies and is never sent back; a link to
+// an account brings it from the gateway to the agent directly.
 func (s *Server) setupRoutes(mux *http.ServeMux) {
 	step := func(do func() error) http.HandlerFunc {
 		return s.control(func(w http.ResponseWriter, _ *http.Request) { s.setupResult(w, do()) })
@@ -38,6 +39,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("POST /api/setup/start", token(f.Start))
 	mux.HandleFunc("POST /api/setup/token", token(f.ChangeToken))
+	// Linking to an account: the answer's state carries the code and the approval page's link; the
+	// token comes from the gateway to the agent, never through the page.
+	mux.HandleFunc("POST /api/setup/link", token(func(_, gateway string) error { return f.Link(gateway) }))
+	mux.HandleFunc("POST /api/setup/link/cancel", step(func() error { f.LinkCancel(); return nil }))
 }
 
 func (s *Server) setupResult(w http.ResponseWriter, err error) {

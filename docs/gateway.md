@@ -510,6 +510,31 @@ working; ids of the form `n-<8 hex>` are reserved for account nodes. In the usag
 account node's operator is the account's pseudonym, and `self_served` marks requests an
 account's own node answered.
 
+**Linking a node without a token** (`gateway/nodelink.go`, owner 2026-11-22; RFC 8628 style). A node
+with no token asks `POST /v1/node/link` (no authentication; JSON: what it reports about itself,
+`name`, `gpu`, `vram_mib`, `os`, `agent`, all optional and unchecked) and gets a `device_code` (its
+secret for polling), a `user_code` such as `KXQT-4821`, `verification_uri` (`<public_url>/link`),
+`verification_uri_complete` (with `?code=`), `expires_in` 600 and `interval` 5. The person opens the
+link on any device, signs in (the sign-in comes back to the link), and the page shows the code, the
+node's details, what approving does, the warning to approve only a code a machine of one's own shows,
+and the operator terms line of "Add a node". **Approve** creates the node exactly as "Add a node" does
+(active accounts only, `nodes_closed`, `max_nodes_per_account`, `max_nodes`; the operator terms are
+accepted unless the account chose science only), with `"via": "link"` on the node and
+`"via": "node-linked"` on an acceptance it records; **Deny** refuses it. The node polls
+`POST /v1/node/link/poll {"device_code"}`: `pending` (with `interval`), `slow_down` (polled too fast:
+the interval grows by 5 s), `approved` with `token` and `node_id` (once; the link is then gone),
+`denied`, or `expired` (also for an unknown or used code). Codes live only in memory, as HMACs under a
+key made at start, for 10 minutes and one use; a restart drops pending links. The token exists in clear
+only between the approval and the node's next poll; a node approved but never picked up (within 10
+minutes, and at least a minute after the approval) is revoked. Limits, in memory only: 20 codes per
+address in 10 minutes and 60 an hour, 300 an hour over the gateway, 500 pending at once; 10 wrong codes
+per account an hour and 30 per address; only an active account looks a code up (a waitlisted one is
+told to come back). Caddy must send `<domain>/link` to the gateway (the ops repo's Caddyfile does).
+The risk that stays is RFC 8628's remote phishing: someone sends a person their code, and the person
+approves it; that adds the sender's machine to the person's account as one of its nodes (it may then
+get the person's own requests, as any own node does). The page says so; chat stays behind the operator
+terms exactly as for any node.
+
 Routing and protections:
 
 | What | Rule |

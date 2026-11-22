@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/node/setup"
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // smi answers the setup's nvidia-smi query with fixed CSV lines.
@@ -318,5 +321,137 @@ func TestConfigured(t *testing.T) {
 	os.WriteFile(cfg, []byte(`{"token":"t","engine":{"tier":"standard"}}`), 0o600)
 	if !Configured(cfg, model) {
 		t.Error("with the model")
+	}
+}
+
+// fakeLinker stands in for the gateway's link calls: Wait answers with result once released.
+type fakeLinker struct {
+	base    string
+	info    protocol.LinkInfo
+	release chan protocol.LinkPoll
+	err     error
+}
+
+func (l *fakeLinker) Start(_ context.Context, info protocol.LinkInfo) (protocol.LinkStart, error) {
+	l.info = info
+	return protocol.LinkStart{DeviceCode: "dev-secret", UserCode: "KXQT-4821", VerificationURI: "https://site.test/link",
+		VerificationURIComplete: "https://site.test/link?code=KXQT-4821", ExpiresIn: 600, Interval: 5}, nil
+}
+
+func (l *fakeLinker) Wait(ctx context.Context, _ protocol.LinkStart) (protocol.LinkPoll, error) {
+	select {
+	case p := <-l.release:
+		return p, l.err
+	case <-ctx.Done():
+		return protocol.LinkPoll{}, ctx.Err()
+	}
+}
+
+func (e *env) linker() *fakeLinker {
+	l := &fakeLinker{release: make(chan protocol.LinkPoll, 1)}
+	e.f.d.NewLinker = func(base string) Linker { l.base = base; return l }
+	e.f.d.LinkInfo = func(context.Context) protocol.LinkInfo { return protocol.LinkInfo{Name: "box"} }
+	return l
+}
+
+func (e *env) waitLink(t *testing.T, status string) *Link {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if l := e.f.State().Link; l != nil && l.Status == status {
+			return l
+		}
+	}
+	t.Fatalf("link state never %s: %+v", status, e.f.State().Link)
+	return nil
+}
+
+// "Link to my account" in place of the token: only once the steps Start needs have passed; the page gets
+// the code and the approval link (never the device code), the state file neither; the approval starts the
+// node with the gateway's token, as Start does.
+func TestSetupLink(t *testing.T) {
+	e := newEnv(t, card4080)
+	l := e.linker()
+	if err := e.f.Link(""); err == nil {
+		t.Fatal("linked before the card check")
+	}
+	e.step(t, e.f.CheckCard)
+	e.step(t, e.f.Download)
+	if err := e.f.Link(""); err == nil {
+		t.Fatal("linked before the speed test")
+	}
+	e.step(t, e.f.SpeedTest)
+	if err := e.f.Link("https://evil.example/"); err == nil {
+		t.Fatal("an https gateway URL accepted")
+	}
+	if err := e.f.Link("wss://staging.example.org/v1/node/connect"); err != nil {
+		t.Fatal(err)
+	}
+	if l.base != "https://staging.example.org" || l.info.Name != "box" {
+		t.Errorf("asked %q with %+v", l.base, l.info)
+	}
+	st := e.f.State()
+	if st.Link == nil || st.Link.Status != LinkWaiting || st.Link.Code != "KXQT-4821" || st.Link.URL != "https://site.test/link?code=KXQT-4821" {
+		t.Fatalf("link state %+v", st.Link)
+	}
+	b, _ := json.Marshal(st)
+	if strings.Contains(string(b), "dev-secret") {
+		t.Fatal("the state shows the device code")
+	}
+	if b, _ := os.ReadFile(e.f.d.StateFile); strings.Contains(string(b), "KXQT-4821") || !strings.Contains(string(b), `"status": "waiting"`) {
+		t.Fatalf("setup state file %s", b)
+	}
+	if st.Mode != "setup" {
+		t.Fatal("left the setup before the approval")
+	}
+	l.release <- protocol.LinkPoll{Status: protocol.LinkApproved, Token: "nt-n-0000000c.fromgateway", NodeID: "n-0000000c"}
+	if mode := <-e.reload; mode {
+		t.Fatal("the approval reloaded into setup mode")
+	}
+	if got := e.waitLink(t, LinkLinked); got.NodeID != "n-0000000c" || got.Code != "" {
+		t.Fatalf("linked state %+v", got)
+	}
+	var cfg map[string]any
+	b, _ = os.ReadFile(e.cfg)
+	json.Unmarshal(b, &cfg)
+	if cfg["token"] != "nt-n-0000000c.fromgateway" || cfg["node_id"] != "n-0000000c" || cfg["gateway_url"] != "wss://staging.example.org/v1/node/connect" {
+		t.Fatalf("node.json %s", b)
+	}
+	if fi, _ := os.Stat(e.cfg); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Errorf("node.json mode %o", fi.Mode().Perm())
+	}
+	if b, _ := os.ReadFile(e.f.d.StateFile); strings.Contains(string(b), "fromgateway") {
+		t.Fatal("the state file holds the token")
+	}
+
+	// Set up already: a denied link changes nothing and says why; an approved one replaces the token.
+	l = e.linker()
+	if err := e.f.Link(""); err != nil {
+		t.Fatal(err)
+	}
+	l.err = errors.New("the link was denied in the browser; nothing was changed")
+	l.release <- protocol.LinkPoll{Status: protocol.LinkDenied}
+	if got := e.waitLink(t, LinkFailed); !strings.Contains(got.Error, "denied") {
+		t.Fatalf("denied: %+v", got)
+	}
+	if b2, _ := os.ReadFile(e.cfg); string(b2) != string(b) {
+		t.Fatal("a denied link changed node.json")
+	}
+	l = e.linker()
+	if err := e.f.Link(""); err != nil {
+		t.Fatal(err)
+	}
+	l.release <- protocol.LinkPoll{Status: protocol.LinkApproved, Token: "nt-n-0000000d.again", NodeID: "n-0000000d"}
+	<-e.reload
+	e.waitLink(t, LinkLinked)
+	if b, _ := os.ReadFile(e.cfg); !strings.Contains(string(b), "nt-n-0000000d.again") || !strings.Contains(string(b), DefaultGatewayURL) {
+		t.Fatalf("after the second link: %s", b)
+	}
+
+	// Cancel: the waiting link is gone, and a late approval changes nothing.
+	l = e.linker()
+	e.f.Link("")
+	e.f.LinkCancel()
+	if e.f.State().Link != nil {
+		t.Fatal("the cancelled link is still shown")
 	}
 }

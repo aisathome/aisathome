@@ -60,7 +60,11 @@
 			out.push(el('strong', '', s.gateway || 'the gateway'));
 			add('. ');
 			if (s.refused) add(`The gateway refused this node agent: ${s.refused}. `, 'bad');
-			if (s.rejected) add(`The gateway refused this node: ${s.rejected}. `, 'bad');
+			if (s.rejected) {
+				add(`The gateway refused this node: ${s.rejected}. `, 'bad');
+				// A revoked or unknown token: link the node again (Windows: the setup page; Linux: the command).
+				add(s.setup ? 'Link it to your account again on the setup page. ' : 'Link it to your account again: sudo aisathome-node link. ', 'bad');
+			}
 		}
 		if (s.paused) add(s.slots_in_use > 0 ? `Paused: finishing ${s.slots_in_use} request(s), taking no new ones. ` : 'Paused: taking no new requests. ');
 		const ep = s.engine_process;

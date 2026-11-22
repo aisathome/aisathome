@@ -178,6 +178,42 @@ func serviceStop(out io.Writer) error {
 	return stopService(s, out)
 }
 
+// serviceRestart stops the service if it runs and starts it again (`aisathome-node link`: the node
+// takes its new token). Unlike `service stop`, it leaves the service enabled.
+func serviceRestart(out io.Writer) error {
+	m, err := connectSCM()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(node.ServiceName)
+	if err != nil {
+		return fmt.Errorf("opening the service %s (is the node installed?): %w", node.ServiceName, err)
+	}
+	defer s.Close()
+	deadline := time.Now().Add(stopWait + 20*time.Second)
+	for {
+		st, err := s.Query()
+		if err != nil {
+			return fmt.Errorf("querying the service: %w", err)
+		}
+		if st.State == svc.Stopped {
+			break
+		}
+		if st.State == svc.Running || st.State == svc.Paused {
+			if _, err := s.Control(svc.Stop); err != nil && !errors.Is(err, windows.ERROR_SERVICE_CANNOT_ACCEPT_CTRL) &&
+				!errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
+				return fmt.Errorf("stopping the service: %w", err)
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the service did not stop within %s (state %d)", stopWait+20*time.Second, st.State)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return startService(s, out)
+}
+
 // stopService disables the service, stops it and waits until its process has ended, so its
 // files can be replaced or removed (the engine, its child, ends with it). Disabled first: after
 // a failure the Service Control Manager may have a restart queued (recovery actions), which only

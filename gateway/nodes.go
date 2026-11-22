@@ -75,6 +75,9 @@ type AccountNode struct {
 	Hash    string    `json:"sha256"`
 	Prefix  string    `json:"prefix"`
 	Created time.Time `json:"created"`
+	// Via says how the node came: ViaNodeLink (approved on /link, nodelink.go), or "" (the account page's
+	// "Add a node").
+	Via string `json:"via,omitempty"`
 }
 
 // NodeHold records a node stopped by a guard (guard.go). It gets no requests until the
@@ -196,6 +199,12 @@ func (s *AccountStore) AddNode(id, name string, now time.Time, valid func(seq in
 // operator terms) it records that acceptance in the same write, as acceptOnNodeCreate would
 // (chatrules.go), and reports whether it did.
 func (s *AccountStore) addNode(id, name string, now time.Time, valid func(seq int) bool, terms bool) (token, nodeID string, recorded bool, err error) {
+	return s.addNodeVia(id, name, now, valid, terms, "")
+}
+
+// addNodeVia is addNode for a node that came by via (AccountNode.Via): ViaNodeLink for an approved link,
+// whose acceptance of the operator terms, if it records one, says so (ViaNodeLinked).
+func (s *AccountStore) addNodeVia(id, name string, now time.Time, valid func(seq int) bool, terms bool, via string) (token, nodeID string, recorded bool, err error) {
 	err = s.Update(func(f *AccountsFile) error {
 		a := f.find(id)
 		switch {
@@ -225,8 +234,12 @@ func (s *AccountStore) addNode(id, name string, now time.Time, valid func(seq in
 			a.FirstNode = &t
 		}
 		a.Nodes = append(a.Nodes, AccountNode{ID: nodeID, Name: cleanNodeName(name), Hash: keyHash(token),
-			Prefix: token[:len("nt-")+len(nodeID)+1+4], Created: t})
-		recorded = terms && a.acceptOnNodeCreate(t)
+			Prefix: token[:len("nt-")+len(nodeID)+1+4], Created: t, Via: via})
+		how := ViaNodeCreated
+		if via == ViaNodeLink {
+			how = ViaNodeLinked
+		}
+		recorded = terms && a.acceptOnNodeCreate(t, how)
 		return nil
 	})
 	if err != nil {

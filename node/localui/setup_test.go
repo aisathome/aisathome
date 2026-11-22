@@ -39,6 +39,8 @@ func (f *fakeSetup) Start(token, gw string) error {
 	return f.do("start " + token + " " + gw)
 }
 func (f *fakeSetup) ChangeToken(token, gw string) error { return f.do("token " + token) }
+func (f *fakeSetup) Link(gw string) error               { return f.do("link " + gw) }
+func (f *fakeSetup) LinkCancel()                        { f.do("link-cancel") }
 func (f *fakeSetup) Enter() error                       { return f.do("enter") }
 func (f *fakeSetup) Leave() error                       { return f.do("leave") }
 
@@ -118,7 +120,8 @@ func TestSetupRedirect(t *testing.T) {
 // goes to the setup and never comes back in an answer.
 func TestSetupActions(t *testing.T) {
 	e, fs := newSetupEnv(t, setupflow.State{Mode: "setup", Gateway: setupflow.DefaultGatewayURL})
-	for _, p := range []string{"/api/setup/check", "/api/setup/download", "/api/setup/start", "/api/setup/enter", "/api/stop-engine"} {
+	for _, p := range []string{"/api/setup/check", "/api/setup/download", "/api/setup/start", "/api/setup/enter", "/api/stop-engine",
+		"/api/setup/link", "/api/setup/link/cancel"} {
 		if resp := e.req(t, "POST", p, `{}`, nil); resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s without a session: %d", p, resp.StatusCode)
 		}
@@ -143,6 +146,18 @@ func TestSetupActions(t *testing.T) {
 	}
 	if got := fs.calls[len(fs.calls)-1]; got != "start nt-n-0000000a.s3cret wss://gw.example/v1/node/connect" {
 		t.Errorf("start call %q", got)
+	}
+	if resp := e.req(t, "POST", "/api/setup/link", `{"gateway":"wss://gw.example/v1/node/connect"}`, map[string]string{"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}, c); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site link: %d", resp.StatusCode)
+	}
+	if resp := e.req(t, "POST", "/api/setup/link", `{"gateway":"wss://gw.example/v1/node/connect"}`, nil, c); resp.StatusCode != 200 {
+		t.Errorf("link: %d %s", resp.StatusCode, body(resp))
+	}
+	if resp := e.req(t, "POST", "/api/setup/link/cancel", `{}`, nil, c); resp.StatusCode != 200 {
+		t.Errorf("link cancel: %d", resp.StatusCode)
+	}
+	if got := strings.Join(fs.calls[len(fs.calls)-2:], ","); got != "link wss://gw.example/v1/node/connect,link-cancel" {
+		t.Errorf("link calls %q", got)
 	}
 	resp = e.req(t, "GET", "/api/status", "", nil, c)
 	var st StatusResponse

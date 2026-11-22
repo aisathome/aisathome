@@ -52,6 +52,7 @@ type Gateway struct {
 	accounts *AccountStore // nil without accounts
 	gkeys    *jwksCache    // Google's signing keys, for Google sign-in
 	email    *emailSignIn  // nil without email sign-in
+	links    *nodeLinks    // nodes linking to an account (nodelink.go); nil without accounts
 	bufByTok sync.Map      // node token → *atomic.Int64: the share held for its nodes
 	start    time.Time
 	use      *usageWriter
@@ -211,6 +212,10 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		if g.acfg.Email != nil {
 			g.email = newEmailSignIn(*g.acfg.Email, g.acfg.PublicURL, log)
 		}
+		g.links = newNodeLinks()
+		if cfg.LinkNow != nil {
+			g.links.now = cfg.LinkNow
+		}
 	}
 	if g.proxies, err = parsePrefixes(cfg.TrustedProxies); err != nil {
 		return fmt.Errorf("trusted_proxies: %w", err)
@@ -284,6 +289,7 @@ func (g *Gateway) startBackground() {
 			}
 			g.sweepNodes() // banned accounts, revoked node tokens, held or cleared nodes
 		})
+		g.every(linkPruneEvery, g.pruneLinks) // expired links; tokens nobody picked up are revoked
 	}
 	g.every(keysFileCheck, g.checkKeysFile)
 	g.every(keysFileCheck, g.applyCreditCorrections) // the operator's CLI asks for corrections (accounts credit-adjust)

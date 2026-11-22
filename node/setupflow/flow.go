@@ -3,7 +3,8 @@
 // tier's own engine, and the node token. It writes node.json once every step has passed, and
 // the agent then starts as configured (Deps.Reload). The steps themselves are package setup's;
 // this package runs them one at a time, keeps their progress for the page and never holds the
-// token in its state.
+// token in its state. The token comes pasted, or by linking the node to an account in the browser
+// (Link, package accountlink): the gateway hands it to the node once the person approves.
 //
 // SPDX-License-Identifier: Apache-2.0
 package setupflow
@@ -23,7 +24,9 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/accountlink"
 	"github.com/aisathome/aisathome/node/setup"
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // DefaultGatewayURL is where nodes connect unless the volunteer names another gateway.
@@ -60,7 +63,37 @@ type Deps struct {
 	// setup: the agent then loads its config again.
 	Reload func(setupMode bool)
 	Log    *slog.Logger
+	// NewLinker talks to the gateway at base (accountlink.APIBase) to link the node to an account;
+	// default an accountlink.Client. LinkInfo is what the node reports about itself; default
+	// accountlink.LocalInfo with SMI.
+	NewLinker func(base string) Linker
+	LinkInfo  func(ctx context.Context) protocol.LinkInfo
 }
+
+// Linker links the node to an account (accountlink.Client).
+type Linker interface {
+	Start(ctx context.Context, info protocol.LinkInfo) (protocol.LinkStart, error)
+	Wait(ctx context.Context, s protocol.LinkStart) (protocol.LinkPoll, error)
+}
+
+// Link is the link to an account as the page shows it: the code and where to approve it, then how it
+// ended. It never holds the device code or the token.
+type Link struct {
+	Status  string    `json:"status"`            // LinkWaiting, LinkLinked or LinkFailed
+	Code    string    `json:"code,omitempty"`    // the code the person checks on the approval page
+	URL     string    `json:"url,omitempty"`     // the approval page with the code filled in
+	Page    string    `json:"page,omitempty"`    // the approval page, where the code can be typed
+	Expires time.Time `json:"expires,omitempty"` // when the code stops working
+	NodeID  string    `json:"node_id,omitempty"` // linked: the node's id on the account
+	Error   string    `json:"error,omitempty"`   // failed: why (denied, expired, the gateway)
+}
+
+// Link states.
+const (
+	LinkWaiting = "waiting"
+	LinkLinked  = "linked"
+	LinkFailed  = "failed"
+)
 
 // Card is the chosen card as the page shows it.
 type Card struct {
@@ -112,6 +145,7 @@ type State struct {
 	ModelPath  string    `json:"model_path"`        // where the model is downloaded
 	Updated    time.Time `json:"updated"`           // when this state last changed
 	Message    string    `json:"message,omitempty"` // the last step's outcome, for the page
+	Link       *Link     `json:"link,omitempty"`    // the last link to an account (Flow.Link)
 }
 
 // Busy steps.
@@ -129,10 +163,11 @@ type Flow struct {
 	d   Deps
 	ctx context.Context
 
-	mu     sync.Mutex
-	st     State
-	tier   setup.Tier
-	cancel context.CancelFunc // the running step's
+	mu         sync.Mutex
+	st         State
+	tier       setup.Tier
+	cancel     context.CancelFunc // the running step's
+	linkCancel context.CancelFunc // the waiting link's
 }
 
 // New returns the flow; ctx bounds every step (the agent's life). mode is "setup" or "run".
@@ -162,6 +197,13 @@ func New(ctx context.Context, d Deps, mode string) *Flow {
 	}
 	if d.Reload == nil {
 		d.Reload = func(bool) {}
+	}
+	if d.NewLinker == nil {
+		d.NewLinker = func(base string) Linker { return &accountlink.Client{Base: base} }
+	}
+	if d.LinkInfo == nil {
+		smi := d.SMI
+		d.LinkInfo = func(ctx context.Context) protocol.LinkInfo { return accountlink.LocalInfo(ctx, smi) }
 	}
 	f := &Flow{d: d, ctx: ctx}
 	f.st = State{Mode: mode, ModelPath: d.Model, Speed: Speed{MinTPS: d.MinTPS}}
@@ -231,7 +273,13 @@ func (f *Flow) changedLocked() {
 	if f.d.StateFile == "" {
 		return
 	}
-	b, err := json.MarshalIndent(f.st, "", "  ")
+	saved := f.st
+	if saved.Link != nil { // a live code could be approved by whoever reads it: not in a file for diagnostics
+		l := *saved.Link
+		l.Code, l.URL = "", ""
+		saved.Link = &l
+	}
+	b, err := json.MarshalIndent(saved, "", "  ")
 	if err == nil {
 		writeAtomic(f.d.StateFile, b)
 	}
@@ -641,6 +689,98 @@ func (f *Flow) ChangeToken(token, gateway string) error {
 	f.d.Log.Info("setup: token changed; restarting the node", "node", id, "gateway", gw)
 	f.leave()
 	return nil
+}
+
+// Link links the node to an account in the browser, in place of a pasted token: it asks the gateway
+// (gateway, as for Start; "" = the default) for a code and returns once the page can show it (State's
+// Link); the node then waits for the approval, and on it starts with the token the gateway hands over
+// (Start, or ChangeToken on a node already set up). A node not set up yet must have passed the steps
+// that Start needs first. A second Link replaces a waiting one.
+func (f *Flow) Link(gateway string) error {
+	gw, err := CheckGateway(gateway)
+	if err != nil {
+		return err
+	}
+	configured := Configured(f.d.ConfigPath, f.d.Model)
+	if !configured {
+		if _, _, err := f.readyTier(); err != nil {
+			return err
+		}
+		f.mu.Lock()
+		busy, dl, speed := f.st.Busy, f.st.Download.Complete, f.st.Speed.Passed
+		f.mu.Unlock()
+		switch {
+		case busy != "":
+			return ErrBusy
+		case !dl:
+			return errors.New("download the model first")
+		case !speed:
+			return errors.New("run the speed test first")
+		}
+	}
+	base, err := accountlink.APIBase(gw)
+	if err != nil {
+		return err
+	}
+	f.LinkCancel()
+	ctx, cancel := context.WithCancel(f.ctx)
+	sctx, scancel := context.WithTimeout(ctx, 30*time.Second)
+	defer scancel()
+	l := f.d.NewLinker(base)
+	st, err := l.Start(sctx, f.d.LinkInfo(sctx))
+	if err != nil {
+		cancel()
+		return err
+	}
+	f.mu.Lock()
+	f.linkCancel = cancel
+	f.st.Link = &Link{Status: LinkWaiting, Code: st.UserCode, URL: st.VerificationURIComplete, Page: st.VerificationURI,
+		Expires: time.Now().Add(time.Duration(st.ExpiresIn) * time.Second).UTC()}
+	f.changedLocked()
+	f.mu.Unlock()
+	f.d.Log.Info("setup: waiting for the link to an account to be approved", "gateway", gw)
+	go func() {
+		defer cancel()
+		p, err := l.Wait(ctx, st)
+		if ctx.Err() != nil {
+			return // cancelled, or replaced by another link
+		}
+		if err == nil {
+			if configured {
+				err = f.ChangeToken(p.Token, gw)
+			} else {
+				err = f.Start(p.Token, gw)
+			}
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.st.Link == nil || f.st.Link.Code != st.UserCode {
+			return
+		}
+		if err != nil {
+			f.d.Log.Warn("setup: link to an account", "err", err)
+			f.st.Link = &Link{Status: LinkFailed, Error: err.Error()}
+		} else {
+			f.d.Log.Info("setup: linked to an account", "node", p.NodeID)
+			f.st.Link = &Link{Status: LinkLinked, NodeID: p.NodeID}
+		}
+		f.changedLocked()
+	}()
+	return nil
+}
+
+// LinkCancel stops waiting for a link's approval; the code the page showed is then of no use.
+func (f *Flow) LinkCancel() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.linkCancel != nil {
+		f.linkCancel()
+		f.linkCancel = nil
+	}
+	if f.st.Link != nil && f.st.Link.Status == LinkWaiting {
+		f.st.Link = nil
+		f.changedLocked()
+	}
 }
 
 // Enter switches to setup mode: the agent stops serving and its engine stops until Start or

@@ -1,6 +1,8 @@
 // Setup page: polls /api/status (which carries the setup's state) and drives the setup steps.
-// Text from the agent and the gateway is only ever set as text, never as HTML. The token is
-// sent once, in the body of a POST, and never read back.
+// Text from the agent and the gateway is only ever set as text, never as HTML. A pasted token is
+// sent once, in the body of a POST, and never read back. "Link to my account" asks the agent for a
+// code and opens the approval page; the token then goes from the gateway to the agent, not through
+// this page.
 'use strict';
 (() => {
 	const $ = (id) => document.getElementById(id);
@@ -34,9 +36,48 @@
 		s.setAttribute('aria-disabled', enabled ? 'false' : 'true');
 	}
 
+	const httpURL = (u) => typeof u === 'string' && /^https?:\/\/[^\s/@]+(\/[^\s]*)?$/.test(u);
+	const hhmm = (t) => { const d = new Date(t); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
+
+	// The link to an account: the code and the approval page while it waits; how it ended after.
+	function renderLink(st, signedIn) {
+		const l = st.link;
+		const waiting = signedIn && !!l && l.status === 'waiting';
+		$('link-panel').hidden = !waiting;
+		if (waiting) {
+			$('link-code').textContent = l.code || '';
+			const u = httpURL(l.url) ? l.url : '';
+			$('link-url').textContent = u;
+			$('link-url').href = u || '#';
+			$('link-until').textContent = hhmm(l.expires);
+		}
+		const id = st.mode === 'setup' ? 'link-msg' : 'running-msg';
+		if (l && l.status === 'linked') msg(id, `Linked: this is node ${l.node_id} on your account.`);
+		else if (l && l.status === 'failed') msg(id, `Not linked: ${l.error}`, true);
+	}
+
+	async function startLink(msgID) {
+		// The tab is opened in the click itself (a tab opened after the answer would be blocked as a
+		// pop-up) and gets the approval page once the agent has the code.
+		const w = window.open('', '_blank');
+		msg(msgID, 'Asking the gateway for a code...');
+		const r = await api('/api/setup/link', { gateway: $('gateway').value || (last && last.setup ? last.setup.gateway : '') });
+		const l = r.ok ? r.data.link : null;
+		if (w) {
+			if (l && httpURL(l.url)) {
+				w.opener = null;
+				w.location.href = l.url;
+			} else {
+				w.close();
+			}
+		}
+		msg(msgID, r.ok ? '' : (r.data.error || `Failed (HTTP ${r.status})`), !r.ok);
+		refresh();
+	}
+
 	function connection(s) {
 		if (s.connected) return [`Node ${s.node_id} is connected to ${s.gateway}. It serves requests from the network now.`, false];
-		if (s.rejected) return [`The gateway refused this node: ${s.rejected}. Check the token on your account page and paste it again below.`, true];
+		if (s.rejected) return [`The gateway refused this node: ${s.rejected}. Link it to your account again below (the node may have been revoked).`, true];
 		if (s.refused) return [`The gateway refused this node agent: ${s.refused}.`, true];
 		const ep = s.engine_process;
 		if (s.engine === 'stopped' || (ep && ep.state === 'stopped')) return ['The engine is stopped (the GPU is free). Start it on the status page.', false];
@@ -57,6 +98,7 @@
 		$('pw-hint').textContent = c.password_hint || '';
 		if (s.account_url) { $('account').href = s.account_url; $('account2').href = s.account_url; }
 		const setupMode = st.mode === 'setup';
+		renderLink(st, signedIn);
 		$('steps').hidden = !signedIn || !setupMode;
 		$('running').hidden = !signedIn || setupMode;
 		$('leave-row').hidden = !signedIn || !setupMode || !st.configured;
@@ -126,10 +168,11 @@
 		msg('speed-msg', sp.error, !!sp.error);
 		$('speed').disabled = !!busy || !dlOK;
 		$('cancel-speed').hidden = busy !== 'speed';
-		// 4. token
+		// 4. account: link (or a pasted token)
 		const ready = dlOK && !!sp.passed;
 		step('step-token', false, ready);
 		$('start').disabled = !!busy || !ready;
+		$('link').disabled = !!busy || !ready || (st.link && st.link.status === 'waiting');
 		if (st.start_error) msg('start-msg', st.start_error, true);
 		if (!$('gateway').value) $('gateway').value = st.gateway || '';
 	}
@@ -189,6 +232,9 @@
 			msg('running-msg', 'Saved. The node reconnects with the new token.');
 		}
 	});
+	$('link').addEventListener('click', () => startLink('link-msg'));
+	$('relink').addEventListener('click', () => startLink('running-msg'));
+	$('link-cancel').addEventListener('click', () => action('/api/setup/link/cancel', 'link-msg'));
 	$('again').addEventListener('click', async () => {
 		if (!window.confirm('Run the setup again? The node stops serving and its engine stops until you start it again.')) return;
 		await action('/api/setup/enter', 'running-msg');

@@ -7,7 +7,8 @@
 //
 // Accepted when the account creates a node on the account page (owner, 2026-11-20: the form says that
 // creating and running the node accepts the terms, and the creation records it, via "node-created"; an
-// account that switched to "science only" stays so), with the account page's button (accounts whose
+// account that switched to "science only" stays so), or approves a node's link under that same line
+// (nodelink.go, via "node-linked"), with the account page's button (accounts whose
 // nodes came before, or that switched back), or, for a connector's user (a BOINC volunteer), by the
 // connector when the user accepted there (handleConnectorTerms: the BOINC bridge, once
 // BOINC records the user's ENROLL consent to terms_of_use.txt, which holds the operator terms verbatim,
@@ -82,6 +83,7 @@ func termsFinal() bool { return !strings.HasPrefix(OperatorTermsVersion, "draft-
 const (
 	ViaAccountPage = "account"
 	ViaNodeCreated = "node-created" // the account created a node, under the line that says it accepts the terms
+	ViaNodeLinked  = "node-linked"  // the account approved a node's link (nodelink.go), under that same line
 	viaConnector   = "connector:"   // + the connector's id
 )
 
@@ -142,14 +144,14 @@ func (s *AccountStore) WithdrawOperatorTerms(id string) error {
 func (a *Account) optedOut() bool { return a.TermsWithdrawn != nil && a.OperatorTerms == nil }
 
 // acceptOnNodeCreate records the operator terms for a, which is creating a node under the line that says
-// so (AccountStore.addNode, in the same write), unless it has accepted the current version already or
+// so (AccountStore.addNode, in the same write; via says how: ViaNodeCreated or ViaNodeLinked), unless it has accepted the current version already or
 // switched to science only (that choice stands until it switches back). It reports whether it recorded
 // an acceptance.
-func (a *Account) acceptOnNodeCreate(now time.Time) bool {
+func (a *Account) acceptOnNodeCreate(now time.Time, via string) bool {
 	if a.Status != StatusActive || a.OperatorTerms.current(OperatorTermsVersion) || a.optedOut() {
 		return false
 	}
-	a.OperatorTerms = &Acceptance{Version: OperatorTermsVersion, At: now.UTC(), Via: ViaNodeCreated}
+	a.OperatorTerms = &Acceptance{Version: OperatorTermsVersion, At: now.UTC(), Via: via}
 	return true
 }
 

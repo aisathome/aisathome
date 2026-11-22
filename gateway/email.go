@@ -431,14 +431,12 @@ func (g *Gateway) handleEmailStart(w http.ResponseWriter, r *http.Request) {
 	typed := strings.TrimSpace(r.FormValue("email"))
 	norm, ok := normaliseEmail(typed)
 	if !ok { // the form, not the address's fate: says nothing about any account
-		g.accountPage(w, r, http.StatusBadRequest, pageData{Next: r.FormValue("next") == "chat",
-			Error: "Please enter a plain email address (for an international domain, its xn-- form)."})
+		d := nextData(r.FormValue("next"))
+		d.Error = "Please enter a plain email address (for an international domain, its xn-- form)."
+		g.accountPage(w, r, http.StatusBadRequest, d)
 		return
 	}
-	next := ""
-	if r.FormValue("next") == "chat" {
-		next = "chat"
-	}
+	next := cleanNext(r.FormValue("next"))
 	// A browser that asks again keeps its pending id: a sent code replaces its attempt, and a
 	// refused request (e.g. within the minute) leaves the earlier code working. The value
 	// does not depend on the outcome, so the answer stays the same.

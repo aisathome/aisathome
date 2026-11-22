@@ -111,6 +111,8 @@ type Config struct {
 	StatsRefresh time.Duration `json:"-"`
 	// TasksNow, if set, is the task queue's clock (leases, affinity). For tests.
 	TasksNow func() time.Time `json:"-"`
+	// LinkNow, if set, is the clock of nodes' links to accounts (nodelink.go: expiry, polls, limits). For tests.
+	LinkNow func() time.Time `json:"-"`
 	// PilotsNow, if set, is the pilots' clock (deadlines, credit hold, caps). For tests.
 	PilotsNow func() time.Time `json:"-"`
 }

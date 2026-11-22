@@ -2,8 +2,10 @@
 // (package setupflow) on any platform, against stand-ins: one NVIDIA card (an RTX 4080 16 GB,
 // driver 566.36), a small "model" served over local TLS, an engine that answers the speed test
 // at 31.5 tokens/s, and a gateway that accepts only the token in -good-token and refuses every
-// other one with 401 "unknown node token", as the real one does. The browser test in e2e/browser
-// drives it; the page, the setup steps and the agent are the real code.
+// other one with 401 "unknown node token", as the real one does. The stand-in gateway also links
+// nodes to an account: its /link page has an Approve button, and an approved link hands the node the
+// good token. The browser test in e2e/browser drives it; the page, the setup steps and the agent are
+// the real code.
 //
 //	setup-harness -ui-port 7399 -password-file <file> -dir <empty folder>
 //
@@ -35,6 +37,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/accountlink"
 	"github.com/aisathome/aisathome/node/engine"
 	"github.com/aisathome/aisathome/node/localui"
 	"github.com/aisathome/aisathome/node/setup"
@@ -70,7 +73,9 @@ func main() {
 	tier := setup.Tiers[0]
 	tier.Model = setup.Model{URL: files.URL + "/model.gguf", SHA256: hex.EncodeToString(sum[:]), Size: int64(len(model))}
 
-	gw := httptest.NewServer(gateway(*good))
+	links := &linkDesk{approved: map[string]bool{}}
+	gw := httptest.NewServer(gateway(*good, links))
+	links.base = gw.URL
 	defer gw.Close()
 	gwURL := "ws" + strings.TrimPrefix(gw.URL, "http") + "/v1/node/connect"
 
@@ -129,6 +134,8 @@ func main() {
 			startNode()
 		},
 		Log: logger,
+		// Links go to the stand-in gateway, whatever address the page names.
+		NewLinker: func(string) setupflow.Linker { return &accountlink.Client{Base: gw.URL} },
 	}, "setup")
 	ui = localui.New(node.New(node.Config{}, logger), localui.Options{Port: *uiPort, PasswordFile: *pwFile, Log: logger, Setup: flow,
 		NvidiaSMI: "true"})
@@ -168,10 +175,68 @@ type smi string
 
 func (s smi) Query(context.Context, ...string) (string, error) { return string(s), nil }
 
+// linkDesk is the stand-in gateway's links: one code per request, approved on its /link page.
+type linkDesk struct {
+	base     string
+	mu       sync.Mutex
+	n        int
+	approved map[string]bool // device code → approved
+	codes    map[string]string
+}
+
+func (d *linkDesk) serve(w http.ResponseWriter, r *http.Request, good string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.codes == nil {
+		d.codes = map[string]string{}
+	}
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == protocol.LinkPath:
+		d.n++
+		code, device := fmt.Sprintf("BCDF-%04d", d.n), fmt.Sprintf("device-%d", d.n)
+		d.codes[code] = device
+		json.NewEncoder(w).Encode(protocol.LinkStart{DeviceCode: device, UserCode: code, VerificationURI: d.base + "/link",
+			VerificationURIComplete: d.base + "/link?code=" + code, ExpiresIn: 600, Interval: 1})
+	case r.Method == http.MethodPost && r.URL.Path == protocol.LinkPollPath:
+		var p protocol.LinkPollRequest
+		json.NewDecoder(r.Body).Decode(&p)
+		out := protocol.LinkPoll{Status: protocol.LinkPending, Interval: 1}
+		if d.approved[p.DeviceCode] {
+			delete(d.approved, p.DeviceCode)
+			out = protocol.LinkPoll{Status: protocol.LinkApproved, Token: good, NodeID: "n-0000e2e0"}
+		}
+		json.NewEncoder(w).Encode(out)
+	case r.URL.Path == "/link" && r.Method == http.MethodGet:
+		code := r.URL.Query().Get("code")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<!doctype html><title>Link a node</title><p>Code <strong id="code">%s</strong></p>`+
+			`<form method="post" action="/link"><input type="hidden" name="code" value="%s"><button id="approve">Approve</button></form>`,
+			htmlEscape(code), htmlEscape(code))
+	case r.URL.Path == "/link" && r.Method == http.MethodPost:
+		if dev, ok := d.codes[r.FormValue("code")]; ok {
+			d.approved[dev] = true
+			delete(d.codes, r.FormValue("code"))
+			fmt.Fprint(w, `<!doctype html><p id="done">Approved.</p>`)
+			return true
+		}
+		http.Error(w, "unknown code", http.StatusBadRequest)
+	default:
+		return false
+	}
+	return true
+}
+
+func htmlEscape(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
+}
+
 // gateway accepts the good token and refuses others as the real gateway does (401 before the
-// upgrade, with its text).
-func gateway(good string) http.Handler {
+// upgrade, with its text), and links nodes (linkDesk).
+func gateway(good string, links *linkDesk) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if links.serve(w, r, good) {
+			return
+		}
 		if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != good {
 			http.Error(w, "unknown node token", http.StatusUnauthorized)
 			return
