@@ -561,8 +561,12 @@ check_model_file() {
 # ---- end of tier -----------------------------------------------------------------------------
 
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
-work=""
-workdir() { [[ -n "$work" ]] || { work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT; }; }
+work="" token_aside=0
+# on_exit: removes the work folder, and puts an installed token back if the install stopped before
+# its link step (token_aside=1: set_aside_before_link, restore_unlinked).
+on_exit() { [[ -z "$work" ]] || rm -rf "$work"; [[ $token_aside = 0 ]] || restore_unlinked "$conf"; }
+trap on_exit EXIT
+workdir() { [[ -n "$work" ]] || work="$(mktemp -d)"; }
 
 # Download the node binary for this architecture from a release and verify it against the
 # release's SHA256SUMS. This catches corrupt downloads; it does not protect against a
@@ -852,17 +856,35 @@ read_token() {
   [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}; to link the node to your account in the browser instead: --link"
 }
 
-# set_aside_token <installed gateway> <config dir>: after a link that did not happen on a node that
-# has a token (--link on an installed node). That token is the gateway's it was installed for: if the
-# new node.json names another gateway, the token is moved aside (token.env.unlinked) so that it is never
-# sent there, and the node stays off until it is linked.
-set_aside_token() {
-  local now
-  now="$(installed_value "$2/node.json" gateway_url)"
-  if [[ -s "$2/token.env" && "${1:-}" != "$now" ]]; then
-    mv "$2/token.env" "$2/token.env.unlinked"
-    echo "The installed token is for ${1:-another gateway}, not $now: moved aside to $2/token.env.unlinked." >&2
-  fi
+# Linking to another gateway (--link, or a gateway change, on a node that has a token): the installed
+# token is that gateway's and must never be sent to the new one. It is moved aside (token.env.unlinked,
+# with the installed node.json copied to node.json.unlinked) BEFORE the new node.json is installed, so
+# at no point do the new node.json and the old token.env sit side by side: the node's unit
+# (ConditionFileNotEmpty) stays off until `aisathome-node link` writes the new token.
+# set_aside_before_link <config dir> <new node.json>: does that when the gateways differ.
+set_aside_before_link() {
+  local was now
+  was="$(installed_value "$1/node.json" gateway_url)"
+  now="$(installed_value "$2" gateway_url)"
+  [[ -s "$1/token.env" && "$was" != "$now" ]] || return 0
+  rm -f "$1/node.json.unlinked"
+  [[ ! -e "$1/node.json" ]] || cp -p "$1/node.json" "$1/node.json.unlinked"
+  mv -f "$1/token.env" "$1/token.env.unlinked"
+  token_aside=1
+  echo "The installed token is for ${was:-another gateway}, not $now: moved aside to $1/token.env.unlinked until the node is linked." >&2
+}
+
+# restore_unlinked <config dir>: the install stopped before its link step started (an error, Ctrl+C):
+# the token goes back together with the node.json it was made for, so the node is as it was. Once the
+# link step has started, a link that did not happen leaves the token aside and the node off (no
+# token for the new gateway). Without a copy of the old node.json the token stays aside.
+restore_unlinked() {
+  [[ $token_aside = 1 ]] || return 0
+  token_aside=0
+  [[ -e "$1/token.env.unlinked" && -e "$1/node.json.unlinked" ]] || return 0
+  mv -f "$1/node.json.unlinked" "$1/node.json"
+  mv -f "$1/token.env.unlinked" "$1/token.env"
+  echo "The install stopped before linking: the installed token and its node.json are back in $1." >&2
 }
 
 # link_node: the last step without a token: `aisathome-node link` shows a link and a code, waits for
@@ -990,13 +1012,16 @@ fi
 
 # 4. Config and token.
 install -d -o root -g aisathome -m 0750 /etc/aisathome-node
+# Linking (no token now): an installed token for another gateway goes aside before the new node.json.
+[[ -n "$token" ]] || set_aside_before_link "$conf" "$node_config"
 # The token lives only in token.env; drop any token from the copied config.
 python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c.pop("token",None); json.dump(c,sys.stdout,indent=2)' \
   "$node_config" > /etc/aisathome-node/node.json.new
 install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json
 rm -f /etc/aisathome-node/node.json.new
-# Linking (no token now): token.env comes with `aisathome-node link` at the end; an installed one
-# (--link on an installed node) stays until then, so a link that does not happen leaves the node as it was.
+# Linking (no token now): token.env comes with `aisathome-node link` at the end; an installed one for the
+# same gateway (--link on an installed node) stays until then, so a link that does not happen leaves the
+# node as it was.
 if [[ -n "$token" ]]; then
   umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/token.env; umask 022
 fi
@@ -1187,9 +1212,10 @@ fi
 engine_on_gpu "$started"
 speed_check
 linked=1
+# From here a link that does not happen leaves an installed token for another gateway aside.
+token_aside=0
 if [[ $link = 1 ]] && ! link_node; then
   linked=0
-  set_aside_token "$old_gw" "$conf"
 fi
 if [[ -s /etc/aisathome-node/token.env ]]; then
   systemctl restart aisathome-node
