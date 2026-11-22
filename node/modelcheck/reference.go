@@ -333,6 +333,8 @@ var Builtins = []Builtin{
 		SHA256: "51a432cbac8ddc5ca9da86af7b9884db89599a56a1b28ebb47435665ca9db9f1"},
 	{Name: "qwen3.8-27b-iq4xs-b11146-rtx4090", File: "qwen3.8-27b-iq4xs-b11146-rtx4090.json.gz",
 		SHA256: "54aeab626227e0ee3170d69926ed6a6c724d200907dc837fa6ee1414d067c982"},
+	{Name: "qwen3.8-27b-q3kxl-b12323-rtx4060ti", File: "qwen3.8-27b-q3kxl-b12323-rtx4060ti.json.gz",
+		SHA256: "9a05c589e2d7c1e64da03e47120f946f354f8a21b9918483b1f1dc6348f36418"},
 	{Name: "qwen3.8-27b-q3kxl-b11146-rtx4090", File: "qwen3.8-27b-q3kxl-b11146-rtx4090.json.gz",
 		SHA256: "548f2506bb72173674b25b84869ef3fd56d64e7982c853939b1f651f181917d0"},
 }

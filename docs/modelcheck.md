@@ -170,6 +170,7 @@ llama.cpp build if there is one, else the newest; the report says when the build
 |---|---|---|
 | `qwen3.8-27b-iq4xs-b12342-rtx4090` | big tier file, llama.cpp b12342 (`0fb8f15`, the node v0.6 engine, the node's own build), RTX 4090, 1 x 196608, q4_0 KV, speculation off, 2026-11-15 | the default for b12342 (and newer) engines. On the recording machine a second plain run matched it exactly and a run with MTP passed it (largest group 0.0009, no confident flip) |
 | `qwen3.8-27b-iq4xs-b11146-rtx4090` | big tier file, llama.cpp b11146 (`7fe450e`, the node v0.4 engine), RTX 4090, 1 x 196608, q4_0 KV, 2026-10-23 | the reference the limits were set against; kept for older engines. b12342 passes it, plain and with MTP (largest group 0.0032, no confident flip) |
+| `qwen3.8-27b-q3kxl-b12323-rtx4060ti` | standard tier file, llama.cpp b12323 (`93cf736`, the node v0.5.0 bundle's own llama-server), RTX 4060 Ti 16 GB (rented), 1 x 81920, q4_0 KV, speculation off, 2026-11-22 | the default for standard-tier engines from b12323 on; staging's public stand-in for the standard tier's secret and admission sets |
 | `qwen3.8-27b-q3kxl-b11146-rtx4090` | standard tier file, llama.cpp b11146, RTX 4090, 1 x 131072, q4_0 KV, 2026-10-11 | provisional: no honest standard-tier node on another card compared yet |
 
 A new llama.cpp build moves the logprobs about as much as another GPU type does, and the two
