@@ -8,7 +8,7 @@
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --enable-at-boot, --keep-token, --dry-run, --download-only <dir> [--tier standard|big],
+#   --enable-at-boot, --link, --keep-token, --dry-run, --download-only <dir> [--tier standard|big],
 #   --speculation off|mtp|dflash2 (default: off, or what an earlier install chose).
 #
 # Without --model, the tier's pinned model is downloaded from Hugging Face, resumed if
@@ -23,8 +23,11 @@
 # desktop) or big (24 GB+: UD-IQ4_XS, 192k); see README.md. A short speed test runs after the
 # install.
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
-# without installing (no root needed). The node token is read from stdin (never from argv):
-# paste it when asked, or: cat token.txt | sudo ./install.sh ...
+# without installing (no root needed). Your account: at a terminal, press Enter at the token
+# question and the install ends by linking the node to your account in the browser (a link
+# and a code; approve on any device). --link does that without asking. A node token instead
+# (advanced, and for scripts) is read from stdin, never from argv: paste it when asked, or
+# cat token.txt | sudo ./install.sh ...
 # Updating: run the new bundle's install.sh. At a terminal, Enter on an empty line keeps the
 # installed token (--keep-token does so without asking), and a generated node.json keeps the
 # installed node id and gateway URL unless --node-id or --gateway-url is given.
@@ -41,11 +44,11 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
-node_id="" gateway_url="" download_only="" keep_token=0 want_tier="" want_spec=""
+node_id="" gateway_url="" download_only="" keep_token=0 link=0 want_tier="" want_spec=""
 conf=/etc/aisathome-node
 preset="${PRESET:-}" alias="${MODEL_ALIAS:-}"
 while [[ $# -gt 0 ]]; do
@@ -63,10 +66,13 @@ while [[ $# -gt 0 ]]; do
     --preset) preset="$2"; shift 2 ;;
     --enable-at-boot) at_boot=1; shift ;;
     --keep-token) keep_token=1; shift ;;
+    --link) link=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) usage ;;
   esac
 done
+
+[[ $link = 0 || $keep_token = 0 ]] || die "use --link or --keep-token, not both" 2
 
 # Two tiers, chosen by the size of the card only (owner, 2026-10-22/23 and 2026-11-09): one model
 # file per tier, 1 request at a time, and a context set by the card, never by the machine's
@@ -818,24 +824,41 @@ interactive() { [[ -t 0 ]]; }
 
 # read_token <token.env>: the node token from stdin, never from argv. An installed token is
 # kept with --keep-token, or when a person at a terminal presses Enter on an empty line; piped
-# empty input is still an error, so a script never keeps a token by accident.
+# empty input is still an error, so a script never keeps a token by accident. Without an
+# installed token, Enter at a terminal chooses linking (link=1, as --link does): no token now,
+# and the install ends with `aisathome-node link`.
 read_token() {
   local old=""
   [[ -r "$1" ]] && old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1" | head -n 1)"
+  if [[ $link = 1 ]]; then
+    token=""; echo "account: the install ends with linking this node to your account in the browser" >&2; return 0
+  fi
   if [[ $keep_token = 1 ]]; then
     [[ -n "$old" ]] || die "--keep-token: no installed token in $1" 2
     token="$old"; echo "token: keeping the installed one" >&2; return 0
   fi
   if interactive; then
-    if [[ -n "$old" ]]; then echo "Paste the node token (input hidden), or press Enter to keep the installed one:" >&2
-    else echo "Paste the node token (input hidden), then Enter:" >&2; fi
+    if [[ -n "$old" ]]; then echo "Paste a node token (input hidden), or press Enter to keep the installed one (to link the node to another account instead: --link):" >&2
+    else echo "Press Enter to link this node to your account in the browser at the end of the install, or paste a node token (advanced; input hidden):" >&2; fi
   fi
   token=""
   IFS= read -rs token || true
   if [[ -z "$token" && -n "$old" ]] && interactive; then
-    token="$old"; echo "token: keeping the installed one" >&2
+    token="$old"; echo "token: keeping the installed one" >&2; return 0
   fi
-  [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}"
+  if [[ -z "$token" ]] && interactive; then
+    link=1; echo "account: the install ends with linking this node to your account in the browser" >&2; return 0
+  fi
+  [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}; to link the node to your account in the browser instead: --link"
+}
+
+# link_node: the last step without a token: `aisathome-node link` shows a link and a code, waits for
+# the approval in a browser on any device, and writes the node's token to token.env (0600). It
+# returns non-zero when the node was not linked (denied, expired, stopped).
+link_node() {
+  echo
+  echo "Last step: link this node to your AIs@home account."
+  /opt/aisathome-node/bin/aisathome-node link -config "$conf/node.json" -token-env "$conf/token.env" -no-start
 }
 
 # node.json for the tier, when no --node-config is given (inputs validated above).
@@ -896,6 +919,7 @@ if [[ $dry_run = 1 ]]; then
   fi
   echo "tier: $tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
   echo "speed test after the install: at least $min_tps tokens/s after a $speed_ctx-token prompt"
+  [[ $keep_token = 1 ]] || echo "account: $([[ $link = 1 ]] && echo "the install ends" || echo "at a terminal, Enter at the token question ends the install") with linking this node to your account in the browser (aisathome-node link)"
   echo "$llama_exec"
   echo "local UI: $ui_port"
   node_ui_dropin
@@ -958,10 +982,14 @@ python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c.pop("token",None)
   "$node_config" > /etc/aisathome-node/node.json.new
 install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json
 rm -f /etc/aisathome-node/node.json.new
-umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/token.env; umask 022
+# Linking (no token now): token.env comes with `aisathome-node link` at the end; an installed one
+# (--link on an installed node) stays until then, so a link that does not happen leaves the node as it was.
+if [[ -n "$token" ]]; then
+  umask 077; printf 'AISATHOME_NODE_TOKEN=%s\n' "$token" > /etc/aisathome-node/token.env; umask 022
+fi
 # The speculation asked for (not what ran: a later update on a card with room may turn it on).
 printf '%s\n' "${want_spec:-$(installed_spec)}" > /etc/aisathome-node/speculation; chmod 0644 /etc/aisathome-node/speculation
-chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env
+[[ ! -e /etc/aisathome-node/token.env ]] || { chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env; }
 
 # 5. systemd units (the sandbox and llama-server's unit are defined above).
 
@@ -1110,6 +1138,9 @@ Wants=network-online.target
 # handles an engine that is up but hung.
 Requires=aisathome-llama.service
 PartOf=aisathome-llama.service
+# No token yet (the install's link step did not finish): the agent stays off rather than failing
+# and restarting every few seconds; `aisathome-node link` writes the token and starts it.
+ConditionFileNotEmpty=/etc/aisathome-node/token.env
 
 [Service]
 User=aisathome
@@ -1142,9 +1173,17 @@ if ! curl -fs http://127.0.0.1:8000/health >/dev/null; then
 fi
 engine_on_gpu "$started"
 speed_check
-systemctl restart aisathome-node
-sleep 3
-systemctl --no-pager --lines=3 status aisathome-node | tail -3
+linked=1
+if [[ $link = 1 ]] && ! link_node; then
+  linked=0
+fi
+if [[ -s /etc/aisathome-node/token.env ]]; then
+  systemctl restart aisathome-node
+  sleep 3
+  systemctl --no-pager --lines=3 status aisathome-node | tail -3
+else
+  systemctl stop aisathome-llama  # no token: free the GPU until the node is linked
+fi
 cat <<MSG
 
 Installed. Pause the node and free the GPU:  sudo systemctl stop aisathome-node aisathome-llama
@@ -1154,3 +1193,11 @@ Start at boot: $(systemctl is-enabled --quiet aisathome-node 2>/dev/null && echo
 Remove:                                      sudo ./uninstall.sh
 MSG
 node_ui_message
+if [[ $linked = 0 ]]; then
+  if [[ -s /etc/aisathome-node/token.env ]]; then
+    echo "Not linked to another account: the node runs with its installed token. Try again: sudo aisathome-node link" >&2
+  else
+    echo "Not linked yet, so the node is off. Link it to your account (it starts the node): sudo aisathome-node link" >&2
+  fi
+  exit 1
+fi

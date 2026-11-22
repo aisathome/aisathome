@@ -372,6 +372,7 @@ unset -f die check_id pick_node_id
 # /etc/aisathome-node, then a dry run of a copy of the installer that reads it.
 etc="$tmp/etc"; mkdir "$etc"
 eval "$(sed -n '/^installed_value() {/,/^}/p;/^pick_gateway_url() {/,/^}/p;/^pick_node_id() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
+link=0
 die() { echo "$1" >&2; exit "${2:-1}"; }
 printf '{"node_id": "box-1", "gateway_url": "wss://staging.example.org/v1/node/connect", "slots": 2}\n' > "$etc/node.json"
 secret="nt-n-0123abcd.$(printf 'S%.0s' {1..43})"
@@ -406,15 +407,28 @@ tok 0 0 "$etc/token.env" "nt-piped"
 ok "piped token"; has "piped token" "token=nt-piped"
 tok 0 0 "$etc/token.env" ""
 [[ $code -ne 0 ]] || fail "empty piped input kept the token"; has "empty piped input" "--keep-token"
-tok 1 0 "$etc/none.env" ""
-[[ $code -ne 0 ]] || fail "Enter without an installed token"; has "Enter without an installed token" "no token on stdin"
+# Enter at a terminal without an installed token chooses linking: no token, and the install ends with
+# `aisathome-node link`. --link does so without reading stdin. Piped empty input is still an error.
+tokl() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=0; link=$2; read_token "$3"; echo "token=$token link=$link") <<<"$4" 2>&1)"; code=$?; }
+tokl 1 0 "$etc/none.env" ""
+ok "Enter without an installed token"; has "Enter without an installed token" "token= link=1"
+has "Enter without an installed token" "Press Enter to link this node to your account"
+has "Enter without an installed token" "the install ends with linking this node to your account"
+tokl 1 0 "$etc/none.env" "nt-pasted"
+ok "a token pasted at the link question"; has "a token pasted at the link question" "token=nt-pasted link=0"
+tokl 0 1 "$etc/token.env" "nt-ignored"
+ok "--link"; has "--link" "token= link=1"; lacks "--link" "nt-ignored"
+tokl 0 0 "$etc/none.env" ""
+[[ $code -ne 0 ]] || fail "empty piped input without a token"; has "empty piped input without a token" "no token on stdin"
+has "empty piped input without a token" "--link"
 tok 0 1 "$etc/none.env" ""
 usage_err "--keep-token without an installed token"
 # The secret appears only where the test prints it: never in a message.
 for t in "1 0" "0 1"; do
   tok $t "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed"
 done
-unset -f die gw check_id tok installed_value pick_gateway_url pick_node_id read_token interactive
+tokl 0 1 "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--link)"
+unset -f die gw check_id tok tokl installed_value pick_gateway_url pick_node_id read_token interactive
 # A dry run reads the installed node.json (a copy of the installer pointed at the fake one).
 sed "s|^conf=/etc/aisathome-node\$|conf=$etc|" "$installer" > "$tmp/install-conf.sh"
 grep -q "^conf=$etc\$" "$tmp/install-conf.sh" || fail "no conf= line to point at the fake install"
@@ -423,6 +437,19 @@ ok "rerun keeps node.json"; has "rerun keeps node.json" '"node_id": "box-1"'
 has "rerun keeps node.json" '"gateway_url": "wss://staging.example.org/v1/node/connect"'
 out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --node-id n2 --gateway-url wss://gw.example.org/v1/node/connect 2>&1)"; code=$?
 ok "flags over installed"; has "flags over installed" '"node_id": "n2"'; has "flags over installed" '"gateway_url": "wss://gw.example.org/v1/node/connect"'
+
+# Linking in the plan: a dry run says how the install ends; --link with --keep-token is refused; the node's
+# unit stays off without a token (ConditionFileNotEmpty) instead of failing every few seconds.
+run -- --dry-run
+ok "dry run, account"; has "dry run, account" "account: at a terminal, Enter at the token question ends the install with linking this node to your account in the browser (aisathome-node link)"
+run -- --dry-run --link
+ok "dry run, --link"; has "dry run, --link" "account: the install ends with linking this node to your account in the browser"
+run -- --dry-run --keep-token
+lacks "dry run, --keep-token" "account:"
+run -- --dry-run --link --keep-token
+usage_err "--link with --keep-token"; has "--link with --keep-token" "use --link or --keep-token, not both"
+grep -q '^ConditionFileNotEmpty=/etc/aisathome-node/token.env$' "$installer" || fail "the node unit has no ConditionFileNotEmpty on token.env"
+grep -q 'aisathome-node link -config "$conf/node.json" -token-env "$conf/token.env" -no-start' "$installer" || fail "link_node does not run aisathome-node link on the installed files"
 
 # install_libs on its own: a bundle unpacked under umask 077 (owner-only files) must still give
 # libraries the aisathome service user can read, and keep the version symlinks.

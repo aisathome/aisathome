@@ -6,6 +6,7 @@
 // `aisathome-node modelcheck` checks that the local engine and model compute like a published
 // reference (package modelcheck).
 // `aisathome-node pilot` runs the agent as a BOINC task (package pilot; boinc/ has the job file).
+// `aisathome-node link` links the node to an account without pasting a token (package accountlink).
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -44,6 +45,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "pilot" {
 		os.Exit(runPilot(os.Args[2:], os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "link" {
+		os.Exit(runLink(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "service" {
 		os.Exit(runServiceCommand(os.Args[2:], os.Stdout, os.Stderr))

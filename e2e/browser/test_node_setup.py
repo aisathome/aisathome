@@ -2,14 +2,15 @@
 
 No Windows, GPU or gateway needed: e2e/cmd/setup-harness serves the real page, setup steps and
 agent against stand-ins (one RTX 4080, a small model over local TLS, an engine that answers the
-speed test, a gateway that refuses every token but one with 401 "unknown node token"). The test
-builds it from this checkout with Go.
+speed test, a gateway that refuses every token but one with 401 "unknown node token" and links the node
+when its stand-in approval page is approved). The test builds it from this checkout with Go.
 
   cd e2e/browser && uv run --with-requirements requirements.txt pytest -q
 
 SPDX-License-Identifier: Apache-2.0
 """
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -114,16 +115,38 @@ def test_setup_page_from_a_fresh_install_to_a_connected_node(node_page, harness)
     expect(p.locator("#speed-line")).to_contain_text("31.5 tokens/s", timeout=30_000)
     expect(p.locator("#step-speed")).to_have_attribute("data-done", "true")
 
-    # 4. The token: a malformed one is refused on the page; a well-formed one the gateway
-    # does not know starts the node, and the page shows the gateway's reason.
+    # 4. The account. Pasting a token is the advanced way: a malformed one is refused on the page.
+    expect(p.locator("#link")).to_be_enabled()
+    expect(p.locator("#token")).to_be_hidden()
+    p.click("#step-token summary:has-text('Advanced: paste a node token')")
     p.fill("#token", "not-a-token")
     p.click("#start")
     expect(p.locator("#start-msg")).to_contain_text("not a node token")
-    p.fill("#token", WRONG)
-    p.click("#start")
-    expect(p.locator("#running")).to_be_visible()
-    expect(p.locator("#running-line")).to_contain_text("HTTP 401: unknown node token")
-    # The right token from "Use another node token": the node connects.
+    # "Link to my account" opens the approval page with the code filled in and shows the code; once it
+    # is approved there, the node gets its token from the gateway and connects.
+    with p.context.expect_page() as popup_info:
+        p.click("#link")
+    popup = popup_info.value
+    expect(p.locator("#link-panel")).to_be_visible()
+    code = p.locator("#link-code").inner_text()
+    assert code.startswith("BCDF-"), code
+    expect(p.locator("#link-url")).to_have_attribute("href", re.compile(r"/link\?code=" + code + "$"))
+    popup.wait_for_url(re.compile(r"/link\?code=" + code + "$"))  # the tab opens blank, then gets the page
+    expect(popup.locator("#code")).to_have_text(code)
+    popup.click("#approve")
+    expect(popup.locator("#done")).to_be_visible()
+    popup.close()
+    expect(p.locator("#running")).to_be_visible(timeout=30_000)
+    expect(p.locator("#running-line")).to_contain_text("is connected", timeout=30_000)
+    expect(p.locator("#running-msg")).to_contain_text("Linked: this is node n-0000e2e0")
+    expect(p.locator("#link-panel")).to_be_hidden()
+    # A token the gateway does not know ("Advanced: use another node token"): the page shows the
+    # gateway's reason and offers to link again; the right token connects again.
+    p.click("#running summary:has-text('Advanced: use another node token')")
+    p.fill("#new-token", WRONG)
+    p.click("#token-form button[type=submit]")
+    expect(p.locator("#running-line")).to_contain_text("HTTP 401: unknown node token", timeout=30_000)
+    expect(p.locator("#running-line")).to_contain_text("Link it to your account again")
     p.fill("#new-token", GOOD)
     p.click("#token-form button[type=submit]")
     expect(p.locator("#running-line")).to_contain_text("is connected", timeout=30_000)

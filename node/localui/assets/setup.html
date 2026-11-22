@@ -42,13 +42,17 @@
 			<a class="btn btn-primary" href="/">Status page</a>
 			<button class="btn btn-secondary" id="again" type="button">Run the setup again</button>
 		</div>
-		<form id="token-form">
-			<label for="new-token">Use another node token</label>
-			<div class="row">
-				<input id="new-token" class="wide" type="password" autocomplete="off" spellcheck="false" placeholder="nt-n-...">
-				<button class="btn btn-secondary" type="submit">Save and reconnect</button>
-			</div>
-		</form>
+		<div class="row"><button class="btn btn-secondary" id="relink" type="button">Link to another account</button></div>
+		<details class="adv">
+			<summary>Advanced: use another node token</summary>
+			<form id="token-form">
+				<label for="new-token">A node token from your account page</label>
+				<div class="row">
+					<input id="new-token" class="wide" type="password" autocomplete="off" spellcheck="false" placeholder="nt-n-...">
+					<button class="btn btn-secondary" type="submit">Save and reconnect</button>
+				</div>
+			</form>
+		</details>
 		<p class="msg" id="running-msg" role="status"></p>
 	</section>
 
@@ -82,29 +86,45 @@
 			</div>
 		</li>
 		<li class="step" id="step-token">
-			<h2>Node token</h2>
-			<form id="start-form">
-				<label for="token">Create a node on <a id="account2" href="https://aisathome.org/account" target="_blank" rel="noopener noreferrer">your account page</a> and paste its token here</label>
-				<div class="row">
-					<input id="token" class="wide" type="password" autocomplete="off" spellcheck="false" placeholder="nt-n-..." required>
-					<button class="btn btn-primary" id="start" type="submit">Start the node</button>
-				</div>
-				<details class="adv">
-					<summary>Other gateway</summary>
-					<label for="gateway">Gateway address</label>
-					<input id="gateway" class="wide" type="text" spellcheck="false">
-				</details>
-			</form>
-			<p class="msg" id="start-msg" role="status"></p>
+			<h2>Your account</h2>
+			<p class="muted">Link this node to your AIs@home account. The button opens the approval page in your browser with the code filled in: sign in, check the code and approve, and the node starts.</p>
+			<div class="row"><button class="btn btn-primary" id="link" type="button">Link to my account</button></div>
+			<p class="msg" id="link-msg" role="status"></p>
+			<details class="adv">
+				<summary>Advanced: paste a node token</summary>
+				<form id="start-form">
+					<label for="token">Create a node on <a id="account2" href="https://aisathome.org/account" target="_blank" rel="noopener noreferrer">your account page</a> and paste its token here</label>
+					<div class="row">
+						<input id="token" class="wide" type="password" autocomplete="off" spellcheck="false" placeholder="nt-n-..." required>
+						<button class="btn btn-primary" id="start" type="submit">Start the node</button>
+					</div>
+				</form>
+				<p class="msg" id="start-msg" role="status"></p>
+			</details>
+			<details class="adv">
+				<summary>Other gateway</summary>
+				<label for="gateway">Gateway address</label>
+				<input id="gateway" class="wide" type="text" spellcheck="false">
+			</details>
 		</li>
 	</ol>
 
+
+	<section class="panel" id="link-panel" hidden aria-labelledby="link-h" aria-live="polite">
+		<h2 id="link-h">Approve in your browser</h2>
+		<p>Code: <code class="code" id="link-code"></code></p>
+		<p>Check that the approval page shows this same code, then approve. The node starts on its own afterwards.</p>
+		<p class="muted">The browser did not open, or you want to use another device such as your phone? Open
+			<a id="link-url" href="#" target="_blank" rel="noopener noreferrer"></a> there. The code works until <span id="link-until"></span>.</p>
+		<p class="muted">Only you should approve it: anyone who approves this code adds this computer to their account.</p>
+		<div class="row"><button class="btn btn-secondary" id="link-cancel" type="button">Cancel</button></div>
+	</section>
 
 	<p class="muted small" id="leave-row" hidden><button class="link" id="leave" type="button">Back to the node without changes</button></p>
 </main>
 
 <footer class="foot">
-	<p>Served by the node agent on this computer only (127.0.0.1). The token stays on this computer; the page never shows it again.</p>
+	<p>Served by the node agent on this computer only (127.0.0.1). The token stays on this computer; the page never shows it.</p>
 </footer>
 </body>
 </html>

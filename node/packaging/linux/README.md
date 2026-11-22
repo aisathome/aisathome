@@ -20,8 +20,13 @@ curl -LO $base/aisathome-node-bundle-linux-amd64.tar.xz -LO $base/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
 ./install.sh --dry-run                 # checks only, no root needed
-sudo ./install.sh    # then paste the node token
+sudo ./install.sh    # press Enter at the token question: the install ends with the link step
 ```
+
+The link step (`aisathome-node link`) prints a link and a code: open the link on any
+device (a phone works on a headless server), sign in, check that the page shows the same code and
+approve. The node gets its own token, written to `/etc/aisathome-node/token.env` (root, 0600), and
+starts. Link it again later, or to another account: `sudo aisathome-node link`.
 
 Requirements:
 
@@ -114,9 +119,10 @@ For other GPUs, older systems, or if you prefer to compile.
   arm64) or your own build (`go build ./node/cmd/aisathome-node`, then `--node-bin`).
 - Optional: a GGUF model you already have (`--model`) and your own `node.json`
   (`--node-config`, see `examples/node.json`).
-- A node token: sign in at `https://aisathome.org/account`, "Your nodes", "Add a node". The
-  token carries the node's id, so `node_id` (and `--node-id`) is needed only with tokens
-  from a gateway's config.
+- Your account: the install ends by linking the node to it (above). Or, advanced, a node token:
+  sign in at `https://aisathome.org/account`, "Your nodes", "Add a node", and paste it at the
+  token question. The token carries the node's id, so `node_id` (and `--node-id`) is needed
+  only with tokens from a gateway's config.
 
 ```bash
 sudo ./install.sh --llama-build llama.cpp/build --node-release latest
@@ -132,9 +138,15 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   install a known version; `latest` skips pre-releases.
 - `--node-bin ./aisathome-node` installs your own build instead.
 - An explicit `--llama-build` wins over the bundle's `llama-server` and skips its checks.
-- The node token is read from stdin (hidden), never from the command line. On an installed
-  node, Enter on an empty line at the prompt keeps the installed token, and `--keep-token`
-  keeps it without asking (for scripts; empty piped input is still an error).
+- Your account: at a terminal, Enter on an empty line at the token question (or `--link`)
+  ends the install with `aisathome-node link`. Until the link is approved the node stays off;
+  not approved within 10 minutes, the installer stops and says how to link later
+  (`sudo aisathome-node link`, which also starts the node).
+- A node token instead (advanced, and for scripts: `cat token.txt | sudo ./install.sh`) is read
+  from stdin (hidden), never from the command line. On an installed node, Enter on an empty
+  line at the prompt keeps the installed token, and `--keep-token` keeps it without asking (for
+  scripts; empty piped input is still an error). `--link` on an installed node links it to
+  another account; until that is approved it keeps its installed token.
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.

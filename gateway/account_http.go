@@ -22,6 +22,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aisathome/aisathome/protocol"
 )
 
 const (
@@ -69,6 +71,11 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /account/ops", g.handleOps)
 	mux.HandleFunc("POST /account/ops/clear", smallForm(g.handleOpsClear))
 	mux.HandleFunc("GET /account/assets/{name}", handleAsset)
+	// Linking a node without pasting a token (nodelink.go): the node's two calls, and the approval page.
+	mux.HandleFunc("POST "+protocol.LinkPath, g.handleLinkStart)
+	mux.HandleFunc("POST "+protocol.LinkPollPath, g.handleLinkPoll)
+	mux.HandleFunc("GET /link", g.handleLinkPage)
+	mux.HandleFunc("POST /link", smallForm(g.handleLinkForm))
 }
 
 // smallForm accepts only short URL-encoded forms. The account pages upload nothing, and
@@ -187,10 +194,7 @@ func (g *Gateway) takeFlow(w http.ResponseWriter, r *http.Request, provider stri
 // link can: never with the contact address, whose consent only the sign-in form (a same-origin
 // POST) carries, so a link from elsewhere cannot tick the box for someone.
 func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
-	f := oauthFlow{provider: r.URL.Query().Get("provider")}
-	if r.URL.Query().Get("next") == "chat" {
-		f.next = "chat"
-	}
+	f := oauthFlow{provider: r.URL.Query().Get("provider"), next: cleanNext(r.URL.Query().Get("next"))}
 	g.startLogin(w, r, f)
 }
 
@@ -202,10 +206,7 @@ func (g *Gateway) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
 		return
 	}
-	f := oauthFlow{provider: r.PostFormValue("provider")}
-	if r.PostFormValue("next") == "chat" {
-		f.next = "chat"
-	}
+	f := oauthFlow{provider: r.PostFormValue("provider"), next: cleanNext(r.PostFormValue("next"))}
 	if r.PostFormValue("contact") == "1" {
 		f.contact = "1"
 	}
@@ -311,6 +312,10 @@ func (g *Gateway) signedIn(w http.ResponseWriter, r *http.Request, a Account, er
 	}
 	if next == contactNone { // the account page says that no address was available
 		http.Redirect(w, r, g.acfg.PublicURL+"/account?contact=none#contact", http.StatusFound)
+		return
+	}
+	if p, ok := nextPath(next); ok && a.Status != StatusBanned { // back to the node's link (nodelink_http.go)
+		http.Redirect(w, r, g.acfg.PublicURL+p, http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusFound)
@@ -423,7 +428,7 @@ func (g *Gateway) handleForwardAuth(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) handleAccount(w http.ResponseWriter, r *http.Request) {
 	id, ok := g.session(r)
 	if !ok {
-		g.accountPage(w, r, http.StatusOK, pageData{Next: r.URL.Query().Get("next") == "chat"})
+		g.accountPage(w, r, http.StatusOK, nextData(r.URL.Query().Get("next")))
 		return
 	}
 	d := g.accountData(id)
@@ -435,6 +440,17 @@ func (g *Gateway) handleAccount(w http.ResponseWriter, r *http.Request) {
 		d.ContactNone += ", so none is stored and you get no notices. Check that your address there is verified, then try again."
 	}
 	g.accountPage(w, r, http.StatusOK, d)
+}
+
+// nextData is the sign-in page's data for a "next" (cleanNext): back to the chat or to a node's link.
+func nextData(v string) pageData {
+	switch n := cleanNext(v); {
+	case n == "chat":
+		return pageData{Next: true}
+	case n != "":
+		return pageData{LinkNext: n, LinkCode: strings.TrimPrefix(strings.TrimPrefix(n, "link"), ":")}
+	}
+	return pageData{}
 }
 
 func (g *Gateway) accountData(id string) pageData {
@@ -607,8 +623,10 @@ type pageData struct {
 	Email    bool
 	Separate string // "GitHub, Google and email" when more than one way is on offer
 	SignedIn bool
-	Admin    bool // the account is one of accounts.admins: the page links to /account/ops
-	Next     bool
+	Admin    bool   // the account is one of accounts.admins: the page links to /account/ops
+	Next     bool   // sign-in returns to the chat
+	LinkNext string // sign-in returns to the link page: "link" or "link:<code>" (cleanNext)
+	LinkCode string // the code of LinkNext, to name on the sign-in page
 	Account  Account
 	Position int
 	NewKey   string
@@ -707,6 +725,8 @@ func (g *Gateway) accountPage(w http.ResponseWriter, r *http.Request, status int
 	}
 	if d.Next {
 		d.Back = "/account?next=chat"
+	} else if d.LinkNext != "" {
+		d.Back = "/account?next=" + url.QueryEscape(d.LinkNext)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // a new key must not end up in a cache
@@ -752,7 +772,8 @@ var accountTmpl = newPage("account", template.FuncMap{
 account only to tell accounts apart. We keep only its user id ({{if .GitHub}}GitHub's numeric
 id{{end}}{{if and .GitHub .Google}}, {{end}}{{if .Google}}Google's account identifier{{end}}): no name, no password, and
 no email unless you tick the box below.</p>{{end}}
-<form class="form" id="signin" method="post" action="{{if .Email}}/account/email{{else}}/account/login{{end}}">{{if .Next}}<input type="hidden" name="next" value="chat">{{end}}
+{{if .LinkNext}}<p id="signin-link"><strong>Sign in to link your node{{with .LinkCode}} (code <code>{{.}}</code>){{end}}.</strong> You come back to the link afterwards.</p>{{end}}
+<form class="form" id="signin" method="post" action="{{if .Email}}/account/email{{else}}/account/login{{end}}">{{if .Next}}<input type="hidden" name="next" value="chat">{{else if .LinkNext}}<input type="hidden" name="next" value="{{.LinkNext}}">{{end}}
 {{if .Email}}<button class="default-submit" tabindex="-1" aria-hidden="true">Email me a code</button>{{end}}
 {{if or .GitHub .Google}}<div class="signin">{{if .GitHub}}<button class="btn-gh" formaction="/account/login" formnovalidate name="provider" value="github">`+githubMark+`<span>Sign in with GitHub</span></button>{{end}}
 {{if .Google}}<button class="btn-google" formaction="/account/login" formnovalidate name="provider" value="google">{{if .Theme}}<img src="{{asset (printf "google-signin-%s.svg" .Theme)}}" alt="Sign in with Google" width="180" height="40">{{else}}<picture>

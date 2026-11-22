@@ -13,3 +13,4 @@ var errNotWindows = errors.New("only on Windows; on Linux, install.sh sets up th
 func serviceInstall(installOptions, io.Writer) error { return errNotWindows }
 func serviceUninstall(io.Writer) error               { return errNotWindows }
 func serviceStop(io.Writer) error                    { return errNotWindows }
+func serviceRestart(io.Writer) error                 { return errNotWindows }

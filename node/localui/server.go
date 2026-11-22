@@ -63,6 +63,8 @@ type Setup interface {
 	Cancel()
 	Start(token, gateway string) error
 	ChangeToken(token, gateway string) error
+	Link(gateway string) error // link to an account in the browser, in place of a token
+	LinkCancel()
 	Enter() error
 	Leave() error
 }

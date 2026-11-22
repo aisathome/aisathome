@@ -53,6 +53,22 @@ The `protocol` field (`"0.1"`) is frozen: gateways before versions refuse a node
 | `done` | node → gw | `req_id`, `usage` | finished. `usage` = `{prompt_tokens, completion_tokens, cached_tokens, duration_ms}` |
 | `error` | node → gw | `req_id`, `error` | failed. Before any `chunk`, the gateway may retry on another node |
 
+## Linking a node to an account
+
+Before a node has a token it can get one through a person's browser (a device code flow in the style
+of RFC 8628; Go types in `link.go`). Both calls are HTTPS `POST` with JSON on the gateway's address
+(the connect URL's host), without authentication:
+
+| call | body | answer |
+|---|---|---|
+| `/v1/node/link` | `name`, `gpu`, `vram_mib`, `os`, `agent` (all optional: what the node reports about itself; shown to the person, not checked) | `device_code` (the node's secret), `user_code` (e.g. `KXQT-4821`), `verification_uri`, `verification_uri_complete` (with the code), `expires_in` (s), `interval` (s) |
+| `/v1/node/link/poll` | `device_code` | `status`: `pending` or `slow_down` (wait `interval` s, then poll again), `approved` (`token`, `node_id`: given once), `denied`, or `expired` (unknown, expired or used: ask for a new code) |
+
+The node shows the person `user_code` and `verification_uri_complete`, keeps `device_code` to itself,
+and polls every `interval` seconds until the answer is not `pending` or `slow_down`. A gateway that
+refuses to hand out a code answers HTTP 429 with an `error.message` (too many codes from the address
+or the network). The token is then used as any node token (above).
+
 ## Gateway behaviour (reference implementation)
 
 - **Routing:** users may name a node model or a **role** (`fast`, `deep`, `agent`). The
