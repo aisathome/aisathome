@@ -246,6 +246,8 @@ Nodes can be linked once it is let in; the code on the node works for 10 minutes
 {{else if ne .Status "active"}}<div class="card" id="link-closed"><p>This account can no longer use AIs@home.</p></div>
 {{else if eq .Done "approved"}}<div class="card ok" id="link-approved" role="status"><p><strong>Approved.</strong> {{if .Name}}{{.Name}} ({{end}}<code>{{.NodeID}}</code>{{if .Name}}){{end}} is now one of
 your nodes. It picks up its node token within a few seconds and starts; it is listed under <a href="/account#nodes">Your nodes</a>, where you can revoke it.</p>
+<p id="link-confirm"><strong>One more step: confirm that it is your machine.</strong> Under <a href="/account#nodes">Your nodes</a>, press
+"This is my machine" on it. Until then it is not one of your own nodes and gets none of your personal data.</p>
 {{if .RulesOn}}{{if .TermsAccepted}}<p class="small" id="terms-created">Running this node means you accept the {{template "terms-link" .}} (accepted {{day .TermsSince}}). You can switch your nodes to science only on your account page.</p>
 {{else if .TermsOptedOut}}<p class="small" id="terms-created">Your nodes do science only, as you chose; this one too.</p>{{end}}{{end}}</div>
 {{else if eq .Done "denied"}}<div class="card" id="link-denied" role="status"><p><strong>Denied.</strong> The node gets no token and is not linked. If you did not start this
@@ -262,8 +264,8 @@ Check that the node shows this same code.</p>
 <div class="card" id="link-what"><h2>What approving does</h2>
 <ul><li>The node becomes one of your nodes, as if you had added it on your account page, and gets its own node token. It is listed under
 <a href="/account#nodes">Your nodes</a>, where you can revoke it at any time.</li>
-<li>What it serves counts for your account. Your own chats and API requests can go to it like to any of your nodes, also those with
-personal data, which go only to your own nodes.</li>
+<li>What it serves counts for your account. It becomes one of <em>your own</em> nodes, which may get your own chats with personal data,
+only once you confirm on your account page that it is your machine ("This is my machine"). Until then it gets none of your personal data.</li>
 <li>Like your other nodes, it answers other people's chats only under the operator terms; otherwise it does science only.</li>
 <li><strong>Only approve a code that a machine you run shows you.</strong> If someone sent you this code or link, deny it: approving
 would link their machine to your account.</li></ul></div>

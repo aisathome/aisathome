@@ -17,9 +17,11 @@
 // not stored): codes asked per address and network-wide, pending links at once, wrong codes typed per
 // account and per address, and polls faster than the interval (slow_down).
 //
-// The risk that stays (RFC 8628 §5.4, remote phishing): someone sends a person their own code, and the
-// person approves it. That links the sender's machine to the person's account as one of its nodes: the
-// person's own requests may then go to it like to any of their nodes. The page says what is being
+// The risk RFC 8628 §5.4 names (remote phishing): someone sends a person their own code, and the person
+// approves it, linking the sender's machine to the person's account. So a linked node is not the account's
+// own node until its owner confirms it once on the account page ("This is my machine",
+// AccountNode.Confirmed; owner 2026-11-22): until then it gets none of the account's personal data and
+// serves the account's requests only as a stranger's node would (route.own). The page says what is being
 // approved, shows the node's own details and says to approve only a code a machine of one's own shows.
 //
 // SPDX-License-Identifier: Apache-2.0

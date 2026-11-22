@@ -313,7 +313,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp.GPU = s.gpu.get(r.Context())
 	}
 	if s.opt.Setup != nil {
-		ss := s.opt.Setup.State()
+		ss := s.setupState(r)
 		resp.Setup = &ss
 	}
 	writeJSON(w, http.StatusOK, resp)

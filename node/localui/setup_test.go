@@ -225,3 +225,22 @@ func TestPrintStatusEngineProcess(t *testing.T) {
 		}
 	}
 }
+
+// A live link code goes only to a signed-in page: the status and the setup state without the local
+// password show that a link waits, not its code or link.
+func TestSetupLinkCodeNeedsPassword(t *testing.T) {
+	e, _ := newSetupEnv(t, setupflow.State{Mode: "setup", Link: &setupflow.Link{Status: setupflow.LinkWaiting, Code: "KXQT-4821",
+		URL: "https://aisathome.org/link?code=KXQT-4821", Page: "https://aisathome.org/link"}})
+	for _, p := range []string{"/api/status", "/api/setup"} {
+		b := body(e.req(t, "GET", p, "", nil))
+		if strings.Contains(b, "KXQT-4821") || !strings.Contains(b, `"status":"waiting"`) {
+			t.Errorf("%s without a session: %s", p, b)
+		}
+	}
+	c := e.login(t)
+	for _, p := range []string{"/api/status", "/api/setup"} {
+		if b := body(e.req(t, "GET", p, "", nil, c)); !strings.Contains(b, "KXQT-4821") {
+			t.Errorf("%s signed in: no code", p)
+		}
+	}
+}

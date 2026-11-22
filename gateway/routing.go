@@ -164,9 +164,10 @@ func (n *nodeConn) projectLoad(project string) int {
 
 // own reports whether n is the requester's own node: a standalone node registered to the requesting
 // account. Not a pilot: the connector binds it to the account, and a connector (or its host) could bind
-// a stranger's machine.
+// a stranger's machine. Not a linked node its owner has not confirmed yet: a code someone else sent may
+// have linked a stranger's machine (nodelink.go). Caller holds g.mu (n.unconfirmed).
 func (rt *route) own(n *nodeConn) bool {
-	return rt.self != "" && n.operator == rt.self && n.pilot == ""
+	return rt.self != "" && n.operator == rt.self && n.pilot == "" && !n.unconfirmed
 }
 
 // allows reports whether n may see the request, ignoring context and free slots. Every node is
@@ -489,7 +490,7 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 		// Personal data waits only for the requester's own node, and only while one is online (just
 		// busy), or while its registered nodes may still reconnect after a gateway start. Otherwise it
 		// is refused at once (unavailable): no other node will ever take it.
-		if rt.pii != "" && g.servesFor(rt) == 0 && (time.Since(g.start) >= startupGrace || !g.hasNodes(rt.acct)) {
+		if rt.pii != "" && g.servesFor(rt) == 0 && (time.Since(g.start) >= startupGrace || !g.hasOwnNodes(rt.acct)) {
 			return nil, "", personal
 		}
 		if !waiting {
@@ -708,6 +709,12 @@ func (g *Gateway) rulesBlocked(rt *route) bool {
 	return g.servesFor(&off) > 0
 }
 
+// hasOwnNodes reports whether account id has registered nodes of its own (they may be offline): not a
+// linked node waiting for its owner's confirmation.
+func (g *Gateway) hasOwnNodes(id string) bool {
+	return g.accounts != nil && id != "" && g.accounts.confirmedNodes(id)
+}
+
 // hasNodes reports whether account id has registered nodes (they may be offline).
 func (g *Gateway) hasNodes(id string) bool {
 	if g.accounts == nil || id == "" {
@@ -732,13 +739,13 @@ func personalDataError(w http.ResponseWriter, kind string) {
 // ownNodesOffline reports whether the requesting account has registered nodes and none of
 // them is connected.
 func (g *Gateway) ownNodesOffline(rt *route) bool {
-	if rt.self == "" || !g.hasNodes(rt.acct) {
+	if rt.self == "" || !g.hasOwnNodes(rt.acct) {
 		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for _, n := range g.node {
-		if n.operator == rt.self {
+		if n.operator == rt.self && !n.unconfirmed {
 			return false
 		}
 	}

@@ -15,7 +15,9 @@ and **(site)** are live on aisathome.org once deployed.
   ends with this step (press Enter at the token question, or `--link`), and `sudo aisathome-node link`
   does it again later; on Windows the setup page's **Link to my account** button opens the approval
   page with the code filled in. Approving creates the node like **Add a node** (the same limits and
-  operator terms line); pasting a token stays, as the advanced way. Codes work 10 minutes, once, and
+  operator terms line). A node linked with a code becomes one of your own nodes, which may get your
+  personal data, only once you press **This is my machine** on it on your account page. Pasting a
+  token stays, as the advanced way. Codes work 10 minutes, once, and
   are kept only in memory, as hashes. (gateway, node, site)
 - **Findable by search engines and AI answer engines.** `/robots.txt` lets every crawler read the
   public site (AI crawlers too; only `/account`, `/v1/`, `/stats/` are left out) and names the

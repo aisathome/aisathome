@@ -41,27 +41,30 @@ func (g *Gateway) nodesOnline() int {
 
 type nodeConn struct {
 	id       string
-	operator string    // the config token's operator, or the account's pseudonym
-	token    string    // to disconnect the node if its token is revoked
-	account  string    // the account that registered it; "" for a token from the config
-	ip       string    // client address it connected from (account nodes: maxNodesPerIP)
-	held     bool      // stopped by a guard until the operator clears it; guarded by g.mu
-	probEnd  time.Time // account nodes: no agents (requests with tools) before; guarded by g.mu
-	agent    string    // the node software's version from its hello ("aisathome-node/0.2.0"), "" if none or invalid
-	proto    int       // the protocol version it speaks (hello's protocol_version; 1 if none)
-	since    time.Time // when it connected
-	models   []protocol.ModelInfo
-	conn     *websocket.Conn
-	wmu      sync.Mutex // serialises writes
-	mu       sync.Mutex
-	pending  map[string]*pendingReq
-	inflight int                 // slots reserved by pick, freed once the node is finished with the request (relay.free); guarded by mu
-	projects map[string]int      // of inflight, the science projects' requests (share cap); guarded by mu
-	work     map[string]nodeWork // the requests in flight, by id, for the operator's page (nodework.go); guarded by mu
-	active   int
-	paused   bool // from the last heartbeat: take no new requests; guarded by mu
-	lastSeen time.Time
-	closed   chan struct{}
+	operator string // the config token's operator, or the account's pseudonym
+	token    string // to disconnect the node if its token is revoked
+	account  string // the account that registered it; "" for a token from the config
+	ip       string // client address it connected from (account nodes: maxNodesPerIP)
+	// unconfirmed: a linked node its owner has not confirmed as their machine yet (AccountNode.unconfirmed):
+	// not its account's own node; guarded by g.mu, updated by sweepNodes.
+	unconfirmed bool
+	held        bool      // stopped by a guard until the operator clears it; guarded by g.mu
+	probEnd     time.Time // account nodes: no agents (requests with tools) before; guarded by g.mu
+	agent       string    // the node software's version from its hello ("aisathome-node/0.2.0"), "" if none or invalid
+	proto       int       // the protocol version it speaks (hello's protocol_version; 1 if none)
+	since       time.Time // when it connected
+	models      []protocol.ModelInfo
+	conn        *websocket.Conn
+	wmu         sync.Mutex // serialises writes
+	mu          sync.Mutex
+	pending     map[string]*pendingReq
+	inflight    int                 // slots reserved by pick, freed once the node is finished with the request (relay.free); guarded by mu
+	projects    map[string]int      // of inflight, the science projects' requests (share cap); guarded by mu
+	work        map[string]nodeWork // the requests in flight, by id, for the operator's page (nodework.go); guarded by mu
+	active      int
+	paused      bool // from the last heartbeat: take no new requests; guarded by mu
+	lastSeen    time.Time
+	closed      chan struct{}
 	// Pilots (connector.go): id is the pilot id. Set before the node is registered, never changed.
 	pilot     string    // the pilot id; "" for a node
 	connector string    // its connector
@@ -223,7 +226,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	case pl != nil:
 		first = pl.first
 	case account != "":
-		first, _ = g.accounts.nodeLive(keyHash(token))
+		first, n.unconfirmed, _ = g.accounts.nodeLive(keyHash(token))
 	}
 	if pl != nil {
 		// The record decides before the pilot is routable: one reported, ended or past its deadline

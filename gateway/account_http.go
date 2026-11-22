@@ -55,6 +55,7 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/nodes", smallForm(g.handleNodeCreate))
 	mux.HandleFunc("POST /account/nodes/revoke", smallForm(g.handleNodeRevoke))
 	mux.HandleFunc("POST /account/nodes/pref", smallForm(g.handleNodePref))
+	mux.HandleFunc("POST /account/nodes/confirm", smallForm(g.handleNodeConfirm))
 	mux.HandleFunc("POST /account/username", smallForm(g.handleUsername))
 	mux.HandleFunc("POST /account/logout", smallForm(g.handleLogout))
 	mux.HandleFunc("POST /account/theme", smallForm(g.handleTheme))
@@ -469,7 +470,10 @@ func (g *Gateway) accountData(id string) pageData {
 		work, speed := g.nodeWorkView(id, n.ID)
 		d.Nodes = append(d.Nodes, nodeRow{ID: n.ID, Name: n.Name, Created: n.Created, Status: g.nodeStatus(id, n.ID),
 			Version: version, Protocol: proto, CreditToday: fmtCredit(c.TodayAt(now)), CreditTotal: fmtCredit(c.total()),
-			Work: work, Speed: speed, Chat: g.chatView(id, n.ID)})
+			Work: work, Speed: speed, Chat: g.chatView(id, n.ID), Unconfirmed: n.unconfirmed(), Confirmed: n.Confirmed})
+		if n.unconfirmed() {
+			d.Unconfirmed++
+		}
 	}
 	if c := g.credit.account(id); c != nil {
 		d.CreditToday, d.CreditTotal, d.CreditRAC = fmtCredit(c.TodayAt(now)), fmtCredit(c.Total), fmtCredit(c.RAC(now))
@@ -581,6 +585,24 @@ func (g *Gateway) handleNodeRevoke(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, g.acfg.PublicURL+"/account", http.StatusSeeOther)
 }
 
+// handleNodeConfirm takes "This is my machine" for a linked node (AccountNode.Confirmed): from then on it
+// is the account's own node, which may get its personal data.
+func (g *Gateway) handleNodeConfirm(w http.ResponseWriter, r *http.Request) {
+	id, ok := g.session(r)
+	if ok && g.sameOrigin(r) {
+		nodeID := r.FormValue("id")
+		if err := g.accounts.ConfirmNode(id, nodeID, time.Now()); err != nil {
+			d := g.accountData(id)
+			d.Error = err.Error()
+			g.accountPage(w, r, http.StatusBadRequest, d)
+			return
+		}
+		g.log.Info("linked node confirmed by its owner", "node", nodeID, "operator", g.pseudonym(id))
+		g.sweepNodes() // it is the account's own node now, not at the next sweep
+	}
+	http.Redirect(w, r, g.acfg.PublicURL+"/account#nodes", http.StatusSeeOther)
+}
+
 func (g *Gateway) handleNodePref(w http.ResponseWriter, r *http.Request) {
 	id, ok := g.session(r)
 	if ok && g.sameOrigin(r) {
@@ -638,6 +660,7 @@ type pageData struct {
 	Once     string // one-time token for the "create a key" form
 
 	Nodes        []nodeRow
+	Unconfirmed  int    // linked nodes waiting for "This is my machine"
 	NewNode      string // a new node token, shown once
 	NewNodeID    string
 	NodeOnce     string // one-time token for the "add a node" form
@@ -677,6 +700,10 @@ type nodeRow struct {
 	Work  []workItem
 	Speed string
 	Chat  string // while connected: whether it serves people's requests under the chat rules (chatrules.go)
+	// Unconfirmed: a linked node its owner has not confirmed as their machine (AccountNode.unconfirmed);
+	// Confirmed: when they did.
+	Unconfirmed bool
+	Confirmed   *time.Time
 }
 
 // createToken ties a "create a key" form to the account's KeySeq (see AccountStore.AddKey).
@@ -846,6 +873,8 @@ See <a href="/use/api/">API and opencode</a>.</p></div>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network
 strips who asked and sends it no personal data. Requests with tools reach it only from users who allow that{{if .Probation}},
 and only after a probation of {{.Probation}}{{end}}.</p>
+{{if .Unconfirmed}}<p class="card confirm" id="nodes-unconfirmed" role="status"><strong>{{if eq .Unconfirmed 1}}A node you linked with a code waits{{else}}{{.Unconfirmed}} nodes you linked with a code wait{{end}} for you to confirm that {{if eq .Unconfirmed 1}}it is your machine{{else}}they are your machines{{end}}</strong>
+(below). Until then {{if eq .Unconfirmed 1}}it gets{{else}}they get{{end}} none of your personal data.</p>{{end}}
 {{if .CreditTotal}}<p>Credit: <strong>{{.CreditToday}}</strong> today, <strong>{{.CreditTotal}}</strong> in total
 (recent average {{.CreditRAC}} a day). <a href="/node/credit/">How credit works</a>.</p>{{end}}
 {{if .Nodes}}<div class="table-wrap"><table><tr><th>Node</th><th>Status</th><th>Version</th><th class="num">Credit today</th><th class="num">Credit total</th><th>Created</th><th></th></tr>
@@ -856,6 +885,10 @@ and only after a probation of {{.Probation}}{{end}}.</p>
 <button class="btn danger">Revoke</button></form></td></tr>
 <tr class="node-now" data-node-now="{{.ID}}"><td colspan="7"><span data-node-speed><span class="mut">Average speed:</span> {{if .Speed}}{{.Speed}}{{else}}not measured yet{{end}}</span>
 {{with .Chat}}<span data-node-chat><span class="mut">Serves:</span> {{.}}</span>{{end}}
+{{if .Unconfirmed}}<span class="confirm" data-node-confirm><strong>Linked with a code: is this your machine?</strong> Until you confirm it,
+it is not one of your own nodes: it gets none of your personal data, and your own requests reach it only as they would a stranger's node.
+<form method="post" action="/account/nodes/confirm"><input type="hidden" name="id" value="{{.ID}}"><button class="btn secondary sm">This is my machine</button></form>
+If you did not set it up yourself, revoke it.</span>{{else if .Confirmed}}<span class="mut small" data-node-confirmed>Linked with a code; you confirmed it as your machine on {{day .Confirmed}}.</span>{{end}}
 {{if .Protocol}}<span data-node-work><span class="mut">Working on now:</span> {{if .Work}}{{range $i, $w := .Work}}{{if $i}}; {{end}}{{if .Href}}<a href="{{.Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{with .Detail}} <span class="mut">({{.}})</span>{{end}}{{end}}{{else}}nothing{{end}}</span>{{end}}</td></tr>{{end}}</table></div>
 <p class="hint">Working on now is as of this page load: reload to see it change. Requests from people show as chat or API
 requests only, never what they asked.</p>
