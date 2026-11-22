@@ -148,9 +148,13 @@ func (c *Client) Wait(ctx context.Context, s protocol.LinkStart) (protocol.LinkP
 		}
 		switch p.Status {
 		case protocol.LinkApproved:
-			if _, ok := node.TokenNodeID(p.Token); !ok {
-				return p, errors.New("the gateway approved the link but sent no valid node token")
+			// The token is written into token.env (a systemd EnvironmentFile): only the exact form the
+			// gateway issues is taken, so a gateway cannot add lines or settings to it.
+			id, ok := node.IssuedTokenNodeID(p.Token)
+			if !ok || (p.NodeID != "" && p.NodeID != id) {
+				return protocol.LinkPoll{}, errors.New("the gateway approved the link but sent no valid node token")
 			}
+			p.NodeID = id
 			return p, nil
 		case protocol.LinkDenied:
 			return p, ErrDenied

@@ -28,3 +28,22 @@ func TestPilotNodeID(t *testing.T) {
 		t.Errorf("node id %q, want the pilot's", a.cfg.NodeID)
 	}
 }
+
+// IssuedTokenNodeID takes exactly the form the gateway issues: nt-n-<8 hex>.<43 base64url>.
+func TestIssuedTokenNodeID(t *testing.T) {
+	secret := "AZaz09-_" + strings.Repeat("x", 35)
+	if id, ok := IssuedTokenNodeID("nt-n-0123abcd." + secret); !ok || id != "n-0123abcd" {
+		t.Fatalf("issued token: %q %v", id, ok)
+	}
+	for _, bad := range []string{
+		"", "nt-n-0123abcd", "nt-n-0123abcd.", "nt-n-0123ABCD." + secret, "pc-0123456789ab." + secret,
+		"nt-n-0123abcd." + secret + "\nX=1", "nt-n-0123abcd." + secret[:42], "nt-n-0123abcd." + secret + "A",
+		"nt-n-0123abcd." + secret[:42] + "=", "nt-n-0123abcd." + secret[:42] + " ", "nt-n-0123abcd." + secret[:42] + "\n",
+		"nt-n-0123abcd." + secret[:42] + "+", "nt-n-0123abcd." + secret[:42] + "/", "nt-n-0123abcd." + secret[:42] + ".",
+		"nt-n-0123abcd." + secret[:41] + "\u00e9", " nt-n-0123abcd." + secret[:42],
+	} {
+		if _, ok := IssuedTokenNodeID(bad); ok {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

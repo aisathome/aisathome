@@ -192,6 +192,33 @@ func PilotNodeID(cred string) (string, bool) {
 	return "p-" + h, true
 }
 
+// IssuedTokenNodeID returns the node id of a token that has exactly the form the gateway issues
+// (gateway/nodes.go newNodeToken): "nt-n-" and 8 lowercase hex digits, ".", and 43 base64url
+// characters (32 random bytes, no padding). Anything else is refused: a token handed over by a
+// gateway is written into systemd's EnvironmentFile (token.env), where a newline, a space or a
+// quote would change what the service gets.
+func IssuedTokenNodeID(token string) (string, bool) {
+	id, ok := TokenNodeID(token)
+	if !ok {
+		return "", false
+	}
+	secret := token[len("nt-")+len(id)+len("."):]
+	if len(secret) != IssuedTokenSecretLen {
+		return "", false
+	}
+	for i := 0; i < len(secret); i++ {
+		c := secret[i]
+		if !('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || '0' <= c && c <= '9' || c == '-' || c == '_') {
+			return "", false
+		}
+	}
+	return id, true
+}
+
+// IssuedTokenSecretLen is the length of the secret in a gateway-issued node token: 32 bytes in
+// unpadded base64url.
+const IssuedTokenSecretLen = 43
+
 // TokenNodeID returns the node id carried by a token from the account page:
 // "nt-<id>.<secret>", where the id is "n-" and 8 hex digits.
 func TokenNodeID(token string) (string, bool) {
