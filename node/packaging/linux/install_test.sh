@@ -382,6 +382,13 @@ printf 'AISATHOME_NODE_TOKEN=%s\n' "$secret" > "$etc/token.env"; chmod 600 "$etc
 [[ -z "$(installed_value "$etc/node.json" slots)" && -z "$(installed_value "$etc/none.json" node_id)" ]] || fail "installed_value: not a string, or no file"
 echo '{broken' > "$etc/bad.json"
 [[ -z "$(installed_value "$etc/bad.json" node_id 2>&1)" ]] || fail "installed_value: invalid JSON"
+# The key as the agent (Go's encoding/json) reads it: any case, the last one wins.
+echo '{"Gateway_URL": "wss://a.example/v1/node/connect"}' > "$etc/case.json"
+[[ "$(installed_value "$etc/case.json" gateway_url)" = wss://a.example/v1/node/connect ]] || fail "installed_value: the key in another case"
+echo '{"gateway_url": "wss://a.example/v1/node/connect", "GATEWAY_URL": "wss://b.example/v1/node/connect"}' > "$etc/case.json"
+[[ "$(installed_value "$etc/case.json" gateway_url)" = wss://b.example/v1/node/connect ]] || fail "installed_value: not the last key"
+echo '[["gateway_url", "wss://a.example/v1/node/connect"]]' > "$etc/case.json"
+[[ -z "$(installed_value "$etc/case.json" gateway_url)" ]] || fail "installed_value: not an object"
 # gw <flag> <installed>: the gateway URL picked, or the error.
 gw() { (gateway_url="$1"; pick_gateway_url "$2"; echo "$gateway_url") 2>&1; }
 [[ "$(gw "" wss://staging.example.org/v1/node/connect)" = wss://staging.example.org/v1/node/connect ]] || fail "gateway: installed kept"
@@ -438,18 +445,36 @@ has "rerun keeps node.json" '"gateway_url": "wss://staging.example.org/v1/node/c
 out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --node-id n2 --gateway-url wss://gw.example.org/v1/node/connect 2>&1)"; code=$?
 ok "flags over installed"; has "flags over installed" '"node_id": "n2"'; has "flags over installed" '"gateway_url": "wss://gw.example.org/v1/node/connect"'
 
-# Linking to another gateway on a node that has a token: the installed token is moved aside BEFORE the
-# new node.json is installed (so the new node.json and the old token never sit side by side, and the
-# old token is never sent to the new gateway), and comes back with its node.json only if the install
-# stops before its link step.
-eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_before_link() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^check_kept_token() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
-declare -F set_aside_before_link restore_unlinked check_kept_token on_exit >/dev/null || fail "set_aside_before_link, restore_unlinked, check_kept_token or on_exit not found"
+# A gateway change on a node that has a token (linking, or a pasted token for the new gateway): the
+# installed token is moved aside and the node stopped BEFORE the new node.json is installed (so the new
+# node.json and the old token never sit side by side, and the old token is never sent to the new
+# gateway), and comes back with its node.json only if the install stops before its link step.
+eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_before_link() {/,/^}/p;/^stop_node() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^check_kept_token() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
+declare -F set_aside_before_link stop_node restore_unlinked check_kept_token on_exit >/dev/null || fail "set_aside_before_link, stop_node, restore_unlinked, check_kept_token or on_exit not found"
 oldtok="nt-n-0123abcd.$(printf 'O%.0s' {1..43})"
-# aside_dir <dir> <installed gateway>: a fake /etc/aisathome-node with node.json and token.env.
+node_was_on=0
+# aside_dir <dir> <installed gateway>: a fake /etc/aisathome-node with node.json and token.env, and the
+# node's service off.
 aside_dir() {
   rm -rf "$1"; mkdir -p "$1"
   printf '{"node_id": "n-0123abcd", "gateway_url": "%s"}\n' "$2" > "$1/node.json"
   printf 'AISATHOME_NODE_TOKEN=%s\n' "$oldtok" > "$1/token.env"; chmod 600 "$1/token.env"
+  echo inactive > "$tmp/node.state"
+}
+# systemctl for the node's service: its ActiveState in $tmp/node.state; stop and start are logged with
+# where the token and the gateway are at that moment; stop fails (the node stays on) with fake_stop_fails=1,
+# or succeeds but leaves the state fake_stop_leaves; fake_load is the unit's LoadState.
+systemctl() {
+  case "$*" in
+    "show -p ActiveState --value aisathome-node") cat "$tmp/node.state" ;;
+    "show -p LoadState --value aisathome-node") echo "${fake_load:-loaded}" ;;
+    "stop aisathome-node"|"start aisathome-node")
+      echo "systemctl $* token.env:$([[ -e "$aside/token.env" ]] && echo here || echo aside) gw:$(installed_value "$aside/node.json" gateway_url)" >> "$tmp/systemctl.log"
+      if [[ $1 = start ]]; then echo active > "$tmp/node.state"
+      elif [[ ${fake_stop_fails:-0} = 1 ]]; then return 1
+      else echo "${fake_stop_leaves:-inactive}" > "$tmp/node.state"; fi ;;
+    *) return 1 ;;
+  esac
 }
 oldgw=wss://gw.example.org/v1/node/connect newgw=wss://api.aisathome.org/v1/node/connect
 printf '{"gateway_url": "%s"}\n' "$oldgw" > "$tmp/same.json"
@@ -486,13 +511,41 @@ restore_unlinked "$aside" 2>/dev/null
 # The node is stopped once the token is aside, still beside the old node.json: a start already under way
 # may have read the old token.env, and must be gone before the new node.json is installed.
 aside_dir "$aside" "$oldgw"; token_aside=0
-systemctl() { echo "systemctl $* token.env:$([[ -e "$aside/token.env" ]] && echo here || echo aside) gw:$(installed_value "$aside/node.json" gateway_url)" >> "$tmp/systemctl.log"; }
 : > "$tmp/systemctl.log"; set_aside_before_link "$aside" "$tmp/new.json" 2>/dev/null
 [[ "$(cat "$tmp/systemctl.log")" = "systemctl stop aisathome-node token.env:aside gw:$oldgw" ]] ||
   fail "set aside: the node is not stopped after the token went aside: $(cat "$tmp/systemctl.log")"
 : > "$tmp/systemctl.log"; aside_dir "$aside" "$oldgw"; set_aside_before_link "$aside" "$tmp/same.json" 2>/dev/null
 [[ ! -s "$tmp/systemctl.log" ]] || fail "same gateway: the node was stopped"
-unset -f systemctl
+# install_until <how> [state]: a node that is on (or in state), then an install (with on_exit) that sets the token aside,
+# installs the new node.json and ends with <how>; sets out (its messages) and code.
+install_until() {
+  aside_dir "$aside" "$oldgw"; echo "${2:-active}" > "$tmp/node.state"; : > "$tmp/systemctl.log"
+  out="$( ( conf="$aside" work="" token_aside=0 node_was_on=0; die() { echo "$1" >&2; exit "${2:-1}"; }; trap on_exit EXIT
+    set_aside_before_link "$conf" "$tmp/new.json"; cp "$tmp/new.json" "$conf/node.json"; echo "new node.json installed"
+    eval "$1" ) 2>&1)"; code=$?
+}
+# The node does not stop: the install stops before the new node.json, with the old token back beside its
+# own node.json.
+fake_stop_fails=1 install_until "exit 0"
+[[ $code -ne 0 ]] || fail "the node did not stop: the install went on"
+has "the node did not stop" "did not stop"; lacks "the node did not stop" "new node.json installed"
+[[ "$(cat "$aside/token.env" 2>/dev/null)" = "AISATHOME_NODE_TOKEN=$oldtok" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" &&
+   ! -e "$aside/token.env.unlinked" ]] || fail "the node did not stop: the old token and node.json are not as they were"
+# A stop that returns but leaves the node starting counts as not stopped.
+fake_stop_leaves=activating install_until "exit 0"
+[[ $code -ne 0 && "$out" != *"new node.json installed"* ]] || fail "the node is still starting after the stop: the install went on"
+# No node unit (stop fails, LoadState not-found): nothing to stop, the install goes on.
+fake_stop_fails=1 fake_load=not-found install_until "exit 0" inactive
+[[ $code -eq 0 && "$out" == *"new node.json installed"* ]] || fail "no node unit: the install stopped"
+# The install stops before its link step: a node that was on starts again, once its token and node.json
+# are back; one that was off stays off.
+install_until "exit 1"
+[[ "$(tail -n 1 "$tmp/systemctl.log")" = "systemctl start aisathome-node token.env:here gw:$oldgw" ]] ||
+  fail "abort before linking: the node that was on did not start again with its old token and node.json: $(cat "$tmp/systemctl.log")"
+aside_dir "$aside" "$oldgw"; : > "$tmp/systemctl.log"
+( conf="$aside" work="" token_aside=0 node_was_on=0; trap on_exit EXIT
+  set_aside_before_link "$conf" "$tmp/new.json"; cp "$tmp/new.json" "$conf/node.json"; exit 1 ) 2>/dev/null
+! grep -q start "$tmp/systemctl.log" || fail "abort before linking: a node that was off was started"
 # A kept installed token (Enter, --keep-token) with another gateway in the new node.json: the install
 # stops (exit 2) before it changes anything; a pasted token, or the same gateway, goes on.
 kept() { out="$( (token="$1"; die() { echo "$1" >&2; exit "${2:-1}"; }; check_kept_token "$aside" "$2"; echo "went on") 2>&1)"; code=$?; }
@@ -512,10 +565,10 @@ for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
   [[ "$(cat "$aside/token.env" 2>/dev/null)" = "AISATHOME_NODE_TOKEN=$oldtok" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" ]] ||
     fail "on_exit ($how) before linking: the old token and node.json are not back"
 done
-unset -f installed_value set_aside_before_link restore_unlinked check_kept_token on_exit aside_dir kept
-# In the installer: the token goes aside (when linking) before the new node.json is installed, the EXIT
-# trap is on_exit, and token_aside is cleared just before the link step (and only there).
-n_aside="$(grep -n '^\[\[ -n "\$token" \]\] || set_aside_before_link "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
+unset -f installed_value set_aside_before_link stop_node restore_unlinked check_kept_token on_exit aside_dir kept install_until systemctl
+# In the installer: the token goes aside (whether linking or given a token) before the new node.json is
+# installed, the EXIT trap is on_exit, and token_aside is cleared just before the link step (and only there).
+n_aside="$(grep -n '^set_aside_before_link "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
 n_json="$(grep -n '^install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json$' "$installer" | cut -d: -f1)"
 n_clear="$(grep -n '^token_aside=0$' "$installer" | cut -d: -f1)"
 n_link="$(grep -n '^if \[\[ \$link = 1 \]\] && ! link_node; then$' "$installer" | cut -d: -f1)"
