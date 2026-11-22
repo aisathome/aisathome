@@ -17,9 +17,9 @@ desktop: see [what you need](/node/#what-you-need)), the NVIDIA driver 525.60.13
 
 ```bash
 base=https://github.com/aisathome/aisathome/releases/latest/download
-curl -LO $base/aisathome-node-bundle-linux-amd64.tar.xz -LO $base/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS
-tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
+curl -fLO $base/aisathome-node-bundle-linux-amd64.tar.xz && curl -fLO $base/SHA256SUMS \
+  && grep ' aisathome-node-bundle-linux-amd64.tar.xz$' SHA256SUMS | sha256sum -c - \
+  && tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
 ```
 
 The bundle (about 0.5 GB) holds the installer, the node agent and `llama-server` with

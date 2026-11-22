@@ -34,7 +34,7 @@ export const steps = [
 	},
 	{
 		title: 'The answer comes back',
-		text: 'Streamed back the same way. The gateway keeps usage numbers, never the content.',
+		text: 'Streamed back the same way. The gateway keeps usage numbers, never the text; only when a safety check stops a node’s answer does it keep a short excerpt of that answer, for 14 days.',
 	},
 ];
 

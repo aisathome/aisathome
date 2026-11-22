@@ -7,7 +7,7 @@
 // (2026-11-21).
 //
 // So for an interpreter the guard reads the rest of its command as the shell would (words,
-// quotes, redirections, substitutions, line ends, and the end of the command's string: the
+// quotes, redirections, substitutions, comments, line ends, and the end of the command's string: the
 // call's other keys and values are no arguments of it; callTexts) and lets the pipe pass only if the program is an argument:
 // python's -c or -m, node's -e/-p/--eval/--print, ruby's and perl's -e (perl -E), php's -r/-R/-F/-f,
 // or a script path. Everything else still holds: no program ("| python3", "| node"), "-" or
@@ -118,17 +118,22 @@ func walkPipe(text string, i int, lang string) (end int, hold bool, from []int) 
 	}
 }
 
-// commandWord is the command word of the stage at i, after assignments and wrappers that run
-// the command after them (sudo, env, nice, timeout, ...) with their options; ok is false if there
-// is none.
+// commandWord is the command word of the stage at i, after line ends and comments (the shell
+// reads on after "|"), assignments and wrappers that run the command after them (sudo, env, nice,
+// timeout, ...) with their options; ok is false if there is none.
 func commandWord(text string, i int) (shTok, int, bool) {
 	wrapper := ""
+	words := 0
 	for {
 		t, j, ok := shLex(text, i, 0)
+		if ok && t.op == "\n" && words == 0 { // the pipeline goes on after a line end (or a comment) after "|"
+			i = j
+			continue
+		}
 		if !ok || t.op != "" || t.bad {
 			return t, j, false
 		}
-		i = j
+		i, words = j, words+1
 		switch {
 		case t.subst:
 			return t, j, true
@@ -500,6 +505,13 @@ func shLex(s string, i, depth int) (t shTok, j int, more bool) {
 	}
 	if i >= len(s) {
 		return t, i, false
+	}
+	if s[i] == '#' { // a comment, to the end of the line: the line end ends the command (code review, 2026-11-22)
+		k := strings.IndexByte(s[i:], '\n')
+		if k < 0 {
+			return t, len(s), false
+		}
+		return shTok{op: "\n"}, i + k + 1, true
 	}
 	if op := shOp(s, i); op != "" {
 		return shTok{op: op}, i + len(op), true
