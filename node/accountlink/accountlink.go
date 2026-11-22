@@ -148,7 +148,8 @@ func (c *Client) Register(ctx context.Context, acceptTerms bool) (protocol.Regis
 	if err := c.post(ctx, protocol.RegisterPath, protocol.RegisterRequest{AcceptTerms: acceptTerms, Agent: "aisathome-node/" + node.Version}, &r); err != nil {
 		return r, err
 	}
-	if id, ok := node.TokenNodeID(r.Token); !ok || id != r.NodeID || !node.Anonymous(r.Token) {
+	// Written into token.env: only the exact form the gateway issues (no newline, space or quote).
+	if id, ok := node.IssuedAnonTokenNodeID(r.Token); !ok || id != r.NodeID {
 		return r, errors.New("unexpected answer from the gateway: no valid token for a node without an account")
 	}
 	return r, nil

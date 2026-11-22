@@ -511,11 +511,20 @@ func TestSetupAnonymous(t *testing.T) {
 		t.Fatalf("registered again over its token: %v", err)
 	}
 	l := e.linker()
-	if err := e.f.Link(""); err != nil {
+	if err := e.f.Link("wss://staging.example.org/v1/node/connect"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(l.token, "nt-a-0000000e.") {
 		t.Fatalf("the link did not send the node's token: %q", l.token)
+	}
+	e.f.LinkCancel()
+	// Another gateway than the one that issued it never gets it.
+	l = e.linker()
+	if err := e.f.Link(""); err != nil {
+		t.Fatal(err)
+	}
+	if l.token != "" {
+		t.Fatalf("the token went to another gateway: %q", l.token)
 	}
 	e.f.LinkCancel()
 }

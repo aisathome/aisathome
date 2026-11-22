@@ -201,6 +201,29 @@ func PilotNodeID(cred string) (string, bool) {
 // gateway is written into systemd's EnvironmentFile (token.env), where a newline, a space or a
 // quote would change what the service gets.
 func IssuedTokenNodeID(token string) (string, bool) {
+	id, ok := issuedToken(token)
+	if !ok || Anonymous(token) {
+		return "", false
+	}
+	return id, true
+}
+
+// IssuedAnonTokenNodeID is IssuedTokenNodeID for a node without an account's token, as the gateway
+// issues it on registration: "nt-a-" and 8 lowercase hex digits, ".", and 43 base64url characters.
+func IssuedAnonTokenNodeID(token string) (string, bool) {
+	id, ok := issuedToken(token)
+	if !ok || !Anonymous(token) {
+		return "", false
+	}
+	return id, true
+}
+
+// IssuedAnyTokenNodeID accepts either issued form (IssuedTokenNodeID, IssuedAnonTokenNodeID): what may
+// be written into token.env.
+func IssuedAnyTokenNodeID(token string) (string, bool) { return issuedToken(token) }
+
+// issuedToken checks the issued form of either kind of node token.
+func issuedToken(token string) (string, bool) {
 	id, ok := TokenNodeID(token)
 	if !ok {
 		return "", false

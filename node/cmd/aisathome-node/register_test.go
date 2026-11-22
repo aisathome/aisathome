@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/accountlink"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -24,6 +25,7 @@ const anonTestToken = "nt-a-0a0b0c0d.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 type fakeRegisterGateway struct {
 	*fakeLinkGateway
 	refuse string
+	token  string // what register answers; "" = anonTestToken
 	mu     sync.Mutex
 	regs   []protocol.RegisterRequest
 	auth   string
@@ -45,7 +47,11 @@ func newFakeRegisterGateway(t *testing.T, refuse string) *fakeRegisterGateway {
 				json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": f.refuse}})
 				return
 			}
-			json.NewEncoder(w).Encode(protocol.Register{Token: anonTestToken, NodeID: "a-0a0b0c0d"})
+			tok := f.token
+			if tok == "" {
+				tok = anonTestToken
+			}
+			json.NewEncoder(w).Encode(protocol.Register{Token: tok, NodeID: "a-0a0b0c0d"})
 		case protocol.LinkPath:
 			f.mu.Lock()
 			f.auth = r.Header.Get("Authorization")
@@ -156,5 +162,73 @@ func TestTokenKinds(t *testing.T) {
 	}
 	if id, ok := node.TokenNodeID(anonTestToken); !ok || id != "a-0a0b0c0d" {
 		t.Errorf("TokenNodeID: %q %v", id, ok)
+	}
+	// The strict forms: an account's issued token is never an anonymous one, nor the reverse.
+	if _, ok := node.IssuedTokenNodeID(anonTestToken); ok {
+		t.Error("IssuedTokenNodeID takes a node without an account's token")
+	}
+	if _, ok := node.IssuedAnonTokenNodeID(linkTestToken); ok {
+		t.Error("IssuedAnonTokenNodeID takes an account's token")
+	}
+	if id, ok := node.IssuedAnonTokenNodeID(anonTestToken); !ok || id != "a-0a0b0c0d" {
+		t.Errorf("IssuedAnonTokenNodeID: %q %v", id, ok)
+	}
+}
+
+// A gateway that registers with a token that is not exactly the form it issues for a node without an
+// account (a newline and a setting, a space, an account's token): nothing is written, nothing starts.
+func TestRegisterRefusesInjectedToken(t *testing.T) {
+	bad := []string{anonTestToken + "\nLD_PRELOAD=/tmp/x.so", anonTestToken + "A", anonTestToken[:len(anonTestToken)-1],
+		"nt-a-0a0b0c0d.BBBBBBBBBBBBBBBBBBBB BBBBBBBBBBBBBBBBBBBBBB", "nt-a-0a0b0c0d.BBBBBBBBBBBBBBBBBBBB#BBBBBBBBBBBBBBBBBBBBBB",
+		"nt-n-0a0b0c0d.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}
+	for _, tok := range bad {
+		f := newFakeRegisterGateway(t, "")
+		f.token = tok
+		dir := t.TempDir()
+		cfg, env := filepath.Join(dir, "node.json"), filepath.Join(dir, "token.env")
+		orig := `{"gateway_url":"` + f.wsURL() + `"}`
+		os.WriteFile(cfg, []byte(orig), 0o640)
+		var restarts []restartCall
+		var out, errb bytes.Buffer
+		code := testLinkEnv(f.fakeLinkGateway, node.LinuxLayout, &restarts).register(context.Background(), []string{"-config", cfg, "-token-env", env, "-accept-terms"}, &out, &errb)
+		c, _ := os.ReadFile(cfg)
+		if _, err := os.Stat(env); code != 1 || err == nil || string(c) != orig || len(restarts) != 0 {
+			t.Errorf("%q: exit %d, token.env written %v, node.json %s", tok, code, err == nil, c)
+		}
+		if strings.Contains(errb.String()+out.String(), "LD_PRELOAD") {
+			t.Errorf("%q: the token was printed", tok)
+		}
+	}
+}
+
+// link -gateway to another gateway than the one that issued a node without an account's token never sends
+// that token there.
+func TestLinkAnonymousTokenStaysWithItsGateway(t *testing.T) {
+	f := newFakeRegisterGateway(t, "")
+	dir := t.TempDir()
+	cfg, env := filepath.Join(dir, "node.json"), filepath.Join(dir, "token.env")
+	os.WriteFile(cfg, []byte(`{"gateway_url":"wss://issuer.example/v1/node/connect"}`), 0o640)
+	os.WriteFile(env, []byte("AISATHOME_NODE_TOKEN="+anonTestToken+"\n"), 0o600)
+	var restarts []restartCall
+	var out, errb bytes.Buffer
+	if code := testLinkEnv(f.fakeLinkGateway, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg, "-gateway", f.wsURL(), "-no-start"}, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if f.auth != "" {
+		t.Fatalf("the anonymous token went to another gateway: %q", f.auth)
+	}
+}
+
+// The client refuses such a token before anyone could write it (save checks it again).
+func TestRegisterClientRefusesInjectedToken(t *testing.T) {
+	f := newFakeRegisterGateway(t, "")
+	f.token = anonTestToken + "\nLD_PRELOAD=/tmp/x.so"
+	c := &accountlink.Client{Base: f.srv.URL}
+	if _, err := c.Register(context.Background(), true); err == nil {
+		t.Fatal("the client took a token with a newline")
+	}
+	f.token = ""
+	if r, err := c.Register(context.Background(), true); err != nil || r.Token != anonTestToken {
+		t.Fatalf("a well-formed token: %v", err)
 	}
 }
