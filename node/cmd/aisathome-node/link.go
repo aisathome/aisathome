@@ -217,11 +217,11 @@ func checkWritable(path string) error {
 // save writes the token: into token.env (and the node id into the config), or into the config. The
 // gateway's address goes into the config too when it was given on the command line.
 // Nothing is written unless the token has the exact form the gateway issues and carries nodeID.
-// Saves hold a lock on the config's folder, so two links at once leave one link's config and token.
 func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error {
 	if id, ok := node.IssuedTokenNodeID(token); !ok || id != nodeID {
 		return errors.New("the gateway sent a token that is not a node token")
 	}
+	// A lock on the config's folder: two links at once leave one link's config and token.
 	unlock, err := lockDir(filepath.Dir(t.config))
 	if err != nil {
 		return err
