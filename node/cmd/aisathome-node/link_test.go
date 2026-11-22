@@ -338,3 +338,48 @@ func TestWriteTokenEnvChecksToken(t *testing.T) {
 		t.Errorf("left behind: %v", left)
 	}
 }
+
+// link -gateway with token.env: the new token never sits beside the old gateway's address, nor the old
+// token beside the new one. The old token.env goes aside first; if the config cannot be written, it
+// comes back beside its own config and the new token is not written.
+func TestLinkOtherGatewaySavesInOrder(t *testing.T) {
+	const old, oldGW, newGW = "AISATHOME_NODE_TOKEN=nt-n-00000000.old\n", "wss://old.example/v1/node/connect", "wss://new.example/v1/node/connect"
+	dir := t.TempDir()
+	cfg, env := filepath.Join(dir, "node.json"), filepath.Join(dir, "token.env")
+	tgt := linkTarget{config: cfg, tokenEnv: env}
+
+	os.WriteFile(cfg, []byte(`{"gateway_url":"`+oldGW+`",`), 0o640) // the config write fails: not JSON
+	os.WriteFile(env, []byte(old), 0o600)
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", true, newGW); err == nil {
+		t.Fatal("saved over a config that cannot be written")
+	}
+	if b, _ := os.ReadFile(env); string(b) != old {
+		t.Errorf("config write failed: token.env %q, want the old token back", b)
+	}
+	if _, err := os.Stat(env + ".unlinked"); err == nil {
+		t.Error("config write failed: the old token is still aside")
+	}
+
+	os.WriteFile(cfg, []byte(`{"gateway_url":"`+oldGW+`"}`), 0o640)
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", true, newGW); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
+		t.Errorf("token.env %q", b)
+	}
+	if b, _ := os.ReadFile(env + ".unlinked"); string(b) != old {
+		t.Errorf("token.env.unlinked %q, want the old token", b)
+	}
+	if configGateway(cfg) != newGW {
+		t.Errorf("config gateway %q", configGateway(cfg))
+	}
+
+	// The same gateway given again: nothing goes aside.
+	os.Remove(env + ".unlinked")
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", true, newGW); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(env + ".unlinked"); err == nil {
+		t.Error("same gateway: the token was moved aside")
+	}
+}
