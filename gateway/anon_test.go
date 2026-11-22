@@ -269,7 +269,9 @@ func TestAnonRoutes(t *testing.T) {
 // whatever the withhold switch; after it, one failed check does not, a fail result does.
 func TestAnonAdmission(t *testing.T) {
 	entry, _ := testMCRef(t, 20)
-	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}, Admit: time.Second}, "")
+	small, _ := testMCRef(t, 20)
+	small.Model = "qwen3.8-27b-q3"
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry, small}, Admit: time.Second}, "")
 	g := &Gateway{mc: mc, log: quietLog()}
 	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	pass := ModelCheckResult{At: now, Verdict: modelcheck.Pass}
@@ -279,8 +281,9 @@ func TestAnonAdmission(t *testing.T) {
 		defer mc.mu.Unlock()
 		return g.mcFileLocked(n, s, c)
 	}
-	n := &nodeConn{id: "a-1", anon: true}
-	s := &ModelCheckNode{Node: n.id}
+	big := []protocol.ModelInfo{{Name: "qwen3.8-27b", Slots: 1}}
+	n := &nodeConn{id: "a-1", anon: true, models: big}
+	s := &ModelCheckNode{Node: n.id, Model: "qwen3.8-27b"}
 	mc.st.Nodes[n.id] = s
 	mc.mu.Lock()
 	if m := mc.meanLocked(n); m != time.Second {
@@ -288,14 +291,14 @@ func TestAnonAdmission(t *testing.T) {
 	}
 	mc.mu.Unlock()
 	for i := 0; i < anonAdmitChecks; i++ {
-		if mc.admitted(n.id) {
+		if mc.admitted(n) {
 			t.Fatalf("admitted after %d passed checks", i)
 		}
 		if why := file(n, s, pass); why != "" {
 			t.Fatalf("held on a pass: %s", why)
 		}
 	}
-	if !mc.admitted(n.id) || mc.passedInWindow(n.id) != anonAdmitChecks {
+	if !mc.admitted(n) || mc.passedInWindow(n.id) != anonAdmitChecks {
 		t.Fatalf("not admitted after %d passes", anonAdmitChecks)
 	}
 	mc.mu.Lock()
@@ -303,10 +306,22 @@ func TestAnonAdmission(t *testing.T) {
 		t.Error("still the admission interval after admission")
 	}
 	mc.mu.Unlock()
-	if why := file(n, s, fail); why != "" || !mc.admitted(n.id) {
-		t.Fatalf("one failed check after admission: held %q, admitted %v", why, mc.admitted(n.id))
+	// Admitted for the model its checks were of only: back with another model (one with a reference, then
+	// one without), it is not, and the other model's checks start afresh.
+	none := &nodeConn{id: n.id, anon: true, models: []protocol.ModelInfo{{Name: "some-model", Slots: 1}}}
+	if mc.admitted(none) {
+		t.Fatal("admitted with a model that has no reference")
 	}
-	if why := file(n, s, fail); why == "" || !strings.Contains(why, "a node without an account") || s.HeldAt.IsZero() || mc.admitted(n.id) {
+	mc.mu.Lock()
+	mc.nodeLocked(n, "qwen3.8-27b", now) // the same model again keeps its checks
+	mc.mu.Unlock()
+	if !mc.admitted(n) {
+		t.Fatal("a reconnect with the same model lost the admission")
+	}
+	if why := file(n, s, fail); why != "" || !mc.admitted(n) {
+		t.Fatalf("one failed check after admission: held %q, admitted %v", why, mc.admitted(n))
+	}
+	if why := file(n, s, fail); why == "" || !strings.Contains(why, "a node without an account") || s.HeldAt.IsZero() || mc.admitted(n) {
 		t.Fatalf("a fail result after admission: held %q", why)
 	}
 
@@ -314,16 +329,37 @@ func TestAnonAdmission(t *testing.T) {
 	if mc.withholding() {
 		t.Fatal("withholding is on in this test")
 	}
-	n2 := &nodeConn{id: "a-2", anon: true}
-	s2 := &ModelCheckNode{Node: n2.id}
+	n2 := &nodeConn{id: "a-2", anon: true, models: big}
+	s2 := &ModelCheckNode{Node: n2.id, Model: "qwen3.8-27b"}
 	mc.st.Nodes[n2.id] = s2
 	file(n2, s2, pass)
 	if why := file(n2, s2, fail); why == "" || !strings.Contains(why, "before its admission") {
 		t.Fatalf("a failed check before admission: %q", why)
 	}
-	if mc.admitted(n2.id) {
+	if mc.admitted(n2) {
 		t.Fatal("a held node is admitted")
 	}
+	// Admitted with one model, back with another that has a reference: not admitted, its checks start afresh.
+	n4 := &nodeConn{id: "a-4", anon: true, models: big}
+	s4 := &ModelCheckNode{Node: n4.id, Model: "qwen3.8-27b"}
+	mc.st.Nodes[n4.id] = s4
+	for i := 0; i < anonAdmitChecks; i++ {
+		file(n4, s4, pass)
+	}
+	if !mc.admitted(n4) {
+		t.Fatal("not admitted")
+	}
+	q3 := &nodeConn{id: n4.id, anon: true, models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q3", Slots: 1}}}
+	if mc.admitted(q3) {
+		t.Fatal("admitted with another model before any check of it")
+	}
+	mc.mu.Lock()
+	mc.nodeLocked(q3, "qwen3.8-27b-q3", now)
+	mc.mu.Unlock()
+	if len(s4.Checks) != 0 || mc.admitted(q3) || mc.admitted(n4) {
+		t.Fatalf("after coming back with another model: %d checks kept", len(s4.Checks))
+	}
+
 	// An account's node is never held while observing.
 	n3 := &nodeConn{id: "n-3"}
 	s3 := &ModelCheckNode{Node: n3.id}

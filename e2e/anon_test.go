@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/gateway"
+	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/accountlink"
 	"github.com/aisathome/aisathome/protocol"
 )
@@ -291,4 +292,24 @@ func TestAnonLinkToAccount(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("the new token: HTTP %d", resp.StatusCode)
 	}
+}
+
+// A node without an account announces one model: the one its admission checks.
+func TestAnonOneModel(t *testing.T) {
+	a, _ := anonRig(t, false, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := anonClient(a, "").Register(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := mockEngine(t, false)
+	a.startNodeCfg(ctx, node.Config{Token: r.Token, Upstream: eng.URL, Models: []protocol.ModelInfo{
+		{Name: mcModel, Roles: []string{"deep"}, Slots: 1, Ctx: 32768}, {Name: "other-model", Roles: []string{"fast"}, Slots: 1, Ctx: 32768}}})
+	time.Sleep(time.Second)
+	if n := a.g.NodeCount(); n != 0 {
+		t.Fatalf("a node without an account with two models connected (%d nodes)", n)
+	}
+	a.startTokenNode(ctx, r.Token, eng, 1, 32768)
+	a.waitNodes(t, 1)
 }

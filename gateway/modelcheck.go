@@ -446,11 +446,15 @@ func passed(s *ModelCheckNode) int {
 	return c
 }
 
-// admitted reports whether the check admits the node without an account id now.
-func (mc *modelChecker) admitted(id string) bool {
+// admitted reports whether the check admits the node without an account n now: for the model it announces
+// now (one only, nodeconn.go), and only if that is the model its checks were of. A node that comes back with
+// another model, or with one that has no reference, is not admitted.
+func (mc *modelChecker) admitted(n *nodeConn) bool {
+	model := mc.checkedModel(n)
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	return anonAdmitted(mc.st.Nodes[id], mc.th)
+	s := mc.st.Nodes[n.id]
+	return model != "" && s != nil && s.Model == model && anonAdmitted(s, mc.th)
 }
 
 // passedInWindow counts node id's passed checks in its window.
@@ -558,6 +562,11 @@ func (mc *modelChecker) nodeLocked(n *nodeConn, model string, now time.Time) *Mo
 		s = &ModelCheckNode{Node: n.id}
 		mc.st.Nodes[n.id] = s
 	}
+	if n.anon && s.Model != "" && s.Model != model {
+		// A node without an account back with another model: checks of the old one admit nothing.
+		s.Checks = nil
+		mc.pending[n.id] = nil
+	}
 	s.Operator, s.Model, s.LastSeen = n.operator, model, now.UTC()
 	return s
 }
@@ -575,7 +584,7 @@ func (g *Gateway) mcTick() {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].id < nodes[j].id })
 	for _, n := range nodes { // nodes without an account: admitted, or no longer (a hold, a failing result)
 		if n.anon {
-			g.setAdmitted(n, mc.admitted(n.id))
+			g.setAdmitted(n, mc.admitted(n))
 		}
 	}
 	live := map[string]bool{}

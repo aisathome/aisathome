@@ -548,7 +548,7 @@ operator terms); it gets **no science until the model check admitted it**: its f
 prompts only, every `model_check.admit_seconds` (default 20) on average, and it is admitted after 3
 passed checks (each 4 probe prompts, the same KL and flip limits as the check), normally within minutes;
 one failed check before then holds it (rule `model-check`), and after admission a fail result holds it,
-both whatever `model_check.withhold` says. Without the model check, registering is refused (503); a node
+both whatever `model_check.withhold` says. It announces exactly one model, and admission holds only for the model its checks were of (back with another model, its checks start afresh). Without the model check, registering is refused (503); a node
 whose model has no reference is never admitted. It earns **no credit** (its usage records carry none,
 and nothing goes to the ledger), so nothing moves when it is linked; it is listed nowhere public. Agent
 calls of a project with `pilot_probation_ok` may use it during probation, as pilots. Limits: 3
