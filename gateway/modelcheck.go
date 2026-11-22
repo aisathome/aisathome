@@ -63,6 +63,10 @@ type ModelCheckConfig struct {
 	// RecheckSec is the mean time between probe prompts before a node's first check is complete
 	// and while a failed check waits for its re-check. Default 300 (a first result within ~20 min).
 	RecheckSec int `json:"recheck_seconds"`
+	// AdmitSec is the mean time between probe prompts to a node without an account that is not admitted
+	// yet (anon.go): its admission takes anonAdmitChecks checks. Default 20 (admitted within minutes; a
+	// node not admitted gets nothing else to do).
+	AdmitSec int `json:"admit_seconds"`
 	// LegacyIncludeTrusted is the removed "include_trusted" (removed.go): accepted and ignored. The
 	// check is for every node.
 	LegacyIncludeTrusted bool `json:"include_trusted,omitempty"`
@@ -74,10 +78,11 @@ type ModelCheckConfig struct {
 	// for the probes' logprobs (removed before the client sees them). Absent: 0.2; 0 turns it off.
 	CoverShare *float64 `json:"cover_share,omitempty"`
 
-	// For tests: the scheduler's tick, both intervals, and the clock.
+	// For tests: the scheduler's tick, the intervals, and the clock.
 	Tick     time.Duration    `json:"-"`
 	Interval time.Duration    `json:"-"`
 	Recheck  time.Duration    `json:"-"`
+	Admit    time.Duration    `json:"-"`
 	Now      func() time.Time `json:"-"`
 }
 
@@ -249,8 +254,12 @@ func newModelChecker(cfg ModelCheckConfig, stateDir string, log *slog.Logger) (*
 	if cfg.RecheckSec == 0 {
 		cfg.RecheckSec = 300
 	}
-	if cfg.IntervalSec < 60 || cfg.RecheckSec < 30 {
-		return nil, fmt.Errorf("model_check: interval_seconds %d (at least 60) and recheck_seconds %d (at least 30)", cfg.IntervalSec, cfg.RecheckSec)
+	if cfg.AdmitSec == 0 {
+		cfg.AdmitSec = 20
+	}
+	if cfg.IntervalSec < 60 || cfg.RecheckSec < 30 || cfg.AdmitSec < 5 {
+		return nil, fmt.Errorf("model_check: interval_seconds %d (at least 60), recheck_seconds %d (at least 30) and admit_seconds %d (at least 5)",
+			cfg.IntervalSec, cfg.RecheckSec, cfg.AdmitSec)
 	}
 	mc := &modelChecker{cfg: cfg, th: modelcheck.DefaultThresholds, refs: map[string]*mcRef{}, cover: defaultCoverShare, log: log,
 		next: map[string]time.Time{}, pending: map[string][]mcAnswer{}, running: map[string]bool{},
@@ -406,10 +415,62 @@ func (mc *modelChecker) recheck() time.Duration {
 	return time.Duration(mc.cfg.RecheckSec) * time.Second
 }
 
-// meanLocked is the mean wait before a node's next probe prompt: short until it has a result and
-// while a failed check waits for its re-check, long otherwise.
-func (mc *modelChecker) meanLocked(id string) time.Duration {
-	s := mc.st.Nodes[id]
+func (mc *modelChecker) admit() time.Duration {
+	if mc.cfg.Admit > 0 {
+		return mc.cfg.Admit
+	}
+	return time.Duration(mc.cfg.AdmitSec) * time.Second
+}
+
+// anonAdmitted reports whether the record s admits a node without an account (anon.go): anonAdmitChecks
+// passed checks in its window, and its result is not fail. (Before admission one failed check holds it:
+// mcFileLocked.)
+func anonAdmitted(s *ModelCheckNode, th modelcheck.Thresholds) bool {
+	if s == nil || !s.HeldAt.IsZero() {
+		return false
+	}
+	if v, _, _ := s.Status(th); v == MCFail {
+		return false
+	}
+	return passed(s) >= anonAdmitChecks
+}
+
+// passed counts the passed checks in s's window.
+func passed(s *ModelCheckNode) int {
+	c := 0
+	for _, x := range s.Checks {
+		if x.Verdict == modelcheck.Pass {
+			c++
+		}
+	}
+	return c
+}
+
+// admitted reports whether the check admits the node without an account id now.
+func (mc *modelChecker) admitted(id string) bool {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return anonAdmitted(mc.st.Nodes[id], mc.th)
+}
+
+// passedInWindow counts node id's passed checks in its window.
+func (mc *modelChecker) passedInWindow(id string) int {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if s := mc.st.Nodes[id]; s != nil {
+		return passed(s)
+	}
+	return 0
+}
+
+// meanLocked is the mean wait before n's next probe prompt: shortest for a node without an account until
+// it is admitted, short until a node has a result and while a failed check waits for its re-check, long
+// otherwise.
+func (mc *modelChecker) meanLocked(n *nodeConn) time.Duration {
+	s := mc.st.Nodes[n.id]
+	if n.anon && !anonAdmitted(s, mc.th) {
+		return mc.admit()
+	}
 	if s == nil || len(s.Checks) == 0 || s.Checks[len(s.Checks)-1].Verdict != modelcheck.Pass {
 		return mc.recheck()
 	}
@@ -512,6 +573,11 @@ func (g *Gateway) mcTick() {
 	}
 	g.mu.Unlock()
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].id < nodes[j].id })
+	for _, n := range nodes { // nodes without an account: admitted, or no longer (a hold, a failing result)
+		if n.anon {
+			g.setAdmitted(n, mc.admitted(n.id))
+		}
+	}
 	live := map[string]bool{}
 	for _, n := range nodes {
 		live[n.id] = true
@@ -526,7 +592,7 @@ func (g *Gateway) mcTick() {
 		s := mc.nodeLocked(n, model, now)
 		next, ok := mc.next[n.id]
 		if !ok { // first sight since it connected: its first prompt comes at a random time
-			mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id)))
+			mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n)))
 			mc.dirty = true
 			mc.mu.Unlock()
 			continue
@@ -578,12 +644,13 @@ func (g *Gateway) mcTick() {
 }
 
 // mcReserve takes a free slot of n for a probe, as pick does for a request, unless n may not get
-// requests now or a request is waiting for a node: probes never make a person (or science) wait.
+// requests now or a request is waiting for a node: probes never make a person (or science) wait. A node
+// without an account not admitted yet serves no waiting request, so they do not hold its probes back.
 func (g *Gateway) mcReserve(n *nodeConn, model string) bool {
 	now := time.Now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.node[n.id] != n || n.held || n.registering || len(g.waiting) > 0 ||
+	if g.node[n.id] != n || n.held || n.registering || (len(g.waiting) > 0 && (!n.anon || n.admitted)) ||
 		(n.pilot != "" && !now.Before(n.deadline)) {
 		return false
 	}
@@ -639,7 +706,7 @@ func (g *Gateway) mcProbe(n *nodeConn, model string, r *mcRef, id string) {
 func (g *Gateway) mcAnswerLocked(n *nodeConn, s *ModelCheckNode, r *mcRef, a mcAnswer, ok bool, why string, now time.Time) string {
 	mc := g.mc
 	mc.dirty = true
-	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id)))
+	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n)))
 	switch {
 	case !ok && strings.HasPrefix(why, mcNodeError):
 		// The node answered with an error. An engine that refuses logprobs, or one that fails only
@@ -667,16 +734,19 @@ func (g *Gateway) mcAnswerLocked(n *nodeConn, s *ModelCheckNode, r *mcRef, a mcA
 	group := mc.pending[n.id]
 	delete(mc.pending, n.id)
 	hold := g.mcFileLocked(n, s, mc.evaluate(r, group, now))
-	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n.id))) // after a failed check, the re-check comes soon
+	mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n))) // after a failed check, the re-check comes soon
 	return hold
 }
 
 // mcFileLocked adds a check to the node's record and logs it. When withholding is in effect and
 // the node's result is fail (also a node that was failing before withholding began), it marks the
-// node held and returns why, for the caller to hold it; otherwise "". Caller holds mc.mu.
+// node held and returns why, for the caller to hold it; otherwise "". A node without an account
+// (anon.go) is held whatever the switch: on any failed check before its admission, and on a fail
+// result after it. Caller holds mc.mu.
 func (g *Gateway) mcFileLocked(n *nodeConn, s *ModelCheckNode, c ModelCheckResult) string {
 	mc := g.mc
 	before, _, _ := s.Status(mc.th)
+	wasAdmitted := anonAdmitted(s, mc.th)
 	s.Checks = append(s.Checks, c)
 	if len(s.Checks) > mcWindow {
 		s.Checks = slices.Clone(s.Checks[len(s.Checks)-mcWindow:])
@@ -689,6 +759,26 @@ func (g *Gateway) mcFileLocked(n *nodeConn, s *ModelCheckNode, c ModelCheckResul
 	after, worst, flips := s.Status(mc.th)
 	mc.log.Info("model check", "node", n.id, "operator", n.operator, "check", c.Verdict, "kl", fmt.Sprintf("%.4f", c.KL),
 		"flips", c.Flips, "result", after, "worst_kl", fmt.Sprintf("%.4f", worst), "window_flips", flips)
+	if n.anon {
+		var why string
+		switch {
+		case !wasAdmitted && c.Verdict != modelcheck.Pass:
+			why = "failed a model check before its admission (a node without an account)"
+		case after == MCFail:
+			why = fmt.Sprintf("failed the model check (a node without an account): largest KL %.4f (limit %.4f), %d confident flips in %d checks",
+				worst, mc.th.MaxCheckKL, flips, len(s.Checks))
+		default:
+			if !wasAdmitted && anonAdmitted(s, mc.th) {
+				mc.log.Info("model check: node without an account admitted", "node", n.id, "passed", passed(s))
+			}
+			return ""
+		}
+		if !s.HeldAt.IsZero() {
+			return ""
+		}
+		s.HeldAt = mc.now().UTC()
+		return why
+	}
 	if after != MCFail {
 		return ""
 	}

@@ -8,7 +8,7 @@
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --enable-at-boot, --link, --keep-token, --dry-run, --download-only <dir> [--tier standard|big],
+#   --enable-at-boot, --link, --anonymous, --keep-token, --dry-run, --download-only <dir> [--tier standard|big],
 #   --speculation off|mtp|dflash2 (default: off, or what an earlier install chose).
 #
 # Without --model, the tier's pinned model is downloaded from Hugging Face, resumed if
@@ -28,6 +28,8 @@
 # and a code; approve on any device). --link does that without asking. A node token instead
 # (advanced, and for scripts) is read from stdin, never from argv: paste it when asked, or
 # cat token.txt | sudo ./install.sh ...
+# --anonymous starts the node without an account instead (science only, no credit until it
+# is linked with `aisathome-node link`): it registers with the gateway after the speed test.
 # Updating: run the new bundle's install.sh. At a terminal, Enter on an empty line keeps the
 # installed token (--keep-token does so without asking), and a generated node.json keeps the
 # installed node id and gateway URL unless --node-id or --gateway-url is given.
@@ -44,11 +46,11 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
-node_id="" gateway_url="" download_only="" keep_token=0 link=0 want_tier="" want_spec=""
+node_id="" gateway_url="" download_only="" keep_token=0 link=0 anonymous=0 want_tier="" want_spec=""
 conf=/etc/aisathome-node
 preset="${PRESET:-}" alias="${MODEL_ALIAS:-}"
 while [[ $# -gt 0 ]]; do
@@ -67,12 +69,23 @@ while [[ $# -gt 0 ]]; do
     --enable-at-boot) at_boot=1; shift ;;
     --keep-token) keep_token=1; shift ;;
     --link) link=1; shift ;;
+    --anonymous) anonymous=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) usage ;;
   esac
 done
 
 [[ $link = 0 || $keep_token = 0 ]] || die "use --link or --keep-token, not both" 2
+[[ $anonymous = 0 || ($link = 0 && $keep_token = 0) ]] || die "use --anonymous alone, without --link or --keep-token" 2
+
+# What a node without an account means, shown before it installs (node.sh shows the same lines).
+anon_notice() {
+  cat >&2 <<'NOTICE'
+Without an account this node does science work only, never people's chats, and earns no credit
+until you link it to an account (aisathome-node link).
+You must be 18 or older; running it means you accept the terms: https://aisathome.org/about/terms/
+NOTICE
+}
 
 # Two tiers, chosen by the size of the card only (owner, 2026-10-22/23 and 2026-11-09): one model
 # file per tier, 1 request at a time, and a context set by the card, never by the machine's
@@ -817,7 +830,7 @@ install_libs() {
 # also takes an account token's id over node_id, with a warning.)
 pick_node_id() {
   [[ -z "$node_id" ]] || return 0
-  if [[ "$1" =~ ^nt-(n-[0-9a-f]{8})\. ]]; then node_id="${BASH_REMATCH[1]}"; return 0; fi
+  if [[ "$1" =~ ^nt-([na]-[0-9a-f]{8})\. ]]; then node_id="${BASH_REMATCH[1]}"; return 0; fi
   if [[ -n "${2:-}" ]]; then
     node_id="$2"
     [[ "$node_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
@@ -840,6 +853,10 @@ interactive() { [[ -t 0 ]]; }
 read_token() {
   local old=""
   [[ -r "$1" ]] && old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1" | head -n 1)"
+  if [[ $anonymous = 1 ]]; then
+    [[ -z "$old" ]] || die "--anonymous: this node has a token already; it keeps it (update with --keep-token, or link it: sudo aisathome-node link)" 2
+    token=""; echo "account: none; the install ends with registering this node without an account (science only)" >&2; return 0
+  fi
   if [[ $link = 1 ]]; then
     token=""; echo "account: the install ends with linking this node to your account in the browser" >&2; return 0
   fi
@@ -927,6 +944,15 @@ check_kept_token() {
   die "the installed token is for ${was:-another gateway}, not $now, and is never sent there: link the node to your account instead (--link), or paste a node token for $now" 2
 }
 
+# register_node: the last step of --anonymous, after the speed test (a machine that cannot serve never
+# registers): `aisathome-node register` gets the node a token of its own from the gateway (science only)
+# and writes it to token.env (0600). It returns non-zero when the gateway refused (limits, a full pool).
+register_node() {
+  echo
+  echo "Last step: register this node without an account."
+  /opt/aisathome-node/bin/aisathome-node register -accept-terms -config "$conf/node.json" -token-env "$conf/token.env" -no-start
+}
+
 # link_node: the last step without a token: `aisathome-node link` shows a link and a code, waits for
 # the approval in a browser on any device, and writes the node's token to token.env (0600). It
 # returns non-zero when the node was not linked (denied, expired, stopped).
@@ -994,7 +1020,12 @@ if [[ $dry_run = 1 ]]; then
   fi
   echo "tier: $tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
   echo "speed test after the install: at least $min_tps tokens/s after a $speed_ctx-token prompt"
-  [[ $keep_token = 1 ]] || echo "account: $([[ $link = 1 ]] && echo "the install ends" || echo "at a terminal, Enter at the token question ends the install") with linking this node to your account in the browser (aisathome-node link)"
+  if [[ $anonymous = 1 ]]; then
+    echo "account: none; the install ends with registering this node without an account (aisathome-node register)"
+    anon_notice
+  else
+    [[ $keep_token = 1 ]] || echo "account: $([[ $link = 1 ]] && echo "the install ends" || echo "at a terminal, Enter at the token question ends the install") with linking this node to your account in the browser (aisathome-node link)"
+  fi
   echo "$llama_exec"
   echo "local UI: $ui_port"
   node_ui_dropin
@@ -1007,6 +1038,7 @@ fi
 [[ -z "$node_config" ]] || python3 -m json.tool "$node_config" >/dev/null || die "invalid JSON: $node_config"
 
 read_token "$conf/token.env"
+[[ $anonymous = 0 ]] || anon_notice
 if [[ -z "$node_config" ]]; then
   pick_node_id "$token" "$old_id"
   [[ -z "$old_id$old_gw" ]] || echo "node.json: node id $node_id, gateway $gateway_url" >&2
@@ -1258,6 +1290,10 @@ token_aside=0
 if [[ $link = 1 ]] && ! link_node; then
   linked=0
 fi
+registered=1
+if [[ $anonymous = 1 ]] && ! register_node; then
+  registered=0
+fi
 if [[ -s /etc/aisathome-node/token.env ]]; then
   systemctl restart aisathome-node
   sleep 3
@@ -1274,6 +1310,14 @@ Start at boot: $(systemctl is-enabled --quiet aisathome-node 2>/dev/null && echo
 Remove:                                      sudo ./uninstall.sh
 MSG
 node_ui_message
+if [[ $anonymous = 1 && $registered = 1 ]]; then
+  echo "This node runs without an account: science only, no credit. Link it to an account later: sudo aisathome-node link"
+fi
+if [[ $registered = 0 ]]; then
+  echo "Not registered, so the node is off. Try again (it starts the node): sudo aisathome-node register -accept-terms" >&2
+  echo "Or link it to your account instead: sudo aisathome-node link" >&2
+  exit 1
+fi
 if [[ $linked = 0 ]]; then
   if [[ -s /etc/aisathome-node/token.env ]]; then
     echo "Not linked to another account: the node runs with its installed token. Try again: sudo aisathome-node link" >&2

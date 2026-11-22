@@ -69,6 +69,24 @@ and polls every `interval` seconds until the answer is not `pending` or `slow_do
 refuses to hand out a code answers HTTP 429 with an `error.message` (too many codes from the address
 or the network). The token is then used as any node token (above).
 
+A node without an account (below) sends its own token with `/v1/node/link` (`Authorization: Bearer
+<token>`): approving then also deletes its identity without an account once the node has picked up its
+new token. Any other token there is refused (HTTP 401), and so is a held node (HTTP 403).
+
+## A node without an account
+
+A machine can start without an account (Go types in `register.go`). It serves science only, gets work
+only once the gateway's model check has admitted it, and earns no credit until it is linked to an
+account (above).
+
+| call | auth | body | answer |
+|---|---|---|---|
+| `POST /v1/node/register` | none | `accept_terms` (required `true`: the person was told they must be 18 or older and that running the node accepts the terms), `agent` | `token` (`nt-a-<8 hex>.<secret>`, given once), `node_id` (`a-<8 hex>`) |
+| `GET /v1/node/self` | `Bearer <node token>` | none | `node_id`, `anonymous`, `science_only`, `state` (`checking`, `admitted`, `held`, `offline`, `no_check`, or `serving` for an account's node), `checks_passed`, `checks_needed`, `message` |
+
+`register` answers HTTP 429 when the address or the network registered too many nodes, and 503 when the
+pool for nodes without an account is full, closed, or the gateway has no model check to admit them.
+
 ## Gateway behaviour (reference implementation)
 
 - **Routing:** users may name a node model or a **role** (`fast`, `deep`, `agent`). The

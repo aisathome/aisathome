@@ -90,6 +90,14 @@
 			<p class="muted">Link this node to your AIs@home account. The button opens the approval page in your browser with the code filled in: sign in, check the code and approve, and the node starts.</p>
 			<div class="row"><button class="btn btn-primary" id="link" type="button">Link to my account</button></div>
 			<p class="msg" id="link-msg" role="status"></p>
+			<div id="anon-box">
+				<p class="muted">Or start without an account. Without an account this node does science work only, never people's chats, and earns no
+					credit until you link it to an account (the status page says how).</p>
+				<label class="check"><input type="checkbox" id="anon-terms"> I am 18 or older, and running this node means I accept the
+					<a href="https://aisathome.org/about/terms/" target="_blank" rel="noopener noreferrer">terms</a>.</label>
+				<div class="row"><button class="btn btn-secondary" id="anon-start" type="button">Start without an account (science only)</button></div>
+				<p class="msg" id="anon-msg" role="status"></p>
+			</div>
 			<details class="adv">
 				<summary>Advanced: paste a node token</summary>
 				<form id="start-form">

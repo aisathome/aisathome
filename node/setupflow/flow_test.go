@@ -326,6 +326,7 @@ func TestConfigured(t *testing.T) {
 
 // fakeLinker stands in for the gateway's link calls: Wait answers with result once released.
 type fakeLinker struct {
+	token   string // SetToken's
 	base    string
 	info    protocol.LinkInfo
 	release chan protocol.LinkPoll
@@ -428,6 +429,9 @@ func TestSetupLink(t *testing.T) {
 	if err := e.f.Link(""); err != nil {
 		t.Fatal(err)
 	}
+	if l.token != "" {
+		t.Fatal("an account's node sent its token with the link")
+	}
 	l.err = errors.New("the link was denied in the browser; nothing was changed")
 	l.release <- protocol.LinkPoll{Status: protocol.LinkDenied}
 	if got := e.waitLink(t, LinkFailed); !strings.Contains(got.Error, "denied") {
@@ -454,4 +458,64 @@ func TestSetupLink(t *testing.T) {
 	if e.f.State().Link != nil {
 		t.Fatal("the cancelled link is still shown")
 	}
+}
+
+type fakeRegistrar struct {
+	base  string
+	calls int
+	err   error
+}
+
+func (r *fakeRegistrar) Register(_ context.Context, accept bool) (protocol.Register, error) {
+	r.calls++
+	if !accept {
+		return protocol.Register{}, errors.New("accept_terms")
+	}
+	return protocol.Register{Token: "nt-a-0000000e." + strings.Repeat("A", 43), NodeID: "a-0000000e"}, r.err
+}
+
+func (l *fakeLinker) SetToken(token string) { l.token = token }
+
+// "Start without an account": only with the 18+ and terms tick, only once the steps Start needs passed (a
+// machine that cannot serve never registers), never over a token; it starts the node with the gateway's
+// token. Linking it later sends that token.
+func TestSetupAnonymous(t *testing.T) {
+	e := newEnv(t, card4080)
+	reg := &fakeRegistrar{}
+	e.f.d.NewRegistrar = func(base string) Registrar { reg.base = base; return reg }
+	if err := e.f.Anonymous("", true); err == nil || reg.calls != 0 {
+		t.Fatalf("registered before the steps: %v, %d calls", err, reg.calls)
+	}
+	e.step(t, e.f.CheckCard)
+	e.step(t, e.f.Download)
+	e.step(t, e.f.SpeedTest)
+	if err := e.f.Anonymous("", false); err == nil || reg.calls != 0 {
+		t.Fatalf("registered without the tick: %v", err)
+	}
+	if err := e.f.Anonymous("wss://staging.example.org/v1/node/connect", true); err != nil {
+		t.Fatal(err)
+	}
+	if mode := <-e.reload; mode {
+		t.Fatal("reloaded into setup mode")
+	}
+	if reg.base != "https://staging.example.org" || reg.calls != 1 {
+		t.Fatalf("registered at %q, %d calls", reg.base, reg.calls)
+	}
+	var cfg map[string]any
+	b, _ := os.ReadFile(e.cfg)
+	json.Unmarshal(b, &cfg)
+	if cfg["node_id"] != "a-0000000e" || !strings.HasPrefix(cfg["token"].(string), "nt-a-0000000e.") {
+		t.Fatalf("node.json %s", b)
+	}
+	if err := e.f.Anonymous("", true); err == nil || reg.calls != 1 {
+		t.Fatalf("registered again over its token: %v", err)
+	}
+	l := e.linker()
+	if err := e.f.Link(""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(l.token, "nt-a-0000000e.") {
+		t.Fatalf("the link did not send the node's token: %q", l.token)
+	}
+	e.f.LinkCancel()
 }

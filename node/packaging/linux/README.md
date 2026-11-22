@@ -147,6 +147,14 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   line at the prompt keeps the installed token, and `--keep-token` keeps it without asking (for
   scripts; empty piped input is still an error). `--link` on an installed node links it to
   another account; until that is approved it keeps its installed token.
+- Without an account: `--anonymous` registers the node with the gateway after the speed test
+  (`aisathome-node register -accept-terms`) instead of asking for a token. Such a node does
+  science work only, gets work once the gateway's model check has admitted it, and earns no
+  credit until it is linked to an account (`sudo aisathome-node link`). The installer shows that,
+  and that you must be 18 or older and accept the terms, before it installs. A node that has a
+  token keeps it: `--anonymous` refuses to run over one. `curl -fsSL https://aisathome.org/node.sh | sh`
+  downloads the latest bundle, checks it against `SHA256SUMS`, runs `--dry-run --anonymous`, asks
+  at the terminal, and then runs `sudo ./install.sh --anonymous`.
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.

@@ -53,6 +53,7 @@ type Gateway struct {
 	gkeys    *jwksCache    // Google's signing keys, for Google sign-in
 	email    *emailSignIn  // nil without email sign-in
 	links    *nodeLinks    // nodes linking to an account (nodelink.go); nil without accounts
+	anonReg  anonRegs      // registrations of nodes without an account, in memory only (anon.go)
 	bufByTok sync.Map      // node token → *atomic.Int64: the share held for its nodes
 	start    time.Time
 	use      *usageWriter
@@ -290,6 +291,9 @@ func (g *Gateway) startBackground() {
 			g.sweepNodes() // banned accounts, revoked node tokens, held or cleared nodes
 		})
 		g.every(linkPruneEvery, g.pruneLinks) // expired links; tokens nobody picked up are revoked
+		g.every(anonRegPruneEvery, func() { g.anonReg.prune(g.anonNow()) })
+		g.every(anonSweepEvery, g.sweepAnon)  // nodes without an account past their retention
+		g.every(anonSeenEvery, g.anonSeenAll) // connected ones are seen
 	}
 	g.every(keysFileCheck, g.checkKeysFile)
 	g.every(keysFileCheck, g.applyCreditCorrections) // the operator's CLI asks for corrections (accounts credit-adjust)

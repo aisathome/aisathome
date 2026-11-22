@@ -524,3 +524,14 @@ var emailTmpl = newPage("email", nil, `{{template "head" .}}{{template "top" .}}
 <a href="/account">ask again</a>.</p></div>
 <script>`+emailScript+`</script>
 {{template "bottom" .}}`)
+
+// drop forgets one event of key at t (a counted attempt that did not happen after all).
+func (e events) drop(key string, t time.Time) {
+	ts := e[key]
+	for i := len(ts) - 1; i >= 0; i-- {
+		if ts[i].Equal(t) {
+			e[key] = append(ts[:i], ts[i+1:]...)
+			return
+		}
+	}
+}

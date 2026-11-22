@@ -50,6 +50,7 @@ gofmt -l .                                    # must print nothing
 go vet ./...
 go test -race ./...                           # e2e included (it needs the release tags: git fetch --tags)
 ./node/packaging/linux/install_test.sh        # the Linux installer
+./scripts/node_sh_test.sh                     # the one-line install without an account (site/public/node.sh)
 ./scripts/bundle_test.sh                      # the prebuilt bundle's packaging
 
 cd harness && python3 -m unittest discover -s tests -t .

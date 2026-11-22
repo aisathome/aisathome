@@ -87,6 +87,11 @@ above (KL per group of 4 prompts, confident flips, the same limits).
   the limits are first seen to hold on our own honest nodes, which it checks as any other
   (`include_trusted`, which once opted them in, is ignored since 2026-11-20). Turn it on only
   after a clean observe-only period on 3090, 4090 and 5090 nodes.
+- **Admission of nodes without an account** (`gateway/anon.go`). For them the check is a gate, whatever
+  `withhold` says: probes only (every `admit_seconds`, default 20, on average) until 3 checks passed,
+  then science; one failed check before that holds the node, and a fail result after it does too. A
+  node without an account whose model has no reference here is never admitted, so the standard tier
+  (`qwen3.8-27b-q3`) needs its own reference before such nodes can work.
 
 Config (`model_check` in the gateway config; the reference files are secrets, kept with the
 gateway's secrets and pinned):
@@ -95,7 +100,7 @@ gateway's secrets and pinned):
 "model_check": {
   "enabled": true,
   "references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-iq4xs.json.gz", "sha256": "<64 hex>"}],
-  "interval_seconds": 1800, "recheck_seconds": 300,
+  "interval_seconds": 1800, "recheck_seconds": 300, "admit_seconds": 20,
   "withhold": false, "cover_share": 0.2
 }
 ```

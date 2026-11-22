@@ -43,6 +43,7 @@ const (
 	whyTerms        = "operator_terms"  // its operator has not accepted the current operator terms
 	whyPilotScience = "pilot_science"   // a pilot whose connector or user keeps it to science
 	whyPilotNotYet  = "pilot_not_ready" // a pilot still registering or past its deadline
+	whyAnon         = "anonymous"       // a node without an account: science only (anon.go)
 	whyOther        = "other"           // another rule of route.allows
 )
 
@@ -97,6 +98,8 @@ func noChatWhy(rt *route, n *nodeConn, now time.Time) string {
 		return whyPilotNotYet
 	case n.pilot != "" && n.scienceOnly:
 		return whyPilotScience
+	case n.anon:
+		return whyAnon
 	case rt.gatedBy(n) && !termsFinal():
 		return whyTermsDraft
 	case rt.gatedBy(n):

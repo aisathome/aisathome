@@ -111,6 +111,17 @@ type Status struct {
 	// EngineProcess is the engine process when the agent runs it itself (Config.EngineControl);
 	// then the UI can also stop and start it.
 	EngineProcess *engine.Status `json:"engine_process,omitempty"`
+	// Anonymous: the node runs without an account (science only, no credit), and what the gateway last
+	// said of it (admitted by the model check, still being checked, held). Nil for an account's node.
+	Anonymous *AnonStatus `json:"anonymous,omitempty"`
+}
+
+// AnonStatus is a node without an account's state at the gateway, for its local page.
+type AnonStatus struct {
+	State        string `json:"state,omitempty"` // protocol.NodeSelf.State; "" until the gateway answered
+	ChecksPassed int    `json:"checks_passed"`
+	ChecksNeeded int    `json:"checks_needed"`
+	Message      string `json:"message,omitempty"` // the gateway's sentence; text only
 }
 
 // persisted is what survives agent restarts (Config.StateFile): the pause switch, the
@@ -420,6 +431,12 @@ func (a *Agent) Status() Status {
 	if ctl := a.cfg.EngineControl; ctl != nil {
 		st := ctl.Status()
 		s.EngineProcess = &st
+	}
+	if Anonymous(a.cfg.Token) {
+		s.Anonymous = &AnonStatus{}
+		if a.self != nil {
+			s.Anonymous = &AnonStatus{State: a.self.State, ChecksPassed: a.self.ChecksPassed, ChecksNeeded: a.self.ChecksNeeded, Message: a.self.Message}
+		}
 	}
 	if a.connected {
 		t := a.connectedAt

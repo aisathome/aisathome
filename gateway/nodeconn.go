@@ -79,6 +79,10 @@ type nodeConn struct {
 	// rules: what the chat rules know of it (chatrules.go); guarded by g.mu, updated by sweepNodes and
 	// Reload.
 	rules nodeRules
+	// anon: a node without an account (anon.go): science only, once admitted. Set at connect, never changed.
+	anon bool
+	// admitted: a node without an account passed the model check's admission (modelcheck.go); guarded by g.mu.
+	admitted bool
 }
 
 // pendingReq is one request in flight on a node. The reader delivers messages on ch; the
@@ -212,7 +216,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
 		return
 	}
-	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, account: account, ip: ip,
+	n := &nodeConn{id: hello.NodeID, operator: operator, token: token, account: account, ip: ip, anon: isAnon(account),
 		agent: cleanAgent(hello.Agent), proto: proto, since: time.Now(), models: hello.Models, conn: c, pending: map[string]*pendingReq{}, lastSeen: time.Now(), closed: make(chan struct{})}
 	if pl != nil {
 		n.pilot, n.connector, n.extUser, n.deadline, n.scienceOnly = pl.pilot.ID, pl.conn.ID, pl.pilot.User, pl.pilot.Deadline, pl.scienceOnly
@@ -227,6 +231,9 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		first = pl.first
 	case account != "":
 		first, n.unconfirmed, _ = g.accounts.nodeLive(keyHash(token))
+	}
+	if n.anon && g.mc != nil { // admitted before (the model check keeps its record across reconnects)
+		n.admitted = g.mc.admitted(n.id)
 	}
 	if pl != nil {
 		// The record decides before the pilot is routable: one reported, ended or past its deadline
@@ -296,9 +303,14 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		refuse("too many nodes for this token", true)
 		return
 	}
-	if account != "" && g.nodesFromLocked(ip, n.id) >= maxNodesPerIP {
+	if account != "" && !n.anon && g.nodesFromLocked(ip, n.id, false) >= maxNodesPerIP {
 		g.mu.Unlock()
 		refuse(fmt.Sprintf("at most %d nodes per address", maxNodesPerIP), true)
+		return
+	}
+	if n.anon && g.nodesFromLocked(ip, n.id, true) >= maxAnonPerIP {
+		g.mu.Unlock()
+		refuse(fmt.Sprintf("at most %d nodes without an account per address; sign in to add more", maxAnonPerIP), true)
 		return
 	}
 	n.held = g.nodeHeld(n.id)
@@ -346,7 +358,8 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	g.signal() // waiting requests may now find a slot
 	g.log.Info("node connected", "node", n.id, "operator", n.operator, "models", len(n.models), "version", cmp.Or(n.agent, "unknown"),
-		"protocol", n.proto)
+		"protocol", n.proto, "anonymous", n.anon)
+	g.noteAnonSeen(n)
 	if flaps > 0 {
 		g.log.Warn("node connections keep replacing each other: two clients may be running with the same node token and id",
 			"node", n.id, "operator", n.operator, "replaced", flaps, "same_address", old.ip == n.ip)
@@ -364,6 +377,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		g.signal()
 		// In-flight requests see n.closed and fail over or report the error themselves.
 		g.log.Info("node disconnected", "node", n.id)
+		g.noteAnonSeen(n)
 	}()
 	err = g.readLoop(ctx, n)
 	if pl != nil {

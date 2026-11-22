@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: Apache-2.0
+package gateway
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aisathome/aisathome/node/modelcheck"
+	"github.com/aisathome/aisathome/protocol"
+)
+
+func testStore(t *testing.T) *AccountStore {
+	t.Helper()
+	s, err := OpenAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// A node without an account is an unclaimed "ax:" account with one "a-" node whose token is stored
+// hashed; its token connects; it counts in its own pool, never in the accounts' max_nodes; the switches
+// and the pool stop new ones.
+func TestRegisterAnon(t *testing.T) {
+	s := testStore(t)
+	t0 := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	token, id, err := s.RegisterAnon(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(token, "nt-"+id+".") || !validNodeID(id) || !strings.HasPrefix(id, "a-") {
+		t.Fatalf("token %q, id %q", token, id)
+	}
+	if got, ok := splitNodeToken(token); !ok || got != id {
+		t.Fatalf("splitNodeToken: %q %v", got, ok)
+	}
+	f := s.Snapshot()
+	if len(f.Accounts) != 1 {
+		t.Fatalf("%d accounts", len(f.Accounts))
+	}
+	a := f.Accounts[0]
+	if !strings.HasPrefix(a.ID, "ax:") || len(a.ID) != 3+32 || a.Status != StatusUnclaimed || a.FirstNode == nil || len(a.Nodes) != 1 {
+		t.Fatalf("account %+v", a)
+	}
+	n := a.Nodes[0]
+	if n.ID != id || n.Hash != keyHash(token) || strings.Contains(n.Prefix, token[len(n.Prefix):]) || n.Via != viaAnon {
+		t.Fatalf("node %+v", n)
+	}
+	acct, nid, ok := s.nodeToken(token)
+	if !ok || acct != a.ID || nid != id {
+		t.Fatalf("nodeToken: %q %q %v", acct, nid, ok)
+	}
+	if _, _, ok := s.nodeLive(keyHash(token)); !ok {
+		t.Fatal("nodeLive refuses a node without an account")
+	}
+	if f.nodeCount() != 0 || f.anonCount() != 1 {
+		t.Fatalf("counts: nodes %d, anonymous %d", f.nodeCount(), f.anonCount())
+	}
+	// Another unclaimed account (a connector's BOINC user) still holds no node token.
+	s.Update(func(f *AccountsFile) error {
+		f.Accounts = append(f.Accounts, &Account{ID: "cx:00", Status: StatusUnclaimed,
+			Nodes: []AccountNode{{ID: "n-00000001", Hash: keyHash("nt-n-00000001.x")}}})
+		return nil
+	})
+	if _, _, ok := s.nodeToken("nt-n-00000001.x"); ok {
+		t.Fatal("a connector's unclaimed account's node token connects")
+	}
+	// A banned one is cut off.
+	if err := s.SetStatus(a.ID, StatusBanned); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.nodeToken(token); ok {
+		t.Fatal("a banned node without an account still connects")
+	}
+
+	for name, set := range map[string]func(*AccountSettings){
+		"anon_closed":  func(st *AccountSettings) { st.AnonClosed = true },
+		"nodes_closed": func(st *AccountSettings) { st.NodesClosed = true },
+	} {
+		s := testStore(t)
+		s.Update(func(f *AccountsFile) error { set(&f.Settings); return nil })
+		if _, _, err := s.RegisterAnon(t0); !errors.Is(err, errAnonClosed) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	s = testStore(t)
+	s.Update(func(f *AccountsFile) error { f.Settings.MaxAnonNodes = 2; f.Settings.MaxNodes = 1; return nil })
+	for i := 0; i < 2; i++ {
+		if _, _, err := s.RegisterAnon(t0); err != nil {
+			t.Fatalf("anonymous node %d with max_nodes 1: %v", i+1, err)
+		}
+	}
+	if _, _, err := s.RegisterAnon(t0); !errors.Is(err, errAnonFull) {
+		t.Fatalf("over the pool: %v", err)
+	}
+	if DefaultMaxAnonNodes != 25 || (AccountSettings{}).MaxAnonNodesOrDefault() != 25 {
+		t.Error("the default pool is not 25 (owner, 2026-11-22)")
+	}
+}
+
+// At most 3 registrations per address a day and 30 an hour over the gateway, in memory; a registration
+// that failed gives its count back.
+func TestAnonRegLimits(t *testing.T) {
+	var r anonRegs
+	t0 := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		if _, err := r.take("203.0.113.5", t0.Add(time.Duration(i)*time.Hour)); err != nil {
+			t.Fatalf("registration %d: %v", i+1, err)
+		}
+	}
+	if _, err := r.take("203.0.113.5", t0.Add(23*time.Hour)); !errors.Is(err, errAnonBusy) {
+		t.Fatalf("a 4th within a day: %v", err)
+	}
+	if _, err := r.take("203.0.113.5", t0.Add(24*time.Hour)); err != nil {
+		t.Fatalf("a day after the first: %v", err)
+	}
+	undo, err := r.take("2001:db8::/64", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	undo()
+	for i := 0; i < 3; i++ {
+		if _, err := r.take("2001:db8::/64", t0); err != nil {
+			t.Fatalf("after a failed one given back, registration %d: %v", i+1, err)
+		}
+	}
+	var g anonRegs
+	for i := 0; i < 30; i++ {
+		if _, err := g.take(fmt.Sprintf("10.0.0.%d", i), t0); err != nil {
+			t.Fatalf("network-wide %d: %v", i+1, err)
+		}
+	}
+	if _, err := g.take("10.0.1.1", t0.Add(59*time.Minute)); !errors.Is(err, errAnonRush) {
+		t.Fatalf("31st in an hour: %v", err)
+	}
+	if _, err := g.take("10.0.1.1", t0.Add(time.Hour)); err != nil {
+		t.Fatalf("an hour later: %v", err)
+	}
+}
+
+// Retention: a node that never connected goes 24 h after it registered, one not seen for 90 days goes;
+// a connected one, a recent one and accounts' nodes stay.
+func TestAnonRetention(t *testing.T) {
+	s := testStore(t)
+	t0 := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	_, never, _ := s.RegisterAnon(t0)
+	_, seen, _ := s.RegisterAnon(t0)
+	_, live, _ := s.RegisterAnon(t0)
+	s.SignIn("gh:1", t0)
+	s.SetStatus("gh:1", StatusActive)
+	s.addNodeVia("gh:1", "", t0, nil, false, "")
+	acctOf := func(id string) string {
+		for _, a := range s.Snapshot().Accounts {
+			for _, n := range a.Nodes {
+				if n.ID == id {
+					return a.ID
+				}
+			}
+		}
+		return ""
+	}
+	if err := s.anonSeen(acctOf(seen), seen, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	connected := func(id string) bool { return id == live }
+	if gone, _ := s.expireAnon(t0.Add(23*time.Hour), connected); len(gone) != 0 {
+		t.Fatalf("within a day: %v", gone)
+	}
+	gone, err := s.expireAnon(t0.Add(25*time.Hour), connected)
+	if err != nil || len(gone) != 1 || gone[0] != never {
+		t.Fatalf("after a day: %v %v", gone, err)
+	}
+	if acctOf(seen) == "" || acctOf(live) == "" {
+		t.Fatal("a node that connected was deleted")
+	}
+	// Seen again within the hour: the time is not rewritten (a node that reconnects often).
+	lastSeen := func() time.Time {
+		a, _, _ := s.Get(acctOf(seen))
+		return *a.Nodes[0].LastSeen
+	}
+	s.anonSeen(acctOf(seen), seen, t0.Add(90*time.Minute))
+	if !lastSeen().Equal(t0.Add(time.Hour)) {
+		t.Errorf("last seen rewritten within anonSeenMin: %v", lastSeen())
+	}
+	s.anonSeen(acctOf(seen), seen, t0.Add(2*time.Hour))
+	if !lastSeen().Equal(t0.Add(2 * time.Hour)) {
+		t.Errorf("last seen not rewritten after anonSeenMin: %v", lastSeen())
+	}
+	if gone, _ := s.expireAnon(t0.Add(2*time.Hour+anonKeep-time.Minute), connected); len(gone) != 0 {
+		t.Fatalf("just under 90 days: %v", gone)
+	}
+	gone, _ = s.expireAnon(t0.Add(2*time.Hour+anonKeep+time.Minute), connected)
+	if len(gone) != 1 || gone[0] != seen {
+		t.Fatalf("after 90 days: %v", gone)
+	}
+	if acctOf(live) == "" {
+		t.Fatal("a connected node was deleted")
+	}
+	if a, _, ok := s.Get("gh:1"); !ok || len(a.Nodes) != 1 {
+		t.Fatal("an account's node was touched")
+	}
+	// A revoked node leaves an empty account: it goes too.
+	if err := s.RevokeNode("", live); err != nil {
+		t.Fatal(err)
+	}
+	if gone, _ := s.expireAnon(t0, connected); len(gone) != 1 || !strings.HasPrefix(gone[0], "ax:") {
+		t.Fatalf("an empty anonymous account: %v", gone)
+	}
+}
+
+// Science only, as a hard rule: a node without an account never gets a person's chat, API or agent
+// request, whatever the chat rules or the request's consent say, and no science before its admission.
+func TestAnonRoutes(t *testing.T) {
+	now := time.Now()
+	n := &nodeConn{id: "a-00000001", operator: "acct-x", account: "ax:00", anon: true}
+	sci := &route{class: ClassScience, rules: true, exclude: map[*nodeConn]bool{}}
+	if sci.allows(n, now) {
+		t.Fatal("science on a node without an account before its admission")
+	}
+	n.admitted = true
+	if !sci.allows(n, now) {
+		t.Fatal("no science on an admitted node without an account")
+	}
+	for _, rules := range []bool{true, false} {
+		n.rules.terms = true // even if something set it
+		for _, rt := range []*route{
+			{class: ClassChat, rules: rules},
+			{class: ClassAgent, rules: rules, tools: true, consent: true},
+			{class: ClassChat, rules: rules, self: "acct-x"}, // as if its own operator asked
+			{class: "api", rules: rules},
+		} {
+			rt.exclude = map[*nodeConn]bool{}
+			if rt.allows(n, now) {
+				t.Errorf("rules %v: %+v went to a node without an account", rules, rt)
+			}
+		}
+	}
+	// Agent calls of a science project (prove2me) during probation, as for pilots.
+	n.probEnd = now.Add(time.Hour)
+	agents := &route{class: ClassScience, tools: true, consent: true, exclude: map[*nodeConn]bool{}}
+	if agents.allows(n, now) {
+		t.Error("science agents in probation without the project's exception")
+	}
+	agents.pilotProbationOK = true
+	if !agents.allows(n, now) {
+		t.Error("science agents in probation refused despite the project's exception")
+	}
+	if noChatWhy(&route{class: ClassChat, rules: true}, n, now) != whyAnon {
+		t.Error("the serve capacity does not name a node without an account")
+	}
+	// Its account never counts as having accepted the operator terms, even with a record.
+	s := testStore(t)
+	s.Update(func(f *AccountsFile) error {
+		f.Accounts = append(f.Accounts, &Account{ID: "ax:01", Status: StatusUnclaimed,
+			OperatorTerms: &Acceptance{Version: OperatorTermsVersion, At: now}})
+		return nil
+	})
+	g := &Gateway{accounts: s}
+	if g.rulesFor("ax:01", NodeToken{}).terms {
+		t.Error("a node without an account counts as having accepted the operator terms")
+	}
+}
+
+// Admission: probes only until anonAdmitChecks checks passed; a failed check before then holds it,
+// whatever the withhold switch; after it, one failed check does not, a fail result does.
+func TestAnonAdmission(t *testing.T) {
+	entry, _ := testMCRef(t, 20)
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}, Admit: time.Second}, "")
+	g := &Gateway{mc: mc, log: quietLog()}
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	pass := ModelCheckResult{At: now, Verdict: modelcheck.Pass}
+	fail := ModelCheckResult{At: now, Verdict: modelcheck.Fail, KL: 1}
+	file := func(n *nodeConn, s *ModelCheckNode, c ModelCheckResult) string {
+		mc.mu.Lock()
+		defer mc.mu.Unlock()
+		return g.mcFileLocked(n, s, c)
+	}
+	n := &nodeConn{id: "a-1", anon: true}
+	s := &ModelCheckNode{Node: n.id}
+	mc.st.Nodes[n.id] = s
+	mc.mu.Lock()
+	if m := mc.meanLocked(n); m != time.Second {
+		t.Errorf("mean before admission %v, want the admission interval", m)
+	}
+	mc.mu.Unlock()
+	for i := 0; i < anonAdmitChecks; i++ {
+		if mc.admitted(n.id) {
+			t.Fatalf("admitted after %d passed checks", i)
+		}
+		if why := file(n, s, pass); why != "" {
+			t.Fatalf("held on a pass: %s", why)
+		}
+	}
+	if !mc.admitted(n.id) || mc.passedInWindow(n.id) != anonAdmitChecks {
+		t.Fatalf("not admitted after %d passes", anonAdmitChecks)
+	}
+	mc.mu.Lock()
+	if m := mc.meanLocked(n); m == time.Second {
+		t.Error("still the admission interval after admission")
+	}
+	mc.mu.Unlock()
+	if why := file(n, s, fail); why != "" || !mc.admitted(n.id) {
+		t.Fatalf("one failed check after admission: held %q, admitted %v", why, mc.admitted(n.id))
+	}
+	if why := file(n, s, fail); why == "" || !strings.Contains(why, "a node without an account") || s.HeldAt.IsZero() || mc.admitted(n.id) {
+		t.Fatalf("a fail result after admission: held %q", why)
+	}
+
+	// Before admission: one failed check holds it (withholding off, the observing period not over).
+	if mc.withholding() {
+		t.Fatal("withholding is on in this test")
+	}
+	n2 := &nodeConn{id: "a-2", anon: true}
+	s2 := &ModelCheckNode{Node: n2.id}
+	mc.st.Nodes[n2.id] = s2
+	file(n2, s2, pass)
+	if why := file(n2, s2, fail); why == "" || !strings.Contains(why, "before its admission") {
+		t.Fatalf("a failed check before admission: %q", why)
+	}
+	if mc.admitted(n2.id) {
+		t.Fatal("a held node is admitted")
+	}
+	// An account's node is never held while observing.
+	n3 := &nodeConn{id: "n-3"}
+	s3 := &ModelCheckNode{Node: n3.id}
+	file(n3, s3, fail)
+	if why := file(n3, s3, fail); why != "" {
+		t.Fatalf("an account's node held while observing: %q", why)
+	}
+}
+
+// Requests waiting elsewhere do not hold back the probes of a node without an account that no request
+// may use yet; once admitted, its probes yield like any node's.
+func TestAnonReserve(t *testing.T) {
+	g := &Gateway{node: map[string]*nodeConn{}, waiting: map[*route]struct{}{{class: ClassScience}: {}}}
+	n := &nodeConn{id: "a-1", anon: true, models: []protocol.ModelInfo{{Name: "qwen3.8-27b", Slots: 1}}}
+	g.node[n.id] = n
+	if !g.mcReserve(n, "qwen3.8-27b") {
+		t.Fatal("a node in admission gave no slot for a probe while a request waits elsewhere")
+	}
+	n.inflight, n.admitted = 0, true
+	if g.mcReserve(n, "qwen3.8-27b") {
+		t.Fatal("an admitted node took a probe while a request waits")
+	}
+}

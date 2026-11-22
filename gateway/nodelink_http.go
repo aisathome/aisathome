@@ -181,6 +181,11 @@ func (g *Gateway) approveLink(w http.ResponseWriter, r *http.Request, account st
 		fail(http.StatusBadRequest, err)
 		return
 	}
+	if l.claimNode != "" && g.nodeHeld(l.claimNode) { // held since it asked
+		g.links.finish(l, "", "", true)
+		fail(http.StatusForbidden, errLinkHeld)
+		return
+	}
 	name := r.FormValue("name")
 	if _, sent := r.Form["name"]; !sent {
 		name = info.Name
@@ -261,6 +266,9 @@ Check that the node shows this same code.</p>
 <dt>Node software</dt><dd data-link="agent">{{if .Info.Agent}}{{.Info.Agent}}{{else}}not reported{{end}}</dd>
 <dt>Asked at</dt><dd>{{hm .Created}}; the code works until {{hm .Expires}}</dd></dl>
 <p class="hint">The node reported these details itself; nobody has checked them.</p></div>
+{{if .Claim}}<div class="card" id="link-anon"><p><strong>This node has been running without an account</strong> (as <code>{{.Claim}}</code>), doing science only.
+Approving makes it one of your nodes with a new node token, and its identity without an account is deleted. A node without an account earns no
+credit, so nothing it did before moves to your account: its credit starts now.</p></div>{{end}}
 <div class="card" id="link-what"><h2>What approving does</h2>
 <ul><li>The node becomes one of your nodes, as if you had added it on your account page, and gets its own node token. It is listed under
 <a href="/account#nodes">Your nodes</a>, where you can revoke it at any time.</li>

@@ -206,6 +206,7 @@ type nodeRules struct {
 func (g *Gateway) rulesFor(account string, tok NodeToken) nodeRules {
 	var r nodeRules
 	switch {
+	case isAnon(account): // a node without an account never accepts them (anon.go)
 	case account != "" && g.accounts != nil:
 		r.terms = g.accounts.operatorTerms(account)
 	case account == "":

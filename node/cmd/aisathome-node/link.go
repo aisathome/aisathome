@@ -34,6 +34,10 @@ Installed on Linux, run it as root (sudo aisathome-node link): the token goes to
 /etc/aisathome-node/token.env and the node service restarts. On Windows, run it as
 administrator once the setup is done (the setup page has a "Link to my account" button).
 
+A node that runs without an account (aisathome-node register) is moved to your account:
+it gets a new node token, and its identity without an account is deleted. It earned no
+credit, so nothing moves with it; its credit starts once it is linked.
+
 Flags:
 `
 
@@ -135,6 +139,10 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 		info.Name = *name
 	}
 	c := e.client(base)
+	if tok := t.installedToken(cfg); node.Anonymous(tok) {
+		c.Token = tok // the gateway deletes its identity without an account once it is linked
+		fmt.Fprintln(stdout, "This node runs without an account (science only). Linking moves it to your account with a new node token.")
+	}
 	st, err := c.Start(ctx, info)
 	if err != nil {
 		return fail(err)
@@ -201,6 +209,22 @@ Link this node to your AIs@home account:
 
 `, st.VerificationURIComplete, st.VerificationURI, st.UserCode)
 	fmt.Fprintf(w, "Waiting for the approval (the code works for %d minutes; Ctrl+C stops)...\n", mins)
+}
+
+// installedToken is the node's token now: token.env's, else the config's ("" if none).
+func (t linkTarget) installedToken(cfg map[string]json.RawMessage) string {
+	if t.tokenEnv != "" {
+		if b, err := os.ReadFile(t.tokenEnv); err == nil {
+			for _, line := range strings.Split(string(b), "\n") {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(line), "AISATHOME_NODE_TOKEN="); ok {
+					return strings.TrimSpace(v)
+				}
+			}
+		}
+	}
+	var tok string
+	json.Unmarshal(cfg["token"], &tok)
+	return tok
 }
 
 // checkWritable reports whether path can be replaced: its folder takes a new file.

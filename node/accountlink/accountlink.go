@@ -50,6 +50,9 @@ func APIBase(gatewayURL string) (string, error) {
 type Client struct {
 	Base string       // APIBase
 	HTTP *http.Client // nil: one with a 20 s timeout
+	// Token is a node without an account's token (node.Anonymous): sent with Start, so that linking moves
+	// that node to the account (its identity without an account is deleted), and with Self. "" otherwise.
+	Token string
 	// Sleep waits between polls; nil: a timer that ends early with ctx.
 	Sleep func(ctx context.Context, d time.Duration) error
 }
@@ -62,15 +65,29 @@ func (c *Client) client() *http.Client {
 }
 
 func (c *Client) post(ctx context.Context, path string, body, out any) error {
-	b, err := json.Marshal(body)
+	return c.do(ctx, http.MethodPost, path, body, false, out)
+}
+
+// do sends a request (body nil: none) and reads its JSON answer; withToken sends c.Token.
+func (c *Client) do(ctx context.Context, method, path string, body any, withToken bool, out any) error {
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.Base+path, rd)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+path, bytes.NewReader(b))
-	if err != nil {
-		return err
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if withToken && c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	req.Header.Set("User-Agent", "aisathome-node/"+node.Version)
 	resp, err := c.client().Do(req)
 	if err != nil {
@@ -88,6 +105,9 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 			return fmt.Errorf("the gateway refused: %s", e.Error.Message)
 		}
 		if resp.StatusCode == http.StatusNotFound {
+			if path == protocol.RegisterPath {
+				return fmt.Errorf("the gateway at %s does not take nodes without an account (HTTP 404)", c.Base)
+			}
 			return fmt.Errorf("the gateway at %s cannot link nodes to accounts (HTTP 404): paste a node token instead", c.Base)
 		}
 		return fmt.Errorf("the gateway answered HTTP %d", resp.StatusCode)
@@ -102,7 +122,7 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 // UserCode and VerificationURIComplete.
 func (c *Client) Start(ctx context.Context, info protocol.LinkInfo) (protocol.LinkStart, error) {
 	var s protocol.LinkStart
-	if err := c.post(ctx, protocol.LinkPath, info, &s); err != nil {
+	if err := c.do(ctx, http.MethodPost, protocol.LinkPath, info, true, &s); err != nil {
 		return s, err
 	}
 	if s.DeviceCode == "" || s.UserCode == "" || !ValidURL(s.VerificationURIComplete) {
@@ -115,6 +135,30 @@ func (c *Client) Start(ctx context.Context, info protocol.LinkInfo) (protocol.Li
 		s.ExpiresIn = 600
 	}
 	return s, nil
+}
+
+// SetToken sets Token (setupflow's linker).
+func (c *Client) SetToken(token string) { c.Token = token }
+
+// Register makes this machine a node without an account (protocol.RegisterPath): science only, no
+// credit, linked to an account later with Start. acceptTerms says the person was told that they must be
+// 18 or older and that running the node accepts the terms, and went on; the gateway refuses without it.
+func (c *Client) Register(ctx context.Context, acceptTerms bool) (protocol.Register, error) {
+	var r protocol.Register
+	if err := c.post(ctx, protocol.RegisterPath, protocol.RegisterRequest{AcceptTerms: acceptTerms, Agent: "aisathome-node/" + node.Version}, &r); err != nil {
+		return r, err
+	}
+	if id, ok := node.TokenNodeID(r.Token); !ok || id != r.NodeID || !node.Anonymous(r.Token) {
+		return r, errors.New("unexpected answer from the gateway: no valid token for a node without an account")
+	}
+	return r, nil
+}
+
+// Self asks the gateway what it knows of the node whose token is c.Token (protocol.SelfPath).
+func (c *Client) Self(ctx context.Context) (protocol.NodeSelf, error) {
+	var s protocol.NodeSelf
+	err := c.do(ctx, http.MethodGet, protocol.SelfPath, nil, true, &s)
+	return s, err
 }
 
 // Poll asks once whether the link is approved.

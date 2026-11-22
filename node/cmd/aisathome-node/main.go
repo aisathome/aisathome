@@ -49,6 +49,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "link" {
 		os.Exit(runLink(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "register" {
+		os.Exit(runRegister(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "service" {
 		os.Exit(runServiceCommand(os.Args[2:], os.Stdout, os.Stderr))
 	}
