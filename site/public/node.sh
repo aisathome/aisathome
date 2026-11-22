@@ -8,11 +8,14 @@
 # installed (at the terminal, not through the pipe), then runs `sudo ./install.sh --anonymous`. The
 # same steps by hand, to read before running: https://aisathome.org/node/install/
 #
-# AISATHOME_RELEASE_BASE: where the bundle comes from (default: the latest GitHub release).
+# AISATHOME_RELEASE_BASE: where the bundle comes from (default: the latest GitHub release);
+# AISATHOME_GATEWAY_URL: the gateway the node connects to (default: the installer's, aisathome.org's).
+# A test site serves this same script with these two defaults changed, nothing else.
 # SPDX-License-Identifier: Apache-2.0
 set -eu
 
 base="${AISATHOME_RELEASE_BASE:-https://github.com/aisathome/aisathome/releases/latest/download}"
+gateway="${AISATHOME_GATEWAY_URL:-}"
 bundle=aisathome-node-bundle-linux-amd64
 sudo="${AISATHOME_SUDO-sudo}"  # tests: a stand-in
 tty="${AISATHOME_TTY:-/dev/tty}" # where the answer comes from: the terminal, never the pipe
@@ -37,7 +40,9 @@ main() {
 
   echo
   echo "Checking this machine (nothing is installed yet):"
-  ./install.sh --dry-run --anonymous || die "the checks failed (above): nothing was installed"
+  set -- --anonymous
+  [ -z "$gateway" ] || set -- "$@" --gateway-url "$gateway"
+  ./install.sh --dry-run "$@" || die "the checks failed (above): nothing was installed"
 
   cat <<'NOTICE'
 
@@ -53,6 +58,6 @@ NOTICE
     y | Y | yes | Yes | YES) ;;
     *) echo "Nothing was installed. The bundle stays in $dir/$bundle"; exit 0 ;;
   esac
-  $sudo ./install.sh --anonymous <"$tty"
+  $sudo ./install.sh "$@" <"$tty"
 }
 main

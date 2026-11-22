@@ -122,6 +122,8 @@ type AnonStatus struct {
 	ChecksPassed int    `json:"checks_passed"`
 	ChecksNeeded int    `json:"checks_needed"`
 	Message      string `json:"message,omitempty"` // the gateway's sentence; text only
+	// DeleteAt: held, the gateway deletes the node then unless it is reinstalled or linked before.
+	DeleteAt *time.Time `json:"delete_at,omitempty"`
 }
 
 // persisted is what survives agent restarts (Config.StateFile): the pause switch, the
@@ -435,7 +437,8 @@ func (a *Agent) Status() Status {
 	if Anonymous(a.cfg.Token) {
 		s.Anonymous = &AnonStatus{}
 		if a.self != nil {
-			s.Anonymous = &AnonStatus{State: a.self.State, ChecksPassed: a.self.ChecksPassed, ChecksNeeded: a.self.ChecksNeeded, Message: a.self.Message}
+			s.Anonymous = &AnonStatus{State: a.self.State, ChecksPassed: a.self.ChecksPassed, ChecksNeeded: a.self.ChecksNeeded,
+				Message: a.self.Message, DeleteAt: a.self.DeleteAt}
 		}
 	}
 	if a.connected {

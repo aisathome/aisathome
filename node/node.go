@@ -126,7 +126,8 @@ type Agent struct {
 	away   bool
 	// self: what the gateway knows of this node without an account (anon.go); nil for an account's node,
 	// or until the gateway answered.
-	self *protocol.NodeSelf
+	self     *protocol.NodeSelf
+	selfKick chan struct{} // watchSelf asks at once (kickSelf)
 
 	saveMu     sync.Mutex
 	saveFailed bool
@@ -171,7 +172,7 @@ func New(cfg Config, log *slog.Logger) *Agent {
 		}
 		cfg.NodeID = id
 	}
-	a := &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelCauseFunc{},
+	a := &Agent{cfg: cfg, log: log, client: &http.Client{}, cancels: map[string]context.CancelCauseFunc{}, selfKick: make(chan struct{}, 1),
 		engine: EngineUnknown, now: time.Now}
 	a.started = a.now()
 	a.load()
@@ -483,6 +484,7 @@ func (a *Agent) session(ctx context.Context) error {
 	a.eventLocked("connected", welcome.GatewayID)
 	paused := a.ps.Paused
 	a.mu.Unlock()
+	a.kickSelf() // a node without an account: its panel follows the gateway's view of this connection at once
 	a.save()
 	defer func() {
 		a.mu.Lock()

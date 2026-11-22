@@ -74,3 +74,26 @@ func TestAnonymousSelf(t *testing.T) {
 		t.Fatal("an account's node asked about itself or shows the panel")
 	}
 }
+
+// The panel follows the gateway's view of a new connection within seconds, and settles once admitted or
+// held.
+func TestSelfCadence(t *testing.T) {
+	for _, c := range []struct {
+		connected bool
+		state     string
+		err       error
+		max       time.Duration
+	}{
+		{true, protocol.SelfOffline, nil, 3 * time.Second},
+		{true, "", nil, 3 * time.Second},
+		{true, protocol.SelfChecking, nil, 10 * time.Second},
+		{true, protocol.SelfChecking, io.EOF, 3 * time.Second},
+	} {
+		if got := selfNext(c.connected, protocol.NodeSelf{State: c.state}, c.err); got > c.max {
+			t.Errorf("%+v: next in %v", c, got)
+		}
+	}
+	if selfNext(true, protocol.NodeSelf{State: protocol.SelfAdmitted}, nil) < 30*time.Second {
+		t.Error("an admitted node is asked about too often")
+	}
+}
