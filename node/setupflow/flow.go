@@ -745,7 +745,8 @@ func (f *Flow) Link(gateway string) error {
 	sctx, scancel := context.WithTimeout(ctx, 30*time.Second)
 	defer scancel()
 	l := f.d.NewLinker(base)
-	if cfg, err := readConfig(f.d.ConfigPath); err == nil && configured && node.Anonymous(cfg.Token) {
+	if cfg, err := readConfig(f.d.ConfigPath); err == nil && configured && node.Anonymous(cfg.Token) &&
+		(cfg.GatewayURL == "" || cfg.GatewayURL == gw) { // only to the gateway that issued it
 		if ts, ok := l.(tokenSender); ok {
 			ts.SetToken(cfg.Token) // a node without an account: linking moves it to the account
 		}

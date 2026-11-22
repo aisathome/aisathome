@@ -139,7 +139,10 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 		info.Name = *name
 	}
 	c := e.client(base)
-	if tok := t.installedToken(cfg); node.Anonymous(tok) {
+	var cfgGW string
+	json.Unmarshal(cfg["gateway_url"], &cfgGW)
+	if tok := t.installedToken(cfg); node.Anonymous(tok) && (cfgGW == "" || cfgGW == gw) {
+		// Only to the gateway that issued it: -gateway to another one starts a plain link there.
 		c.Token = tok // the gateway deletes its identity without an account once it is linked
 		fmt.Fprintln(stdout, "This node runs without an account (science only). Linking moves it to your account with a new node token.")
 	}
@@ -240,9 +243,10 @@ func checkWritable(path string) error {
 
 // save writes the token: into token.env (and the node id into the config), or into the config. The
 // gateway's address goes into the config too when it was given on the command line.
-// Nothing is written unless the token has the exact form the gateway issues and carries nodeID.
+// Nothing is written unless the token has the exact form the gateway issues (an account's node, or a
+// node without an account's from register) and carries nodeID.
 func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error {
-	if id, ok := node.IssuedTokenNodeID(token); !ok || id != nodeID {
+	if id, ok := node.IssuedAnyTokenNodeID(token); !ok || id != nodeID {
 		return errors.New("the gateway sent a token that is not a node token")
 	}
 	// A lock on the config's folder: two links at once leave one link's config and token.
@@ -351,7 +355,7 @@ func configGateway(path string) string {
 // gateway issues (no newline, space, quote, "=" or "#") can go into the file, so a token cannot
 // add environment settings for the node's service.
 func writeTokenEnv(path, token string) error {
-	if _, ok := node.IssuedTokenNodeID(token); !ok {
+	if _, ok := node.IssuedAnyTokenNodeID(token); !ok {
 		return errors.New("not writing token.env: the token is not a node token")
 	}
 	return writeReplacing(path, []byte("AISATHOME_NODE_TOKEN="+token+"\n"), 0o600)
