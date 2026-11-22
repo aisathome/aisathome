@@ -5,10 +5,11 @@
 // What such a node may do, as hard rules (route.allows), not settings:
 //   - Science only. No chat, API or agent request of a person ever goes to it, whatever the chat rules or
 //     their config switch say: its operator accepted no operator terms, and there is nobody to accept them.
-//   - No science until the model check admitted it: its first work is probe prompts only, and it is admitted
-//     after anonAdmitChecks passed checks (modelcheck.go). A failed check before then holds it. Without the
-//     model check, or with no reference for its model, it is never admitted (and registering is refused when
-//     the check is off).
+//   - No science until the model check admitted it: its first work is probe prompts only, from the admission
+//     set (model_check.admit_references), never the secret set of the ongoing checks, and it is admitted
+//     after anonAdmitChecks passed checks (modelcheck.go). A failed check before then holds it. Admitted, it
+//     gets the secret set at random like any node. Without the model check, or with no admission set for its
+//     model, it is never admitted (and registering is refused when the check is off).
 //   - No credit: what it serves is not counted in the credit ledger (relay.go), so nothing moves when it is
 //     linked to an account; credit starts with the account's own node.
 //   - Not listed anywhere public.
@@ -22,8 +23,8 @@
 // over the gateway anonRegNetwork an hour: both in memory only, as the privacy notice promises for
 // addresses (a restart forgets them). A pool of max_anon_nodes (default 25) apart from the accounts'
 // max_nodes; anon_closed (and nodes_closed) stop new registrations. At most maxAnonPerIP connected per
-// address. Retention: a node that never connected is deleted anonUnconnected after it registered, and
-// one not seen for anonKeep is deleted (sweepAnon).
+// address. Retention: a node that never connected is deleted anonUnconnected after it registered, one not
+// seen for anonKeep is deleted, and a held one anonHeldKeep after its hold (sweepAnon).
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -49,6 +50,7 @@ const (
 	maxAnonPerIP        = 2                    // connected nodes without an account per client address
 	anonUnconnected     = 24 * time.Hour       // a registered node that never connected is deleted after this
 	anonKeep            = 90 * 24 * time.Hour  // one not seen for this long is deleted
+	anonHeldKeep        = 24 * time.Hour       // a held one is deleted this long after its hold, unless linked
 	anonSweepEvery      = 10 * time.Minute     // how often sweepAnon runs
 	anonAdmitChecks     = 3                    // passed model checks before a node without an account gets science
 	anonRegPruneEvery   = time.Minute          // old registration counts are forgotten
@@ -178,13 +180,20 @@ func (s *AccountStore) removeAnon(account string) error {
 
 // anonExpired reports whether the node without an account a is past its retention at now: it never
 // connected within anonUnconnected of registering, or it was not seen for anonKeep, or it has no node left
-// (revoked). A connected node (live) is never expired. Banned ones stay, as banned accounts do.
-func anonExpired(a *Account, now time.Time, live func(id string) bool) bool {
+// (revoked), or a hold (held: node id to when) is anonHeldKeep old: a held node would otherwise keep its
+// pool slot (owner, 2026-11-22; linked to an account before then, it is no longer anonymous). A connected
+// node (live) is not expired for being unseen. Banned ones stay, as banned accounts do.
+func anonExpired(a *Account, now time.Time, live func(id string) bool, held map[string]time.Time) bool {
 	if !isAnon(a.ID) || a.Status != StatusUnclaimed {
 		return false
 	}
 	if len(a.Nodes) == 0 {
 		return true
+	}
+	for _, n := range a.Nodes {
+		if at, ok := held[n.ID]; ok && now.Sub(at) >= anonHeldKeep {
+			return true
+		}
 	}
 	for _, n := range a.Nodes {
 		switch {
@@ -201,10 +210,18 @@ func anonExpired(a *Account, now time.Time, live func(id string) bool) bool {
 
 // expireAnon deletes the nodes without an account past their retention, and returns their node ids.
 func (s *AccountStore) expireAnon(now time.Time, live func(id string) bool) ([]string, error) {
+	heldAt := func(f *AccountsFile) map[string]time.Time {
+		m := map[string]time.Time{}
+		for _, h := range f.NodeHolds {
+			m[h.Node] = h.At
+		}
+		return m
+	}
 	s.mu.Lock()
 	any := false
+	held := heldAt(&s.f)
 	for _, a := range s.f.Accounts {
-		any = any || anonExpired(a, now, live)
+		any = any || anonExpired(a, now, live, held)
 	}
 	s.mu.Unlock()
 	if !any { // nothing to delete: no write
@@ -213,8 +230,9 @@ func (s *AccountStore) expireAnon(now time.Time, live func(id string) bool) ([]s
 	var gone []string
 	err := s.Update(func(f *AccountsFile) error {
 		keep := f.Accounts[:0]
+		held := heldAt(f)
 		for _, a := range f.Accounts {
-			if anonExpired(a, now, live) {
+			if anonExpired(a, now, live, held) {
 				for _, n := range a.Nodes {
 					gone = append(gone, n.ID)
 				}

@@ -56,6 +56,12 @@ type ModelCheckConfig struct {
 	// References are the secret prompt sets with their recorded answers, one per model name nodes
 	// announce ("qwen3.8-27b"): files in the aisathome-modelcheck/1 format, pinned by SHA-256.
 	References []ModelCheckReference `json:"references"`
+	// AdmitReferences are the admission sets, one per model: other prompts, recorded like References,
+	// sent only to nodes without an account that are not admitted yet (anon.go), so that registering
+	// never shows anyone a prompt of References. Anyone can collect these by registering, so they are
+	// rotated (a new file and pin) rather than kept forever; small (16 prompts at least) and cheap to
+	// record. Without one for a node's model, such a node is never admitted.
+	AdmitReferences []ModelCheckReference `json:"admit_references,omitempty"`
 	// IntervalSec is the mean time between two probe prompts to a node once it has a result
 	// (exponential, so a node cannot predict them); 4 prompts make a check. Default 1800 (a check
 	// about every 2 hours).
@@ -205,27 +211,33 @@ func ReadModelCheckState(stateDir string) (*ModelCheckState, error) {
 
 // mcRef is a loaded reference: by prompt id, in file order.
 type mcRef struct {
-	ref  *modelcheck.Reference
-	byID map[string]*modelcheck.Result
-	ids  []string
+	ref   *modelcheck.Reference
+	byID  map[string]*modelcheck.Result
+	ids   []string
+	admit bool // an admission set (AdmitReferences)
 }
+
+// admitPrefix starts the ids of the admission sets' prompts.
+const admitPrefix = "admit:"
 
 // mcAnswer is one probe prompt's answer, waiting for the rest of its group.
 type mcAnswer struct {
 	id    string
 	model string // the reference it answers: a group never mixes two (a node may come back with another model)
+	admit bool   // an admission set's prompt: a group never mixes the admission set and the secret set
 	toks  []modelcheck.Token
 	bad   string // why the answer cannot be compared (no logprobs, an error), "" if it can
 }
 
 // modelChecker runs the check. Its state is guarded by mu.
 type modelChecker struct {
-	cfg   ModelCheckConfig
-	th    modelcheck.Thresholds
-	refs  map[string]*mcRef // by model name
-	cover float64
-	path  string // the result file, "" without a state_dir
-	log   *slog.Logger
+	cfg    ModelCheckConfig
+	th     modelcheck.Thresholds
+	refs   map[string]*mcRef // by model name
+	admits map[string]*mcRef // the admission sets, by model name; prompt ids carry admitPrefix
+	cover  float64
+	path   string // the result file, "" without a state_dir
+	log    *slog.Logger
 
 	mu      sync.Mutex
 	st      ModelCheckState
@@ -261,7 +273,8 @@ func newModelChecker(cfg ModelCheckConfig, stateDir string, log *slog.Logger) (*
 		return nil, fmt.Errorf("model_check: interval_seconds %d (at least 60), recheck_seconds %d (at least 30) and admit_seconds %d (at least 5)",
 			cfg.IntervalSec, cfg.RecheckSec, cfg.AdmitSec)
 	}
-	mc := &modelChecker{cfg: cfg, th: modelcheck.DefaultThresholds, refs: map[string]*mcRef{}, cover: defaultCoverShare, log: log,
+	mc := &modelChecker{cfg: cfg, th: modelcheck.DefaultThresholds, refs: map[string]*mcRef{}, admits: map[string]*mcRef{},
+		cover: defaultCoverShare, log: log,
 		next: map[string]time.Time{}, pending: map[string][]mcAnswer{}, running: map[string]bool{},
 		rng: rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))}
 	if cfg.CoverShare != nil {
@@ -270,29 +283,56 @@ func newModelChecker(cfg ModelCheckConfig, stateDir string, log *slog.Logger) (*
 		}
 		mc.cover = *cfg.CoverShare
 	}
-	for _, r := range cfg.References {
-		if r.Model == "" || r.File == "" || len(r.SHA256) != 64 {
-			return nil, fmt.Errorf("model_check: a reference needs model, file and its sha256 (64 hex digits): %+v", r)
+	for _, set := range []struct {
+		refs   []ModelCheckReference
+		into   map[string]*mcRef
+		prefix string
+	}{{cfg.References, mc.refs, ""}, {cfg.AdmitReferences, mc.admits, admitPrefix}} {
+		for _, r := range set.refs {
+			if r.Model == "" || r.File == "" || len(r.SHA256) != 64 {
+				return nil, fmt.Errorf("model_check: a reference needs model, file and its sha256 (64 hex digits): %+v", r)
+			}
+			if set.into[r.Model] != nil {
+				return nil, fmt.Errorf("model_check: two references for model %s", r.Model)
+			}
+			ref, err := modelcheck.LoadFile(r.File, r.SHA256)
+			if err != nil {
+				return nil, fmt.Errorf("model_check: %w", err)
+			}
+			if ref.Request.Thinking || ref.Request.TopLogprobs != modelcheck.DefaultRequest.TopLogprobs {
+				return nil, fmt.Errorf("model_check: %s was recorded with %+v; the check sends %+v", r.File, ref.Request, modelcheck.DefaultRequest)
+			}
+			if len(ref.Results) < 4*mc.th.GroupSize {
+				return nil, fmt.Errorf("model_check: %s has %d prompts; a pool needs at least %d", r.File, len(ref.Results), 4*mc.th.GroupSize)
+			}
+			m := &mcRef{ref: ref, byID: map[string]*modelcheck.Result{}, admit: set.prefix != ""}
+			for i := range ref.Results {
+				// The admission set's ids carry admitPrefix everywhere (records, uses, groups): never
+				// mistaken for the secret set's.
+				ref.Results[i].ID = set.prefix + ref.Results[i].ID
+				m.byID[ref.Results[i].ID] = &ref.Results[i]
+				m.ids = append(m.ids, ref.Results[i].ID)
+			}
+			set.into[r.Model] = m
 		}
-		if mc.refs[r.Model] != nil {
-			return nil, fmt.Errorf("model_check: two references for model %s", r.Model)
+	}
+	for model, a := range mc.admits {
+		if r := mc.refs[model]; r != nil {
+			shared := 0
+			texts := map[string]bool{}
+			for _, x := range r.ref.Results {
+				texts[x.Text] = true
+			}
+			for _, x := range a.ref.Results {
+				if texts[x.Text] {
+					shared++
+				}
+			}
+			if shared > 0 { // a test setup (staging's public references); never prod's secret set
+				log.Warn("model check: the admission set shares prompts with the ongoing set: those are shown to nodes not admitted yet",
+					"model", model, "shared", shared)
+			}
 		}
-		ref, err := modelcheck.LoadFile(r.File, r.SHA256)
-		if err != nil {
-			return nil, fmt.Errorf("model_check: %w", err)
-		}
-		if ref.Request.Thinking || ref.Request.TopLogprobs != modelcheck.DefaultRequest.TopLogprobs {
-			return nil, fmt.Errorf("model_check: %s was recorded with %+v; the check sends %+v", r.File, ref.Request, modelcheck.DefaultRequest)
-		}
-		if len(ref.Results) < 4*mc.th.GroupSize {
-			return nil, fmt.Errorf("model_check: %s has %d prompts; a pool needs at least %d", r.File, len(ref.Results), 4*mc.th.GroupSize)
-		}
-		m := &mcRef{ref: ref, byID: map[string]*modelcheck.Result{}}
-		for i := range ref.Results {
-			m.byID[ref.Results[i].ID] = &ref.Results[i]
-			m.ids = append(m.ids, ref.Results[i].ID)
-		}
-		mc.refs[r.Model] = m
 	}
 	mc.st = ModelCheckState{Nodes: map[string]*ModelCheckNode{}, Uses: map[string]int{}}
 	if stateDir != "" {
@@ -481,10 +521,15 @@ func (mc *modelChecker) meanLocked(n *nodeConn) time.Duration {
 	return mc.interval()
 }
 
-// checkedModel is the model of n the check has a reference for, or "".
+// checkedModel is the model of n the check has a reference for, or "": for a node without an account,
+// an admission set (it is admitted by one before any other check).
 func (mc *modelChecker) checkedModel(n *nodeConn) string {
+	refs := mc.refs
+	if n.anon {
+		refs = mc.admits
+	}
 	for _, m := range n.models {
-		if mc.refs[m.Name] != nil {
+		if refs[m.Name] != nil {
 			return m.Name
 		}
 	}
@@ -571,6 +616,17 @@ func (mc *modelChecker) nodeLocked(n *nodeConn, model string, now time.Time) *Mo
 	return s
 }
 
+// probeRefLocked is the reference n's next probe prompt comes from: for a node without an account not
+// admitted yet (by its record s), the admission set, never the secret set; otherwise the ongoing (secret)
+// set, as for any node. nil: none for its model (an admitted node without an account whose model has no
+// ongoing reference gets no more probes). Caller holds mc.mu.
+func (mc *modelChecker) probeRefLocked(n *nodeConn, s *ModelCheckNode, model string) *mcRef {
+	if n.anon && !anonAdmitted(s, mc.th) {
+		return mc.admits[model]
+	}
+	return mc.refs[model]
+}
+
 // tick starts the probes that are due, one per node at most.
 func (g *Gateway) mcTick() {
 	mc := g.mc
@@ -629,7 +685,12 @@ func (g *Gateway) mcTick() {
 			continue
 		}
 		mc.mu.Lock()
-		r := mc.refs[model]
+		r := mc.probeRefLocked(n, s, model)
+		if r == nil {
+			mc.mu.Unlock()
+			g.mcRelease(n)
+			continue
+		}
 		id := mc.pickPromptLocked(s, r)
 		mc.running[n.id] = true
 		mc.dirty = true
@@ -672,6 +733,14 @@ func (g *Gateway) mcReserve(n *nodeConn, model string) bool {
 	return true
 }
 
+// mcRelease gives back the slot mcReserve took, for a probe that is not sent after all.
+func (g *Gateway) mcRelease(n *nodeConn) {
+	n.mu.Lock()
+	n.inflight--
+	n.mu.Unlock()
+	g.signal()
+}
+
 // mcWanted reports whether a request waiting for a node could use n.
 func (g *Gateway) mcWanted(n *nodeConn) bool {
 	now := time.Now()
@@ -694,7 +763,7 @@ func (g *Gateway) mcProbe(n *nodeConn, model string, r *mcRef, id string) {
 	hold := ""
 	mc.mu.Lock()
 	if s := mc.st.Nodes[n.id]; s != nil { // nil: forgotten meanwhile (not seen for mcKeepNodes)
-		hold = g.mcAnswerLocked(n, s, r, mcAnswer{id: id, model: model, toks: toks}, ok, why, now)
+		hold = g.mcAnswerLocked(n, s, r, mcAnswer{id: id, model: model, admit: r.admit, toks: toks}, ok, why, now)
 	}
 	if hold == "" {
 		mc.running[n.id] = false
@@ -732,7 +801,7 @@ func (g *Gateway) mcAnswerLocked(n *nodeConn, s *ModelCheckNode, r *mcRef, a mcA
 	// another model) are dropped.
 	kept := mc.pending[n.id][:0]
 	for _, p := range mc.pending[n.id] {
-		if p.model == a.model {
+		if p.model == a.model && p.admit == a.admit {
 			kept = append(kept, p)
 		}
 	}

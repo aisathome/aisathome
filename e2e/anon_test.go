@@ -18,6 +18,7 @@ import (
 	"github.com/aisathome/aisathome/gateway"
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/accountlink"
+	"github.com/aisathome/aisathome/node/modelcheck"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -26,6 +27,7 @@ import (
 func anonRig(t *testing.T, rulesOff bool, mod func(*gateway.Config)) (*acctRig, *linkClock) {
 	t.Helper()
 	entry, _ := mcReference(t)
+	admit, _ := mcReferenceOf(t, "q", "Admission question %d, please.")
 	clk := &linkClock{t: time.Now()}
 	a := newAcctRigNodes(t, 100, nil, func(c *gateway.Config) {
 		c.ChatRulesOff = rulesOff
@@ -33,13 +35,37 @@ func anonRig(t *testing.T, rulesOff bool, mod func(*gateway.Config)) (*acctRig, 
 		c.AnonNow = clk.now
 		c.StatsRefresh = time.Millisecond
 		c.ModelCheck = &gateway.ModelCheckConfig{Enabled: true, References: []gateway.ModelCheckReference{entry},
-			Tick: 10 * time.Millisecond, Interval: time.Hour, Recheck: time.Hour, Admit: 20 * time.Millisecond}
+			AdmitReferences: []gateway.ModelCheckReference{admit},
+			Tick:            10 * time.Millisecond, Interval: 300 * time.Millisecond, Recheck: 300 * time.Millisecond, Admit: 20 * time.Millisecond}
 		withProjects(c)
 		if mod != nil {
 			mod(c)
 		}
 	})
 	return a, clk
+}
+
+// bothSets is a reference holding the secret set's and the admission set's prompts and answers, so that a
+// fake engine answers both like the right model.
+func bothSets(t *testing.T) (*modelcheck.Reference, map[string]bool) {
+	_, main := mcReference(t)
+	_, admit := mcReferenceOf(t, "q", "Admission question %d, please.")
+	both := *main
+	both.Results = append(append([]modelcheck.Result(nil), main.Results...), admit.Results...)
+	secret := map[string]bool{}
+	for _, r := range main.Results {
+		secret[r.Text] = true
+	}
+	return &both, secret
+}
+
+// probeTexts are the prompts of the probes an engine got, in order.
+func probeTexts(e *mcEngine) []string {
+	var out []string
+	for _, b := range e.probeBodies() {
+		out = append(out, b["messages"].([]any)[0].(map[string]any)["content"].(string))
+	}
+	return out
 }
 
 func anonClient(a *acctRig, token string) *accountlink.Client {
@@ -92,11 +118,10 @@ func TestAnonNodeServesScienceOnly(t *testing.T) {
 			if s := waitSelf(t, c, protocol.SelfOffline); !s.Anonymous || !s.ScienceOnly || s.ChecksNeeded != 3 {
 				t.Fatalf("before connecting: %+v", s)
 			}
-			_, ref := mcReference(t)
+			ref, secret := bothSets(t)
 			eng := &mcEngine{ref: ref}
 			srv := httptest.NewServer(eng)
 			t.Cleanup(srv.Close)
-			// Probes come every 20 ms, but the engine is held back until the first look below.
 			a.startTokenNode(ctx, r.Token, srv, 1, 32768)
 			a.waitNodes(t, 1)
 
@@ -108,10 +133,30 @@ func TestAnonNodeServesScienceOnly(t *testing.T) {
 			if s.ChecksPassed < 3 {
 				t.Fatalf("admitted after %d passed checks", s.ChecksPassed)
 			}
-			if len(eng.probeBodies()) < 12 {
-				t.Fatalf("admitted after %d probe prompts", len(eng.probeBodies()))
+			// Until its admission it got the admission set only, never a prompt of the secret set.
+			before := probeTexts(eng)
+			if len(before) < 12 {
+				t.Fatalf("admitted after %d probe prompts", len(before))
+			}
+			for i, p := range before[:12] {
+				if secret[p] || !strings.HasPrefix(p, "Admission question") {
+					t.Fatalf("probe %d before admission: %q", i, p)
+				}
 			}
 
+			// Admitted, it gets the secret set like any node (the rig's interval is long: wait for one).
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+				got := false
+				for _, p := range probeTexts(eng) {
+					got = got || secret[p]
+				}
+				if got {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no secret-set probe after admission")
+				}
+			}
 			// Science: served by it.
 			resp := a.do(t, "POST", "/v1/chat/completions", projectKey, chatBody)
 			body, _ := io.ReadAll(resp.Body)
@@ -163,7 +208,7 @@ func TestAnonWrongModelHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, ref := mcReference(t)
+	ref, secret := bothSets(t)
 	eng := &mcEngine{ref: ref, skew: true}
 	srv := httptest.NewServer(eng)
 	t.Cleanup(srv.Close)
@@ -178,6 +223,11 @@ func TestAnonWrongModelHeld(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == 200 || eng.people.Load() != 0 {
 		t.Fatalf("a held node served science: %d, %d requests", resp.StatusCode, eng.people.Load())
+	}
+	for _, p := range probeTexts(eng) {
+		if secret[p] {
+			t.Fatalf("a node never admitted got a secret-set prompt: %q", p)
+		}
 	}
 	// Held, it cannot be linked to an account to get out.
 	if _, err := c.Start(ctx, protocol.LinkInfo{}); err == nil || !strings.Contains(err.Error(), "held") {
