@@ -23,8 +23,8 @@ tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-li
 sudo ./install.sh    # press Enter at the token question: the install ends with the link step
 ```
 
-The link step (`aisathome-node link`) prints a link and a code: open the link on any
-device (a phone works on a headless server), sign in, check that the page shows the same code and
+The link step (`aisathome-node link`) prints a link and a code: open the link in a
+browser (any device, for a headless server), sign in, check that the page shows the same code and
 approve. The node gets its own token, written to `/etc/aisathome-node/token.env` (root, 0600), and
 starts. Link it again later, or to another account: `sudo aisathome-node link`.
 

@@ -26,7 +26,7 @@ import (
 const linkUsage = `usage: aisathome-node link [flags]
 
 Links this node to your AIs@home account, without pasting a token. It shows a link and a
-code: open the link on any device (a phone works), sign in, check that the page shows the
+code: open the link in your browser, sign in, check that the page shows the
 same code, and approve. The node then gets its own node token, saves it with its settings
 (readable by the owner only) and starts.
 
@@ -185,7 +185,7 @@ func printLinkSteps(w io.Writer, st protocol.LinkStart) {
 	fmt.Fprintf(w, `
 Link this node to your AIs@home account:
 
-  1. Open this link on any device (a phone works):
+  1. Open this link in your browser:
 
        %s
 
