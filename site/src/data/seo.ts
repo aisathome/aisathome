@@ -100,8 +100,10 @@ Facts:
 - A node needs an NVIDIA GPU with 16 GB of memory or more, on Windows 10 or 11 (64-bit) or Linux with systemd.
 - Running a node is voluntary and unpaid. Nodes earn credit in BOINC's unit (the cobblestone): recognition, not money;
   there is no token and no payment.
-- Privacy: hardened, not confidential. The volunteer whose GPU answers can technically read the conversation; the gateway
-  keeps usage numbers, not the content.
+- Privacy: hardened, not confidential. The volunteer whose GPU answers can technically read the conversation. For each
+  request the gateway keeps usage numbers, never the text; when a safety check stops or flags a node's answer, it keeps
+  the part that triggered the check (at most 300 characters, known secret formats removed, admins only) for 14 days,
+  which can quote the conversation. Chats are temporary unless you save them.
 - Using the chat and the API is free, with a daily limit per account (sign in with GitHub or Google).
 - The Windows installer is not code-signed yet.
 

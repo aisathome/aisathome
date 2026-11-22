@@ -23,10 +23,15 @@ export const installerSize = `${Math.round(nodeRelease.installerBytes / 2 ** 20)
 
 // The Linux install in one paste: the prebuilt bundle of the latest release, checked against its
 // SHA256SUMS, then the installer (it asks for the node token). The long form is /node/install/.
+// Each download on its own with -f and every step joined by &&: a failed download stops it, and
+// the check reads the bundle's own line, so it never unpacks a file that was not checked (a stale
+// bundle in the directory, code review 2026-11-22). The docs' long form does the same.
+const bundle = 'aisathome-node-bundle-linux-amd64.tar.xz';
+const linuxBundleCheck = `grep ' ${bundle}$' SHA256SUMS | sha256sum -c -`;
 export const linuxCommand = [
 	`u=${latest}`,
-	'curl -fLO $u/aisathome-node-bundle-linux-amd64.tar.xz -fLO $u/SHA256SUMS \\',
-	'  && sha256sum -c --ignore-missing SHA256SUMS \\',
-	'  && tar -xJf aisathome-node-bundle-linux-amd64.tar.xz \\',
+	`curl -fLO $u/${bundle} && curl -fLO $u/SHA256SUMS \\`,
+	`  && ${linuxBundleCheck} \\`,
+	`  && tar -xJf ${bundle} \\`,
 	'  && cd aisathome-node-bundle-linux-amd64 && sudo ./install.sh',
 ].join('\n');

@@ -283,6 +283,17 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Fixed
 
+- **The guard's interpreter reading follows shell comments and line ends.** A `#` that starts a
+  word comments out the rest of the line, so `curl … | python3 # x.py` runs the download (no
+  script) and holds; and a pipeline that goes on after `|` and a line end (or a comment) is read
+  to its next command, as the shell does. (gateway)
+- **The Linux install command stops at any failed download** and checks the bundle's own line in
+  `SHA256SUMS`, so it never unpacks a bundle that was not checked (also on Install and Update on
+  Linux). (site)
+- **The privacy summary for search engines and AI engines (`/llms.txt`) and the home page say what
+  the gateway keeps**: usage numbers, never the text, and for 14 days the part of a node's answer
+  that a safety check stopped or flagged, as the privacy notice says. (site)
+
 - **A download piped into an interpreter's data no longer holds a node.** The guard stopped
   `curl … | python3 -c '…'` and `curl … | python3 parse.py`, where the download is only data on
   standard input, as if it ran the download, and held the owner's node for five hours for an agent

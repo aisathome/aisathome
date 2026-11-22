@@ -12,11 +12,10 @@ Download the new bundle, check it and run its installer:
 
 ```bash
 base=https://github.com/aisathome/aisathome/releases/latest/download
-curl -LO $base/aisathome-node-bundle-linux-amd64.tar.xz -LO $base/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS
-tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
-sudo ./install.sh --keep-token
-aisathome-node status
+curl -fLO $base/aisathome-node-bundle-linux-amd64.tar.xz && curl -fLO $base/SHA256SUMS \
+  && grep ' aisathome-node-bundle-linux-amd64.tar.xz$' SHA256SUMS | sha256sum -c - \
+  && tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64 \
+  && sudo ./install.sh --keep-token && aisathome-node status
 ```
 
 `--keep-token` keeps the installed node token, so you don't paste it again. Without it, the
