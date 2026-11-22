@@ -133,7 +133,8 @@ const (
 	StatusBanned     = "banned"
 	// StatusUnclaimed: an account a connector's pilot created for one of its users who has no
 	// account here yet (connector.go). It has no sign-in, keys or node tokens and does not count
-	// against max_active; its pilots serve under it, and its user claims it later.
+	// against max_active; its pilots serve under it, and its user claims it later. A node without an
+	// account (anon.go) is one too, with id "ax:<hex>" and its one node token.
 	StatusUnclaimed = "unclaimed"
 )
 
@@ -149,6 +150,10 @@ type AccountSettings struct {
 	MaxNodesPerAccount int    `json:"max_nodes_per_account,omitempty"` // node tokens per account; 0 = DefaultMaxNodesPerAccount
 	NodesClosed        bool   `json:"nodes_closed,omitempty"`          // no new node tokens (existing ones keep working)
 	Routing            string `json:"routing,omitempty"`               // RoutingOwnOnly: every request only to the requester's own nodes; "" or "any" = normal
+	// Nodes without an account (anon.go): their pool, apart from max_nodes (0 = DefaultMaxAnonNodes), and
+	// the switch that stops new ones (nodes_closed stops them too).
+	MaxAnonNodes int  `json:"max_anon_nodes,omitempty"`
+	AnonClosed   bool `json:"anon_closed,omitempty"`
 	// Notice is the operator's banner on the account pages and in the chat (contact.go).
 	Notice *Notice `json:"notice,omitempty"`
 }

@@ -365,6 +365,7 @@ check_id mine "nt-n-0123abcd.secret" mine
 check_id "" "config-token" "$(hostname -s)"
 check_id "" "nt-n-0123ABCD.secret" "$(hostname -s)"
 check_id "" "nt-n-0123abcd" "$(hostname -s)"
+check_id "" "nt-a-0123abcd.secret" a-0123abcd # a node without an account's
 unset -f die check_id pick_node_id
 
 # Rerunning on an installed node (an update): the installed token, node id and gateway URL
@@ -372,7 +373,7 @@ unset -f die check_id pick_node_id
 # /etc/aisathome-node, then a dry run of a copy of the installer that reads it.
 etc="$tmp/etc"; mkdir "$etc"
 eval "$(sed -n '/^installed_value() {/,/^}/p;/^pick_gateway_url() {/,/^}/p;/^pick_node_id() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
-link=0
+link=0 anonymous=0
 die() { echo "$1" >&2; exit "${2:-1}"; }
 printf '{"node_id": "box-1", "gateway_url": "wss://staging.example.org/v1/node/connect", "slots": 2}\n' > "$etc/node.json"
 secret="nt-n-0123abcd.$(printf 'S%.0s' {1..43})"
@@ -435,7 +436,15 @@ for t in "1 0" "0 1"; do
   tok $t "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed"
 done
 tokl 0 1 "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--link)"
-unset -f die gw check_id tok tokl installed_value pick_gateway_url pick_node_id read_token interactive
+# --anonymous: no token is read (the node registers after the speed test); a node that has one keeps it.
+toka() { out="$( (interactive() { false; }; keep_token=0; link=0; anonymous=1; read_token "$1"; echo "token=$token") <<<"$2" 2>&1)"; code=$?; }
+toka "$etc/none.env" "nt-ignored"
+ok "--anonymous"; has "--anonymous" "token="; lacks "--anonymous" "nt-ignored"
+has "--anonymous" "registering this node without an account (science only)"
+toka "$etc/token.env" ""
+usage_err "--anonymous on a node with a token"; has "--anonymous on a node with a token" "it keeps it"
+[[ "$out" != *"$secret"* ]] || fail "the token was printed (--anonymous)"
+unset -f die gw check_id tok tokl toka installed_value pick_gateway_url pick_node_id read_token interactive
 # A dry run reads the installed node.json (a copy of the installer pointed at the fake one).
 sed "s|^conf=/etc/aisathome-node\$|conf=$etc|" "$installer" > "$tmp/install-conf.sh"
 grep -q "^conf=$etc\$" "$tmp/install-conf.sh" || fail "no conf= line to point at the fake install"
@@ -595,6 +604,20 @@ run -- --dry-run --link --keep-token
 usage_err "--link with --keep-token"; has "--link with --keep-token" "use --link or --keep-token, not both"
 grep -q '^ConditionFileNotEmpty=/etc/aisathome-node/token.env$' "$installer" || fail "the node unit has no ConditionFileNotEmpty on token.env"
 grep -q 'aisathome-node link -config "$conf/node.json" -token-env "$conf/token.env" -no-start' "$installer" || fail "link_node does not run aisathome-node link on the installed files"
+
+# Without an account (--anonymous): the plan says so with the three lines (science only, no credit, 18+ and
+# the terms); it goes alone; it registers after the speed test, on the installed files.
+run -- --dry-run --anonymous
+ok "dry run, --anonymous"; has "dry run, --anonymous" "account: none; the install ends with registering this node without an account"
+for want in "does science work only, never people's chats, and earns no credit" "You must be 18 or older" "https://aisathome.org/about/terms/"; do
+  has "dry run, --anonymous" "$want"
+done
+for other in --link --keep-token; do
+  run -- --dry-run --anonymous "$other"
+  usage_err "--anonymous with $other"; has "--anonymous with $other" "use --anonymous alone"
+done
+grep -q 'aisathome-node register -accept-terms -config "$conf/node.json" -token-env "$conf/token.env" -no-start' "$installer" || fail "register_node does not run aisathome-node register on the installed files"
+[[ "$(grep -n '^speed_check$' "$installer" | cut -d: -f1)" -lt "$(grep -n 'register_node; then' "$installer" | cut -d: -f1)" ]] || fail "the node registers before the speed test"
 
 # install_libs on its own: a bundle unpacked under umask 077 (owner-only files) must still give
 # libraries the aisathome service user can read, and keep the version symlinks.

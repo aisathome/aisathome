@@ -9,6 +9,18 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Added
 
+- **Run a node without an account (science only).** `sudo ./install.sh --anonymous` (and the
+  one-liner `curl -fsSL https://aisathome.org/node.sh | sh`, which downloads and checks the bundle,
+  runs the installer's checks and asks at the terminal before it installs), the Windows setup page's
+  **Start without an account (science only)** button, or `aisathome-node register -accept-terms`
+  register the machine with no sign-in. Such a node serves science work only, never people's chats;
+  it first answers a few test prompts (the model check) and gets work only once it passed 3 checks; a
+  failed check before then holds it. It earns no credit: credit starts once it is linked to an
+  account with `aisathome-node link` (which moves it to the account with a new token). Its local page
+  shows where it stands. Limits: 3 registrations per address a day (counted in memory only), a pool
+  of 25 apart from account nodes, 2 connected per address; one that never connects is deleted after a
+  day, one not seen for 90 days after that. (gateway, node, site)
+
 - **Link a node to your account without pasting a token.** The node shows a link and a code
   (`KXQT-4821`); open it on any device (a phone works for a server without a screen), sign in,
   check the code and approve, and the node gets its own token and starts. On Linux the installer

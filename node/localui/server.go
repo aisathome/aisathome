@@ -64,6 +64,9 @@ type Setup interface {
 	Start(token, gateway string) error
 	ChangeToken(token, gateway string) error
 	Link(gateway string) error // link to an account in the browser, in place of a token
+	// Anonymous starts the node without an account (science only), in place of a token or a link;
+	// accepted: the person ticked the 18+ and terms line.
+	Anonymous(gateway string, accepted bool) error
 	LinkCancel()
 	Enter() error
 	Leave() error

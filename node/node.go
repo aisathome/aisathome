@@ -124,6 +124,9 @@ type Agent struct {
 	// deliberate break ended), and whether the node stays away from the gateway on purpose.
 	linkAt time.Time
 	away   bool
+	// self: what the gateway knows of this node without an account (anon.go); nil for an account's node,
+	// or until the gateway answered.
+	self *protocol.NodeSelf
 
 	saveMu     sync.Mutex
 	saveFailed bool
@@ -220,7 +223,8 @@ func IssuedTokenNodeID(token string) (string, bool) {
 const IssuedTokenSecretLen = 43
 
 // TokenNodeID returns the node id carried by a token from the account page:
-// "nt-<id>.<secret>", where the id is "n-" and 8 hex digits.
+// "nt-<id>.<secret>", where the id is "n-" and 8 hex digits; or, for a node without an account
+// (registered by the installer, science only), "a-" and 8 hex digits.
 func TokenNodeID(token string) (string, bool) {
 	rest, ok := strings.CutPrefix(token, "nt-")
 	if !ok {
@@ -228,10 +232,20 @@ func TokenNodeID(token string) (string, bool) {
 	}
 	id, _, ok := strings.Cut(rest, ".")
 	h, isID := strings.CutPrefix(id, "n-")
+	if !isID {
+		h, isID = strings.CutPrefix(id, "a-")
+	}
 	if !ok || !isID || len(h) != 8 || strings.Trim(h, "0123456789abcdef") != "" {
 		return "", false
 	}
 	return id, true
+}
+
+// Anonymous reports whether token is a node without an account's (its id is "a-<8 hex>"): it serves
+// science only, earns no credit, and `aisathome-node link` moves it to an account.
+func Anonymous(token string) bool {
+	id, ok := TokenNodeID(token)
+	return ok && strings.HasPrefix(id, "a-")
 }
 
 // Run connects to the gateway and serves until ctx is cancelled, reconnecting with backoff.
@@ -239,6 +253,9 @@ func TokenNodeID(token string) (string, bool) {
 // longer than Config.Watchdog (watchdog.go).
 func (a *Agent) Run(ctx context.Context) error {
 	a.event("started", AgentVersion())
+	sctx, stop := context.WithCancel(ctx)
+	defer stop()
+	go a.watchSelf(sctx) // a node without an account: its state at the gateway, for the local page (anon.go)
 	return a.watch(ctx, a.serve)
 }
 

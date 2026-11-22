@@ -4,6 +4,7 @@ package localui
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/aisathome/aisathome/node/setupflow"
@@ -43,6 +44,18 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// token comes from the gateway to the agent, never through the page.
 	mux.HandleFunc("POST /api/setup/link", token(func(_, gateway string) error { return f.Link(gateway) }))
 	mux.HandleFunc("POST /api/setup/link/cancel", step(func() error { f.LinkCancel(); return nil }))
+	// Without an account (science only): the gateway registers the node and hands its token to the agent.
+	mux.HandleFunc("POST /api/setup/anonymous", s.control(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Gateway     string `json:"gateway"`
+			AcceptTerms bool   `json:"accept_terms"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "send {\"gateway\", \"accept_terms\"}"})
+			return
+		}
+		s.setupResult(w, f.Anonymous(body.Gateway, body.AcceptTerms))
+	}))
 }
 
 // setupState is the setup's state for r. A live link code (and the approval link that carries it) goes

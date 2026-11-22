@@ -81,6 +81,8 @@ type AccountNode struct {
 	// Confirmed is when the account confirmed on its account page that a linked node is its own machine
 	// ("This is my machine"). Until then a linked node is not the account's own node (unconfirmed).
 	Confirmed *time.Time `json:"confirmed,omitempty"`
+	// LastSeen is when a node without an account (anon.go) was last connected, for its retention.
+	LastSeen *time.Time `json:"last_seen,omitempty"`
 }
 
 // unconfirmed reports whether n came by a link (a code someone may have sent the account's owner) and
@@ -126,9 +128,13 @@ func splitNodeToken(token string) (id string, ok bool) {
 	return id, ok && validNodeID(id) && len(secret) >= 40
 }
 
-// validNodeID reports whether id has the form the gateway assigns: "n-" and 8 hex digits.
+// validNodeID reports whether id has a form the gateway assigns: "n-" (an account's node) or "a-" (a node
+// without an account, anon.go), and 8 hex digits.
 func validNodeID(id string) bool {
 	h, ok := strings.CutPrefix(id, "n-")
+	if !ok {
+		h, ok = strings.CutPrefix(id, anonNodePrefix)
+	}
 	return ok && len(h) == 8 && strings.Trim(h, "0123456789abcdef") == ""
 }
 
@@ -154,11 +160,14 @@ func cleanNodeName(s string) string {
 	return s
 }
 
-// nodeCount counts node tokens over all accounts.
+// nodeCount counts node tokens over all accounts; nodes without an account have their own pool
+// (anonCount).
 func (f *AccountsFile) nodeCount() int {
 	n := 0
 	for _, a := range f.Accounts {
-		n += len(a.Nodes)
+		if !isAnon(a.ID) {
+			n += len(a.Nodes)
+		}
 	}
 	return n
 }
@@ -333,24 +342,26 @@ func (s *AccountStore) SetNodePref(id, pref string) error {
 	})
 }
 
-// nodeToken returns the active account and node id that token belongs to.
+// nodeToken returns the account and node id that token belongs to: an active account's, or a node
+// without an account's (anon.go).
 func (s *AccountStore) nodeToken(token string) (account, nodeID string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, found := s.byNode[keyHash(token)]
-	if !found || r.acct.Status != StatusActive {
+	if !found || !r.acct.nodesWork() {
 		return "", "", false
 	}
 	return r.acct.ID, r.node.ID, true
 }
 
-// nodeLive reports whether the node token with hash still exists for an active account, when that
-// account's probation started, and whether the node is a linked one its owner has not confirmed yet.
+// nodeLive reports whether the node token with hash still exists for an active account (or a node without
+// an account), when that account's probation started, and whether the node is a linked one its owner has
+// not confirmed yet.
 func (s *AccountStore) nodeLive(tokenHash string) (first time.Time, unconfirmed, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, found := s.byNode[tokenHash]
-	if !found || r.acct.Status != StatusActive {
+	if !found || !r.acct.nodesWork() {
 		return time.Time{}, false, false
 	}
 	if r.acct.FirstNode != nil {
@@ -446,19 +457,19 @@ func (g *Gateway) nodeAuth(token string) (tok NodeToken, account string, ok bool
 	if _, form := splitNodeToken(token); !form || g.accounts == nil {
 		return NodeToken{}, "", false
 	}
-	account, id, ok := g.accounts.nodeToken(token)
+	account, id, ok := g.accounts.nodeToken(token) // a node without an account's too (anon.go)
 	if !ok {
 		return NodeToken{}, "", false
 	}
 	return NodeToken{Operator: g.pseudonym(account), NodeID: id}, account, true
 }
 
-// nodesFromLocked counts connected account nodes from address ip, except node id. Caller
-// holds g.mu.
-func (g *Gateway) nodesFromLocked(ip, id string) int {
+// nodesFromLocked counts connected nodes from address ip, except node id: account nodes, or with anon nodes
+// without an account (they have their own limit, maxAnonPerIP). Caller holds g.mu.
+func (g *Gateway) nodesFromLocked(ip, id string, anon bool) int {
 	c := 0
 	for _, n := range g.node {
-		if n.account != "" && n.ip == ip && n.id != id {
+		if n.account != "" && n.anon == anon && n.ip == ip && n.id != id {
 			c++
 		}
 	}

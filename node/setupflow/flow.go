@@ -68,7 +68,19 @@ type Deps struct {
 	// accountlink.LocalInfo with SMI.
 	NewLinker func(base string) Linker
 	LinkInfo  func(ctx context.Context) protocol.LinkInfo
+	// NewRegistrar registers the node without an account at the gateway at base (Anonymous); default an
+	// accountlink.Client.
+	NewRegistrar func(base string) Registrar
 }
+
+// Registrar registers a node without an account (accountlink.Client).
+type Registrar interface {
+	Register(ctx context.Context, acceptTerms bool) (protocol.Register, error)
+}
+
+// tokenSender is a Linker that can send a node without an account's token with its request for a code
+// (accountlink.Client), so that linking moves that node to the account.
+type tokenSender interface{ SetToken(token string) }
 
 // Linker links the node to an account (accountlink.Client).
 type Linker interface {
@@ -200,6 +212,9 @@ func New(ctx context.Context, d Deps, mode string) *Flow {
 	}
 	if d.NewLinker == nil {
 		d.NewLinker = func(base string) Linker { return &accountlink.Client{Base: base} }
+	}
+	if d.NewRegistrar == nil {
+		d.NewRegistrar = func(base string) Registrar { return &accountlink.Client{Base: base} }
 	}
 	if d.LinkInfo == nil {
 		smi := d.SMI
@@ -616,6 +631,9 @@ func CheckToken(token string) (nodeID string, err error) {
 	if !ok || len(token) > 256 || strings.ContainsFunc(token, func(r rune) bool { return r <= ' ' || r > '~' }) {
 		return "", errors.New("this is not a node token: copy the whole token from your account page (it starts with nt-n-)")
 	}
+	if node.Anonymous(token) && len(token) < len("nt-a-00000000.")+40 {
+		return "", errors.New("this is not a whole node token")
+	}
 	return id, nil
 }
 
@@ -727,6 +745,11 @@ func (f *Flow) Link(gateway string) error {
 	sctx, scancel := context.WithTimeout(ctx, 30*time.Second)
 	defer scancel()
 	l := f.d.NewLinker(base)
+	if cfg, err := readConfig(f.d.ConfigPath); err == nil && configured && node.Anonymous(cfg.Token) {
+		if ts, ok := l.(tokenSender); ok {
+			ts.SetToken(cfg.Token) // a node without an account: linking moves it to the account
+		}
+	}
 	st, err := l.Start(sctx, f.d.LinkInfo(sctx))
 	if err != nil {
 		cancel()
@@ -766,6 +789,52 @@ func (f *Flow) Link(gateway string) error {
 		}
 		f.changedLocked()
 	}()
+	return nil
+}
+
+// Anonymous starts the node without an account, in place of a token or a link: the gateway registers it
+// (science only, no credit; accepted is the person's tick under the 18+ and terms line) and the node
+// starts with the token it hands over, as Start does. Only in setup, once the steps Start needs passed,
+// and only for a node that has no token yet.
+func (f *Flow) Anonymous(gateway string, accepted bool) error {
+	if !accepted {
+		return errors.New("tick that you are 18 or older and accept the terms")
+	}
+	gw, err := CheckGateway(gateway)
+	if err != nil {
+		return err
+	}
+	if cfg, err := readConfig(f.d.ConfigPath); err == nil && strings.TrimSpace(cfg.Token) != "" {
+		return errors.New("this node has a token already; it keeps it")
+	}
+	if _, _, err := f.readyTier(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	busy, dl, speed := f.st.Busy, f.st.Download.Complete, f.st.Speed.Passed
+	f.mu.Unlock()
+	switch {
+	case busy != "":
+		return ErrBusy
+	case !dl:
+		return errors.New("download the model first")
+	case !speed:
+		return errors.New("run the speed test first") // a machine that cannot serve never registers
+	}
+	base, err := accountlink.APIBase(gw)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
+	defer cancel()
+	r, err := f.d.NewRegistrar(base).Register(ctx, true)
+	if err != nil {
+		return err
+	}
+	if err := f.Start(r.Token, gw); err != nil {
+		return fmt.Errorf("registered as node %s, but starting failed: %w", r.NodeID, err)
+	}
+	f.d.Log.Info("setup: started without an account (science only)", "node", r.NodeID)
 	return nil
 }
 

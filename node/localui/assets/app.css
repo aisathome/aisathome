@@ -195,3 +195,4 @@ details.adv { margin-top: 0.75rem; }
 code.code { font-size: 1.5em; letter-spacing: 0.08em; }
 details.adv summary { cursor: pointer; color: var(--muted); }
 .wide { flex: 1 1 22rem; max-width: 34rem; }
+.check { display: flex; gap: 0.5rem; align-items: baseline; margin: 0.6rem 0; font-weight: 400; }

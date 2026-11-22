@@ -161,6 +161,24 @@
 		$('setup-link').hidden = !s.setup;
 	}
 
+	// A node without an account: what the gateway says of it (admitted by the model check, still being
+	// checked, held). Text only.
+	const anonWords = {
+		checking: 'Being checked: the gateway sends a few test prompts first.',
+		admitted: 'Admitted: the model check passed, and this node gets science work.',
+		held: 'Held: it gets no work until the operator clears it.',
+		offline: 'Not connected to the gateway.',
+		no_check: 'The gateway cannot check this node\'s model, so it gets no work.',
+	};
+	function anon(a, s) {
+		$('anon').hidden = !a;
+		if (!a) return;
+		let t = a.state ? (anonWords[a.state] || a.message || a.state) : 'Asking the gateway about this node…';
+		if (a.state === 'checking' && a.checks_needed) t += ` ${a.checks_passed} of ${a.checks_needed} checks passed.`;
+		$('anon-state').textContent = t;
+		$('anon-link-cmd').textContent = s.setup ? 'the setup page: Link to my account' : 'sudo aisathome-node link';
+	}
+
 	function showCommand(cmd) {
 		$('restart-cmd-text').textContent = cmd;
 		$('restart-cmd').hidden = false;
@@ -188,6 +206,7 @@
 		counts('total', s.total);
 		events(s.events);
 		controls(s);
+		anon(s.anonymous, s);
 	}
 
 	async function refresh() {

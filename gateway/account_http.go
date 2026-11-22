@@ -75,6 +75,9 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	// Linking a node without pasting a token (nodelink.go): the node's two calls, and the approval page.
 	mux.HandleFunc("POST "+protocol.LinkPath, g.handleLinkStart)
 	mux.HandleFunc("POST "+protocol.LinkPollPath, g.handleLinkPoll)
+	// Nodes without an account (anon.go): registering, and what the gateway knows of a node.
+	mux.HandleFunc("POST "+protocol.RegisterPath, g.handleNodeRegister)
+	mux.HandleFunc("GET "+protocol.SelfPath, g.handleNodeSelf)
 	mux.HandleFunc("GET /link", g.handleLinkPage)
 	mux.HandleFunc("POST /link", smallForm(g.handleLinkForm))
 }

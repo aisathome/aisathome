@@ -3,6 +3,11 @@
 // user code and a link; the person signs in on /link, sees what the node reported about itself and
 // approves or denies; the node polls (POST /v1/node/link/poll) and gets its node token once.
 //
+// A node without an account (anon.go) links the same way, sending its own token with the code request:
+// the page then says that it ran without an account, approving gives the account a new node of its own as
+// any link does, and once the node has picked up its new token its anonymous identity is deleted. Nothing
+// moves with it: a node without an account earned no credit. A held one cannot be linked.
+//
 // Approving creates the node exactly as "Add a node" on the account page does (AccountStore.addNode): the
 // same limits (active accounts only, nodes closed, per account, network-wide), and the same operator
 // terms line, so creating it accepts the terms unless the account chose science only. The node's record
@@ -82,6 +87,7 @@ var (
 	errLinkTries   = errors.New("Too many wrong codes. Try again in an hour.")
 	errLinkUsed    = errors.New("This code was already approved or denied. To link the node, start the link again on it.")
 	errLinkForm    = errors.New("This page is out of date. Open the link again.")
+	errLinkHeld    = errors.New("This node is held and cannot be linked to an account. Write to contact@aisathome.org.")
 )
 
 // LinkInfo is what a node reports about itself (protocol.LinkInfo).
@@ -129,6 +135,10 @@ type nodeLink struct {
 	account  string // who approved or denied
 	token    string // approved: the node token until the node picks it up
 	nodeID   string
+	// claim and claimNode: the node without an account (anon.go) that asked, by its token; its anonymous
+	// identity is deleted once it has picked up its new token. "" for a node without a token.
+	claim     string
+	claimNode string
 }
 
 // linkView is what the approval page shows of a link.
@@ -137,6 +147,7 @@ type linkView struct {
 	Info    LinkInfo
 	Created time.Time
 	Expires time.Time
+	Claim   string // the node id of the node without an account that asked ("" = a node without a token)
 }
 
 // nodeLinks holds the pending links and the limits' counters, in memory only.
@@ -216,6 +227,11 @@ func normUserCode(s string) (string, bool) {
 
 // start makes a link for a node at address client: its device code (the node's secret) and user code.
 func (s *nodeLinks) start(client string, info LinkInfo) (device, user string, err error) {
+	return s.startClaim(client, info, "", "")
+}
+
+// startClaim is start for the node without an account claimNode of account claim (both "" for none).
+func (s *nodeLinks) startClaim(client string, info LinkInfo, claim, claimNode string) (device, user string, err error) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -232,7 +248,7 @@ func (s *nodeLinks) start(client string, info LinkInfo) (device, user string, er
 	b := make([]byte, 12)
 	rand.Read(b)
 	l := &nodeLink{id: base64.RawURLEncoding.EncodeToString(b), device: s.mac("device", device), user: s.mac("user", user),
-		info: cleanLinkInfo(info), created: now, expires: now.Add(linkTTL), interval: linkInterval}
+		info: cleanLinkInfo(info), created: now, expires: now.Add(linkTTL), interval: linkInterval, claim: claim, claimNode: claimNode}
 	s.byDevice[l.device], s.byUser[l.user] = l, l
 	s.starts.add("c:"+client, now)
 	s.starts.add("*", now)
@@ -271,11 +287,12 @@ func (s *nodeLinks) lookup(account, client, code string) (linkView, error) {
 	if err != nil {
 		return linkView{}, err
 	}
-	return linkView{ID: l.id, Info: l.info, Created: l.created, Expires: l.expires}, nil
+	return linkView{ID: l.id, Info: l.info, Created: l.created, Expires: l.expires, Claim: l.claimNode}, nil
 }
 
 // claim marks the link of code (shown in the form with id) as being approved by account, so that no
-// second approval or a denial can run meanwhile. finish ends it.
+// second approval or a denial can run meanwhile. finish ends it. (Not a node without an account's claim:
+// that is nodeLink.claim.)
 func (s *nodeLinks) claim(account, client, code, id string) (*nodeLink, LinkInfo, error) {
 	now := s.now()
 	s.mu.Lock()
@@ -348,12 +365,18 @@ const (
 
 // poll answers a node's poll with its device code. An approved link hands over its token once and is gone.
 func (s *nodeLinks) poll(device string) (status string, interval time.Duration, token, nodeID string) {
+	status, interval, token, nodeID, _ = s.pollClaim(device)
+	return
+}
+
+// pollClaim is poll, and for an approved link of a node without an account, that node's account (claim).
+func (s *nodeLinks) pollClaim(device string) (status string, interval time.Duration, token, nodeID, claim string) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l := s.byDevice[s.mac("device", device)]
 	if l == nil || !now.Before(l.expires) {
-		return LinkExpired, 0, "", "" // an approved one is revoked by prune
+		return LinkExpired, 0, "", "", "" // an approved one is revoked by prune
 	}
 	fast := !l.lastPoll.IsZero() && now.Sub(l.lastPoll) < l.interval*4/5
 	l.lastPoll = now
@@ -362,15 +385,15 @@ func (s *nodeLinks) poll(device string) (status string, interval time.Duration, 
 		token, nodeID = l.token, l.nodeID
 		l.token = ""
 		s.dropLocked(l)
-		return LinkApproved, 0, token, nodeID
+		return LinkApproved, 0, token, nodeID, l.claim
 	case l.state == linkDenied:
 		s.dropLocked(l)
-		return LinkDenied, 0, "", ""
+		return LinkDenied, 0, "", "", ""
 	case fast:
 		l.interval = min(l.interval+linkSlowDown, linkMaxWait)
-		return LinkSlowDown, l.interval, "", ""
+		return LinkSlowDown, l.interval, "", "", ""
 	}
-	return LinkPending, l.interval, "", ""
+	return LinkPending, l.interval, "", "", ""
 }
 
 func (s *nodeLinks) dropLocked(l *nodeLink) {
@@ -437,13 +460,30 @@ func decodeLinkBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // handleLinkStart serves POST /v1/node/link: a node without a token asks for a code. No authentication:
-// the code is worth nothing until a signed-in person approves it.
+// the code is worth nothing until a signed-in person approves it. A node without an account (anon.go)
+// sends its token (Authorization: Bearer), so that its anonymous identity goes once it is linked; a token
+// that is not a node without an account's is refused, and so is a held node.
 func (g *Gateway) handleLinkStart(w http.ResponseWriter, r *http.Request) {
 	var info LinkInfo
 	if !decodeLinkBody(w, r, &info) {
 		return
 	}
-	device, user, err := g.links.start(g.clientIP(r), info)
+	var claim, claimNode string
+	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		var found bool
+		if _, form := splitNodeToken(tok); form {
+			claim, claimNode, found = g.accounts.nodeToken(tok)
+		}
+		switch {
+		case !found || !isAnon(claim):
+			apiError(w, http.StatusUnauthorized, "only a node without an account sends its token to link; this token is unknown or an account's")
+			return
+		case g.nodeHeld(claimNode):
+			apiError(w, http.StatusForbidden, errLinkHeld.Error())
+			return
+		}
+	}
+	device, user, err := g.links.startClaim(g.clientIP(r), info, claim, claimNode)
 	if err != nil {
 		w.Header().Set("Retry-After", "300")
 		apiError(w, http.StatusTooManyRequests, err.Error())
@@ -464,10 +504,18 @@ func (g *Gateway) handleLinkPoll(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "device_code: the code POST /v1/node/link gave")
 		return
 	}
-	status, interval, token, nodeID := g.links.poll(body.DeviceCode)
+	status, interval, token, nodeID, claim := g.links.pollClaim(body.DeviceCode)
 	switch status {
 	case LinkApproved:
 		g.log.Info("linked node picked up its token", "node", nodeID)
+		if claim != "" { // a node without an account, now the account's: its anonymous identity goes (anon.go)
+			if err := g.accounts.removeAnon(claim); err != nil {
+				g.log.Error("linked node without an account: its anonymous identity was not deleted; the retention sweep deletes it", "node", nodeID, "err", err)
+			} else {
+				g.log.Info("node without an account linked to an account; its anonymous identity is deleted", "node", nodeID)
+				g.sweepNodes()
+			}
+		}
 	case LinkExpired:
 		g.pruneLinks() // a node approved too late is revoked now, not at the next prune
 	}

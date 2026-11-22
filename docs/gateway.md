@@ -537,6 +537,32 @@ none of the account's personal data (such a request is refused as with no own no
 other requests reach it only as they would a stranger's node. The account page and the approval page
 say so. Chat stays behind the operator terms exactly as for any node.
 
+**Nodes without an account** (`gateway/anon.go`, owner 2026-11-22). `POST /v1/node/register`
+(`{"accept_terms": true, "agent"}`, no authentication; the installer calls it after its speed test,
+`install.sh --anonymous`, `node.sh`, the Windows setup page's "Start without an account", or
+`aisathome-node register -accept-terms`) makes an unclaimed account `ax:<32 hex>` with one node
+`a-<8 hex>` and answers its token `nt-a-<8 hex>.<secret>` once (stored hashed, as any node token). Hard
+rules, not settings: such a node serves **science only** (no chat, API or agent request of a person,
+whatever `chat_rules_off` or a key's consent say; its account never counts as having accepted the
+operator terms); it gets **no science until the model check admitted it**: its first work is probe
+prompts only, every `model_check.admit_seconds` (default 20) on average, and it is admitted after 3
+passed checks (each 4 probe prompts, the same KL and flip limits as the check), normally within minutes;
+one failed check before then holds it (rule `model-check`), and after admission a fail result holds it,
+both whatever `model_check.withhold` says. Without the model check, registering is refused (503); a node
+whose model has no reference is never admitted. It earns **no credit** (its usage records carry none,
+and nothing goes to the ledger), so nothing moves when it is linked; it is listed nowhere public. Agent
+calls of a project with `pilot_probation_ok` may use it during probation, as pilots. Limits: 3
+registrations per address a day and 30 an hour over the gateway (in memory only; a restart forgets
+them), a pool of `max_anon_nodes` (default 25) apart from `max_nodes`, `anon_closed` and `nodes_closed`
+stop new ones, at most 2 connected per address (account nodes keep their 10). Retention: one that never
+connected is deleted 24 hours after it registered, one not seen for 90 days is deleted (its last
+connection is written at most once an hour). `GET /v1/node/self` (its own token) tells the node's local
+page its state: `checking` (with `checks_passed` of `checks_needed`), `admitted`, `held` (no reason
+given), `offline`, `no_check`. **Linking**: `aisathome-node link` on such a node sends its token with
+`/v1/node/link`; the approval page says it ran without an account; approving creates a new node on the
+account as any link does (unconfirmed until "This is my machine"), and once the node picked up its new
+token the `ax:` account is deleted. A held node cannot be linked.
+
 Routing and protections:
 
 | What | Rule |
@@ -562,7 +588,9 @@ aisathome-gateway accounts nodes                  # node tokens, held nodes, set
 aisathome-gateway accounts nodes close|open       # stop or allow new node tokens
 aisathome-gateway accounts nodes limit 25         # node tokens over all accounts (max_nodes, default 25)
 aisathome-gateway accounts nodes per-account 10   # node tokens per account (max_nodes_per_account, default 10; "default" unsets it)
-aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token
+aisathome-gateway accounts nodes anon close|open  # stop or allow new nodes without an account (anon_closed)
+aisathome-gateway accounts nodes anon limit 25    # the pool of nodes without an account (max_anon_nodes, default 25; "default" unsets it)
+aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token (a node without an account's too: a-…)
 aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
 aisathome-gateway accounts guard-log [n-1a2b3c4d] # recent stops, holds and flags with what matched (14 days)
 aisathome-gateway accounts node-checks [7] [n-1a2b3c4d] # answer checks and signals per node over the last days

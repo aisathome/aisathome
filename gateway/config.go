@@ -113,6 +113,8 @@ type Config struct {
 	TasksNow func() time.Time `json:"-"`
 	// LinkNow, if set, is the clock of nodes' links to accounts (nodelink.go: expiry, polls, limits). For tests.
 	LinkNow func() time.Time `json:"-"`
+	// AnonNow, if set, is the clock of nodes without an account (anon.go: registration limits, retention). For tests.
+	AnonNow func() time.Time `json:"-"`
 	// PilotsNow, if set, is the pilots' clock (deadlines, credit hold, caps). For tests.
 	PilotsNow func() time.Time `json:"-"`
 }

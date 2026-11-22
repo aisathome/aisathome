@@ -76,8 +76,8 @@ type route struct {
 	class   string
 	project string
 	share   float64
-	// pilotProbationOK: the project's agents may use pilots of accounts still in probation
-	// (Project.PilotProbationOK).
+	// pilotProbationOK: the project's agents may use pilots of accounts still in probation, and nodes
+	// without an account (admitted by the model check, anon.go) in theirs (Project.PilotProbationOK).
 	pilotProbationOK bool
 	// rules: the chat rules apply to this gateway (chatrules.go).
 	rules bool
@@ -178,6 +178,8 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	switch {
 	case rt.exclude[n] || n.held:
 		return false
+	case n.anon && (rt.class != ClassScience || !n.admitted):
+		return false // a node without an account: science only, and only once the model check admitted it (anon.go)
 	case n.pilot != "" && (n.registering || !now.Before(n.deadline) || (n.scienceOnly && rt.class != ClassScience)):
 		return false // a pilot still registering, past its deadline, or without chat (connector.go)
 	case rt.operator != "" && n.operator != rt.operator:
@@ -189,7 +191,7 @@ func (rt *route) allows(n *nodeConn, now time.Time) bool {
 	case rt.gatedBy(n):
 		return false // the chat rules (chatrules.go): its operator has not accepted the operator terms
 	case rt.tools: // agents on volunteer nodes: consent, and the node's account past probation
-		return rt.consent && (!now.Before(n.probEnd) || (n.pilot != "" && rt.pilotProbationOK))
+		return rt.consent && (!now.Before(n.probEnd) || ((n.pilot != "" || n.anon) && rt.pilotProbationOK))
 	}
 	return true
 }

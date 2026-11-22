@@ -3,6 +3,7 @@ package localui
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,8 +42,14 @@ func (f *fakeSetup) Start(token, gw string) error {
 func (f *fakeSetup) ChangeToken(token, gw string) error { return f.do("token " + token) }
 func (f *fakeSetup) Link(gw string) error               { return f.do("link " + gw) }
 func (f *fakeSetup) LinkCancel()                        { f.do("link-cancel") }
-func (f *fakeSetup) Enter() error                       { return f.do("enter") }
-func (f *fakeSetup) Leave() error                       { return f.do("leave") }
+func (f *fakeSetup) Anonymous(gw string, ok bool) error {
+	if !ok {
+		return errors.New("tick the terms")
+	}
+	return f.do("anonymous " + gw)
+}
+func (f *fakeSetup) Enter() error { return f.do("enter") }
+func (f *fakeSetup) Leave() error { return f.do("leave") }
 
 // engineAgent runs its engine (Windows): stop and start work.
 type engineAgent struct {
@@ -121,7 +128,7 @@ func TestSetupRedirect(t *testing.T) {
 func TestSetupActions(t *testing.T) {
 	e, fs := newSetupEnv(t, setupflow.State{Mode: "setup", Gateway: setupflow.DefaultGatewayURL})
 	for _, p := range []string{"/api/setup/check", "/api/setup/download", "/api/setup/start", "/api/setup/enter", "/api/stop-engine",
-		"/api/setup/link", "/api/setup/link/cancel"} {
+		"/api/setup/link", "/api/setup/link/cancel", "/api/setup/anonymous"} {
 		if resp := e.req(t, "POST", p, `{}`, nil); resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s without a session: %d", p, resp.StatusCode)
 		}
@@ -158,6 +165,19 @@ func TestSetupActions(t *testing.T) {
 	}
 	if got := strings.Join(fs.calls[len(fs.calls)-2:], ","); got != "link wss://gw.example/v1/node/connect,link-cancel" {
 		t.Errorf("link calls %q", got)
+	}
+	// Without an account: only with the tick, and cross-site never.
+	if resp := e.req(t, "POST", "/api/setup/anonymous", `{"gateway":"","accept_terms":true}`, map[string]string{"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}, c); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site anonymous: %d", resp.StatusCode)
+	}
+	if resp := e.req(t, "POST", "/api/setup/anonymous", `{"gateway":"wss://gw.example/v1/node/connect"}`, nil, c); resp.StatusCode == 200 {
+		t.Errorf("anonymous without the tick: %d", resp.StatusCode)
+	}
+	if resp := e.req(t, "POST", "/api/setup/anonymous", `{"gateway":"wss://gw.example/v1/node/connect","accept_terms":true}`, nil, c); resp.StatusCode != 200 {
+		t.Errorf("anonymous: %d %s", resp.StatusCode, body(resp))
+	}
+	if got := fs.calls[len(fs.calls)-1]; got != "anonymous wss://gw.example/v1/node/connect" {
+		t.Errorf("anonymous call %q", got)
 	}
 	resp = e.req(t, "GET", "/api/status", "", nil, c)
 	var st StatusResponse

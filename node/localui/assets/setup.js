@@ -112,6 +112,7 @@
 		}
 		if (!setupMode) {
 			$('lead').textContent = st.configured ? 'The node runs with its settings.' : 'Starting the node...';
+			$('relink').textContent = s.anonymous ? 'Link to my account' : 'Link to another account';
 			const [line, bad] = connection(s);
 			$('running-line').textContent = line;
 			$('running-line').classList.toggle('bad', bad);
@@ -173,6 +174,7 @@
 		step('step-token', false, ready);
 		$('start').disabled = !!busy || !ready;
 		$('link').disabled = !!busy || !ready || (st.link && st.link.status === 'waiting');
+		$('anon-start').disabled = !!busy || !ready || !$('anon-terms').checked;
 		if (st.start_error) msg('start-msg', st.start_error, true);
 		if (!$('gateway').value) $('gateway').value = st.gateway || '';
 	}
@@ -233,6 +235,13 @@
 		}
 	});
 	$('link').addEventListener('click', () => startLink('link-msg'));
+	$('anon-terms').addEventListener('change', () => last && render(last));
+	$('anon-start').addEventListener('click', async () => {
+		$('anon-start').disabled = true;
+		msg('anon-msg', 'Registering this node with the gateway...');
+		const r = await action('/api/setup/anonymous', 'anon-msg', { gateway: $('gateway').value, accept_terms: $('anon-terms').checked });
+		if (r.ok) msg('anon-msg', 'Started without an account. It answers a few test prompts first and gets science work once they pass.');
+	});
 	$('relink').addEventListener('click', () => startLink('running-msg'));
 	$('link-cancel').addEventListener('click', () => action('/api/setup/link/cancel', 'link-msg'));
 	$('again').addEventListener('click', async () => {

@@ -49,7 +49,13 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
   nodes limit <n>      at most n node tokens over all accounts (default 25)
   nodes per-account <n> | default
                        at most n node tokens per account (default 10)
-  node-revoke <node>   delete a node token (e.g. n-1a2b3c4d); the node is dropped
+  nodes anon close | open
+                       stop or allow new nodes without an account (science only, registered by
+                       the installer with no sign-in; existing ones keep working)
+  nodes anon limit <n> | default
+                       at most n nodes without an account (default 25), apart from the limit above
+  node-revoke <node>   delete a node token (e.g. n-1a2b3c4d, or a node without an account's
+                       a-1a2b3c4d); the node is dropped
   node-clear <node>    let a node that a guard held serve again
   guard-log [node]     the guards' recent stops, holds and flags (at most 200, of the past 14
                        days) with what matched: a piece of the node's answer, secrets redacted;
@@ -261,6 +267,21 @@ func runAccounts(args []string, out, msg io.Writer) error {
 				}
 			}
 			return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = n; return nil })
+		case "anon":
+			switch {
+			case len(a) == 3 && (a[2] == "close" || a[2] == "open"):
+				return store.Update(func(f *gateway.AccountsFile) error { f.Settings.AnonClosed = a[2] == "close"; return nil })
+			case len(a) == 4 && a[2] == "limit":
+				n := 0
+				if a[3] != "default" {
+					var err error
+					if n, err = strconv.Atoi(a[3]); err != nil || n < 1 {
+						return fmt.Errorf("the limit on nodes without an account must be a number ≥ 1, or default (nodes anon close for none)")
+					}
+				}
+				return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxAnonNodes = n; return nil })
+			}
+			return errors.New("nodes anon takes close, open, or limit <n>|default")
 		}
 		fs.Usage()
 		return fmt.Errorf("unknown nodes command %q", a[1])
@@ -503,10 +524,14 @@ func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 	}
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "NODE\tACCOUNT\tNAME\tCREATED\tHELD")
-	total := 0
+	total, anon := 0, 0
 	for _, a := range f.Accounts {
 		for _, n := range a.Nodes {
-			total++
+			if strings.HasPrefix(a.ID, "ax:") {
+				anon++
+			} else {
+				total++
+			}
 			p := "-"
 			if q, ok := held[n.ID]; ok {
 				p = holdLine(q)
@@ -539,7 +564,13 @@ func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 	if f.Settings.MaxNodesPerAccount == 0 {
 		perAccount += " (default)"
 	}
-	fmt.Fprintf(out, "\n%d of %d node tokens; up to %s per account; new nodes are %s; routing %s\n", total,
+	anonState := "open"
+	if f.Settings.AnonClosed || f.Settings.NodesClosed {
+		anonState = "closed"
+	}
+	fmt.Fprintf(out, "\n%d of %d nodes without an account (science only, ids a-…); new ones are %s\n", anon, f.Settings.MaxAnonNodesOrDefault(), anonState)
+	// The summary stays the last line: the browser tests (and scripts) read it there.
+	fmt.Fprintf(out, "%d of %d node tokens; up to %s per account; new nodes are %s; routing %s\n", total,
 		f.Settings.MaxNodesOrDefault(), perAccount, state, routing)
 	return nil
 }

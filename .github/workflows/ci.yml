@@ -60,6 +60,8 @@ jobs:
         run: go test -race -count=1 $(go list ./... | grep -v -E '/e2e(/|$)')
       - name: install.sh tests
         run: ./node/packaging/linux/install_test.sh
+      - name: node.sh tests (the one-line install without an account)
+        run: ./scripts/node_sh_test.sh
       - name: prebuilt bundle packaging (fake llama-server)
         run: ./scripts/bundle_test.sh
       - name: release build, installed from file:// by install.sh
