@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -360,9 +361,24 @@ func TestLinkOtherGatewaySavesInOrder(t *testing.T) {
 		t.Error("config write failed: the old token is still aside")
 	}
 
+	// The node is stopped once the old token is aside and before the config names the new gateway.
 	os.WriteFile(cfg, []byte(`{"gateway_url":"`+oldGW+`"}`), 0o640)
+	stops := 0
+	tgt.stopNode = func() (bool, error) {
+		stops++
+		if _, err := os.Stat(env); err == nil {
+			t.Error("stopping the node: the old token is still in token.env")
+		}
+		if gw := configGateway(cfg); gw != oldGW {
+			t.Errorf("stopping the node: the config names %s already", gw)
+		}
+		return true, nil
+	}
 	if err := tgt.save(linkTestToken, "n-1a2b3c4d", true, newGW); err != nil {
 		t.Fatal(err)
+	}
+	if stops != 1 {
+		t.Errorf("the node was stopped %d times, want 1", stops)
 	}
 	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
 		t.Errorf("token.env %q", b)
@@ -374,12 +390,160 @@ func TestLinkOtherGatewaySavesInOrder(t *testing.T) {
 		t.Errorf("config gateway %q", configGateway(cfg))
 	}
 
-	// The same gateway given again: nothing goes aside.
+	// The same gateway given again: nothing goes aside, and the node is not stopped.
 	os.Remove(env + ".unlinked")
+	stops = 0
 	if err := tgt.save(linkTestToken, "n-1a2b3c4d", true, newGW); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(env + ".unlinked"); err == nil {
 		t.Error("same gateway: the token was moved aside")
+	}
+	if stops != 0 {
+		t.Errorf("same gateway: the node was stopped %d times", stops)
+	}
+}
+
+// otherGatewayDir is a node linked to oldGW: node.json (with a key in another case) and token.env.
+func otherGatewayDir(t *testing.T) (tgt linkTarget, cfgBody string) {
+	dir := t.TempDir()
+	tgt = linkTarget{config: filepath.Join(dir, "node.json"), tokenEnv: filepath.Join(dir, "token.env")}
+	cfgBody = `{"Gateway_URL":"wss://old.example/v1/node/connect","upstream":"http://127.0.0.1:8000"}`
+	os.WriteFile(tgt.config, []byte(cfgBody), 0o640)
+	os.Chmod(tgt.config, 0o640)
+	os.WriteFile(tgt.tokenEnv, []byte("AISATHOME_NODE_TOKEN=nt-n-00000000.old\n"), 0o600)
+	return tgt, cfgBody
+}
+
+// checkUnchanged fails unless the node's config and token are the ones otherGatewayDir made.
+func checkUnchanged(t *testing.T, what string, tgt linkTarget, cfgBody string) {
+	t.Helper()
+	if b, _ := os.ReadFile(tgt.config); string(b) != cfgBody {
+		t.Errorf("%s: node.json %s", what, b)
+	}
+	if b, _ := os.ReadFile(tgt.tokenEnv); string(b) != "AISATHOME_NODE_TOKEN=nt-n-00000000.old\n" {
+		t.Errorf("%s: token.env %q, want the old token", what, b)
+	}
+	if _, err := os.Stat(tgt.tokenEnv + ".unlinked"); err == nil {
+		t.Errorf("%s: the old token is still aside", what)
+	}
+}
+
+// link -gateway on a node that does not stop changes nothing: the old token stays with its config.
+func TestLinkOtherGatewayNodeDoesNotStop(t *testing.T) {
+	tgt, cfgBody := otherGatewayDir(t)
+	starts := 0
+	tgt.stopNode = func() (bool, error) { return true, errors.New("job canceled") }
+	tgt.startNode = func() error { starts++; return nil }
+	err := tgt.save(linkTestToken, "n-1a2b3c4d", true, "wss://new.example/v1/node/connect")
+	if err == nil || !strings.Contains(err.Error(), "did not stop") {
+		t.Fatalf("save: %v", err)
+	}
+	checkUnchanged(t, "the node did not stop", tgt, cfgBody)
+	if starts != 0 {
+		t.Errorf("started %d times", starts)
+	}
+}
+
+// The token write fails after the config named the new gateway: the old config comes back, then the old
+// token beside it, and a node that was on starts again, with both back in place.
+func TestLinkOtherGatewayRollsBack(t *testing.T) {
+	defer func(w func(string, string) error) { saveTokenEnv = w }(saveTokenEnv)
+	saveTokenEnv = func(string, string) error { return errors.New("disk full") }
+	for _, wasOn := range []bool{true, false} {
+		tgt, cfgBody := otherGatewayDir(t)
+		starts := 0
+		tgt.stopNode = func() (bool, error) { return wasOn, nil }
+		tgt.startNode = func() error {
+			starts++
+			checkUnchanged(t, "starting the node again", tgt, cfgBody)
+			return nil
+		}
+		err := tgt.save(linkTestToken, "n-1a2b3c4d", true, "wss://new.example/v1/node/connect")
+		if err == nil || !strings.Contains(err.Error(), "disk full") {
+			t.Fatalf("save: %v", err)
+		}
+		checkUnchanged(t, "token write failed", tgt, cfgBody)
+		if want := map[bool]int{true: 1, false: 0}[wasOn]; starts != want {
+			t.Errorf("node on %v: started %d times, want %d", wasOn, starts, want)
+		}
+		if runtime.GOOS != "windows" && mode(t, tgt.config) != 0o640 {
+			t.Errorf("node.json mode %o after the rollback", mode(t, tgt.config))
+		}
+	}
+}
+
+// The config's gateway key in another case is the agent's gateway too: link reads it, and link -gateway
+// replaces it rather than adding a second key the agent might read instead.
+func TestLinkGatewayKeyAnyCase(t *testing.T) {
+	tgt, _ := otherGatewayDir(t)
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", true, "wss://new.example/v1/node/connect"); err != nil {
+		t.Fatal(err)
+	}
+	var c map[string]any
+	b, _ := os.ReadFile(tgt.config)
+	json.Unmarshal(b, &c)
+	if c["gateway_url"] != "wss://new.example/v1/node/connect" || c["Gateway_URL"] != nil || c["upstream"] != "http://127.0.0.1:8000" {
+		t.Errorf("node.json %s", b)
+	}
+
+	f := newFakeLinkGateway(t, protocol.LinkApproved)
+	cfg := filepath.Join(t.TempDir(), "node.json")
+	os.WriteFile(cfg, []byte(`{"Gateway_URL":"`+f.wsURL()+`"}`), 0o600)
+	var restarts []restartCall
+	var out, errb bytes.Buffer
+	if code := testLinkEnv(f, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg, "-no-start"}, &out, &errb); code != 0 || f.starts != 1 {
+		t.Errorf("exit %d, gateway asked %d times: %s", code, f.starts, errb.String())
+	}
+}
+
+// link (without -gateway) does not save a token beside a gateway the config was changed to meanwhile.
+func TestLinkConfigGatewayChangedMeanwhile(t *testing.T) {
+	tgt, cfgBody := otherGatewayDir(t)
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", false, "wss://new.example/v1/node/connect"); err == nil {
+		t.Fatal("saved a token for another gateway than the config names")
+	}
+	checkUnchanged(t, "gateway changed meanwhile", tgt, cfgBody)
+}
+
+// Two saves at once go one after the other: a save waits while another holds the config folder's lock.
+func TestLinkSaveWaitsForLock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no lock: the token goes into node.json in one write")
+	}
+	tgt, _ := otherGatewayDir(t)
+	unlock, err := lockDir(filepath.Dir(tgt.config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- tgt.save(linkTestToken, "n-1a2b3c4d", true, "wss://new.example/v1/node/connect") }()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("saved while another held the lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// link -gateway on the Linux install stops the node through linkEnv.stop before it saves.
+func TestLinkOtherGatewayStopsNode(t *testing.T) {
+	f := newFakeLinkGateway(t, protocol.LinkApproved)
+	tgt, _ := otherGatewayDir(t)
+	var restarts []restartCall
+	var out, errb bytes.Buffer
+	e := testLinkEnv(f, node.LinuxLayout, &restarts)
+	stops := 0
+	e.stop = func() (bool, error) { stops++; return true, nil }
+	code := e.main(context.Background(), []string{"-config", tgt.config, "-gateway", f.wsURL()}, &out, &errb)
+	if code != 0 || stops != 1 || len(restarts) != 1 || configGateway(tgt.config) != f.wsURL() {
+		t.Errorf("exit %d, stops %d, restarts %v, gateway %s: %s", code, stops, restarts, configGateway(tgt.config), errb.String())
+	}
+	if b, _ := os.ReadFile(tgt.tokenEnv); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
+		t.Errorf("token.env %q", b)
 	}
 }

@@ -47,12 +47,13 @@ type linkEnv struct {
 	smi     setup.SMI
 	client  func(base string) *accountlink.Client
 	restart func(tokenEnv bool, out io.Writer) error // starts or restarts the node after saving
+	stop    func() (wasOn bool, err error)           // stops the node before link -gateway saves; nil: nothing to stop
 }
 
 func runLink(args []string, stdout, stderr io.Writer) int {
 	env := linkEnv{layout: node.DefaultLayout(), exists: fileExists, smi: setup.ExecSMI{},
 		client:  func(base string) *accountlink.Client { return &accountlink.Client{Base: base} },
-		restart: restartNode}
+		restart: restartNode, stop: stopNode}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return env.main(ctx, args, stdout, stderr)
@@ -66,8 +67,10 @@ func fileExists(p string) bool {
 // linkTarget is where the token goes: token.env (the Linux install; node.json gets the node id), or
 // node.json itself.
 type linkTarget struct {
-	config   string
-	tokenEnv string // "" = the token goes into config
+	config    string
+	tokenEnv  string               // "" = the token goes into config
+	stopNode  func() (bool, error) // see linkEnv.stop
+	startNode func() error         // starts the node again after a failed save stopped it
 }
 
 func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -104,7 +107,7 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 		return fail(fmt.Errorf("reading the config: %w", err))
 	}
 	if gw == "" {
-		json.Unmarshal(cfg["gateway_url"], &gw)
+		gw = configGateway(t.config) // the key as the agent reads it (any case)
 	}
 	if gw == "" {
 		gw = setupflow.DefaultGatewayURL
@@ -164,7 +167,10 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 
 // target works out where the token goes from the flags and what is installed.
 func (e linkEnv) target(cfgFlag, envFlag string) linkTarget {
-	t := linkTarget{config: cfgFlag, tokenEnv: envFlag}
+	t := linkTarget{config: cfgFlag, tokenEnv: envFlag, stopNode: e.stop}
+	if e.restart != nil {
+		t.startNode = func() error { return e.restart(true, io.Discard) }
+	}
 	if t.config == "" {
 		t.config = e.layout.Config
 		if runtime.GOOS == "linux" && e.exists(linkInstalledConfig) {
@@ -211,9 +217,18 @@ func checkWritable(path string) error {
 // save writes the token: into token.env (and the node id into the config), or into the config. The
 // gateway's address goes into the config too when it was given on the command line.
 // Nothing is written unless the token has the exact form the gateway issues and carries nodeID.
+// Saves hold a lock on the config's folder, so two links at once leave one link's config and token.
 func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error {
 	if id, ok := node.IssuedTokenNodeID(token); !ok || id != nodeID {
 		return errors.New("the gateway sent a token that is not a node token")
+	}
+	unlock, err := lockDir(filepath.Dir(t.config))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if cg := configGateway(t.config); !setGateway && cg != "" && cg != gw {
+		return fmt.Errorf("the config's gateway changed to %s while linking to %s", cg, gw)
 	}
 	set := map[string]any{"node_id": nodeID}
 	if setGateway {
@@ -233,11 +248,17 @@ func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error
 }
 
 // saveOtherGateway saves a token for another gateway than the config names (link -gateway) so that at
-// no moment a token sits beside the other gateway's address: the old token.env is moved aside
-// (token.env.unlinked; the unit's ConditionFileNotEmpty keeps the node off), then the config gets the
-// new gateway, then token.env the new token. If the config cannot be written, the old token comes back
-// beside its own config.
+// no moment a token sits beside the other gateway's address, or reaches it: the old token.env is moved
+// aside (token.env.unlinked; the unit's ConditionFileNotEmpty keeps the node off), the node is stopped
+// (a start already under way may have read the old token.env), then the config gets the new gateway,
+// then token.env the new token. If the node does not stop, nothing is changed. If a write fails, the
+// old config comes back, then the old token beside it, and a node that was on starts again.
 func (t linkTarget) saveOtherGateway(token string, set map[string]any) error {
+	oldCfg, err := os.ReadFile(t.config)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	hadCfg := err == nil
 	parked := t.tokenEnv + ".unlinked"
 	moved := true
 	if err := os.Rename(t.tokenEnv, parked); errors.Is(err, os.ErrNotExist) {
@@ -245,16 +266,52 @@ func (t linkTarget) saveOtherGateway(token string, set map[string]any) error {
 	} else if err != nil {
 		return err
 	}
-	if err := updateJSON(t.config, set, nil, 0); err != nil {
-		if moved {
-			os.Rename(parked, t.tokenEnv)
+	wasOn := false
+	if t.stopNode != nil {
+		on, err := t.stopNode()
+		if err != nil {
+			if moved {
+				os.Rename(parked, t.tokenEnv)
+			}
+			return fmt.Errorf("the node did not stop, so nothing was changed: %v", err)
 		}
-		return err
+		wasOn = on
 	}
-	return writeTokenEnv(t.tokenEnv, token)
+	rollback := func(cause error, cfgReplaced bool) error {
+		if cfgReplaced {
+			var err error
+			if hadCfg {
+				err = writeReplacing(t.config, oldCfg, 0)
+			} else {
+				err = os.Remove(t.config)
+			}
+			if err != nil {
+				return fmt.Errorf("%v; putting the old config back failed too (%v), so the old token stays in %s", cause, err, parked)
+			}
+		}
+		if moved {
+			if err := os.Rename(parked, t.tokenEnv); err != nil {
+				return fmt.Errorf("%v; putting the old token back failed too: %v", cause, err)
+			}
+		}
+		if wasOn && t.startNode != nil {
+			if err := t.startNode(); err != nil {
+				return fmt.Errorf("%v; the old config and token are back, but the node did not start again: %v", cause, err)
+			}
+		}
+		return cause
+	}
+	if err := updateJSON(t.config, set, nil, 0); err != nil {
+		return rollback(err, false)
+	}
+	if err := saveTokenEnv(t.tokenEnv, token); err != nil {
+		return rollback(err, true)
+	}
+	return nil
 }
 
-// configGateway is the gateway_url in a config file ("" if none or unreadable).
+// configGateway is the gateway_url in a config file ("" if none or unreadable), its key matched as the
+// agent matches it (encoding/json: any case, the last one wins).
 func configGateway(path string) string {
 	var c struct {
 		GatewayURL string `json:"gateway_url"`
@@ -276,8 +333,12 @@ func writeTokenEnv(path, token string) error {
 	return writeReplacing(path, []byte("AISATHOME_NODE_TOKEN="+token+"\n"), 0o600)
 }
 
-// updateJSON sets keys in a JSON object file and deletes drop, keeping everything else. mode 0 keeps the
-// file's mode; otherwise the file gets mode (a config holding a token: 0600).
+// saveTokenEnv is writeTokenEnv; tests replace it to make the write after the config fail.
+var saveTokenEnv = writeTokenEnv
+
+// updateJSON sets keys in a JSON object file and deletes drop, keeping everything else. A key set
+// replaces the same key in another case too (the agent reads keys in any case). mode 0 keeps the file's
+// mode; otherwise the file gets mode (a config holding a token: 0600).
 func updateJSON(path string, set map[string]any, drop []string, mode os.FileMode) error {
 	m := map[string]json.RawMessage{}
 	if b, err := os.ReadFile(path); err == nil {
@@ -286,6 +347,13 @@ func updateJSON(path string, set map[string]any, drop []string, mode os.FileMode
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	for k := range m {
+		for s := range set {
+			if k != s && strings.EqualFold(k, s) {
+				delete(m, k)
+			}
+		}
 	}
 	for k, v := range set {
 		b, err := json.Marshal(v)
@@ -350,7 +418,7 @@ func restartNode(tokenEnv bool, out io.Writer) error {
 	switch {
 	case runtime.GOOS == "windows":
 		return serviceRestart(out)
-	case tokenEnv && fileExists("/etc/systemd/system/"+node.ServiceName+".service"):
+	case tokenEnv && fileExists(nodeUnit):
 		fmt.Fprintln(out, "Starting the node: systemctl restart", node.ServiceName)
 		cmd := exec.Command("systemctl", "restart", node.ServiceName)
 		cmd.Stdout, cmd.Stderr = out, out
@@ -363,4 +431,31 @@ func restartNode(tokenEnv bool, out io.Writer) error {
 	}
 	fmt.Fprintln(out, "Start the node with its config as usual (aisathome-node -config <file>).")
 	return nil
+}
+
+// nodeUnit is the Linux installer's systemd unit for the node.
+const nodeUnit = "/etc/systemd/system/" + node.ServiceName + ".service"
+
+// stopNode stops the installed node's systemd service before link -gateway saves, and waits until it is
+// off: a start already under way may have read the old token.env. It reports whether the node was on
+// (or starting), so that a save that fails can start it again. Without the unit there is nothing to stop.
+func stopNode() (bool, error) {
+	if runtime.GOOS != "linux" || !fileExists(nodeUnit) {
+		return false, nil
+	}
+	st := nodeState()
+	on := st == "active" || st == "activating" || st == "reloading"
+	if b, err := exec.Command("systemctl", "stop", node.ServiceName).CombinedOutput(); err != nil {
+		return on, fmt.Errorf("systemctl stop %s: %v %s", node.ServiceName, err, strings.TrimSpace(string(b)))
+	}
+	if st := nodeState(); st != "inactive" && st != "failed" {
+		return on, fmt.Errorf("the node service is %q after systemctl stop", st)
+	}
+	return on, nil
+}
+
+// nodeState is the node service's ActiveState ("" if systemctl cannot tell).
+func nodeState() string {
+	b, _ := exec.Command("systemctl", "show", "-p", "ActiveState", "--value", node.ServiceName).Output()
+	return strings.TrimSpace(string(b))
 }
