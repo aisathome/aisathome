@@ -203,6 +203,18 @@ func TestAnonRetention(t *testing.T) {
 	if a, _, ok := s.Get("gh:1"); !ok || len(a.Nodes) != 1 {
 		t.Fatal("an account's node was touched")
 	}
+	// A held node goes 24 h after its hold, connected or not (it would keep its pool slot).
+	if err := s.HoldNode(NodeHold{Node: live, Rule: "download-and-execute", At: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if gone, _ := s.expireAnon(t0.Add(anonHeldKeep-time.Minute), connected); len(gone) != 0 {
+		t.Fatalf("a hold under a day old: %v", gone)
+	}
+	gone, _ = s.expireAnon(t0.Add(anonHeldKeep), connected)
+	if len(gone) != 1 || gone[0] != live {
+		t.Fatalf("a hold a day old: %v", gone)
+	}
+	_, live, _ = s.RegisterAnon(t0)
 	// A revoked node leaves an empty account: it goes too.
 	if err := s.RevokeNode("", live); err != nil {
 		t.Fatal(err)
@@ -271,7 +283,11 @@ func TestAnonAdmission(t *testing.T) {
 	entry, _ := testMCRef(t, 20)
 	small, _ := testMCRef(t, 20)
 	small.Model = "qwen3.8-27b-q3"
-	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry, small}, Admit: time.Second}, "")
+	admitBig, _ := testMCRef(t, 20)
+	admitSmall, _ := testMCRef(t, 20)
+	admitSmall.Model = "qwen3.8-27b-q3"
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry, small},
+		AdmitReferences: []ModelCheckReference{admitBig, admitSmall}, Admit: time.Second}, "")
 	g := &Gateway{mc: mc, log: quietLog()}
 	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	pass := ModelCheckResult{At: now, Verdict: modelcheck.Pass}
@@ -382,4 +398,74 @@ func TestAnonReserve(t *testing.T) {
 	if g.mcReserve(n, "qwen3.8-27b") {
 		t.Fatal("an admitted node took a probe while a request waits")
 	}
+}
+
+// The secret prompts of the ongoing checks never go to a node without an account that is not admitted:
+// its probes come from the admission set (ids "admit:…"), whatever its record says until it is admitted,
+// also after a hold was cleared or it came back with another model; once admitted, from the secret set
+// like any node. Without an admission set for its model, it gets no probe at all.
+func TestAnonNeverGetsSecretPrompts(t *testing.T) {
+	main, _ := testMCRef(t, 20)
+	admit, _ := testMCRef(t, 20)
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{main},
+		AdmitReferences: []ModelCheckReference{admit}}, "")
+	secret := map[string]bool{}
+	for _, id := range mc.refs["qwen3.8-27b"].ids {
+		secret[id] = true
+	}
+	n := &nodeConn{id: "a-1", anon: true, models: []protocol.ModelInfo{{Name: "qwen3.8-27b", Slots: 1}}}
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	pick := func() (string, bool) {
+		mc.mu.Lock()
+		defer mc.mu.Unlock()
+		s := mc.nodeLocked(n, mc.checkedModel(n), now)
+		r := mc.probeRefLocked(n, s, "qwen3.8-27b")
+		return mc.pickPromptLocked(s, r), r.admit
+	}
+	s := mc.st.Nodes
+	for i := 0; i < 200; i++ { // more than the admission pool: its list starts again, still the admission set
+		id, admitSet := pick()
+		if secret[id] || !strings.HasPrefix(id, admitPrefix) || !admitSet {
+			t.Fatalf("probe %d to a node not admitted: %q (admission set %v)", i, id, admitSet)
+		}
+	}
+	rec := s[n.id]
+	pass := ModelCheckResult{At: now, Verdict: modelcheck.Pass}
+	rec.Checks = []ModelCheckResult{pass, pass, pass}
+	if id, admitSet := pick(); !secret[id] || admitSet {
+		t.Fatalf("an admitted node got %q (admission set %v), not the secret set", id, admitSet)
+	}
+	rec.Checks, rec.HeldAt = []ModelCheckResult{pass, pass, pass}, now // held: not admitted
+	if id, _ := pick(); secret[id] {
+		t.Fatalf("a held node got secret prompt %q", id)
+	}
+	rec.HeldAt = time.Time{}
+	// An account's node gets the secret set from the start.
+	acct := &nodeConn{id: "n-1", models: n.models}
+	mc.mu.Lock()
+	sa := mc.nodeLocked(acct, mc.checkedModel(acct), now)
+	if r := mc.probeRefLocked(acct, sa, "qwen3.8-27b"); r.admit {
+		t.Error("an account's node gets the admission set")
+	}
+	mc.mu.Unlock()
+	// No admission set for its model: not checked at all, so no probe.
+	q3 := &nodeConn{id: "a-2", anon: true, models: []protocol.ModelInfo{{Name: "qwen3.8-27b-q3", Slots: 1}}}
+	big := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{main}}, "")
+	if big.checks(n) || big.checks(q3) {
+		t.Error("a node without an account is checked without an admission set")
+	}
+	// The two sets' groups never mix.
+	g := &Gateway{mc: mc, log: quietLog()}
+	ra := mc.admits["qwen3.8-27b"]
+	mc.mu.Lock()
+	sa2 := mc.nodeLocked(n, "qwen3.8-27b", now)
+	sa2.Checks = nil
+	mc.pending[n.id] = nil
+	g.mcAnswerLocked(n, sa2, ra, mcAnswer{id: ra.ids[0], model: "qwen3.8-27b", admit: true, toks: ra.byID[ra.ids[0]].Tokens}, true, "", now)
+	rm := mc.refs["qwen3.8-27b"]
+	g.mcAnswerLocked(n, sa2, rm, mcAnswer{id: rm.ids[0], model: "qwen3.8-27b", toks: rm.byID[rm.ids[0]].Tokens}, true, "", now)
+	if p := mc.pending[n.id]; len(p) != 1 || p[0].admit {
+		t.Errorf("a group mixed the sets: %+v", p)
+	}
+	mc.mu.Unlock()
 }

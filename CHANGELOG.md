@@ -14,8 +14,8 @@ and **(site)** are live on aisathome.org once deployed.
   runs the installer's checks and asks at the terminal before it installs), the Windows setup page's
   **Start without an account (science only)** button, or `aisathome-node register -accept-terms`
   register the machine with no sign-in. Such a node serves science work only, never people's chats;
-  it first answers a few test prompts (the model check) and gets work only once it passed 3 checks; a
-  failed check before then holds it. It earns no credit: credit starts once it is linked to an
+  it first answers a few test prompts (the model check, from a separate admission set) and gets work only
+  once it passed 3 checks; a failed check before then holds it, and a held one is deleted a day later. It earns no credit: credit starts once it is linked to an
   account with `aisathome-node link` (which moves it to the account with a new token). Its local page
   shows where it stands. Limits: 3 registrations per address a day (counted in memory only), a pool
   of 25 apart from account nodes, 2 connected per address; one that never connects is deleted after a

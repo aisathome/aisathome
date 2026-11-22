@@ -89,9 +89,14 @@ above (KL per group of 4 prompts, confident flips, the same limits).
   after a clean observe-only period on 3090, 4090 and 5090 nodes.
 - **Admission of nodes without an account** (`gateway/anon.go`). For them the check is a gate, whatever
   `withhold` says: probes only (every `admit_seconds`, default 20, on average) until 3 checks passed,
-  then science; one failed check before that holds the node, and a fail result after it does too. A
-  node without an account whose model has no reference here is never admitted, so the standard tier
-  (`qwen3.8-27b-q3`) needs its own reference before such nodes can work.
+  then science; one failed check before that holds the node, and a fail result after it does too.
+  Their admission probes come from a separate **admission set** (`admit_references`, one per model),
+  never from the secret set: anyone can register and read what an unadmitted node is sent, so those
+  prompts are as good as public and the set is rotated (record a new pool, replace the file and its
+  pin). Recording one is cheap: 100 prompts of 32 tokens take a few minutes. Once admitted, a node gets
+  the secret set at random like any node. A node without an account whose model has no admission set is
+  never admitted. The gateway logs a warning when an admission set shares prompts with the ongoing set
+  (only a test setup, such as staging's public references, should).
 
 Config (`model_check` in the gateway config; the reference files are secrets, kept with the
 gateway's secrets and pinned):
@@ -100,6 +105,7 @@ gateway's secrets and pinned):
 "model_check": {
   "enabled": true,
   "references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-iq4xs.json.gz", "sha256": "<64 hex>"}],
+  "admit_references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-admit-iq4xs.json.gz", "sha256": "<64 hex>"}],
   "interval_seconds": 1800, "recheck_seconds": 300, "admit_seconds": 20,
   "withhold": false, "cover_share": 0.2
 }

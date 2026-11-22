@@ -30,6 +30,12 @@ const mcModel = "qwen3.8-27b-q4" // the rig's nodes announce this model
 // mcReference writes a synthetic secret reference of 20 prompts and returns its config entry.
 func mcReference(t *testing.T) (gateway.ModelCheckReference, *modelcheck.Reference) {
 	t.Helper()
+	return mcReferenceOf(t, "p", "Tell me about secret topic %d.")
+}
+
+// mcReferenceOf is mcReference with its own prompt ids (id prefix) and texts (a format with %d).
+func mcReferenceOf(t *testing.T, idPrefix, textFormat string) (gateway.ModelCheckReference, *modelcheck.Reference) {
+	t.Helper()
 	ref := &modelcheck.Reference{Format: modelcheck.Format, Kind: modelcheck.KindReference, Name: "e2e-secret",
 		Created: "2026-11-20", Engine: modelcheck.Engine{Name: "llama.cpp", Build: "b12342"},
 		Model: modelcheck.Model{File: "Qwen3.8-27B-UD-IQ4_XS.gguf"}, GPU: modelcheck.GPU{Name: "test"}, Request: modelcheck.DefaultRequest}
@@ -46,7 +52,7 @@ func mcReference(t *testing.T) (gateway.ModelCheckReference, *modelcheck.Referen
 			}
 			toks = append(toks, modelcheck.Token{Key: top[0].Key, Top: top})
 		}
-		ref.Results = append(ref.Results, modelcheck.Result{ID: fmt.Sprintf("p%02d", i), Text: fmt.Sprintf("Tell me about secret topic %d.", i), Tokens: toks})
+		ref.Results = append(ref.Results, modelcheck.Result{ID: fmt.Sprintf("%s%02d", idPrefix, i), Text: fmt.Sprintf(textFormat, i), Tokens: toks})
 	}
 	b, err := ref.Encode(true)
 	if err != nil {

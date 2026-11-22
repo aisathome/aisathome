@@ -545,8 +545,9 @@ say so. Chat stays behind the operator terms exactly as for any node.
 rules, not settings: such a node serves **science only** (no chat, API or agent request of a person,
 whatever `chat_rules_off` or a key's consent say; its account never counts as having accepted the
 operator terms); it gets **no science until the model check admitted it**: its first work is probe
-prompts only, every `model_check.admit_seconds` (default 20) on average, and it is admitted after 3
-passed checks (each 4 probe prompts, the same KL and flip limits as the check), normally within minutes;
+prompts only, from the **admission set** (`model_check.admit_references`, other prompts than the secret
+set, so registering never shows anyone a secret-set prompt), every `model_check.admit_seconds` (default
+20) on average, and it is admitted after 3 passed checks (each 4 probe prompts, the same KL and flip limits as the check), normally within minutes;
 one failed check before then holds it (rule `model-check`), and after admission a fail result holds it,
 both whatever `model_check.withhold` says. It announces exactly one model, and admission holds only for the model its checks were of (back with another model, its checks start afresh). Without the model check, registering is refused (503); a node
 whose model has no reference is never admitted. It earns **no credit** (its usage records carry none,
@@ -555,7 +556,8 @@ calls of a project with `pilot_probation_ok` may use it during probation, as pil
 registrations per address a day and 30 an hour over the gateway (in memory only; a restart forgets
 them), a pool of `max_anon_nodes` (default 25) apart from `max_nodes`, `anon_closed` and `nodes_closed`
 stop new ones, at most 2 connected per address (account nodes keep their 10). Retention: one that never
-connected is deleted 24 hours after it registered, one not seen for 90 days is deleted (its last
+connected is deleted 24 hours after it registered, one not seen for 90 days is deleted, and a held one 24
+hours after its hold (its last
 connection is written at most once an hour). `GET /v1/node/self` (its own token) tells the node's local
 page its state: `checking` (with `checks_passed` of `checks_needed`), `admitted`, `held` (no reason
 given), `offline`, `no_check`. **Linking**: `aisathome-node link` on such a node sends its token with
