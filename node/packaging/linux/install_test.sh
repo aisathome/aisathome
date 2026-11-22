@@ -438,6 +438,20 @@ has "rerun keeps node.json" '"gateway_url": "wss://staging.example.org/v1/node/c
 out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --node-id n2 --gateway-url wss://gw.example.org/v1/node/connect 2>&1)"; code=$?
 ok "flags over installed"; has "flags over installed" '"node_id": "n2"'; has "flags over installed" '"gateway_url": "wss://gw.example.org/v1/node/connect"'
 
+# A link that did not happen on an installed node keeps its token only for the gateway it was made for:
+# with another gateway in node.json now, the token is moved aside and never sent there.
+eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_token() {/,/^}/p' "$installer")"
+aside="$tmp/aside"; mkdir "$aside"
+printf '{"gateway_url": "wss://gw.example.org/v1/node/connect"}\n' > "$aside/node.json"
+echo "AISATHOME_NODE_TOKEN=nt-old" > "$aside/token.env"
+out="$(set_aside_token wss://gw.example.org/v1/node/connect "$aside" 2>&1)"
+[[ -s "$aside/token.env" && ! -e "$aside/token.env.unlinked" ]] || fail "same gateway: the token was moved"
+out="$(set_aside_token wss://api.aisathome.org/v1/node/connect "$aside" 2>&1)"
+[[ ! -e "$aside/token.env" && "$(cat "$aside/token.env.unlinked")" = "AISATHOME_NODE_TOKEN=nt-old" ]] || fail "another gateway: the token stayed"
+has "token moved aside" "moved aside"
+grep -q 'set_aside_token "$old_gw" "$conf"' "$installer" || fail "a failed link does not set the old token aside"
+unset -f installed_value set_aside_token
+
 # Linking in the plan: a dry run says how the install ends; --link with --keep-token is refused; the node's
 # unit stays off without a token (ConditionFileNotEmpty) instead of failing every few seconds.
 run -- --dry-run
