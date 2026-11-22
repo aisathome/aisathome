@@ -852,6 +852,19 @@ read_token() {
   [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}; to link the node to your account in the browser instead: --link"
 }
 
+# set_aside_token <installed gateway> <config dir>: after a link that did not happen on a node that
+# has a token (--link on an installed node). That token is the gateway's it was installed for: if the
+# new node.json names another gateway, the token is moved aside (token.env.unlinked) so that it is never
+# sent there, and the node stays off until it is linked.
+set_aside_token() {
+  local now
+  now="$(installed_value "$2/node.json" gateway_url)"
+  if [[ -s "$2/token.env" && "${1:-}" != "$now" ]]; then
+    mv "$2/token.env" "$2/token.env.unlinked"
+    echo "The installed token is for ${1:-another gateway}, not $now: moved aside to $2/token.env.unlinked." >&2
+  fi
+}
+
 # link_node: the last step without a token: `aisathome-node link` shows a link and a code, waits for
 # the approval in a browser on any device, and writes the node's token to token.env (0600). It
 # returns non-zero when the node was not linked (denied, expired, stopped).
@@ -1176,6 +1189,7 @@ speed_check
 linked=1
 if [[ $link = 1 ]] && ! link_node; then
   linked=0
+  set_aside_token "$old_gw" "$conf"
 fi
 if [[ -s /etc/aisathome-node/token.env ]]; then
   systemctl restart aisathome-node
