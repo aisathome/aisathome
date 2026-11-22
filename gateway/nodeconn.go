@@ -205,6 +205,11 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		c.Close(websocket.StatusPolicyViolation, "this node token belongs to another node id")
 		return
 	}
+	if isAnon(account) && len(hello.Models) != 1 {
+		// Admission (modelcheck.go) checks one model: a node without an account serves only that one.
+		c.Close(websocket.StatusPolicyViolation, "a node without an account announces exactly one model")
+		return
+	}
 	if account == "" && (validNodeID(hello.NodeID) || validPilotID(hello.NodeID)) { // the gateway assigns these to account nodes and pilots
 		c.Close(websocket.StatusPolicyViolation, "node id is reserved")
 		return
@@ -233,7 +238,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		first, n.unconfirmed, _ = g.accounts.nodeLive(keyHash(token))
 	}
 	if n.anon && g.mc != nil { // admitted before (the model check keeps its record across reconnects)
-		n.admitted = g.mc.admitted(n.id)
+		n.admitted = g.mc.admitted(n)
 	}
 	if pl != nil {
 		// The record decides before the pilot is routable: one reported, ended or past its deadline
