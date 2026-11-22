@@ -28,6 +28,8 @@ const linkTestToken = "nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 type fakeLinkGateway struct {
 	srv     *httptest.Server
 	outcome string
+	token   string // the approved token; "" = linkTestToken
+	nodeID  string // the approved node id; "" = n-1a2b3c4d
 	mu      sync.Mutex
 	starts  int
 	polls   int
@@ -58,6 +60,9 @@ func newFakeLinkGateway(t *testing.T, outcome string) *fakeLinkGateway {
 			case f.polls <= 2:
 			case f.outcome == protocol.LinkApproved:
 				out = protocol.LinkPoll{Status: protocol.LinkApproved, Token: linkTestToken, NodeID: "n-1a2b3c4d"}
+				if f.token != "" {
+					out.Token, out.NodeID = f.token, f.nodeID
+				}
 			default:
 				out = protocol.LinkPoll{Status: f.outcome}
 			}
@@ -239,5 +244,97 @@ func TestLinkTarget(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "token.env"), nil, 0o600)
 	if got := e.target(cfg, ""); got.tokenEnv != filepath.Join(dir, "token.env") {
 		t.Errorf("token.env beside: %+v", got)
+	}
+}
+
+// injectedTokens are approvals a malicious or broken gateway could send: each would add a line or a
+// setting to token.env (a systemd EnvironmentFile), or is not the form the gateway issues.
+var injectedTokens = []string{
+	linkTestToken + "\nLD_PRELOAD=/tmp/x.so",
+	"nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+	"nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAA=AAAAAAAAAAAAAAAAAAAAAA",
+	"nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAA",
+	"nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAA\"AAAAAAAAAAAAAAAAAAAAAA",
+	"nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAA#AAAAAAAAAAAAAAAAAAAAAA",
+	"nt-n-1a2b3c4d.AAAAAAAAAAAAAAAAAAAA\rAAAAAAAAAAAAAAAAAAAAAA",
+	linkTestToken + "A",                  // 44 characters
+	linkTestToken[:len(linkTestToken)-1], // 42
+	"nt-n-1a2b3c4d.secret",
+}
+
+// A gateway that approves with a token that is not exactly the form it issues: nothing is written,
+// token.env and node.json stay as they were, and the node is not restarted.
+func TestLinkRefusesInjectedToken(t *testing.T) {
+	for _, tok := range injectedTokens {
+		f := newFakeLinkGateway(t, protocol.LinkApproved)
+		f.token, f.nodeID = tok, "n-1a2b3c4d"
+		dir := t.TempDir()
+		cfg, env := filepath.Join(dir, "node.json"), filepath.Join(dir, "token.env")
+		origCfg := `{"node_id":"box","gateway_url":"` + f.wsURL() + `"}`
+		os.WriteFile(cfg, []byte(origCfg), 0o640)
+		os.WriteFile(env, []byte("AISATHOME_NODE_TOKEN=nt-n-00000000.old\n"), 0o600)
+		var restarts []restartCall
+		var out, errb bytes.Buffer
+		code := testLinkEnv(f, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg}, &out, &errb)
+		b, _ := os.ReadFile(env)
+		c, _ := os.ReadFile(cfg)
+		if code != 1 || string(b) != "AISATHOME_NODE_TOKEN=nt-n-00000000.old\n" || string(c) != origCfg || len(restarts) != 0 {
+			t.Errorf("%q: exit %d, token.env %q, node.json %s, restarts %v", tok, code, b, c, restarts)
+		}
+		if !strings.Contains(errb.String(), "no valid node token") || strings.Contains(errb.String()+out.String(), "LD_PRELOAD") {
+			t.Errorf("%q: message %q", tok, errb.String())
+		}
+	}
+	// A valid token for another node id than the answer names is refused too.
+	f := newFakeLinkGateway(t, protocol.LinkApproved)
+	f.token, f.nodeID = linkTestToken, "n-ffffffff"
+	cfg := filepath.Join(t.TempDir(), "node.json")
+	os.WriteFile(cfg, []byte(`{"gateway_url":"`+f.wsURL()+`"}`), 0o600)
+	var restarts []restartCall
+	var out, errb bytes.Buffer
+	if code := testLinkEnv(f, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg}, &out, &errb); code != 1 {
+		t.Errorf("mismatched node id: exit %d", code)
+	}
+}
+
+// The write itself checks the token again (save and writeTokenEnv): even a caller that skipped the
+// client's check cannot put another line into token.env. A valid token is written atomically, 0600.
+func TestWriteTokenEnvChecksToken(t *testing.T) {
+	dir := t.TempDir()
+	env, cfg := filepath.Join(dir, "token.env"), filepath.Join(dir, "node.json")
+	os.WriteFile(env, []byte("AISATHOME_NODE_TOKEN=nt-n-00000000.old\n"), 0o644)
+	os.WriteFile(cfg, []byte(`{"node_id":"box"}`), 0o640)
+	tgt := linkTarget{config: cfg, tokenEnv: env}
+	for _, tok := range injectedTokens {
+		if err := writeTokenEnv(env, tok); err == nil {
+			t.Errorf("writeTokenEnv took %q", tok)
+		}
+		if err := tgt.save(tok, "n-1a2b3c4d", false, ""); err == nil {
+			t.Errorf("save took %q", tok)
+		}
+		if err := (linkTarget{config: cfg}).save(tok, "n-1a2b3c4d", false, ""); err == nil {
+			t.Errorf("save into the config took %q", tok)
+		}
+	}
+	if err := tgt.save(linkTestToken, "n-ffffffff", false, ""); err == nil {
+		t.Error("save took a token for another node id")
+	}
+	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN=nt-n-00000000.old\n" {
+		t.Fatalf("token.env changed: %q", b)
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != `{"node_id":"box"}` {
+		t.Fatalf("node.json changed: %s", b)
+	}
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
+		t.Errorf("token.env %q", b)
+	}
+	if runtime.GOOS != "windows" && mode(t, env) != 0o600 {
+		t.Errorf("token.env mode %o, want 600", mode(t, env))
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".*")); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
 	}
 }

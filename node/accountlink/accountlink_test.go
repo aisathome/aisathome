@@ -94,6 +94,28 @@ func TestWait(t *testing.T) {
 	if _, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: "ak-not-a-node-token"}}}); err == nil {
 		t.Error("an approval without a node token was taken")
 	}
+	// The token goes into token.env (a systemd EnvironmentFile): only the exact form the gateway issues
+	// is taken, so a gateway cannot add lines or settings to it.
+	for _, bad := range []string{
+		tok + "\nLD_PRELOAD=/tmp/x.so",
+		tok + "\n",
+		"nt-n-1a2b3c4d." + strings.Repeat("A", 20) + "=" + strings.Repeat("A", 22),
+		"nt-n-1a2b3c4d." + strings.Repeat("A", 20) + " " + strings.Repeat("A", 22),
+		"nt-n-1a2b3c4d." + strings.Repeat("A", 42),
+		"nt-n-1a2b3c4d." + strings.Repeat("A", 44),
+		"nt-n-1a2b3c4d.secret",
+	} {
+		p, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: bad, NodeID: "n-1a2b3c4d"}}})
+		if err == nil || p.Token != "" {
+			t.Errorf("approval with token %q taken: %+v %v", bad, p, err)
+		}
+	}
+	if _, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: tok, NodeID: "n-ffffffff"}}}); err == nil {
+		t.Error("an approval naming another node id than its token carries was taken")
+	}
+	if p, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: tok}}}); err != nil || p.NodeID != "n-1a2b3c4d" {
+		t.Errorf("approval without a node id: %+v %v", p, err)
+	}
 	// A gateway that never answers usefully: Wait gives up after the code's life.
 	if _, err, slept := run([]step{{500, protocol.LinkPoll{}}}); !errors.Is(err, ErrExpired) || len(slept) < 100 {
 		t.Errorf("lost gateway: %v after %d polls", err, len(slept))

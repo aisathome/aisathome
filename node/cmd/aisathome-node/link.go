@@ -210,19 +210,34 @@ func checkWritable(path string) error {
 
 // save writes the token: into token.env (and the node id into the config), or into the config. The
 // gateway's address goes into the config too when it was given on the command line.
+// Nothing is written unless the token has the exact form the gateway issues and carries nodeID.
 func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error {
+	if id, ok := node.IssuedTokenNodeID(token); !ok || id != nodeID {
+		return errors.New("the gateway sent a token that is not a node token")
+	}
 	set := map[string]any{"node_id": nodeID}
 	if setGateway {
 		set["gateway_url"] = gw
 	}
 	if t.tokenEnv != "" {
-		if err := writeReplacing(t.tokenEnv, []byte("AISATHOME_NODE_TOKEN="+token+"\n"), 0o600); err != nil {
+		if err := writeTokenEnv(t.tokenEnv, token); err != nil {
 			return err
 		}
 		return updateJSON(t.config, set, nil, 0)
 	}
 	set["token"] = token
 	return updateJSON(t.config, set, nil, 0o600)
+}
+
+// writeTokenEnv replaces a systemd EnvironmentFile with the one line AISATHOME_NODE_TOKEN=<token>,
+// atomically and with mode 0600. It checks the token again right at the write: only the form the
+// gateway issues (no newline, space, quote, "=" or "#") can go into the file, so a token cannot
+// add environment settings for the node's service.
+func writeTokenEnv(path, token string) error {
+	if _, ok := node.IssuedTokenNodeID(token); !ok {
+		return errors.New("not writing token.env: the token is not a node token")
+	}
+	return writeReplacing(path, []byte("AISATHOME_NODE_TOKEN="+token+"\n"), 0o600)
 }
 
 // updateJSON sets keys in a JSON object file and deletes drop, keeping everything else. mode 0 keeps the
@@ -275,6 +290,10 @@ func writeReplacing(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil { // the new content is on disk before it replaces the old file
 		f.Close()
 		return err
 	}
