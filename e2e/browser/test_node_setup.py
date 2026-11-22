@@ -22,8 +22,9 @@ import pytest
 from playwright.sync_api import expect
 
 SRC = Path(__file__).resolve().parents[2]
-GOOD = "nt-n-0000e2e0.good-" + secrets.token_hex(8)
-WRONG = "nt-n-0000e2e0.wrong-" + secrets.token_hex(8)
+# The form the gateway issues (nt-n-<8 hex>.<43 base64url>): the node takes nothing else from a link.
+GOOD = "nt-n-0000e2e0." + secrets.token_urlsafe(32)
+WRONG = "nt-n-0000e2e0." + secrets.token_urlsafe(32)
 
 
 def _go() -> str:

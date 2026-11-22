@@ -49,7 +49,7 @@ func main() {
 	uiPort := flag.Int("ui-port", 7399, "the local page's port")
 	pwFile := flag.String("password-file", "", "the local password's file (required)")
 	dir := flag.String("dir", "", "an empty folder for node.json, the model and the state (required)")
-	good := flag.String("good-token", "nt-n-0000e2e0.good-secret", "the one token the stand-in gateway accepts")
+	good := flag.String("good-token", "nt-n-0000e2e0.good-secret-good-secret-good-secret-good-se", "the one token the stand-in gateway accepts (the form the gateway issues: a link hands over nothing else)")
 	modelMB := flag.Int("model-mb", 24, "the stand-in model's size in MB (downloaded at about 8 MB/s)")
 	flag.Parse()
 	if *pwFile == "" || *dir == "" {
