@@ -98,6 +98,19 @@ func PrintStatus(w io.Writer, st StatusResponse, port int, now time.Time) {
 	if !st.Connected && st.Rejected != "" {
 		row("rejected", "%s", st.Rejected)
 	}
+	if an := st.Anonymous; an != nil {
+		state := an.State
+		switch state {
+		case "":
+			state = "asking the gateway"
+		case "checking":
+			state = fmt.Sprintf("being checked (%d of %d checks passed)", an.ChecksPassed, an.ChecksNeeded)
+		}
+		row("account", "none: science only, no credit (link it: sudo aisathome-node link); %s", state)
+		if an.State == "held" && an.Message != "" {
+			row("held", "%s", an.Message)
+		}
+	}
 	row("engine", "%s", engineLine(st.Status, now))
 	if st.Setup != nil && (st.Setup.Mode == "setup" || !st.Setup.Configured) {
 		row("setup", "not set up yet: open http://%s/setup", Addr(port))

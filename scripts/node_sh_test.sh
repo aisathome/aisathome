@@ -61,6 +61,16 @@ printf '' > "$tmp/calls"
 out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_SUDO="" AISATHOME_TTY="$tmp/none" TMPDIR="$tmp" sh < "$script" 2>&1)"; code=$?
 [[ $code -ne 0 && ! -s "$tmp/calls" && "$out" == *"needs a terminal"* ]] || fail "no terminal: exit $code: $out"
 
+# A test site's copy names its gateway: both installer runs get it.
+printf 'y\n' > "$tmp/tty"; : > "$tmp/calls"
+out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_GATEWAY_URL=wss://api.staging.example.org/v1/node/connect \
+  AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" sh < "$script" 2>&1)"; code=$?
+want=$'install.sh --dry-run --anonymous --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --anonymous --gateway-url wss://api.staging.example.org/v1/node/connect'
+[[ $code -eq 0 && "$(cat "$tmp/calls")" == "$want" ]] || fail "gateway: calls were: $(cat "$tmp/calls")"
+# The two defaults are single lines a test site can replace.
+grep -q '^base="${AISATHOME_RELEASE_BASE:-https://github.com/aisathome/aisathome/releases/latest/download}"$' "$script" || fail "no base line"
+grep -q '^gateway="${AISATHOME_GATEWAY_URL:-}"$' "$script" || fail "no gateway line"
+
 grep -q '^set -eu$' "$script" || fail "node.sh does not stop on errors"
 sh -n "$script" || fail "node.sh is not valid sh"
 

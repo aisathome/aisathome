@@ -215,8 +215,17 @@ func TestAnonWrongModelHeld(t *testing.T) {
 	a.startTokenNode(ctx, r.Token, srv, 1, 32768)
 	c := anonClient(a, r.Token)
 	s := waitSelf(t, c, protocol.SelfHeld)
-	if strings.Contains(s.Message, "KL") || strings.Contains(s.Message, "flip") {
+	if strings.Contains(s.Message, "KL") || strings.Contains(s.Message, "flip") || strings.Contains(s.Message, "admit:") {
 		t.Errorf("the node is told which check failed: %q", s.Message)
+	}
+	// It is told why in general terms, what to do, and when it is deleted.
+	for _, want := range []string{"Failed the model check before admission", "curl -fsSL https://site.test/node.sh | sh", "deleted at "} {
+		if !strings.Contains(s.Message, want) {
+			t.Errorf("held message lacks %q: %q", want, s.Message)
+		}
+	}
+	if s.DeleteAt == nil || time.Until(*s.DeleteAt) < 23*time.Hour || time.Until(*s.DeleteAt) > 25*time.Hour {
+		t.Errorf("delete_at %v", s.DeleteAt)
 	}
 	resp := a.do(t, "POST", "/v1/chat/completions", projectKey, chatBody)
 	io.Copy(io.Discard, resp.Body)

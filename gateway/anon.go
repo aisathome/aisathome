@@ -57,7 +57,7 @@ const (
 	anonSeenEvery       = 6 * time.Hour        // how often the connected nodes' last-seen times are written
 	anonSeenMin         = time.Hour            // a last-seen time is not rewritten sooner than this
 	viaAnon             = "anonymous"          // AccountNode.Via of a node without an account
-	anonHeldMsg         = "This node is held." // what a held node without an account is told (no reason)
+	anonHeldMsg         = "This node is held." // what a held account node is told (no reason)
 )
 
 // Registration limits (rule, events: email.go), in memory only.
@@ -417,6 +417,9 @@ func (g *Gateway) handleNodeSelf(w http.ResponseWriter, r *http.Request) {
 		s.ChecksPassed = g.mc.passedInWindow(id)
 	}
 	switch {
+	case g.nodeHeld(id) && s.Anonymous:
+		s.State = selfHeld
+		s.Message, s.DeleteAt = g.anonHeldMessage(id)
 	case g.nodeHeld(id):
 		s.State, s.Message = selfHeld, anonHeldMsg+" It gets no work until the operator clears it: contact@aisathome.org."
 	case !connected:
@@ -455,4 +458,30 @@ func (s *AccountStore) byNodeID(id string) (nodeRef, bool) {
 		}
 	}
 	return nodeRef{}, false
+}
+
+// anonHeldMessage tells the operator of a held node without an account why (the kind of check only, never
+// which probe) and what to do, and when the node is deleted (anonHeldKeep after its hold).
+func (g *Gateway) anonHeldMessage(id string) (string, *time.Time) {
+	var hold *NodeHold
+	for _, h := range g.holds() {
+		if h.Node == id {
+			h := h
+			hold = &h
+		}
+	}
+	install := "curl -fsSL " + g.acfg.PublicURL + "/node.sh | sh"
+	var at *time.Time
+	when := "24 hours after it was held"
+	if hold != nil {
+		t := hold.At.Add(anonHeldKeep).UTC()
+		at, when = &t, "at "+t.Format("2006-01-02 15:04")+" UTC"
+	}
+	if hold != nil && hold.Rule == ruleModelCheck {
+		return "Failed the model check before admission: this usually means an engine or settings different from the current " +
+			"release. Reinstall with the latest version: " + install + " . This node is deleted " + when + "; a reinstall " +
+			"registers it again.", at
+	}
+	return "Held after a safety check on one of its answers: it gets no work. This node is deleted " + when +
+		"; if you think this is a mistake, write to contact@aisathome.org.", at
 }

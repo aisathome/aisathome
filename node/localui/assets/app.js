@@ -166,15 +166,19 @@
 	const anonWords = {
 		checking: 'Being checked: the gateway sends a few test prompts first.',
 		admitted: 'Admitted: the model check passed, and this node gets science work.',
-		held: 'Held: it gets no work until the operator clears it.',
+		held: 'Held: it gets no work.',
 		offline: 'Not connected to the gateway.',
 		no_check: 'The gateway cannot check this node\'s model, so it gets no work.',
 	};
 	function anon(a, s) {
 		$('anon').hidden = !a;
 		if (!a) return;
-		let t = a.state ? (anonWords[a.state] || a.message || a.state) : 'Asking the gateway about this node…';
-		if (a.state === 'checking' && a.checks_needed) t += ` ${a.checks_passed} of ${a.checks_needed} checks passed.`;
+		let t;
+		if (!s.connected) t = anonWords.offline; // the agent's own view first: the gateway's may lag it
+		else if (!a.state || a.state === 'offline') t = 'Connected; asking the gateway about this node…';
+		else if (a.state === 'held') t = a.message || anonWords.held; // why, and what to do (the gateway's words)
+		else t = anonWords[a.state] || a.message || a.state;
+		if (s.connected && a.state === 'checking' && a.checks_needed) t += ` ${a.checks_passed} of ${a.checks_needed} checks passed.`;
 		$('anon-state').textContent = t;
 		$('anon-link-cmd').textContent = s.setup ? 'the setup page: Link to my account' : 'sudo aisathome-node link';
 	}

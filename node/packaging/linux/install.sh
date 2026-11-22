@@ -854,7 +854,10 @@ read_token() {
   local old=""
   [[ -r "$1" ]] && old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1" | head -n 1)"
   if [[ $anonymous = 1 ]]; then
-    [[ -z "$old" ]] || die "--anonymous: this node has a token already; it keeps it (update with --keep-token, or link it: sudo aisathome-node link)" 2
+    # A token for another gateway is moved aside further on (set_aside_before_link), as for any gateway
+    # change; a token for this gateway stays, and so does the node: it is linked to an account.
+    [[ -z "$old" || "${old_gw:-}" != "$gateway_url" ]] ||
+      die "This node is already linked to an account (it has a node token for $gateway_url), so it is not made a node without an account. To update it, run in this folder: sudo ./install.sh --keep-token" 2
     token=""; echo "account: none; the install ends with registering this node without an account (science only)" >&2; return 0
   fi
   if [[ $link = 1 ]]; then

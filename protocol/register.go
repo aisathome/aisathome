@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package protocol
 
+import "time"
+
 // Paths on the gateway's HTTPS address (the connect URL's host).
 const (
 	RegisterPath = "/v1/node/register"
@@ -34,7 +36,10 @@ type NodeSelf struct {
 	State        string `json:"state"`                  // SelfChecking, SelfAdmitted, SelfHeld, SelfOffline, SelfNoCheck or SelfServing
 	ChecksPassed int    `json:"checks_passed"`          // model checks passed in its recent window
 	ChecksNeeded int    `json:"checks_needed"`          // passed checks a node without an account needs before it gets work
-	Message      string `json:"message,omitempty"`      // the state in a sentence, for people; never which check failed
+	Message      string `json:"message,omitempty"`      // the state in a sentence, for people; never which probe or check failed
+	// DeleteAt: a held node without an account is deleted then (24 hours after its hold) unless it is
+	// reinstalled or linked before.
+	DeleteAt *time.Time `json:"delete_at,omitempty"`
 }
 
 // NodeSelf.State values.

@@ -437,13 +437,21 @@ for t in "1 0" "0 1"; do
 done
 tokl 0 1 "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--link)"
 # --anonymous: no token is read (the node registers after the speed test); a node that has one keeps it.
-toka() { out="$( (interactive() { false; }; keep_token=0; link=0; anonymous=1; read_token "$1"; echo "token=$token") <<<"$2" 2>&1)"; code=$?; }
+# A token for the same gateway stays (one line says what to do); one for another gateway does not stop it
+# (it is moved aside later, set_aside_before_link, as for any gateway change).
+# toka <token.env> <stdin> [installed gateway] [gateway]
+toka() { out="$( (interactive() { false; }; keep_token=0; link=0; anonymous=1; old_gw="${3:-}"; gateway_url="${4:-wss://api.aisathome.org/v1/node/connect}"
+  read_token "$1"; echo "token=$token") <<<"$2" 2>&1)"; code=$?; }
 toka "$etc/none.env" "nt-ignored"
 ok "--anonymous"; has "--anonymous" "token="; lacks "--anonymous" "nt-ignored"
 has "--anonymous" "registering this node without an account (science only)"
-toka "$etc/token.env" ""
-usage_err "--anonymous on a node with a token"; has "--anonymous on a node with a token" "it keeps it"
+toka "$etc/token.env" "" wss://api.aisathome.org/v1/node/connect wss://api.aisathome.org/v1/node/connect
+usage_err "--anonymous on a node with a token"; has "--anonymous on a node with a token" "already linked to an account"
+has "--anonymous on a node with a token" "sudo ./install.sh --keep-token"
 [[ "$out" != *"$secret"* ]] || fail "the token was printed (--anonymous)"
+toka "$etc/token.env" "" wss://api.aisathome.org/v1/node/connect wss://api.staging.example.org/v1/node/connect
+ok "--anonymous with another gateway's token"; has "--anonymous with another gateway's token" "token="
+[[ "$out" != *"$secret"* ]] || fail "the token was printed (--anonymous, another gateway)"
 unset -f die gw check_id tok tokl toka installed_value pick_gateway_url pick_node_id read_token interactive
 # A dry run reads the installed node.json (a copy of the installer pointed at the fake one).
 sed "s|^conf=/etc/aisathome-node\$|conf=$etc|" "$installer" > "$tmp/install-conf.sh"
