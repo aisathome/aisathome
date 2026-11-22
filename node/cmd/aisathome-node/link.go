@@ -220,6 +220,9 @@ func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error
 		set["gateway_url"] = gw
 	}
 	if t.tokenEnv != "" {
+		if setGateway && configGateway(t.config) != gw {
+			return t.saveOtherGateway(token, set)
+		}
 		if err := writeTokenEnv(t.tokenEnv, token); err != nil {
 			return err
 		}
@@ -227,6 +230,39 @@ func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error
 	}
 	set["token"] = token
 	return updateJSON(t.config, set, nil, 0o600)
+}
+
+// saveOtherGateway saves a token for another gateway than the config names (link -gateway) so that at
+// no moment a token sits beside the other gateway's address: the old token.env is moved aside
+// (token.env.unlinked; the unit's ConditionFileNotEmpty keeps the node off), then the config gets the
+// new gateway, then token.env the new token. If the config cannot be written, the old token comes back
+// beside its own config.
+func (t linkTarget) saveOtherGateway(token string, set map[string]any) error {
+	parked := t.tokenEnv + ".unlinked"
+	moved := true
+	if err := os.Rename(t.tokenEnv, parked); errors.Is(err, os.ErrNotExist) {
+		moved = false
+	} else if err != nil {
+		return err
+	}
+	if err := updateJSON(t.config, set, nil, 0); err != nil {
+		if moved {
+			os.Rename(parked, t.tokenEnv)
+		}
+		return err
+	}
+	return writeTokenEnv(t.tokenEnv, token)
+}
+
+// configGateway is the gateway_url in a config file ("" if none or unreadable).
+func configGateway(path string) string {
+	var c struct {
+		GatewayURL string `json:"gateway_url"`
+	}
+	if b, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(b, &c)
+	}
+	return c.GatewayURL
 }
 
 // writeTokenEnv replaces a systemd EnvironmentFile with the one line AISATHOME_NODE_TOKEN=<token>,
