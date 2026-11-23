@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/node"
-	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/localui"
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/node/tray"
 )
