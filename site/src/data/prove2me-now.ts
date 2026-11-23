@@ -1,7 +1,6 @@
 // "Working on now" on /science/prove2me/: what runs or waits now, a block each (owner, 2026-11-23: "Working on now can
-// be the trial or the bench"): every replay benchmark with open tasks (prove2me-status.ts isBench; no campaign, its
-// tasks name it), then every trial that has not finished (prove2me-records.ts nowDocs). A benchmark's block says it is a
-// replay on its scaffold and not a trial; a trial whose tasks wait behind a benchmark says so.
+// be the trial or the bench"): every trial that has not finished (prove2me-records.ts nowDocs), then every bench with
+// open tasks (prove2me-status.ts isBench; no campaign, its tasks name it), shown as a trial is.
 //
 // One HTML renderer for the build (from the records the build fetched) and the browser (live, every minute), so the
 // two never say different things. Every value is escaped; a campaign's text is plain text, the data document's
@@ -12,7 +11,7 @@ import { day, mdLightHTML, submissionText, theoremURL, trialQueue, type CurrentD
 import { leafTokensText, liveLeaves, taskTableHTML, type LiveLeaf } from './prove2me-live';
 import { leafPlan, leafPlanHTML } from './prove2me-outlines';
 import { nowDocs, type Records } from './prove2me-records';
-import { isBench, type StatusView } from './prove2me-status';
+import { benchName, isBench } from './prove2me-status';
 
 const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const andList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -25,7 +24,7 @@ const plainHTML = (s: string) =>
 		.join('');
 const roleLabel: Record<string, string> = { calibration: 'Calibration', open: 'Open', comparison: 'Comparison' };
 
-/** The benchmark documents: one per benchmark with tasks running or waiting, its leaves in the order its tasks were
+/** The bench documents: one per bench with tasks running or waiting, its leaves in the order its tasks were
  * made, each leaf's theorem and page from the campaign that listed it. */
 export function benchDocs(live: Records): CurrentDoc[] {
 	const byBench = new Map<string, Records['tasks']['tasks']>();
@@ -55,15 +54,15 @@ export function benchDocs(live: Records): CurrentDoc[] {
 		});
 }
 
-/** Every block of "Working on now": the open benchmarks, then the trials (nowDocs). */
-export const nowAll = (doc: CurrentDoc | null, live: Records | null) => [...(live ? benchDocs(live) : []), ...nowDocs(doc, live)];
+/** Every block of "Working on now": the trials (nowDocs), then the open benches. */
+export const nowAll = (doc: CurrentDoc | null, live: Records | null) => [...nowDocs(doc, live), ...(live ? benchDocs(live) : [])];
 
 export const isBenchDoc = (d: CurrentDoc) => d.schema === 'bench';
 
 /** A block's head line. */
 export function nowHead(d: CurrentDoc): string {
 	const t = d.trial;
-	if (isBenchDoc(d)) return `Benchmark ${t.id}${t.start ? `, since ${day(t.start)}` : ''} · a replay on scaffold ${t.scaffold || '?'}, not a trial`;
+	if (isBenchDoc(d)) return `${benchName(t.id)}${t.start ? `, since ${day(t.start)}` : ''} · scaffold ${t.scaffold}`;
 	return t.status === 'preparing'
 		? `Trial ${t.number} is being prepared · scaffold ${t.scaffold}`
 		: t.status === 'finished'
@@ -71,26 +70,13 @@ export function nowHead(d: CurrentDoc): string {
 			: `Trial ${t.number}${t.start ? `, since ${day(t.start)}` : ''} · scaffold ${t.scaffold}`;
 }
 
-/** A benchmark's own text: what it is and where it stands in the queue. */
-export function benchText(d: CurrentDoc, status: StatusView | null): string {
-	const b = status?.benches.find((x) => x.label === d.trial.id);
-	const ahead = (status?.trials ?? []).filter((t) => b?.ahead.includes(t.label)).map((t) => (t.probe ? `the outline probes for trial ${t.number}` : `trial ${t.number}`));
-	return (
-		`It runs tasks recorded in earlier trials again under scaffold ${d.trial.scaffold || '?'}, so that scaffold versions can be compared on the same tasks. ` +
-		`It is not a trial: it submits nothing, and its runs count in neither the trials nor the leaves on this page.` +
-		(ahead.length ? ` Its tasks run before ${andList(ahead)}’s in the queue.` : '')
-	);
-}
-
 export interface NowCtx {
 	/** The build's theorem pages by theorem (a leaf the document lists without one). */
 	theorems?: Record<string, string>;
-	/** The trials before `n` that ran a leaf (every trial for a benchmark: `n` is Infinity). */
+	/** The trials before `n` that ran a leaf (every trial for a bench: `n` is Infinity). */
 	earlier?: (leaf: string, n: number) => number[];
 	/** The build's reuses: theorem -> the proved theorem its one-line proof imports. */
 	reuses?: Record<string, string>;
-	/** The queue now: which benchmark runs ahead of which trial. */
-	status?: StatusView | null;
 }
 
 function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, live: LiveLeaf | undefined, ctx: NowCtx, taken: Set<string>): string {
@@ -104,7 +90,7 @@ function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, 
 	const role = l?.role ?? (live?.group === 'calibration' ? 'calibration' : 'open');
 	const earlier = l?.id ? (ctx.earlier?.(l.id, bench ? Infinity : doc.trial.number) ?? []) : [];
 	const meta = [`<span>${esc(roleLabel[role] ?? 'Open')} leaf</span>`];
-	if (earlier.length) meta.push(`<span>${bench ? 'tried in' : 'tried before in'} trial${earlier.length > 1 ? 's' : ''} ${esc(andList(earlier.map(String)))}</span>`);
+	if (earlier.length) meta.push(`<span>tried before in trial${earlier.length > 1 ? 's' : ''} ${esc(andList(earlier.map(String)))}</span>`);
 	const d = live?.detail;
 	if (d && (d.total > 0 || d.computed > 0))
 		meta.push(`<span data-tokens="${d.total}" data-computed="${d.computed}" data-exact="${d.exact}">${esc(leafTokensText(d, state === 'running' || state === 'queued'))}</span>`);
@@ -129,23 +115,18 @@ function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, 
 
 function blockHTML(doc: CurrentDoc, tasks: TasksView, ctx: NowCtx, taken: Set<string>): string {
 	const t = doc.trial;
-	const bench = isBenchDoc(doc);
 	const live = liveLeaves(trialQueue(tasks, doc), t.id, doc.leaves.map((l) => l.alias));
 	const items = [
 		...doc.leaves.map((l) => leafHTML(doc, l, live.find((x) => x.leaf === l.alias), ctx, taken)),
 		...live.filter((x) => !doc.leaves.some((l) => l.alias === x.leaf)).map((x) => leafHTML(doc, undefined, x, ctx, taken)),
 	];
-	const behind = ctx.status?.trials.find((x) => x.label === t.id)?.behind ?? [];
-	const about = bench ? plainHTML(benchText(doc, ctx.status ?? null)) : doc.schema === 'campaign' ? plainHTML(t.description) : mdLightHTML(t.description);
+	const about = doc.schema === 'campaign' || isBenchDoc(doc) ? plainHTML(t.description) : mdLightHTML(t.description);
 	// the trial's submissions of leaves it does not list (a leaf closed by reuse while the trial was prepared)
 	const others = doc.submissions.filter((s) => !doc.leaves.some((l) => l.id === s.leaf));
 	const subs = others.map((s) => `${s.leaf} (${s.alias}), ${submissionText(s)} on ${day(s.verdict_at ?? s.submitted_at, false)}`).join('; ');
 	return (
-		`<div class="now-trial" data-now-trial="${esc(t.id)}" data-status="${esc(t.status)}"${bench ? ' data-bench' : ''}>` +
+		`<div class="now-trial" data-now-trial="${esc(t.id)}" data-status="${esc(t.status)}">` +
 		`<p class="head" data-now-head>${esc(nowHead(doc))}</p>` +
-		(behind.length
-			? `<p class="meta" data-now-behind>${esc(`Waiting: its tasks wait behind ${behind.length > 1 ? 'benchmarks' : 'benchmark'} ${andList(behind)}, which the queue runs first.`)}</p>`
-			: '') +
 		`<div class="about" data-now-about${about ? '' : ' hidden'}>${about}</div>` +
 		`<p class="caps" data-now-budget${t.budget ? '' : ' hidden'}>${t.budget ? esc(`Budget: ${t.budget}.`) : ''}</p>` +
 		`<ul data-now-leaves>${items.join('')}</ul>` +
@@ -154,11 +135,9 @@ function blockHTML(doc: CurrentDoc, tasks: TasksView, ctx: NowCtx, taken: Set<st
 	);
 }
 
-/** Every block in `docs`' order. A leaf's #leaf-<id> and #leaf-<alias> anchors go to its first row in a trial's block
- * (an account page's link names a task's leaf), a benchmark's rows of the same leaf get none. */
+/** Every block in `docs`' order. A leaf's #leaf-<id> and #leaf-<alias> anchors go to its first row (the oldest trial's;
+ * the benches come last). */
 export function nowBlocksHTML(docs: CurrentDoc[], tasks: TasksView, ctx: NowCtx = {}): string {
 	const taken = new Set<string>();
-	const html = new Map<CurrentDoc, string>();
-	for (const d of [...docs.filter((d) => !isBenchDoc(d)), ...docs.filter(isBenchDoc)]) html.set(d, blockHTML(d, tasks, ctx, taken));
-	return docs.map((d) => html.get(d)!).join('');
+	return docs.map((d) => blockHTML(d, tasks, ctx, taken)).join('');
 }

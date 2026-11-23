@@ -5,10 +5,9 @@
 //  - one line per open trial (a trial or probe-round campaign that is running or being prepared, or a trial label with
 //    open tasks and no campaign yet): its tasks by state (proved, ended otherwise, stopped, running, waiting) and, for a
 //    trial, its leaves proved (a run that proved its leaf, as the trials table counts it), from the campaigns and tasks;
-//  - one line per open replay benchmark (a task label bench-<name>, e.g. bench-v13; no campaign record): the research
-//    tooling replays recorded cases of earlier trials under one scaffold to compare scaffold versions, at a queue band
-//    below the trials', so its tasks are claimed first. Its tasks count in the queue, as their own part, and nowhere
-//    else: a benchmark is no trial, submits nothing and proves no leaf of a trial;
+//  - a bench (a task label bench-<name>, e.g. bench-v13; no campaign) is shown as a trial is while it has open tasks:
+//    a part of the queue, a line, named "Bench v13" (owner, 2026-11-23: "a bench is just another form of a trial"). It
+//    replays leaves of earlier trials, so its runs count in no proof, leaf or submission number;
 //  - the numbers: the network's nodes online and GPU slots busy (GET /v1/stats `nodes`: the whole network, not only
 //    prove2me) and the proofs submitted and accepted (GET /v1/projects/prove2me/results).
 //
@@ -51,26 +50,15 @@ export interface OpenTrial {
 	/** Leaves proved by a run, of those it tries (leaves closed by reuse left out); null for a probe round or a trial
 	 * with no campaign yet. */
 	leaves: { proved: number; of: number } | null;
-	/** The open benchmarks running ahead of it while it has tasks waiting and none running. */
-	behind: string[];
+	/** A bench (label bench-<name>): shown as a trial, counted in no result. */
+	bench: boolean;
 }
 
-/** One open benchmark: a replay of earlier trials' tasks under one scaffold, with tasks running or waiting. */
-export interface OpenBench {
-	label: string;
-	scaffold: string;
-	/** The leaves its tasks name. */
-	leaves: number;
-	running: number;
-	queued: number;
-	/** The open trials it is ahead of in the queue: one of its tasks started after a task of theirs, still waiting,
-	 * was made. */
-	ahead: string[];
-}
-
-/** A benchmark's label on a task: bench-<name> (bench-v13, bench-v12b); never a trial's t<N>. */
+/** A bench's label on a task: bench-<name> (bench-v13, bench-v12b); never a trial's t<N>. */
 export const BENCH_LABEL = /^bench-[A-Za-z0-9._-]+$/;
 export const isBench = (label: string | undefined) => BENCH_LABEL.test(label ?? '');
+/** A bench's name: "Bench v13". */
+export const benchName = (label: string) => `Bench ${label.replace(/^bench-/, '')}`;
 
 export interface StatusView {
 	/** live: the browser's, from the gateway now; build: the records the site's build fetched (or, `saved`, its committed
@@ -81,13 +69,11 @@ export interface StatusView {
 	updated: string;
 	/** Every open trial, oldest first; empty when none is open. */
 	trials: OpenTrial[];
-	/** Every open benchmark, by label. */
-	benches: OpenBench[];
 	/** The newest trial that has ended, when no trial is open. */
 	lastEnded: { number: number; end: string | null } | null;
-	/** The whole queue now: tasks running and waiting per open benchmark (they are claimed first), then per trial
-	 * (every trial with any), oldest trial first; null without the gateway's task list. */
-	queue: { label: string; running: number; queued: number; bench: boolean }[] | null;
+	/** The whole queue now: tasks running and waiting per open trial or bench (every one with any), oldest trial first,
+	 * the benches after; null without the gateway's task list. */
+	queue: { label: string; running: number; queued: number }[] | null;
 	submissions: { submitted: number; accepted: number; pending: number };
 	nodes: Nodes | null;
 }
@@ -112,8 +98,9 @@ export function barPart(t: Pick<PublicTask, 'state' | 'outcome'>): BarPart {
 }
 
 const isOpen = (t: PublicTask) => t.state === 'queued' || t.state === 'leased';
-/** Trials in order: by number, a probe round before the trial it chose leaves for. */
-const order = (a: { number: number; probe: boolean }, b: { number: number; probe: boolean }) => a.number - b.number || Number(b.probe) - Number(a.probe);
+/** Trials in order: by number, a probe round before the trial it chose leaves for; the benches after, by label. */
+const order = (a: OpenTrial, b: OpenTrial) =>
+	Number(a.bench) - Number(b.bench) || (a.bench ? a.label.localeCompare(b.label) : a.number - b.number || Number(b.probe) - Number(a.probe));
 
 function countsOf(tasks: PublicTask[]): Counts {
 	const c = { proved: 0, ended: 0, stopped: 0, running: 0, queued: 0, total: tasks.length };
@@ -127,10 +114,10 @@ export function statusView(live: Records | null, nodes: Nodes | null, fallback: 
 	if (!live && !nodes) return null;
 	const updated = [live?.updated, nodes?.updated].filter((x): x is string => !!x).sort().at(-1)!;
 	if (!live) {
-		const none: StatusView = { source: 'build', updated, trials: [], benches: [], lastEnded: null, queue: null, submissions: { submitted: 0, accepted: 0, pending: 0 }, nodes: null };
+		const none: StatusView = { source: 'build', updated, trials: [], lastEnded: null, queue: null, submissions: { submitted: 0, accepted: 0, pending: 0 }, nodes: null };
 		return { ...(fallback ?? none), nodes };
 	}
-	const tasks = live.tasks.tasks.filter((t) => isLiveTrial(t.labels.trial)); // a test's or a benchmark's tasks are no trial's
+	const tasks = live.tasks.tasks.filter((t) => isLiveTrial(t.labels.trial)); // a test's tasks are no trial's
 	const benchTasks = new Map<string, PublicTask[]>();
 	for (const t of live.tasks.tasks) if (isBench(t.labels.trial)) benchTasks.set(t.labels.trial, [...(benchTasks.get(t.labels.trial) ?? []), t]);
 	const byTrial = new Map<string, PublicTask[]>();
@@ -150,38 +137,26 @@ export function statusView(live: Records | null, nodes: Nodes | null, fallback: 
 			}
 			return {
 				label, number: n.number, probe: n.probe, status: c?.status === 'preparing' ? 'preparing' : 'running', scaffold: c?.labels.scaffold ?? '',
-				start: c?.started_at ?? null, counts: countsOf(byTrial.get(label) ?? []), leaves, behind: [],
+				start: c?.started_at ?? null, counts: countsOf(byTrial.get(label) ?? []), leaves, bench: false,
 			} as OpenTrial;
-		})
-		.sort(order);
-	// a benchmark is ahead of a trial when one of its tasks started after a trial task that still waits was made
-	const firstWaiting = new Map(trials.map((t) => [t.label, Math.min(...(byTrial.get(t.label) ?? []).filter((x) => x.state === 'queued').map((x) => Date.parse(x.created_at)))]));
-	const benches: OpenBench[] = [...benchTasks]
-		.filter(([, ts]) => ts.some(isOpen))
-		.map(([label, ts]) => {
-			const lastStart = Math.max(...ts.map((x) => (x.started_at ? Date.parse(x.started_at) : -Infinity)));
-			const c = countsOf(ts);
-			return {
-				label, scaffold: ts.find((x) => x.labels.scaffold)?.labels.scaffold ?? '', leaves: new Set(ts.map((x) => x.labels.leaf).filter(Boolean)).size,
-				running: c.running, queued: c.queued, ahead: trials.filter((t) => firstWaiting.get(t.label)! < lastStart).map((t) => t.label),
-			};
-		})
-		.sort((a, b) => a.label.localeCompare(b.label));
-	for (const t of trials)
-		if (t.counts.queued > 0 && t.counts.running === 0) t.behind = benches.filter((b) => b.running > 0 && b.ahead.includes(t.label)).map((b) => b.label);
-	const queue = [
-		...benches.map((b) => ({ label: b.label, running: b.running, queued: b.queued, bench: true })),
-		...trials.map((t) => ({ label: t.label, running: t.counts.running, queued: t.counts.queued, bench: false })),
-	].filter((q) => q.running + q.queued > 0);
+		});
+	// a bench with open tasks, as a trial is shown: its scaffold from its tasks, its start their first start, no leaves
+	for (const [label, ts] of benchTasks)
+		if (ts.some(isOpen))
+			trials.push({
+				label, number: 0, probe: false, status: 'running', scaffold: ts.find((x) => x.labels.scaffold)?.labels.scaffold ?? '',
+				start: ts.map((x) => x.started_at).filter((x): x is string => !!x).sort()[0] ?? null, counts: countsOf(ts), leaves: null, bench: true,
+			});
+	trials.sort(order);
+	const queue = trials.map((t) => ({ label: t.label, running: t.counts.running, queued: t.counts.queued })).filter((q) => q.running + q.queued > 0);
 	const ended = trials.length
 		? null
 		: [...camps.values()].filter((c) => !trialOf(c.id)!.probe && c.status === 'finished').sort((a, b) => trialOf(b.id)!.number - trialOf(a.id)!.number)[0];
-	const rs = live.results; // a benchmark submits nothing (its tasks run with submit off)
+	const rs = live.results; // a bench submits nothing
 	return {
 		source: 'live',
 		updated,
 		trials,
-		benches,
 		lastEnded: ended ? { number: trialOf(ended.id)!.number, end: ended.ended_at } : null,
 		queue,
 		submissions: { submitted: rs.length, accepted: rs.filter((r) => r.state === 'accepted').length, pending: rs.filter((r) => r.state === 'pending').length },
@@ -198,8 +173,7 @@ export function builtStatus(h: History): StatusView {
 	return {
 		source: 'build',
 		updated: h.generated_at,
-		trials: c ? [{ label: `t${c.number}`, number: c.number, probe: false, status: c.status, scaffold: c.scaffold, start: c.start, counts: none, leaves: null, behind: [] }] : [],
-		benches: [],
+		trials: c ? [{ label: `t${c.number}`, number: c.number, probe: false, status: c.status, scaffold: c.scaffold, start: c.start, counts: none, leaves: null, bench: false }] : [],
 		lastEnded: c || !last ? null : { number: last.number, end: last.end },
 		queue: null,
 		submissions: { submitted: subs.length, accepted: subs.filter((s) => s.verdict === 'accepted').length, pending: subs.filter((s) => s.verdict === 'pending').length },
@@ -215,12 +189,13 @@ const shortDay = (iso: string) => {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
-/** A trial's name: "Trial 9", or "Outline probes for trial 10". */
-export const trialName = (t: { number: number; probe: boolean }) => (t.probe ? `Outline probes for trial ${t.number}` : `Trial ${t.number}`);
-/** The short name a queue part carries: "Trial 9", "Probes 10", a benchmark's label ("bench-v13"). */
+/** A trial's name: "Trial 9", "Outline probes for trial 10", or a bench's, "Bench v13". */
+export const trialName = (t: { number: number; probe: boolean; bench?: boolean; label?: string }) =>
+	t.bench ? benchName(t.label ?? '') : t.probe ? `Outline probes for trial ${t.number}` : `Trial ${t.number}`;
+/** The short name a queue part carries: "Trial 9", "Probes 10", "Bench v13". */
 export const shortName = (label: string) => {
 	const t = trialOf(label);
-	return t ? (t.probe ? `Probes ${t.number}` : `Trial ${t.number}`) : label;
+	return t ? (t.probe ? `Probes ${t.number}` : `Trial ${t.number}`) : isBench(label) ? benchName(label) : label;
 };
 const facts = (t: OpenTrial) => [t.scaffold ? `scaffold ${t.scaffold}` : '', t.start ? `since ${shortDay(t.start)}` : ''].filter(Boolean).join(', ');
 
@@ -238,9 +213,9 @@ function headText(v: StatusView): string {
 		}
 		const names = ts.map((t) => `${trialName(t)}${t.scaffold ? ` (scaffold ${t.scaffold})` : ''}`);
 		// "Trials 8 (scaffold v9) and 9 (scaffold v10)" when every one is a trial
-		const plain = ts.every((t) => !t.probe)
+		const plain = ts.every((t) => !t.probe && !t.bench)
 			? `Trials ${and(ts.map((t) => `${t.number}${t.scaffold ? ` (scaffold ${t.scaffold})` : ''}`))}`
-			: and(names.map((n, i) => (i ? n.replace(/^Trial/, 'trial').replace(/^Outline/, 'outline') : n)));
+			: and(names.map((n, i) => (i ? n.replace(/^(Trial|Outline|Bench)/, (w) => w.toLowerCase()) : n)));
 		return `${plain} ${verb[1]}`;
 	};
 	const running = part(v.trials.filter((t) => t.status === 'running'), ['is running', 'are running']);
@@ -253,22 +228,7 @@ export function trialLine(t: OpenTrial): string {
 	const c = t.counts;
 	const tasks = c.total === 0 ? 'no tasks yet' : `${plural(c.total, 'task')}: ` + BAR_PARTS.filter((p) => c[p] > 0).map((p) => `${c[p]} ${BAR_LABEL[p]}`).join(', ');
 	const leaves = t.leaves ? `; ${t.leaves.proved} of ${plural(t.leaves.of, 'leaf', 'leaves')} proved` : '';
-	const behind = t.behind.length ? ` Its tasks wait behind ${t.behind.length > 1 ? 'benchmarks' : 'benchmark'} ${and(t.behind)}.` : '';
-	return `${trialName(t)}, ${tasks}${leaves}.${behind}`;
-}
-
-/** The trials' names as one: "trial 10", "trials 10 and 11", "outline probes for trial 11". */
-const trialsNamed = (ts: { number: number; probe: boolean }[]) =>
-	ts.every((t) => !t.probe) ? `${ts.length > 1 ? 'trials' : 'trial'} ${and(ts.map((t) => String(t.number)))}` : and(ts.map((t) => trialName(t).replace(/^T/, 't').replace(/^O/, 'o')));
-
-/** One open benchmark's line: what it is, what it is ahead of, its tasks running and waiting. */
-export function benchLine(b: OpenBench, trials: OpenTrial[] = []): string {
-	const ahead = trials.filter((t) => b.ahead.includes(t.label));
-	return (
-		`Benchmark ${b.label} is ${b.running ? 'running' : 'waiting'}${b.scaffold ? `, scaffold ${b.scaffold}` : ''}: it replays earlier tasks` +
-		`${b.leaves ? ` on ${plural(b.leaves, 'leaf', 'leaves')}` : ''} to compare scaffold versions` +
-		`${ahead.length ? `, ahead of ${trialsNamed(ahead)} in the queue` : ''}; ${b.running} running, ${b.queued} waiting.`
-	);
+	return `${trialName(t)}, ${tasks}${leaves}.`;
 }
 
 /** The block's texts: the head line, the queue in words (the bar's text equivalent), each open trial's line, the
@@ -305,51 +265,24 @@ export function statusTexts(v: StatusView, now: Date = new Date()) {
 		slots: v.nodes ? `${v.nodes.busy} of ${v.nodes.slots}` : '',
 		accepted: `${s.accepted} of ${s.submitted}`,
 	};
-	// the benchmarks' lines first (their tasks are claimed first), then the trials'; `keys` names each line's label
 	const recs = v.queue !== null; // the records, live or the build's
-	const lines = recs ? [...v.benches.map((b) => benchLine(b, v.trials)), ...v.trials.map(trialLine)] : [];
-	const keys = recs ? [...v.benches.map((b) => b.label), ...v.trials.map((t) => t.label)] : [];
-	return { head: headText(v), queue, lines, keys, updated, nums };
+	return { head: headText(v), queue, lines: recs ? v.trials.map(trialLine) : [], updated, nums };
 }
 
-/** The queue bar's parts (the bar's children) and their names under it: a part per benchmark and per trial, its running
- * tasks then its waiting ones. Empty with nothing in the queue. */
+/** The queue bar's parts (the bar's children) and their names under it: a part per trial or bench, its running tasks
+ * then its waiting ones, the parts alternating in tone. Empty with nothing in the queue. */
 export function queueBarHTML(v: StatusView): { bar: string; labels: string } {
 	const q = (v.queue ?? []).filter((x) => x.running + x.queued > 0);
-	let nth = 0; // the trials' parts alternate their colour; a benchmark's has its own
-	const attr = (x: { bench: boolean; label: string }) => `data-${x.bench ? 'bench' : 'trial'}="${escAttr(x.label)}"`;
 	const bar = q
-		.map((x) => {
+		.map((x, i) => {
 			const segs = (['running', 'queued'] as const)
 				.filter((k) => x[k] > 0)
 				.map((k) => `<span class="seg q-${k}" data-part="${k}" style="flex-grow: ${x[k]}"></span>`)
 				.join('');
-			return `<span class="grp ${x.bench ? 'grp-bench' : `grp-${nth++ % 2}`}" ${attr(x)} style="flex-grow: ${x.running + x.queued}">${segs}</span>`;
+			return `<span class="grp grp-${i % 2}" data-trial="${escAttr(x.label)}" style="flex-grow: ${x.running + x.queued}">${segs}</span>`;
 		})
 		.join('');
-	const labels = q.map((x) => `<span ${attr(x)} style="flex-grow: ${x.running + x.queued}">${escAttr(`${shortName(x.label)} · ${x.running + x.queued}`)}</span>`).join('');
+	const labels = q.map((x) => `<span data-trial="${escAttr(x.label)}" style="flex-grow: ${x.running + x.queued}">${escAttr(`${shortName(x.label)} · ${x.running + x.queued}`)}</span>`).join('');
 	return { bar, labels };
 }
 const escAttr = (v: string) => v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-
-/** "What comes next", the part the queue says: what runs first and what waits behind it (owner, 2026-11-23: it must not
- * go stale). Empty without the records. */
-export function nextText(v: StatusView): string {
-	if (!v.queue) return '';
-	const tasks = (x: { running: number; queued: number }) =>
-		x.running && x.queued ? `${plural(x.running, 'task')} running, ${x.queued} waiting` : x.running ? `${plural(x.running, 'task')} running` : `${plural(x.queued, 'task')} waiting`;
-	const inQueue = (label: string) => v.queue!.find((q) => q.label === label && q.running + q.queued > 0);
-	const name = (t: OpenTrial) => (t.probe ? `the outline probes for trial ${t.number}` : `trial ${t.number}`);
-	const tpart = (t: OpenTrial) => `${name(t)}${t.scaffold ? ` on scaffold ${t.scaffold}` : ''} (${tasks(inQueue(t.label)!)})`;
-	const benches = v.benches.filter((b) => inQueue(b.label));
-	const ahead = new Set(benches.flatMap((b) => b.ahead));
-	const parts = [
-		...benches.map((b) => {
-			const ts = v.trials.filter((t) => b.ahead.includes(t.label) && inQueue(t.label));
-			return `benchmark ${b.label}${b.scaffold ? ` on scaffold ${b.scaffold}` : ''} (${tasks(b)})${ts.length ? `, ahead of ${and(ts.map(tpart))}` : ''}`;
-		}),
-		...v.trials.filter((t) => !ahead.has(t.label) && inQueue(t.label)).map(tpart),
-	];
-	const preparing = v.trials.filter((t) => t.status === 'preparing' && !inQueue(t.label)).map((t) => `${trialName(t)} is being prepared.`);
-	return [parts.length ? `In the queue now: ${parts.join('; ')}.` : 'Nothing is in the queue now.', ...preparing].join(' ');
-}
