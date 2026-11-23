@@ -214,6 +214,9 @@ func TestAnonRetention(t *testing.T) {
 	if len(gone) != 1 || gone[0] != live {
 		t.Fatalf("a hold a day old: %v", gone)
 	}
+	if hs := s.nodeHolds(); len(hs) != 0 {
+		t.Fatalf("the deleted node's hold stays: %+v", hs)
+	}
 	_, live, _ = s.RegisterAnon(t0)
 	// A revoked node leaves an empty account: it goes too.
 	if err := s.RevokeNode("", live); err != nil {
