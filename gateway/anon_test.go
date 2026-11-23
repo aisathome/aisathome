@@ -535,13 +535,18 @@ func TestAnonExpiryNeverUnholdsALiveNode(t *testing.T) {
 	mu.Unlock()
 
 	expired := make(chan struct{})
-	g.sweepHook = func() { // the expiry starts while a sweep is between reading tokens and reading holds
-		go func() { g.sweepAnon(); close(expired) }()
-		select {
-		case <-expired:
-		case <-time.After(300 * time.Millisecond):
-		}
+	var once sync.Once
+	hook := func() { // the expiry starts while a sweep is between reading tokens and reading holds (once:
+		// the gateway's own periodic sweep may be the one)
+		once.Do(func() {
+			go func() { g.sweepAnon(); close(expired) }()
+			select {
+			case <-expired:
+			case <-time.After(300 * time.Millisecond):
+			}
+		})
 	}
+	g.sweepHook.Store(&hook)
 	g.sweepNodes()
 	g.mu.Lock()
 	held, there := n.held, g.node[id] == n
@@ -551,7 +556,7 @@ func TestAnonExpiryNeverUnholdsALiveNode(t *testing.T) {
 		t.Fatalf("a guard-held node is usable again during its deletion (held %v, science allowed %v)", held, usable)
 	}
 	<-expired
-	g.sweepHook = nil
+	g.sweepHook.Store(nil)
 	g.mu.Lock()
 	held = n.held
 	g.mu.Unlock()
@@ -600,6 +605,20 @@ func TestTokenKnown(t *testing.T) {
 		code, out := ask(fmt.Sprintf(`{"sha256":"%s"}`, strings.ToUpper(keyHash(tok))))
 		if code != 200 || out != fmt.Sprintf(`{"known":%v}`, want) {
 			t.Errorf("token %.10s…: %d %s, want known %v", tok, code, out, want)
+		}
+	}
+	// Held: a node without an account's token is not known (a reinstall registers a fresh node, as the
+	// hold message says); an account's held node stays known.
+	_, anonID, _ := g.accounts.nodeToken(anonTok)
+	_, acctID, _ := g.accounts.nodeToken(acctTok)
+	for _, id := range []string{anonID, acctID} {
+		if err := g.accounts.HoldNode(NodeHold{Node: id, Rule: ruleModelCheck, At: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for tok, want := range map[string]bool{anonTok: false, acctTok: true} {
+		if code, out := ask(fmt.Sprintf(`{"sha256":"%s"}`, keyHash(tok))); code != 200 || out != fmt.Sprintf(`{"known":%v}`, want) {
+			t.Errorf("held token %.10s…: %d %s, want known %v", tok, code, out, want)
 		}
 	}
 	for _, bad := range []string{`{"sha256":"` + anonTok + `"}`, `{"sha256":"abc"}`, `{}`} {
