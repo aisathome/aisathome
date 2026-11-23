@@ -21,6 +21,7 @@ import { leafPlan } from './prove2me-outlines';
 import { provesLeaf } from './prove2me-outcomes';
 import type { Prove2me } from './prove2me';
 import type { TaskTableRow } from './task-table';
+import curatedReuses from './science/prove2me-reuses.json';
 
 export const CAMPAIGNS_URL = '/v1/projects/prove2me/campaigns?limit=200';
 export const RESULTS_URL = '/v1/projects/prove2me/results?limit=500';
@@ -100,7 +101,20 @@ export function parseCampaigns(d: unknown): { items: Campaign[] } | null {
 	return { items };
 }
 
-/** One page of GET .../results, or null when it is not one; a result that is not what it should be is left out. */
+/** A reuse the records cannot mark: the leaf, the trial whose result it corrects, the theorem the proof imports. */
+type CuratedReuse = { trial: string; theorem: string; url: string; author: string; relation: string };
+const reuseFixes = Object.fromEntries(Object.entries(curatedReuses).filter(([k]) => leafID.test(k))) as Record<string, CuratedReuse>;
+
+/** A result corrected by science/prove2me-reuses.json: a leaf's accepted "proof" whose proof imports someone else's
+ * proved theorem is a reuse (kind reuse, the theorem, its page and author in the labels). */
+function curated(r: ExtResult): ExtResult {
+	const fix = r.item ? reuseFixes[r.item] : undefined;
+	if (!fix || (r.labels.trial ?? r.campaign) !== fix.trial) return r;
+	return { ...r, labels: { ...r.labels, kind: 'reuse', reuses: fix.theorem, relation: fix.relation, reuses_url: fix.url, reuses_author: fix.author } };
+}
+
+/** One page of GET .../results, or null when it is not one; a result that is not what it should be is left out, a
+ * curated reuse corrected (curated). */
 export function parseResults(d: unknown): { items: ExtResult[] } | null {
 	const v = d as { results?: unknown };
 	if (!v || !Array.isArray(v.results)) return null;
@@ -117,7 +131,8 @@ export function parseResults(d: unknown): { items: ExtResult[] } | null {
 			labels: r.labels,
 			submitted_at: r.submitted_at,
 			verdict_at: r.verdict_at ?? null,
-		}));
+		}))
+		.map(curated);
 	return { items };
 }
 
@@ -386,7 +401,13 @@ function resultSub(r: ExtResult, campaigns: Campaign[], built: SubRec[]): SubRec
 	const t = trialOf(r.labels.trial ?? r.campaign);
 	const kind = r.labels.kind === 'reuse' ? 'reuse' : 'proof';
 	const reuses = kind === 'reuse' && (r.labels.reuses || b?.reuses)
-		? { ...(b?.reuses ?? { theorem: '' }), ...(r.labels.reuses ? { theorem: r.labels.reuses } : {}), ...(r.labels.relation ? { relation: r.labels.relation } : {}) }
+		? {
+				...(b?.reuses ?? { theorem: '' }),
+				...(r.labels.reuses ? { theorem: r.labels.reuses } : {}),
+				...(r.labels.relation ? { relation: r.labels.relation } : {}),
+				...(r.labels.reuses_url && theoremURL.test(r.labels.reuses_url) ? { url: r.labels.reuses_url } : {}),
+				...(r.labels.reuses_author ? { author: r.labels.reuses_author } : {}),
+			}
 		: undefined;
 	return {
 		leaf: r.item,

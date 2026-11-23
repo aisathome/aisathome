@@ -71,7 +71,7 @@ const verdictWord: Record<string, string> = { accepted: 'Accepted', pending: 'Pe
 export function submissionRowHTML(s: SubRec): string {
 	const r = s.reuses;
 	const reuse = r?.theorem
-		? `<span class="sub" data-reuses>${r.relation === 'part' ? 'part of' : 'same statement as'} ${link(r.url, r.theorem)}${r.author ? ` by ${esc(r.author)}` : ''}</span>`
+		? `<span class="sub" data-reuses>${r.relation === 'part' ? 'part of' : r.relation === 'import' ? 'imports' : 'same statement as'} ${link(r.url, r.theorem)}${r.author ? ` by ${esc(r.author)}` : ''}</span>`
 		: '';
 	const from = s.kind === 'reuse'
 		? `<td data-label="From">Closed by reuse<span class="sub">${s.found === 'trial' ? `found during trial ${s.trial}` : `found while preparing trial ${s.trial}`}</span></td>`
@@ -113,7 +113,9 @@ export function reuseNotesHTML(v: ScienceView): string {
 			const who = s.reuses!.author ?? 'someone else';
 			const found = s.found === 'probes' ? `while we prepared trial ${s.trial}` : `during trial ${s.trial}`;
 			const how =
-				s.reuses!.relation === 'part'
+				s.reuses!.relation === 'import'
+					? `The model’s proof imports a theorem that ${who} had already proved on prove2me, with nearly the same statement; our index of prove2me’s library offered it ${found}.`
+					: s.reuses!.relation === 'part'
 					? `The leaf is one part of a theorem that ${who} had already proved on prove2me: its conclusion contains the leaf’s statement. Our index of prove2me’s library offered that theorem as a similar statement ${found}, and the model’s proof is one line that uses it.`
 					: `The leaf is the same statement as a theorem that ${who} had already proved on prove2me under another name. Our index of prove2me’s library found the match ${found}, and the model’s proof is one line that imports that theorem.`;
 			return `<p data-p2m-reuse-note="${esc(s.alias || s.leaf)}">${esc(`${named(s.leaf, s.alias)} was closed by reuse. ${how} Our full check and then prove2me accepted it, but none of the mathematics is ours, so it is not counted among the open leaves proved.`)}</p>`;
