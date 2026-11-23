@@ -8,7 +8,8 @@
     "preview": "astro preview",
     "astro": "astro",
     "check": "node scripts/check-dist.mjs",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "records": "node scripts/prove2me-records.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.6",
