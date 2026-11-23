@@ -2,9 +2,13 @@
 // volunteer can read and change what its node answers; an agent such as opencode may run a tool
 // call without a person reading it. So tool calls from such nodes are held back until complete and
 // checked before the client sees them: download-and-execute, credential files, encoded
-// commands and uploads of files. A tool call that breaks one of these rules is never released,
-// and the node is held (gets no requests) until the operator looks, unless it only runs an
-// official installer (guard_official.go). Each stop, hold and flag keeps its evidence, a fragment
+// commands and uploads of files. From a node without an account, a config token's node or a
+// pilot, a tool call that breaks one of these rules is never released, and the node is held
+// (gets no requests) until the operator looks, unless it only runs an official installer
+// (guard_official.go). From an account's node these rules only flag (guard.flagOnly): the
+// guard cannot tell an honest model reading a credential file from an attack, stopping such
+// answers could hold every node of the network on one agent's retries, and the defence is the
+// client's own command approval. Each stop, hold and flag keeps its evidence, a fragment
 // of the node's answer (guard_evidence.go). Web addresses that appear
 // nowhere in the request and are not well-known sources (knownAddrs) are only flagged (logged),
 // in tool calls as in plain text: honest coding agents write such addresses all the time
@@ -698,10 +702,16 @@ type guard struct {
 	req        string     // requestText of the request
 	known      knownAddrs // sources known without the request (defaultKnownAddrs)
 	installers knownAddrs // official installers (guard_official.go)
-	calls      []*heldCall
-	flag       guardHit // a flag-only rule a checked tool call broke (ruleUnknownURL)
-	held       int      // bytes of arguments held
-	early      [][]byte // chunks before any content (the role): held, so that an answer made only of
+	// flagOnly: an account's node. Its command, credential, install and address rules only flag
+	// (logged with their evidence; the answer goes out, the node serves on). The guard cannot
+	// tell an honest model reading a credential file from an attack, and stopping such answers
+	// could hold every node of the network; the client's own command approval is the defence.
+	// Stream rules (violation) still stop the answer.
+	flagOnly bool
+	calls    []*heldCall
+	flag     guardHit // a flag-only rule a checked tool call broke (ruleUnknownURL)
+	held     int      // bytes of arguments held
+	early    [][]byte // chunks before any content (the role): held, so that an answer made only of
 	// a flagged tool call has sent nothing yet (the client gets a clean 502)
 	begun  bool   // content went out: nothing more is held early
 	finish []byte // the chunk with finish_reason, held until the calls are released
@@ -720,6 +730,10 @@ type heldCall struct {
 }
 
 func newGuard(req string, known knownAddrs) *guard { return &guard{req: req, known: known} }
+
+// flagOnlyNode: an account's node (n-), whose answers the command rules only flag. A node without
+// an account, a config token's node and a pilot still stop and hold.
+func flagOnlyNode(n *nodeConn) bool { return n.account != "" && !n.anon && n.pilot == "" }
 
 // violationHit is the hit of the stream rule broken.
 func (gd *guard) violationHit() guardHit { return streamHit(gd.violation, gd.violating) }
@@ -867,10 +881,14 @@ func (gd *guard) hold(tcs []any) {
 
 // check returns what the held tool calls break that blocks; hit.rule is "" if nothing. A rule
 // that only flags is kept for flagged. A call that is not official goes before an official one.
+// With flagOnly nothing blocks: the first blocking hit is kept for flagged instead.
 func (gd *guard) check() guardHit {
 	var official guardHit
 	for _, k := range gd.calls {
 		h := checkCall(k.name, k.args.String(), gd.req, gd.known, gd.installers)
+		if !gd.stops(h) {
+			continue
+		}
 		if h.blocks() && !h.official {
 			return h
 		}
@@ -882,6 +900,18 @@ func (gd *guard) check() guardHit {
 		}
 	}
 	return official
+}
+
+// stops reports whether h may stop the answer. With flagOnly it never does: a blocking hit
+// becomes the flag (over a flag-only one, so the log names the rule that matters).
+func (gd *guard) stops(h guardHit) bool {
+	if !gd.flagOnly || !h.blocks() {
+		return true
+	}
+	if gd.flag.rule == "" || !gd.flag.blocks() {
+		gd.flag = h
+	}
+	return false
 }
 
 // flagged returns the hit to log for an answer that passed: ruleUnknownURL if a tool call named

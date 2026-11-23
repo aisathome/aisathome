@@ -562,7 +562,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 		ans = assemble(rl.reqID, rl.model, rl.collected, u, rl.req.logprobs)
 		if rl.gd != nil { // what the client gets, not the pieces the guard saw
 			hit, flag := checkAssembled(ans, rl.gd.req, rl.gd.known, rl.gd.installers)
-			if hit.rule != "" {
+			if hit.rule != "" && rl.gd.stops(hit) {
 				return rl.block(hit)
 			}
 			if rl.gd.flag.rule == "" {

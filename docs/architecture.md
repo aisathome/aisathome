@@ -108,8 +108,11 @@ gateway; [gateway.md](gateway.md) is how to run another.
    guards on answers from volunteers' nodes (tool calls that download and run code, read
    credential files, upload files, or name web addresses the request never mentioned), and
    streams the answer to the client in OpenAI's format. A node that fails before sending output
-   is retried once on another node. A flagged answer is never released nor sent to another node,
-   and the volunteer's node is held until an operator looks at it.
+   is retried once on another node. From an account's node a flagged answer is only logged, with
+   its evidence: the guard cannot tell an honest model reading a credential file from an attack, and
+   the client's own command approval is the defence. From a node without an account, a config
+   token's node or a pilot, a flagged answer is never released nor sent to another node, and the
+   node is held until an operator looks at it.
 7. **Accounting.** One usage record per request: time, a pseudonymous user id, class, node,
    tokens, duration, credit, and the guard's rule if one fired. Never the content.
 
@@ -178,7 +181,7 @@ or misusing data harder, less valuable and more visible.
 |---|---|---|---|
 | Client → gateway | The gateway's operator | Requests and answers while they pass through | TLS; the gateway does not store prompts or answers (except the evidence of a guard stop or flag below); the usage log has no content |
 | Gateway → node | The node's operator | The request body the node serves: messages, tools, sampling settings | No identity (no user, account, key or email reaches a node); well-known secret formats replaced by placeholders; requests that look like personal data only to the requester's own nodes, otherwise refused; agent requests (with tools) to volunteers only with the key's consent and past the node's probation; no volunteer gets more than about a third of recent conversations while others are free |
-| Node → gateway | The gateway, the requester | The node's answer | Guards on tool calls in volunteers' answers (a node that trips one is held) and flags on unknown addresses, each with its evidence for the operator; revoking a token cuts a node off within seconds |
+| Node → gateway | The gateway, the requester | The node's answer | Guards on tool calls in volunteers' answers (an account's node is only logged; a node without an account, a config token's node or a pilot that trips one is held) and flags on unknown addresses, each with its evidence for the operator; revoking a token cuts a node off within seconds |
 | Node machine | The node's operator | Everything on the machine | Engine bound to `127.0.0.1`; services sandboxed; no core dumps, no swap for the services, no prompt logging, a bounded prompt cache in RAM. These reduce traces; they cannot stop an operator who wants to look. The terms forbid logging or inspecting prompts |
 | Public views | Anyone | Aggregates and public task fields | See below |
 

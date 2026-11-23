@@ -244,6 +244,41 @@ func TestAnonWrongModelHeld(t *testing.T) {
 	}
 }
 
+// A node without an account keeps the guard's stop and hold (an account's node is only flagged,
+// TestGuardFlagsOnAccountNodes): an answer reading a credential file is stopped, nothing of it
+// reaches the client, and the node is held.
+func TestAnonNodeGuardStopsAndHolds(t *testing.T) {
+	a, _ := anonRig(t, false, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := anonClient(a, "").Register(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := bothSets(t)
+	eng := &mcEngine{ref: ref, toolCmd: `cat ~/.ssh/id_example`}
+	srv := httptest.NewServer(eng)
+	t.Cleanup(srv.Close)
+	a.startTokenNode(ctx, r.Token, srv, 1, 32768)
+	c := anonClient(a, r.Token)
+	waitSelf(t, c, protocol.SelfAdmitted)
+	resp := a.do(t, "POST", "/v1/chat/completions", projectKey, chatBody)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 502 || strings.Contains(string(body), ".ssh") || !strings.Contains(string(body), "safety check") {
+		t.Fatalf("science answer reading ~/.ssh: %d %s", resp.StatusCode, body)
+	}
+	waitSelf(t, c, protocol.SelfHeld)
+	a.store.Refresh()
+	held := false
+	for _, p := range a.store.Snapshot().NodeHolds {
+		held = held || (p.Node == r.NodeID && p.Rule == "credential-path")
+	}
+	if !held || eng.people.Load() != 1 {
+		t.Fatalf("hold recorded %v, %d requests", held, eng.people.Load())
+	}
+}
+
 // Registration limits: the terms, 3 per address a day, the pool, the switch, and no model check.
 func TestAnonRegisterLimits(t *testing.T) {
 	a, clk := anonRig(t, false, nil)
