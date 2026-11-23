@@ -5,10 +5,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { day, hhmm, theoremURL } from './prove2me-current';
-import { compact, leafRoleLabel, taskTableHTML } from './prove2me-live';
+import { compact, leafOutcomeLabel, leafOutcomes, leafRoleLabel, taskTableHTML } from './prove2me-live';
 import { leafPlan, leafPlanHTML } from './prove2me-outlines';
 import { attemptOf, provesLeaf } from './prove2me-outcomes';
-import type { Kpis, ScienceView, SubRec, TrialDetail, TrialSum } from './prove2me-records';
+import type { Kpis, LeavesView, ScienceView, SubRec, TrialDetail, TrialSum } from './prove2me-records';
 import { shortSpan, tokTitleOf } from './prove2me-trials';
 
 const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -89,6 +89,40 @@ export function submissionRowHTML(s: SubRec): string {
 		`<td data-label="Verdict" class="verdict verdict-${esc(s.verdict)}">${esc(verdictWord[s.verdict] ?? s.verdict)}${s.verdict_at ? `<span class="sub">${esc(hhmm(s.verdict_at))}</span>` : ''}</td>` +
 		`</tr>`
 	);
+}
+
+/** The paragraph under the submissions, made from them (owner, 2026-11-23: not a fixed story of the first two). */
+export function submissionsNoteHTML(v: ScienceView): string {
+	const subs = v.submissions;
+	const acc = subs.filter((s) => s.verdict === 'accepted');
+	const proofs = acc.filter((s) => s.kind !== 'reuse');
+	const reuses = acc.filter((s) => s.kind === 'reuse');
+	const pending = subs.filter((s) => s.verdict === 'pending').length;
+	const when = (s: SubRec) => s.verdict_at ?? s.submitted_at;
+	const newest = [...proofs].sort((a, b) => when(b).localeCompare(when(a)))[0];
+	return esc(
+		`prove2me has accepted ${acc.length} of the ${subs.length} proofs we submitted${pending ? ` (${pending} still wait for its verdict)` : ''}: ` +
+			`${plural(proofs.length, 'proof')} of open leaves written by the model${proofs.length ? ` (${andList(proofs.map((s) => named(s.leaf, s.alias)))})` : ''}` +
+			`${reuses.length ? ` and ${plural(reuses.length, 'leaf', 'leaves')} closed by reuse (below)` : ''}.` +
+			(newest ? ` The newest accepted proof is ${named(newest.leaf, newest.alias)}, from trial ${newest.trial}, accepted on ${day(when(newest))}.` : '') +
+			` prove2me’s theorem pages show every accepted leaf as proved. Calibration leaves are never submitted: they were proved before.`,
+	);
+}
+
+/** A note per leaf prove2me accepted as closed by reuse: whose theorem it reuses and how we found it. */
+export function reuseNotesHTML(v: ScienceView): string {
+	return v.submissions
+		.filter((s) => s.kind === 'reuse' && s.verdict === 'accepted' && s.reuses?.theorem)
+		.map((s) => {
+			const who = s.reuses!.author ?? 'someone else';
+			const found = s.found === 'probes' ? `while we prepared trial ${s.trial}` : `during trial ${s.trial}`;
+			const how =
+				s.reuses!.relation === 'part'
+					? `The leaf is one part of a theorem that ${who} had already proved on prove2me: its conclusion contains the leaf’s statement. Our index of prove2me’s library offered that theorem as a similar statement ${found}, and the model’s proof is one line that uses it.`
+					: `The leaf is the same statement as a theorem that ${who} had already proved on prove2me under another name. Our index of prove2me’s library found the match ${found}, and the model’s proof is one line that imports that theorem.`;
+			return `<p data-p2m-reuse-note="${esc(s.alias || s.leaf)}">${esc(`${named(s.leaf, s.alias)} was closed by reuse. ${how} Our full check and then prove2me accepted it, but none of the mathematics is ours, so it is not counted among the open leaves proved.`)}</p>`;
+		})
+		.join('');
 }
 
 // ---- the trials table
@@ -207,6 +241,73 @@ export function trialDetailHTML(d: TrialDetail): string {
 			: '') +
 		`</details>`
 	);
+}
+
+// ---- every leaf: the scorecard by role, the filters and the list (prove2me-records.ts leavesView)
+
+const numCell = (label: string, cell: string, v: string | number) => `<td data-label="${label}" class="num" data-cell="${cell}">${esc(v)}</td>`;
+const scoreTok = (computed: number, withCache: number, exactCount: boolean) =>
+	`<td data-label="Tokens computed" class="num tok" data-cell="tokens" data-tokens="${computed}" title="${esc(tokTitleOf(computed, withCache, exactCount))}">${exactCount ? '' : '≥ '}${esc(compact(computed))}</td>`;
+
+/** The scorecard: a row per role and the outline probes (the tbody), the All row (the tfoot). */
+export function leafScoreHTML(v: LeavesView): { body: string; foot: string } {
+	const roles = v.roles.map(
+		(r) =>
+			`<tr data-role="${r.role}"><th scope="row">${esc(leafRoleLabel[r.role])}</th>${numCell('Leaves', 'leaves', r.leaves)}${numCell('Runs', 'runs', r.runs)}` +
+			`${numCell('Runs proved', 'proved', r.proved)}${numCell('Proofs accepted', 'accepted', r.accepted)}${numCell('Closed by reuse', 'reused', r.reused)}` +
+			`${numCell('Model hours', 'hours', r.hours.toFixed(1))}${scoreTok(r.computed, r.withCache, r.exact)}</tr>`,
+	);
+	const p = v.probes;
+	const probes = p
+		? `<tr data-role="probes"><th scope="row">Outline probes</th>${numCell('Leaves', 'leaves', p.leaves)}${['Runs:runs', 'Runs proved:proved', 'Proofs accepted:accepted', 'Closed by reuse:reused'].map((x) => numCell(x.split(':')[0], x.split(':')[1], '–')).join('')}` +
+			`${numCell('Model hours', 'hours', p.hours.toFixed(1))}${scoreTok(p.computed, p.withCache, p.exact)}</tr>`
+		: '';
+	const a = v.all;
+	const foot =
+		`<tr data-role="all"><th scope="row">All</th>${numCell('Leaves', 'leaves', a.leaves)}${numCell('Runs', 'runs', a.runs)}${numCell('Runs proved', 'proved', a.proved)}` +
+		`${numCell('Proofs accepted', 'accepted', a.accepted)}${numCell('Closed by reuse', 'reused', a.reused)}${numCell('Model hours', 'hours', a.hours.toFixed(1))}` +
+		`${scoreTok(a.computed, a.withCache, a.exact)}</tr>`;
+	return { body: roles.join('') + probes, foot };
+}
+
+/** The list's filters: one per role there is and one per outcome a leaf has. */
+export function leafFiltersHTML(v: LeavesView): string {
+	const btn = (key: string, value: string, label: string) => `<button type="button" data-filter="${key}" data-value="${esc(value)}" aria-pressed="${value ? 'false' : 'true'}">${esc(label)}</button>`;
+	return (
+		btn('role', '', 'All roles') +
+		v.roles.map((r) => btn('role', r.role, leafRoleLabel[r.role])).join('') +
+		'<span class="sep"></span>' +
+		btn('outcome', '', 'Any outcome') +
+		leafOutcomes.filter((o) => v.leaves.some((l) => l.outcome === o)).map((o) => btn('outcome', o, leafOutcomeLabel[o])).join('')
+	);
+}
+
+/** The list's rows, in the order the leaves were first tried (data-order); the browser filters and sorts them. */
+export function leafRowsHTML(v: LeavesView): string {
+	return v.leaves
+		.map((l, i) => {
+			const cls = ['result', ['accepted', 'proved'].includes(l.outcome) ? 'proved' : '', ['not_scored', 'stopped'].includes(l.outcome) ? 'unscored' : ''].filter(Boolean).join(' ');
+			const first = l.first ? `<time datetime="${esc(l.first)}">${esc(day(l.first))}</time>` : '–';
+			const tok =
+				l.computed === null
+					? `<td data-label="Tokens computed" class="num" data-cell="tokens" title="No run: closed by reuse">–</td>`
+					: `<td data-label="Tokens computed" class="num tok" data-cell="tokens" data-tokens="${l.computed}" title="${esc(tokTitleOf(l.computed, l.withCache ?? 0, l.exact))}">${l.exact ? '' : '≥ '}${esc(compact(l.computed))}</td>`;
+			return (
+				`<tr data-leaf-id="${esc(l.id)}" data-roles="${esc(l.roles.join(' '))}" data-outcome="${esc(l.outcome)}" data-order="${i}"` +
+				`${l.first ? ` data-sort-first="${Date.parse(`${l.first}T00:00:00Z`)}"` : ''} data-sort-outcome="${leafOutcomes.indexOf(l.outcome)}"` +
+				`${l.computed !== null ? ` data-sort-tokens="${l.computed}"` : ''}${l.minutes !== null ? ` data-sort-minutes="${l.minutes}"` : ''}>` +
+				`<th scope="row">${esc(l.id)}<span class="sub" data-alias title="The id the trials used">${esc(l.aliases.join(', '))}</span></th>` +
+				`<td class="thm">${link(l.url, l.theorem, `${l.title ? ` title="${esc(plainTitle(l.title))}"` : ''} data-sort-theorem`)}</td>` +
+				`<td data-label="Role">${esc(l.roles.map((r) => leafRoleLabel[r]).join(', '))}</td>` +
+				`<td data-label="Trials" data-cell="trials">${l.trials.length ? esc(l.trials.join(', ')) : '–'}</td>` +
+				`<td data-label="Outcome" data-cell="outcome" class="${cls}">${esc(leafOutcomeLabel[l.outcome])}${l.runs > 1 ? `<span class="sub">${l.provedRuns} of ${l.runs} runs proved</span>` : ''}</td>` +
+				`<td data-label="First tried" class="nowrap">${first}</td>` +
+				`<td data-label="Model min" class="num" data-cell="minutes">${l.minutes === null ? '–' : l.minutes.toFixed(1)}</td>` +
+				tok +
+				`</tr>`
+			);
+		})
+		.join('');
 }
 
 // ---- the home page's line and the /science/ card

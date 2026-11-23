@@ -20,6 +20,8 @@ export type Outcome = 'proved' | 'refused' | 'compile_error' | 'no_solution' | '
 export interface LeafRun {
 	leaf: string;
 	group: Group;
+	/** The leaf's role in this trial (a comparison leaf is an open leaf run again to compare scaffolds). */
+	role?: 'calibration' | 'open' | 'comparison';
 	theorem: string;
 	title: string;
 	url: string;

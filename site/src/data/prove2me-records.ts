@@ -141,13 +141,23 @@ export interface RunRec {
 	leaf: string;
 	alias: string;
 	group: 'calibration' | 'open';
+	/** The leaf's role in its trial: calibration, open, or comparison (an open leaf run again to compare scaffolds). */
+	role: 'calibration' | 'open' | 'comparison';
 	proved: boolean;
+	/** False for a run cut short by a fault on our side (the build's; a gateway trial's runs are all scored). */
+	scored: boolean;
+	/** A run we stopped (not scored, its outcome "cancelled"). */
+	stopped: boolean;
+	/** The day its trial started. */
+	date: string | null;
 	model_min: number;
 	computed: number;
 	withCache: number;
 	/** False when a task that ran has no cache count: its tokens are then a lower bound. */
 	exact: boolean;
 }
+/** A leaf's theorem, its prove2me title and page. */
+export type LeafInfo = { theorem: string; title: string; url: string };
 /** A submission to prove2me and its verdict. */
 export interface SubRec {
 	/** The leaf's id (p2m-...); `alias` the id the trials used. */
@@ -191,6 +201,10 @@ export interface History {
 	trials: TrialSum[];
 	submissions: SubRec[];
 	current: { number: number; status: 'preparing' | 'running'; start: string | null; scaffold: string } | null;
+	/** Every leaf of the build's data by id: its theorem, title and page (a gateway campaign's items add theirs). */
+	leafInfo: Record<string, LeafInfo>;
+	/** The leaves of each finished outline probe round of the build's data, by the trials table's label ("6p"). */
+	probeLeaves: Record<string, string[]>;
 }
 export interface Kpis {
 	accepted: number;
@@ -242,7 +256,8 @@ export function historyOf(p: Prove2me): History {
 	const runs: RunRec[] = p.trials.flatMap((tr) =>
 		tr.leaves.map((r) => ({
 			trial: tr.trial, leaf: idOf(r.theorem, r.url), alias: r.leaf, group: r.group === 'calibration' ? 'calibration' : 'open',
-			proved: r.outcome === 'proved', model_min: r.model_minutes, computed: computedOf(r), withCache: withCacheOf(r), exact: true,
+			role: r.role ?? (r.group === 'calibration' ? 'calibration' : 'open'), proved: r.outcome === 'proved', scored: r.scored,
+			stopped: !r.scored && r.outcome === 'cancelled', date: tr.start, model_min: r.model_minutes, computed: computedOf(r), withCache: withCacheOf(r), exact: true,
 		})),
 	);
 	const count = (rs: RunRec[]): Count => ({ proved: rs.filter((r) => r.proved).length, runs: rs.length });
@@ -275,6 +290,8 @@ export function historyOf(p: Prove2me): History {
 		trials: sortTrials(trials),
 		submissions,
 		current: cur && (cur.state === 'preparing' || running) ? { number: cur.trial, status: cur.state === 'preparing' ? 'preparing' : 'running', start: cur.start, scaffold: cur.scaffold } : null,
+		leafInfo: Object.fromEntries(p.leaves.map((l) => [l.id, { theorem: l.theorem, title: l.title, url: l.url }])),
+		probeLeaves: Object.fromEntries((p.probes ?? []).filter((r) => r.state === 'finished').map((r) => [r.trial.slice(1), r.leaves.map((l) => l.id)])),
 	};
 }
 
@@ -332,6 +349,7 @@ export function campaignRuns(c: Campaign, tasks: PublicTask[], results: ExtResul
 		const tok = tokSum(ts);
 		out.push({
 			trial: t.number, leaf: item.id, alias: item.labels.alias ?? '', group: item.role === 'calibration' ? 'calibration' : 'open',
+			role: item.role === 'calibration' || item.role === 'comparison' ? item.role : 'open', scored: true, stopped: false, date: day(c.started_at),
 			proved: ts.some((x) => provesLeaf({ kind: x.role ?? '', state: x.state, outcome: x.outcome })),
 			model_min: sum(ts, (x) => x.model_min ?? 0), ...tok,
 		});
@@ -598,4 +616,128 @@ export async function getJSON(url: string, ms = 8000): Promise<unknown> {
 export async function liveSummary(h: History, get: (url: string) => Promise<unknown> = getJSON): Promise<ScienceView | null> {
 	const live = await fetchRecords(get, DECIDING_TASKS_URL);
 	return live ? scienceView(h, live) : null;
+}
+
+// ---- every leaf: the scorecard by role and the list of every leaf tried (owner, 2026-11-23: live like the rest)
+
+export type LeafRole = 'calibration' | 'open' | 'comparison';
+export type LeafOutcome = 'accepted' | 'reused' | 'proved' | 'not_proved' | 'stopped' | 'not_scored';
+/** One leaf over every run of it. */
+export interface LeafRow {
+	id: string;
+	/** The ids the trials used, in the order they first appear. */
+	aliases: string[];
+	theorem: string;
+	title: string;
+	url: string;
+	roles: LeafRole[];
+	trials: number[];
+	/** The day it was first tried (its first run's trial start; a leaf closed by reuse, the day of that submission). */
+	first: string | null;
+	runs: number;
+	provedRuns: number;
+	/** The best of its runs: accepted by prove2me, closed by reuse, proved, not proved, stopped by us, not scored. */
+	outcome: LeafOutcome;
+	/** Null for a leaf with no run (closed by reuse). */
+	minutes: number | null;
+	computed: number | null;
+	withCache: number | null;
+	exact: boolean;
+}
+/** The scorecard's row of one role (a leaf counts under every role it had). */
+export interface RoleRow {
+	role: LeafRole;
+	leaves: number;
+	runs: number;
+	proved: number;
+	/** Proofs prove2me accepted, under the role of the run that proved the leaf. */
+	accepted: number;
+	reused: number;
+	hours: number;
+	computed: number;
+	withCache: number;
+	exact: boolean;
+}
+export interface LeavesView {
+	leaves: LeafRow[];
+	roles: RoleRow[];
+	/** The outline probe rounds: their leaves, model hours and tokens (no runs); null with none. */
+	probes: { leaves: number; hours: number; computed: number; withCache: number; exact: boolean } | null;
+	all: { leaves: number; runs: number; proved: number; accepted: number; reused: number; hours: number; computed: number; withCache: number; exact: boolean };
+	/** Runs cut short by a fault on our side, or stopped by us because of one. */
+	notScored: number;
+}
+
+const ROLES: LeafRole[] = ['calibration', 'open', 'comparison'];
+
+/** Every leaf tried, from the build's history alone (`live` null) or with the gateway's records: trials 1 to 5 (and any
+ * later trial the gateway has no campaign of) from the build, trial 6 on from the gateway. The leaves keep the order
+ * they were first tried in; leaves closed by reuse (no run) come last. */
+export function leavesView(h: History, live: Records | null): LeavesView {
+	const v = scienceView(h, live);
+	const runs = live ? allRuns(h, live) : h.runs;
+	const info: Record<string, LeafInfo> = { ...h.leafInfo };
+	for (const c of live?.campaigns ?? []) for (const i of c.items) if (leafID.test(i.id)) info[i.id] ??= { theorem: i.labels.theorem ?? '', title: i.title, url: i.url };
+	const accepted = v.submissions.filter((s) => s.verdict === 'accepted');
+	const proofs = accepted.filter((s) => s.kind !== 'reuse');
+	const reuses = accepted.filter((s) => s.kind === 'reuse');
+	const ids = [...new Set([...runs.map((r) => r.leaf), ...reuses.map((s) => s.leaf)])];
+	const leaves = ids.map((id): LeafRow => {
+		const rs = runs.filter((r) => r.leaf === id);
+		const reuse = reuses.find((s) => s.leaf === id);
+		const i = info[id] ?? reuse ?? { theorem: id, title: '', url: '' };
+		const outcome: LeafOutcome = proofs.some((s) => s.leaf === id)
+			? 'accepted'
+			: reuse
+				? 'reused'
+				: rs.some((r) => r.proved)
+					? 'proved'
+					: rs.some((r) => r.scored)
+						? 'not_proved'
+						: rs.some((r) => r.stopped)
+							? 'stopped'
+							: 'not_scored';
+		const roles = new Set<LeafRole>(rs.map((r) => r.role));
+		if (!rs.length) roles.add('open'); // closed by reuse: an open leaf
+		const dates = rs.map((r) => r.date).filter((d): d is string => !!d);
+		return {
+			id, aliases: [...new Set([...rs.map((r) => r.alias), reuse?.alias ?? ''].filter(Boolean))], theorem: i.theorem, title: i.title, url: i.url,
+			roles: ROLES.filter((r) => roles.has(r)), trials: [...new Set(rs.map((r) => r.trial))].sort((a, b) => a - b),
+			first: dates.length ? dates.sort()[0] : reuse ? reuse.submitted_at.slice(0, 10) : null,
+			runs: rs.length, provedRuns: rs.filter((r) => r.proved).length, outcome,
+			minutes: rs.length ? sum(rs, (r) => r.model_min) : null, computed: rs.length ? sum(rs, (r) => r.computed) : null,
+			withCache: rs.length ? sum(rs, (r) => r.withCache) : null, exact: rs.every((r) => r.exact),
+		};
+	});
+	// a proof accepted counts under the role of the run that proved it (in the submission's trial)
+	const roleOfProof = (s: SubRec): LeafRole =>
+		(runs.find((r) => r.leaf === s.leaf && r.trial === s.trial && r.proved) ?? runs.find((r) => r.leaf === s.leaf && r.proved))?.role ?? 'open';
+	const roles = ROLES.map((role): RoleRow => {
+		const rs = runs.filter((r) => r.role === role);
+		return {
+			role, leaves: leaves.filter((l) => l.roles.includes(role)).length, runs: rs.length, proved: rs.filter((r) => r.proved).length,
+			accepted: proofs.filter((s) => roleOfProof(s) === role).length, reused: role === 'open' ? reuses.length : 0,
+			hours: sum(rs, (r) => r.model_min) / 60, computed: sum(rs, (r) => r.computed), withCache: sum(rs, (r) => r.withCache), exact: rs.every((r) => r.exact),
+		};
+	}).filter((r) => r.leaves > 0);
+	const probeTrials = v.trials.filter((t) => t.probe);
+	const keep = live ? keepBuilt(h, live) : () => true;
+	const probeIds = new Set([
+		...Object.entries(h.probeLeaves).filter(([label]) => keep(label, Number(label.slice(0, -1)))).flatMap(([, ids]) => ids),
+		...(live?.campaigns ?? []).filter((c) => liveCampaign(c)?.probe).flatMap((c) => c.items.map((i) => i.id)),
+	]);
+	const probes = probeTrials.length
+		? { leaves: probeIds.size, hours: sum(probeTrials, (t) => t.model_min) / 60, computed: sum(probeTrials, (t) => t.computed), withCache: sum(probeTrials, (t) => t.withCache), exact: probeTrials.every((t) => t.exact) }
+		: null;
+	return {
+		leaves,
+		roles,
+		probes,
+		all: {
+			leaves: leaves.length, runs: runs.length, proved: runs.filter((r) => r.proved).length, accepted: proofs.length, reused: reuses.length,
+			hours: (sum(runs, (r) => r.model_min) + sum(probeTrials, (t) => t.model_min)) / 60,
+			computed: v.kpis.computed, withCache: v.kpis.withCache, exact: v.trials.every((t) => t.exact),
+		},
+		notScored: runs.filter((r) => !r.scored).length,
+	};
 }

@@ -73,7 +73,10 @@ export const BENCH_LABEL = /^bench-[A-Za-z0-9._-]+$/;
 export const isBench = (label: string | undefined) => BENCH_LABEL.test(label ?? '');
 
 export interface StatusView {
+	/** live: the browser's, from the gateway now; build: the records the site's build fetched (or, `saved`, its committed
+	 * copy when the gateway did not answer the build), else the build's history alone (no queue). */
 	source: 'build' | 'live';
+	saved?: boolean;
 	/** The newest time of the data shown (ISO). */
 	updated: string;
 	/** Every open trial, oldest first; empty when none is open. */
@@ -282,11 +285,17 @@ export function statusTexts(v: StatusView, now: Date = new Date()) {
 				(q.length > 1 ? ` (${q.map((x) => `${shortName(x.label)}: ${x.running} running, ${x.queued} waiting`).join('; ')})` : '') + '.';
 	const age = (now.getTime() - Date.parse(v.updated)) / 60000;
 	const hm = `${v.updated.slice(11, 16)} UTC`;
+	const asOf =
+		v.queue === null
+			? `As of the site’s last build, ${shortDay(v.updated)}, ${hm}.`
+			: v.saved
+				? `As of a saved copy of the gateway’s records, ${shortDay(v.updated)}, ${hm}: the gateway did not answer the site’s last build.`
+				: `As of the gateway’s records at the site’s last build, ${shortDay(v.updated)}, ${hm}.`;
 	const updated =
 		v.source === 'build'
 			? v.nodes
 				? `Trials and proofs as of the site’s last build, ${shortDay(v.updated)}, ${hm}; nodes live from the gateway, updated ${v.nodes.updated.slice(11, 16)} UTC.`
-				: `As of the site’s last build, ${shortDay(v.updated)}, ${hm}. The queue and the network show when the page can reach the gateway.`
+				: `${asOf} The page refreshes it every minute when it can reach the gateway.`
 			: age > 10
 				? `Updated ${shortDay(v.updated)}, ${hm}; the gateway has not answered since.`
 				: `Live from the gateway, updated ${hm}. It refreshes every minute.`;
@@ -297,8 +306,50 @@ export function statusTexts(v: StatusView, now: Date = new Date()) {
 		accepted: `${s.accepted} of ${s.submitted}`,
 	};
 	// the benchmarks' lines first (their tasks are claimed first), then the trials'; `keys` names each line's label
-	const live = v.source === 'live';
-	const lines = live ? [...v.benches.map((b) => benchLine(b, v.trials)), ...v.trials.map(trialLine)] : [];
-	const keys = live ? [...v.benches.map((b) => b.label), ...v.trials.map((t) => t.label)] : [];
+	const recs = v.queue !== null; // the records, live or the build's
+	const lines = recs ? [...v.benches.map((b) => benchLine(b, v.trials)), ...v.trials.map(trialLine)] : [];
+	const keys = recs ? [...v.benches.map((b) => b.label), ...v.trials.map((t) => t.label)] : [];
 	return { head: headText(v), queue, lines, keys, updated, nums };
+}
+
+/** The queue bar's parts (the bar's children) and their names under it: a part per benchmark and per trial, its running
+ * tasks then its waiting ones. Empty with nothing in the queue. */
+export function queueBarHTML(v: StatusView): { bar: string; labels: string } {
+	const q = (v.queue ?? []).filter((x) => x.running + x.queued > 0);
+	let nth = 0; // the trials' parts alternate their colour; a benchmark's has its own
+	const attr = (x: { bench: boolean; label: string }) => `data-${x.bench ? 'bench' : 'trial'}="${escAttr(x.label)}"`;
+	const bar = q
+		.map((x) => {
+			const segs = (['running', 'queued'] as const)
+				.filter((k) => x[k] > 0)
+				.map((k) => `<span class="seg q-${k}" data-part="${k}" style="flex-grow: ${x[k]}"></span>`)
+				.join('');
+			return `<span class="grp ${x.bench ? 'grp-bench' : `grp-${nth++ % 2}`}" ${attr(x)} style="flex-grow: ${x.running + x.queued}">${segs}</span>`;
+		})
+		.join('');
+	const labels = q.map((x) => `<span ${attr(x)} style="flex-grow: ${x.running + x.queued}">${escAttr(`${shortName(x.label)} · ${x.running + x.queued}`)}</span>`).join('');
+	return { bar, labels };
+}
+const escAttr = (v: string) => v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** "What comes next", the part the queue says: what runs first and what waits behind it (owner, 2026-11-23: it must not
+ * go stale). Empty without the records. */
+export function nextText(v: StatusView): string {
+	if (!v.queue) return '';
+	const tasks = (x: { running: number; queued: number }) =>
+		x.running && x.queued ? `${plural(x.running, 'task')} running, ${x.queued} waiting` : x.running ? `${plural(x.running, 'task')} running` : `${plural(x.queued, 'task')} waiting`;
+	const inQueue = (label: string) => v.queue!.find((q) => q.label === label && q.running + q.queued > 0);
+	const name = (t: OpenTrial) => (t.probe ? `the outline probes for trial ${t.number}` : `trial ${t.number}`);
+	const tpart = (t: OpenTrial) => `${name(t)}${t.scaffold ? ` on scaffold ${t.scaffold}` : ''} (${tasks(inQueue(t.label)!)})`;
+	const benches = v.benches.filter((b) => inQueue(b.label));
+	const ahead = new Set(benches.flatMap((b) => b.ahead));
+	const parts = [
+		...benches.map((b) => {
+			const ts = v.trials.filter((t) => b.ahead.includes(t.label) && inQueue(t.label));
+			return `benchmark ${b.label}${b.scaffold ? ` on scaffold ${b.scaffold}` : ''} (${tasks(b)})${ts.length ? `, ahead of ${and(ts.map(tpart))}` : ''}`;
+		}),
+		...v.trials.filter((t) => !ahead.has(t.label) && inQueue(t.label)).map(tpart),
+	];
+	const preparing = v.trials.filter((t) => t.status === 'preparing' && !inQueue(t.label)).map((t) => `${trialName(t)} is being prepared.`);
+	return [parts.length ? `In the queue now: ${parts.join('; ')}.` : 'Nothing is in the queue now.', ...preparing].join(' ');
 }

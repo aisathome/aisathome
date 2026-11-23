@@ -12,7 +12,7 @@ import fixture from './fixtures/prove2me-records-2026-11-18.json';
 import type { Prove2me } from '../src/data/prove2me';
 import type { PublicTask } from '../src/data/prove2me-current';
 import { historyOf, parseCampaigns, parseResults, scienceView, type Records } from '../src/data/prove2me-records';
-import { barPart, benchLine, builtStatus, isBench, parseNodes, shortName, statusTexts, statusView, trialLine } from '../src/data/prove2me-status';
+import { barPart, benchLine, builtStatus, isBench, nextText, parseNodes, queueBarHTML, shortName, statusTexts, statusView, trialLine } from '../src/data/prove2me-status';
 
 const h = historyOf(raw as unknown as Prove2me);
 const records = (): Records => ({
@@ -250,4 +250,41 @@ test('a benchmark is no trial: the trials table, the numbers and the submissions
 	assert.deepEqual(b.submissions, a.submissions);
 	assert.deepEqual(statusView(bench, nodes)!.submissions, statusView(plain, nodes)!.submissions);
 	assert.ok(isBench('bench-v13') && isBench('bench-v12b') && !isBench('t10') && !isBench('e2e1') && !isBench(undefined));
+});
+
+test('“What comes next” from the queue: the benchmark ahead of the trial, a trial alone, nothing', () => {
+	assert.equal(
+		nextText(statusView(withBench(true), nodes)!),
+		'In the queue now: benchmark bench-v13 on scaffold v13 (2 tasks running, 3 waiting), ahead of trial 8 on scaffold v9 (11 tasks waiting).',
+	);
+	assert.equal(nextText(statusView(records(), nodes)!), 'In the queue now: trial 8 on scaffold v9 (2 tasks running, 9 waiting).');
+	// a benchmark that is not ahead of the trial: each on its own
+	assert.equal(
+		nextText(statusView(withBench(true, '2026-11-18T07:00:00Z'), nodes)!),
+		'In the queue now: benchmark bench-v13 on scaffold v13 (2 tasks running, 3 waiting); trial 8 on scaffold v9 (11 tasks waiting).',
+	);
+	const r = records();
+	for (const t of r.tasks.tasks) if (t.state === 'queued' || t.state === 'leased') t.state = 'cancelled';
+	assert.equal(nextText(statusView(r, nodes)!), 'Nothing is in the queue now.');
+	assert.equal(nextText(builtStatus(h)), ''); // no records, no claim
+});
+
+test('the queue bar as HTML: a part per benchmark (its own tone) and per trial, escaped', () => {
+	const b = queueBarHTML(statusView(withBench(false), nodes)!);
+	assert.match(b.bar, /^<span class="grp grp-bench" data-bench="bench-v13" style="flex-grow: 5"><span class="seg q-running" data-part="running" style="flex-grow: 2"><\/span><span class="seg q-queued"/);
+	assert.match(b.bar, /<span class="grp grp-0" data-trial="t8" style="flex-grow: 11">/);
+	assert.equal(b.labels, '<span data-bench="bench-v13" style="flex-grow: 5">bench-v13 · 5</span><span data-trial="t8" style="flex-grow: 11">Trial 8 · 11</span>');
+	assert.deepEqual(queueBarHTML(builtStatus(h)), { bar: '', labels: '' });
+});
+
+test('the build’s copy from the records: the queue and the lines, as of the build; a saved copy says so', () => {
+	const v = { ...statusView(withBench(true), null)!, source: 'build' as const };
+	const tx = statusTexts(v, at);
+	assert.equal(tx.lines.length, 2);
+	assert.match(tx.queue, /^16 tasks in the queue/);
+	assert.equal(tx.updated, 'As of the gateway’s records at the site’s last build, 18 Nov, 14:58 UTC. The page refreshes it every minute when it can reach the gateway.');
+	assert.equal(
+		statusTexts({ ...v, saved: true }, at).updated,
+		'As of a saved copy of the gateway’s records, 18 Nov, 14:58 UTC: the gateway did not answer the site’s last build. The page refreshes it every minute when it can reach the gateway.',
+	);
 });
