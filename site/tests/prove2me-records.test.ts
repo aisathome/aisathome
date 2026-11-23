@@ -104,8 +104,7 @@ test('the headline numbers, the submissions and the trials table as HTML: escape
 	assert.match(k.html, /<dt>open leaves proved, of 26 tried<\/dt><dd>6<\/dd>/);
 	assert.match(k.html, /<dt>runs proved, of 54 in trials 1 to 8<\/dt><dd>17<\/dd>/);
 	const small = smallNumbersHTML(v, 21, (a) => ({ O04: 'p2m-7f145a', F01: 'p2m-a146ce' })[a] ?? a);
-	assert.match(small, /^Small numbers\. The 6 open leaves proved, p2m-7f145a \(O04\), p2m-a146ce \(F01\), p2m-dbd69f \(N03\), p2m-aec6a2 \(N10\), p2m-d00cfc \(N07\) and p2m-527634 \(N12\), show/);
-	assert.match(small, /p2m-b1d59e \(N02\) and p2m-f181df \(N05\), closed by reuse, are not among them/);
+	assert.match(small, /^Small numbers: 6 open leaves proved so far\. That shows the model can do it, not yet how often\./);
 	assert.match(small, /11 of 16 runs succeeded/);
 	const t8row = trialRowHTML(row(v, '8'));
 	assert.match(t8row, /^<tr data-trial="8" data-source="live" data-status="running">/);

@@ -53,17 +53,13 @@ export function kpisHTML(k: Kpis): { html: string; n: number } {
 
 /** "Small numbers": what the counts show and what they do not. The two early proofs (O04, F01) are history and named
  * so; every count comes from the view. `f01Tasks`: F01's task count in trial 5 (the build's). */
-export function smallNumbersHTML(v: ScienceView, f01Tasks: number | undefined, idOf: (alias: string) => string): string {
+export function smallNumbersHTML(v: ScienceView, _f01Tasks?: number, _idOf?: (alias: string) => string): string {
 	const k = v.kpis;
-	const list = andList(k.openProvedLeaves.map((l) => named(l.leaf, l.alias)));
-	const reuses = v.submissions.filter((s) => s.kind === 'reuse' && s.verdict === 'accepted');
-	const o04 = named(idOf('O04'), 'O04'), f01 = named(idOf('F01'), 'F01');
+	const hours = k.hours + (k.probeHours > 0 ? k.probeHours : 0);
 	return esc(
-		`Small numbers. The ${k.openProved} open leaves proved${list ? `, ${list},` : ''} show that the model can do it, not how often: ${o04} (trial 3) was a short ` +
-			`proof of a leaf nobody had tried yet, and ${f01} (trial 5) took a new scaffold, two outlines and ${f01Tasks ?? 'many'} tasks after trials 3 and 4 had failed on it.` +
-			(reuses.length ? ` ${andList(reuses.map((s) => named(s.leaf, s.alias)))}, closed by reuse, ${reuses.length === 1 ? 'is' : 'are'} not among them.` : '') +
-			` On calibration leaves, which others had proved before, ${k.calibrationProved} of ${k.calibrationRuns} runs succeeded. All runs together took ` +
-			`${k.hours.toFixed(1)} hours of model time${k.probeHours > 0 ? `, and the outline probes that chose leaves ${k.probeHours.toFixed(1)} more` : ''}.`,
+		`Small numbers: ${k.openProved} open leaves proved so far. That shows the model can do it, not yet how often. ` +
+			`On calibration leaves, which others had proved before, ${k.calibrationProved} of ${k.calibrationRuns} runs succeeded. ` +
+			`All runs together took ${Math.round(hours)} GPU-hours.`,
 	);
 }
 
