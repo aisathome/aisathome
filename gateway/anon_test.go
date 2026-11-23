@@ -2,12 +2,19 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/aisathome/aisathome/node/modelcheck"
 	"github.com/aisathome/aisathome/protocol"
@@ -471,4 +478,133 @@ func TestAnonNeverGetsSecretPrompts(t *testing.T) {
 		t.Errorf("a group mixed the sets: %+v", p)
 	}
 	mc.mu.Unlock()
+}
+
+// wsPair returns a server-side WebSocket connection (closed with the test), as a node's.
+func wsPair(t *testing.T) *websocket.Conn {
+	t.Helper()
+	got := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		got <- c
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	cli, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cli.CloseNow() })
+	return <-got
+}
+
+// Deleting a held node without an account deletes its hold too. A sweep that read the node's token as live
+// before the deletion and its hold after it must never let the node take requests again (code review,
+// 2026-11-23): the deletion waits for the sweep, and marks the node held and closes it before any later
+// sweep can see the hold gone.
+func TestAnonExpiryNeverUnholdsALiveNode(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	now := t0
+	g, err := New(Config{StateDir: dir, AnonNow: func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+		Accounts: &AccountsConfig{File: dir + "/accounts.json", PublicURL: "https://site.test",
+			SessionSecret: strings.Repeat("s", 32), GitHubClientID: "id", GitHubClientSecret: "secret"}}, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { g.Close() })
+	token, id, err := g.accounts.RegisterAnon(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct, _, _ := g.accounts.nodeToken(token)
+	if err := g.accounts.HoldNode(NodeHold{Node: id, Rule: "download-and-execute", At: t0}); err != nil {
+		t.Fatal(err)
+	}
+	n := &nodeConn{id: id, account: acct, anon: true, admitted: true, token: token, held: true, conn: wsPair(t),
+		operator: "op", models: []protocol.ModelInfo{{Name: "qwen3.8-27b", Roles: []string{"deep"}, Slots: 1}}}
+	g.mu.Lock()
+	g.node[id] = n
+	g.mu.Unlock()
+	mu.Lock()
+	now = t0.Add(anonHeldKeep + time.Minute)
+	mu.Unlock()
+
+	expired := make(chan struct{})
+	g.sweepHook = func() { // the expiry starts while a sweep is between reading tokens and reading holds
+		go func() { g.sweepAnon(); close(expired) }()
+		select {
+		case <-expired:
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	g.sweepNodes()
+	g.mu.Lock()
+	held, there := n.held, g.node[id] == n
+	usable := (&route{class: ClassScience, exclude: map[*nodeConn]bool{}}).allows(n, time.Now())
+	g.mu.Unlock()
+	if there && (!held || usable) {
+		t.Fatalf("a guard-held node is usable again during its deletion (held %v, science allowed %v)", held, usable)
+	}
+	<-expired
+	g.sweepHook = nil
+	g.mu.Lock()
+	held = n.held
+	g.mu.Unlock()
+	if !held {
+		t.Fatal("the deleted node is not marked held")
+	}
+	if a, _, ok := g.accounts.Get(acct); ok {
+		t.Fatalf("the node without an account was not deleted: %+v", a)
+	}
+	if g.nodeHeld(id) {
+		t.Fatal("its hold stays")
+	}
+}
+
+// POST /v1/node/token-known answers by a token's hash only: an account's node token, a node without an
+// account's and a config token are known; another hash, or one of a banned account, is not.
+func TestTokenKnown(t *testing.T) {
+	dir := t.TempDir()
+	g, err := New(Config{StateDir: dir, NodeTokens: map[string]NodeToken{"config-node-token": {Operator: "op"}},
+		Accounts: &AccountsConfig{File: dir + "/accounts.json", PublicURL: "https://site.test",
+			SessionSecret: strings.Repeat("s", 32), GitHubClientID: "id", GitHubClientSecret: "secret"}}, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { g.Close() })
+	anonTok, _, _ := g.accounts.RegisterAnon(time.Now())
+	g.accounts.SignIn("gh:1", time.Now())
+	g.accounts.SetStatus("gh:1", StatusActive)
+	acctTok, _, _, _ := g.accounts.addNodeVia("gh:1", "", time.Now(), nil, false, "")
+	g.accounts.SignIn("gh:2", time.Now())
+	g.accounts.SetStatus("gh:2", StatusActive)
+	bannedTok, _, _, _ := g.accounts.addNodeVia("gh:2", "", time.Now(), nil, false, "")
+	g.accounts.SetStatus("gh:2", StatusBanned)
+	srv := httptest.NewServer(g.Handler())
+	t.Cleanup(srv.Close)
+	ask := func(body string) (int, string) {
+		resp, err := http.Post(srv.URL+protocol.TokenKnownPath, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, strings.TrimSpace(string(b))
+	}
+	for tok, want := range map[string]bool{anonTok: true, acctTok: true, "config-node-token": true, bannedTok: false, "nt-n-00000000.x": false} {
+		code, out := ask(fmt.Sprintf(`{"sha256":"%s"}`, strings.ToUpper(keyHash(tok))))
+		if code != 200 || out != fmt.Sprintf(`{"known":%v}`, want) {
+			t.Errorf("token %.10s…: %d %s, want known %v", tok, code, out, want)
+		}
+	}
+	for _, bad := range []string{`{"sha256":"` + anonTok + `"}`, `{"sha256":"abc"}`, `{}`} {
+		if code, _ := ask(bad); code != http.StatusBadRequest {
+			t.Errorf("%s: %d", bad, code)
+		}
+	}
 }

@@ -464,27 +464,37 @@ ok "--anonymous with another gateway's token"; has "--anonymous with another gat
   fail "the gateway asked about the token: $(cat "$tmp/asked.log") (another gateway's token is never sent anywhere)"
 unset -f die gw check_id tok tokl toka installed_value pick_gateway_url pick_node_id read_token interactive
 
-# token_known against a stand-in gateway: 401 is "unknown", anything else (200, an old gateway's 404, no
-# answer) "known"; the token goes in a header from stdin, never in curl's argv.
+# token_known against a stand-in gateway: it sends the token's SHA-256 only, never the token (node.json may
+# name another gateway than the token's: code review 2026-11-23); "known": false is "unknown", anything else
+# (true, an old gateway's 404, no answer) "known".
 eval "$(sed -n '/^token_known() {/,/^}/p' "$installer")"
 cat > "$tmp/selfgw.py" <<'PY'
 import http.server, sys
+import hashlib, json
+GOOD = hashlib.sha256(("nt-n-0000000a." + "G" * 43).encode()).hexdigest()
 class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if b"nt-n-" in raw or "nt-n-" in str(self.headers) or "Authorization" in self.headers or self.path != "/v1/node/token-known":
+            self.send_response(400); self.end_headers(); open(sys.argv[1], "a").write("LEAK\n"); return
+        known = json.loads(raw).get("sha256") == GOOD
+        self.send_response(200); self.end_headers(); self.wfile.write(json.dumps({"known": known}).encode())
     def do_GET(self):
-        ok = self.path == "/v1/node/self" and self.headers.get("Authorization") == "Bearer nt-n-0000000a." + "G" * 43
-        self.send_response(200 if ok else 401); self.end_headers()
+        open(sys.argv[1], "a").write("LEAK\n"); self.send_response(401); self.end_headers()
     def log_message(self, *a): pass
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 print(s.server_port, flush=True)
 s.serve_forever()
 PY
-coproc SELFGW { exec python3 "$tmp/selfgw.py"; }
+: > "$tmp/leak.log"
+coproc SELFGW { exec python3 "$tmp/selfgw.py" "$tmp/leak.log"; }
 read -r selfport <&"${SELFGW[0]}"
 [[ "$(token_known "nt-n-0000000a.$(printf 'G%.0s' {1..43})" "ws://127.0.0.1:$selfport/v1/node/connect")" == known ]] || fail "token_known: an accepted token"
 [[ "$(token_known "nt-n-0000000b.$(printf 'G%.0s' {1..43})" "ws://127.0.0.1:$selfport/v1/node/connect")" == unknown ]] || fail "token_known: a token the gateway does not know"
 kill "$SELFGW_PID" 2>/dev/null; wait "$SELFGW_PID" 2>/dev/null
 [[ "$(token_known "nt-n-0000000b.x" "ws://127.0.0.1:9/v1/node/connect")" == known ]] || fail "token_known: no answer must keep the token"
-grep -A6 '^token_known() {' "$installer" | grep -q -- '-H @-' || fail "token_known: the token is not sent from stdin"
+[[ ! -s "$tmp/leak.log" ]] || fail "token_known sent the token (not only its hash) to the gateway"
+grep -A12 '^token_known() {' "$installer" | grep -q 'Authorization' && fail "token_known sends an Authorization header"
 unset -f token_known
 # A dry run reads the installed node.json (a copy of the installer pointed at the fake one).
 sed "s|^conf=/etc/aisathome-node\$|conf=$etc|" "$installer" > "$tmp/install-conf.sh"

@@ -97,8 +97,10 @@ type Gateway struct {
 	// pilotRegistered, if set, runs when a pilot's connection is registered, before its record is
 	// checked once more (tests: a report racing the handshake).
 	pilotRegistered func(pilot string)
-	// sweepMu serialises sweepNodes.
+	// sweepMu serialises sweepNodes (and sweepAnon, which deletes nodes and their holds).
 	sweepMu sync.Mutex
+	// sweepHook, tests only: runs inside sweepNodes between reading the tokens and reading the holds.
+	sweepHook func()
 	// ownOnlyNow: the operator's emergency switch (RoutingOwnOnly) as last read from the accounts file,
 	// which requests that wait for a node check on every try (route.ownOnly).
 	ownOnlyNow atomic.Bool
