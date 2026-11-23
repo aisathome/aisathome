@@ -192,14 +192,9 @@ def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, dat
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t96]")
     expect(box).to_be_visible()
     expect(box.locator("[data-now-head]")).to_have_text("Trial 96, since 15 November 2026 · scaffold v7")
-    about = box.locator("[data-now-about]")
-    expect(about.locator("p")).to_have_count(2)
-    expect(about.locator("code")).to_have_text("sorry")
-    expect(about.locator("b")).to_have_count(0)
-    expect(about).to_contain_text("<b>no html</b>")
-    expect(about.locator("a")).to_have_attribute("href", "https://prove2.me/")
-    expect(about.locator("em")).to_have_text("more")
-    expect(box.locator("[data-now-budget]")).to_have_text("Budget: one round of 110 steps / 110 min.")
+    # the block states what is worked on: no description of the trial, no budget (owner, 2026-11-23)
+    expect(box.locator("[data-now-about], [data-now-budget]")).to_have_count(0)
+    assert "no html" not in box.inner_text() and "Budget" not in box.inner_text()
     items = box.locator("li[data-current-leaf]")
     expect(items).to_have_count(3)
     assert [i.get_attribute("data-current-leaf") for i in items.all()] == ["X01", "X02", "X03"]
@@ -258,8 +253,6 @@ def test_working_on_now_follows_a_newer_document(pages, site, data):
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t97]")
     expect(box).to_be_visible()
     expect(box.locator("[data-now-head]")).to_have_text("Trial 97 is being prepared · scaffold v9")
-    expect(box.locator("[data-now-about]")).to_have_text("Scaffold v9: next.")
-    expect(box.locator("[data-now-budget]")).to_be_hidden()
     expect(box.locator("li[data-current-leaf]")).to_have_count(0)
     url = "https://prove2.me/theorems/0123abcd-0000-4000-8000-000000000001"
     leaf = {"id": "p2m-0123ab", "alias": "Z01", "role": "open", "theorem": "E2e.newer_leaf", "url": url}
@@ -538,9 +531,7 @@ def test_working_on_now_shows_every_trial_not_finished(pages, site, records, wid
     b8, b9 = now.locator("[data-now-trial=t8]"), now.locator("[data-now-trial=t9]")
     expect(b8.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
     expect(b9.locator("[data-now-head]")).to_have_text("Trial 9, since 18 November 2026 · scaffold v10")
-    expect(b8.locator("[data-now-budget]")).to_contain_text("Budget: one round of 110 steps")
-    expect(b9.locator("[data-now-budget]")).to_have_text("Budget: one round of 120 steps / 120 min.")
-    expect(b9.locator("[data-now-about]")).to_have_text("Trial nine's own text.")
+    assert "Trial nine's own text." not in now.inner_text()
     expect(b8.locator("li[data-current-leaf]")).to_have_count(6)
     expect(b9.locator("li[data-current-leaf]")).to_have_count(6)
     leaf = b8.locator("li[data-current-leaf]").first.get_attribute("data-leaf-id")
@@ -587,12 +578,13 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     expect(kpis.locator("[data-kpi=reused] dd")).to_have_text("2")
     expect(kpis.locator("[data-kpi=runs] dt")).to_have_text("runs proved, of 54 in trials 1 to 8")
     expect(kpis.locator("[data-kpi=runs] dd")).to_have_text("17")
-    expect(page.locator("[data-p2m-small]")).to_contain_text("p2m-d00cfc (N07) and p2m-527634 (N12), show")
+    expect(page.locator("[data-p2m-small]")).to_contain_text("Small numbers: 6 open leaves proved so far.")
     expect(page.locator("[data-p2m-updated]")).to_have_text(re.compile(r"^Live from the gateway’s records, updated 18 November 2026, 14:58 UTC$"))
 
     subs = page.locator("[data-p2m-submissions][data-source=live] tbody tr")
     expect(subs).to_have_count(8)
-    assert [s.get_attribute("data-submission") for s in subs.all()] == ["O04", "F01", "N02", "N05", "N03", "N10", "N07", "N12"]
+    # newest trial first
+    assert [s.get_attribute("data-submission") for s in subs.all()] == ["N12", "N07", "N10", "N03", "N05", "N02", "F01", "O04"]
     n12 = page.locator("[data-p2m-submissions] tr[data-submission=N12]")
     expect(n12.locator("th")).to_contain_text("p2m-527634")
     expect(n12.get_by_role("link", name="DistLTLSynth.Char.lemma_2_3")).to_have_attribute(
@@ -636,7 +628,6 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     expect(now.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
     expect(now.locator("li[data-current-leaf]")).to_have_count(6)
     expect(now.locator("[data-now-asof]")).to_have_text("Live from the gateway’s records of the trial and its tasks, updated 14:58 UTC. It refreshes every minute.")
-    expect(now.locator("[data-now-budget]")).to_contain_text("Budget: one round of 110 steps")
     # every task: trial 8's cancelled try says why
     page.locator("[data-p2m-alltasks] > summary").click()
     row = page.locator("[data-p2m-alltasks] tr[data-task-id='t8-p2m-03d4b4-s1-h02-a2']")
@@ -689,7 +680,7 @@ def test_without_javascript_the_page_is_the_builds(pages, site, data, records):
     for n in range(1, 9):
         expect(page.locator(f"details#trial-{n}")).to_have_count(1)
     expect(page.locator("[data-p2m-submissions] tbody tr")).to_have_count(len(records["results"]["results"]))
-    expect(page.locator("[data-p2m-subs-note]")).to_contain_text("The newest accepted proof is p2m-527634 (N12), from trial 8")
+    assert [s.get_attribute("data-submission") for s in page.locator("[data-p2m-submissions] tbody tr").all()][:2] == ["N12", "N07"]
     now = page.locator("[data-p2m-now][data-source=build][data-trial=t8]")
     expect(now.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
     expect(now.locator("li[data-current-leaf]")).to_have_count(6)
@@ -773,7 +764,6 @@ def test_the_status_block_shows_the_whole_queue(pages, site, records, width, the
     expect(box.locator("[data-num=nodes] dd")).to_have_text("2")
     expect(box.locator("[data-num=slots] dd")).to_have_text("1 of 2")
     expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
-    expect(box.get_by_role("link", name="Run a node")).to_have_attribute("href", "/node/")
     expect(box.locator("[data-st=updated]")).to_contain_text("updated 14:58 UTC")
     assert "%" not in box.inner_text()
     assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
@@ -891,3 +881,36 @@ def test_every_leaf_comes_live_from_the_records(pages, site, records):
     expect(row).to_be_hidden()
     expect(page.locator("[data-p2m-list-count]")).to_have_text(re.compile(r"^Showing 5 of \d+$"))
     expect(page.locator("[data-p2m-not-scored]")).to_have_text("4")
+
+
+@pytest.mark.parametrize("width", (1280, 390))
+def test_the_submissions_show_the_newest_five_and_scroll(pages, site, records, width):
+    """The submissions table shows the five newest (newest trial first; on a phone, at most 85% of the
+    window) and scrolls inside for the rest: nothing hidden, the area takes the keyboard's focus and scrolls with it; at
+    390 px the page does not scroll sideways."""
+    page = _records_page(pages, records, site=site, width=width)
+    expect(page.locator("[data-p2m-submissions][data-source=live]")).to_be_visible()
+    box = page.locator("[data-p2m-subs-scroll]")
+    expect(box).to_have_attribute("tabindex", "0")
+    rows = box.locator("tbody tr")
+    expect(rows).to_have_count(8)
+    m = box.evaluate("b => ({ client: b.clientHeight, scroll: b.scrollHeight })")
+    assert m["scroll"] > m["client"], m
+    assert m["client"] <= page.viewport_size["height"] * 0.85 + 2, m
+    top, sixth = box.bounding_box(), rows.nth(5).bounding_box()
+    assert sixth["y"] + sixth["height"] > top["y"] + top["height"], (sixth, top)
+    # the first five rows fit, unless they would take more than 85% of the window
+    fifth = rows.nth(4).bounding_box()
+    capped = m["client"] >= page.viewport_size["height"] * 0.85 - 2
+    assert capped or fifth["y"] + fifth["height"] <= top["y"] + top["height"] + 3, (fifth, top, m)
+    box.focus()
+    page.keyboard.press("PageDown")
+    page.wait_for_function("() => document.querySelector('[data-p2m-subs-scroll]').scrollTop > 0")
+    page.keyboard.press("End")
+    # the last row in view inside the area (layout settles as the fonts arrive)
+    page.wait_for_function("""() => { const b = document.querySelector('[data-p2m-subs-scroll]');
+        const l = b.querySelector('tbody tr:last-child').getBoundingClientRect(), r = b.getBoundingClientRect();
+        return b.scrollTop + b.clientHeight >= b.scrollHeight - 2 && l.bottom <= r.bottom + 3 && l.top >= r.top - 1; }""")
+    assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
+    expect(page.locator("h2#submissions ~ p.caps").first).to_have_text(
+        "Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the model.")

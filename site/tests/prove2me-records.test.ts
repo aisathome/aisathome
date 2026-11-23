@@ -14,7 +14,7 @@ import {
 	builtDetail, builtTaskRows, docFromCampaign, fetchRecords, historyOf, liveSummary, nowDocs, parseCampaigns, parseResults, scienceView, trialDetails,
 	type Campaign, type Records,
 } from '../src/data/prove2me-records';
-import { cardNumbers, homeLine, kpisHTML, plainHTML, reuseNotesHTML, smallNumbersHTML, submissionRowHTML, submissionsNoteHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
+import { cardNumbers, homeLine, kpisHTML, newestFirst, plainHTML, smallNumbersHTML, submissionRowHTML, submissionRowsHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
 
 const p2m = raw as unknown as Prove2me;
 const h = historyOf(p2m);
@@ -272,26 +272,16 @@ test('the build’s task rows carry tokens computed, the cache re-reads beside t
 	assert.equal(rows.find((x) => x.id === 't6p-N02')!.tokens, null);
 });
 
-test('the submissions’ paragraph and the reuse notes, made from the submissions (the build’s alone, then with the records)', () => {
-	const b = scienceView(h, null);
-	assert.equal(
-		submissionsNoteHTML(b),
-		'prove2me has accepted 7 of the 7 proofs we submitted: 5 proofs of open leaves written by the model (p2m-7f145a (O04), p2m-a146ce (F01), ' +
-			'p2m-dbd69f (N03), p2m-aec6a2 (N10) and p2m-d00cfc (N07)) and 2 leaves closed by reuse (below). The newest accepted proof is p2m-d00cfc (N07), ' +
-			'from trial 7, accepted on 16 November 2026. prove2me’s theorem pages show every accepted leaf as proved. Calibration leaves are never submitted: they were proved before.',
-	);
+test('the submissions table: newest trial first, the newest submission first within a trial', () => {
 	const v = scienceView(h, records());
-	assert.match(submissionsNoteHTML(v), /^prove2me has accepted 8 of the 8 proofs we submitted: 6 proofs .* The newest accepted proof is p2m-527634 \(N12\), from trial 8, accepted on 18 November 2026\./);
-	// a pending one is counted as waiting
-	const pend = { ...v, submissions: [...v.submissions, { ...v.submissions.at(-1)!, leaf: 'p2m-000001', alias: 'N99', verdict: 'pending', verdict_at: null }] };
-	assert.match(submissionsNoteHTML(pend), /^prove2me has accepted 8 of the 9 proofs we submitted \(1 still wait for its verdict\)/);
-	const notes = reuseNotesHTML(v);
-	assert.equal((notes.match(/<p data-p2m-reuse-note=/g) ?? []).length, 2);
-	assert.match(notes, /data-p2m-reuse-note="N02">p2m-b1d59e \(N02\) was closed by reuse\. The leaf is the same statement as a theorem that WillR had already proved/);
-	assert.match(notes, /found the match while we prepared trial 6/);
-	assert.match(notes, /data-p2m-reuse-note="N05">.*one part of a theorem that mikedeng1 .* during trial 6/);
-	const x = { ...b, submissions: b.submissions.map((s) => ({ ...s, alias: '<i>x</i>' })) };
-	assert.ok(!submissionsNoteHTML(x).includes('<i>') && !reuseNotesHTML(x).includes('<i>'));
+	assert.deepEqual(newestFirst(v.submissions).map((s) => s.alias), ['N12', 'N07', 'N10', 'N03', 'N05', 'N02', 'F01', 'O04']);
+	const rows = submissionRowsHTML(v);
+	assert.equal((rows.match(/<tr /g) ?? []).length, 8);
+	assert.ok(rows.indexOf('data-submission="N12"') < rows.indexOf('data-submission="O04"'));
+	// the trial leads, not the day: a later trial's proof submitted before an earlier trial's comes first
+	const s0 = v.submissions[0];
+	const mixed = [{ ...s0, alias: 'A', trial: 9, submitted_at: '2026-11-20T08:00:00Z' }, { ...s0, alias: 'B', trial: 10, submitted_at: '2026-11-19T08:00:00Z' }];
+	assert.deepEqual(newestFirst(mixed).map((s) => s.alias), ['B', 'A']);
 });
 
 test('a curated reuse: N18 (trial 9) imports a theorem another prover had proved, so it is a reuse, not a proof by the model', async () => {
@@ -313,8 +303,7 @@ test('a curated reuse: N18 (trial 9) imports a theorem another prover had proved
 	assert.equal(s18.kind, 'reuse');
 	assert.equal(s18.reuses!.url, 'https://prove2.me/theorems/896d696c-1e18-4de1-b5bd-ab3d52a97871');
 	assert.match(submissionRowHTML(s18), /imports <a href="https:\/\/prove2\.me\/theorems\/896d696c/);
-	assert.match(reuseNotesHTML(v), /data-p2m-reuse-note="N18">p2m-faf1e3 \(N18\) was closed by reuse\. The model’s proof imports a theorem that Eyal1990 had already proved on prove2me/);
-	assert.match(submissionsNoteHTML(v), /^prove2me has accepted 11 of the 11 proofs we submitted: 8 proofs of open leaves written by the model .* and 3 leaves closed by reuse/);
+	assert.equal(s18.reuses!.author, 'Eyal1990');
 	// trial 9: its run of N18 is no run (as trial 6's N05), 1 of 6 open runs proved
 	const t9 = v.trials.find((t) => t.label === '9')!;
 	assert.deepEqual([t9.open.proved, t9.open.runs], [1, 5]);
