@@ -583,10 +583,38 @@ for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
     fail "on_exit ($how) before linking: the old token and node.json are not back"
 done
 unset -f installed_value set_aside_before_link stop_node restore_unlinked check_kept_token on_exit aside_dir kept install_until systemctl
+
+# canon_node_config: node.json once, as the agent reads it: keys in lower case, no token, and two keys that
+# are equal in any case refused (a first-wins and a last-wins reader would see different gateways; Codex
+# review 2026-11-22). The keep-token check reads the canonical file, and that file is what is installed.
+eval "$(sed -n '/^canon_node_config() {/,/^}/p;/^installed_value() {/,/^}/p' "$installer")"
+die() { echo "$1" >&2; exit "${2:-1}"; }
+canon() { out="$( (canon_node_config "$1" "$tmp/canon.json") 2>&1)"; code=$?; }
+printf '{"gateway_url": "wss://a.example/v1/node/connect", "Gateway_URL": "wss://b.example/v1/node/connect", "gateway_url": "wss://c.example/v1/node/connect"}\n' > "$tmp/dup.json"
+canon "$tmp/dup.json"; usage_err "case variants of gateway_url"; has "case variants of gateway_url" "appears more than once"
+printf '{"gateway_url": "wss://a.example/v1/node/connect", "gateway_url": "wss://b.example/v1/node/connect"}\n' > "$tmp/dup2.json"
+canon "$tmp/dup2.json"; usage_err "a repeated gateway_url"
+printf '{"models": [{"name": "m", "Name": "n"}]}\n' > "$tmp/dup3.json"
+canon "$tmp/dup3.json"; usage_err "a repeated key in a nested object"
+printf '[1]\n' > "$tmp/notobj.json"
+canon "$tmp/notobj.json"; usage_err "not an object"
+printf '{"Gateway_URL": "wss://b.example/v1/node/connect", "TOKEN": "nt-secret", "Models": [{"Name": "m"}]}\n' > "$tmp/case.json"
+canon "$tmp/case.json"; ok "one spelling in another case"
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c == {"gateway_url": "wss://b.example/v1/node/connect", "models": [{"name": "m"}]}, c' "$tmp/canon.json" ||
+  fail "canonical node.json: $(cat "$tmp/canon.json")"
+[[ "$(installed_value "$tmp/canon.json" gateway_url)" = wss://b.example/v1/node/connect ]] || fail "the canonical gateway as read"
+grep -q 'nt-secret' "$tmp/canon.json" && fail "the token stayed in the canonical node.json"
+# In the installer: canonical before the keep-token check, and nothing rewrites it between the check and
+# the install (the file checked is the file installed).
+n_canon="$(grep -n '^workdir; canon_node_config "\$node_config" "\$work/node.canon.json"; node_config="\$work/node.canon.json"$' "$installer" | cut -d: -f1)"
+n_kept="$(grep -n '^check_kept_token "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
+[[ -n "$n_canon" && -n "$n_kept" && $n_canon -lt $n_kept ]] || fail "node.json is not canonical before the keep-token check"
+grep -q 'json.dump(c,sys.stdout' "$installer" && fail "node.json is rewritten after the checks"
+unset -f canon canon_node_config installed_value die
 # In the installer: the token goes aside (whether linking or given a token) before the new node.json is
 # installed, the EXIT trap is on_exit, and token_aside is cleared just before the link step (and only there).
 n_aside="$(grep -n '^set_aside_before_link "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
-n_json="$(grep -n '^install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json$' "$installer" | cut -d: -f1)"
+n_json="$(grep -n '^install -o root -g aisathome -m 0640 "\$node_config" /etc/aisathome-node/node.json$' "$installer" | cut -d: -f1)"
 n_clear="$(grep -n '^token_aside=0$' "$installer" | cut -d: -f1)"
 n_link="$(grep -n '^if \[\[ \$link = 1 \]\] && ! link_node; then$' "$installer" | cut -d: -f1)"
 n_speed="$(grep -n '^speed_check$' "$installer" | cut -d: -f1)"
