@@ -45,6 +45,7 @@ Add a provider to `~/.config/opencode/opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
+  "permission": { "bash": "ask", "edit": "ask" },
   "provider": {
     "aisathome": {
       "npm": "@ai-sdk/openai-compatible",
@@ -73,7 +74,8 @@ curl -s https://api.aisathome.org/v1/models -H "Authorization: Bearer $AISATHOME
 ```
 
 Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. Tool calls
-(reading and editing files, running commands) work.
+(reading and editing files, running commands) work. `"permission"` makes opencode ask before
+each command and file edit: keep it (see below).
 
 ## Good to know
 
@@ -88,11 +90,14 @@ Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. To
   go to volunteers' nodes when the key allows it: **Run requests through nodes operated by
   other people** is ticked by default when you create a key. If you untick it, agent requests
   go only to your own node.
-- **Run agents carefully, with any provider.** A model can propose a harmful command, and a
-  malicious node could alter one; volunteers' answers pass simple checks but are not
-  verified yet. In opencode, keep approval of commands on, and **run it isolated**: in a
-  dedicated Docker container or virtual machine with only the project mounted, no SSH keys,
-  cloud credentials or browser profile, and nothing you could not afford to lose.
+- **Answers are not checked for safety.** Nothing stops a harmful command in an answer from a
+  volunteer's node: the gateway logs commands that look dangerous, but passes them on, because
+  it cannot tell an honest model reading a credential file from an attack. A model can propose a
+  harmful command with any provider, and a malicious node could write one. So **approve every
+  command yourself** (opencode's `"permission"` above; never auto-approve), and preferably **run
+  the agent isolated**: in a dedicated Docker container or virtual machine with only the project
+  mounted, no SSH keys, cloud credentials or browser profile, and nothing you could not afford to
+  lose.
 - **Context and answer length.** A request must fit the context of a node that serves it:
   the prompt (everything sent, including tool definitions and earlier turns) plus the room
   for the answer. `/v1/models` reports `context_length`, the context every node serving the

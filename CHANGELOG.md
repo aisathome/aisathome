@@ -93,6 +93,13 @@ and **(site)** are live on aisathome.org once deployed.
   `register` and the setup page take one lock (`node.lock` beside `node.json`) while they change these
   files. The gateway's `POST /v1/node/token-known` is gone (nothing asks it any more). (node, gateway)
 
+- **The guard only logs on account nodes (gateway).** On a node with an account, the command,
+  credential, install and address rules no longer stop the answer or hold the node: the answer
+  goes out, and the event is logged with its evidence as flagged. The guard cannot tell an honest
+  model reading a credential file from an attack, and stopping such answers could hold every node
+  of the network on one agent's retries. Run agents with command approval, preferably isolated
+  (site: API and opencode). Nodes without an account, config tokens' nodes and pilots still stop
+  and hold.
 
 - **No more trusted nodes: every node is untrusted.** Personal data in a request (an email address,
   a card number, an IBAN, a Norwegian national identity number) goes only to the requester's own

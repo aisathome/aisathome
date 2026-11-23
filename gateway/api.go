@@ -444,11 +444,12 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 		}
 		rt.exclude[n] = true
 		// Answers from every node but the requester's own are checked (guard.go); a pilot's even for
-		// its own account.
+		// its own account. An account's node is only flagged (guard.flagOnly).
 		var gd *guard
 		if !rt.own(n) {
 			gd = newGuard(job.reqText, g.knownSrc)
 			gd.installers = g.installs
+			gd.flagOnly = flagOnlyNode(n)
 		}
 		started, err := g.run(w, r, req, n, model, gd)
 		if errors.Is(err, errPreempted) && !started {

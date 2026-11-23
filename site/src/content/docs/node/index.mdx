@@ -72,9 +72,10 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
 
 - A new node serves requests from day one. Requests with tools (agents such as opencode)
   reach it only from users who allow volunteer nodes for agents.
-- Answers from volunteers' nodes pass simple safety checks. If an answer looks like it
-  injects a dangerous command, it is stopped and the node is **held** until we have looked
-  at it; the account page shows that.
+- Answers are not stopped for looking dangerous: if one looks like it injects a dangerous
+  command, the gateway logs it with a short excerpt for us to look at. The people who run
+  agents approve each command themselves. A node can still be **held** (for example when it
+  fails the model check); the account page shows that.
 - No single volunteer gets more than about a third of the conversations while others are free.
 - Your node earns [credit](/node/credit/), except for requests you send yourself.
 
