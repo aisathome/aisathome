@@ -6,11 +6,12 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../data/prove2me';
 import { historyOf, scienceView } from '../../data/prove2me-records';
+import { buildRecords } from '../../data/prove2me-build';
 import { cardNumbers } from '../../data/prove2me-view';
 import { science as tc } from '../../data/science';
 
 const p2mHistory = historyOf(p2m);
-const p2mView = scienceView(p2mHistory, null);
+const p2mView = scienceView(p2mHistory, (await buildRecords()).records); // the records as the build fetched them
 const dayLabel = (iso: string) => {
 	const d = new Date(iso);
 	return `${d.getUTCDate()} ${['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][d.getUTCMonth()]} ${d.getUTCFullYear()}`;
@@ -24,7 +25,7 @@ const cards = [
 		state: 'active',
 		about: 'Research theorems stated in Lean 4 and split into leaves. The Lean kernel checks every proof.',
 		numbers: cardNumbers(p2mView),
-		asOf: p2m.generated_at,
+		asOf: p2mView.updated,
 	},
 	{
 		id: 'tauceti',

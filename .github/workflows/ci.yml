@@ -153,9 +153,11 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install -q -r e2e/browser/requirements.txt
           "$RUNNER_TEMP/venv/bin/python" -m playwright install --only-shell chromium
       - name: build the website (site/dist, for the site's browser tests)
-        # the same Node image as the site job
+        # the same Node image as the site job; from the tests' fixed records, not the live gateway's
+        # (site/src/data/prove2me-build.ts), so the page without JavaScript is what the tests expect
         run: |
           docker run --rm -e ASTRO_TELEMETRY_DISABLED=1 -e HOME=/tmp -u "$(id -u):$(id -g)" \
+            -e P2M_RECORDS=tests/fixtures/prove2me-records-2026-11-18.json \
             -v "$PWD/site":/w -w /w node:22-bookworm-slim sh -c 'npm ci --no-audit --no-fund && npm run build'
       - name: browser tests
         working-directory: e2e/browser

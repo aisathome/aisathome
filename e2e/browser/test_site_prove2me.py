@@ -1,13 +1,18 @@
 """The prove2me science page (/science/prove2me/), the science overview (/science/) and the home page's science line,
 in a browser, against fixed documents: no staging and no gateway needed.
 
-The site is the build in site/dist (CI builds it first; locally `cd site && npm ci && npm run build`), served here by a
-small static server. Every request the pages make to the gateway (/v1/...) or for the project's data document
+The site is the build in site/dist, built from the same fixed records (the build fetches the gateway's records itself
+otherwise: site/src/data/prove2me-build.ts), so the page without JavaScript is theirs:
+
+  cd site && npm ci && P2M_RECORDS=tests/fixtures/prove2me-records-2026-11-18.json npm run build
+
+CI builds it so first. It is served here by a small static server. Every request the pages make to the gateway (/v1/...) or for the project's data document
 (/data/prove2me/current.json) is answered by the test: a fixed document, an HTTP error, or the gateway's public records
 as they were on 2026-11-18 (site/tests/fixtures). Checked here: "Working on now" live from the data document or the
 trial campaigns not finished (a block each) and the tasks; each leaf's outlines and holes in words; the headline numbers, the submissions,
-the trials table and each trial's list from trial 6 on live from the records (decision 0021, step D6), with tokens
-computed leading; the home page's line and the /science/ card; and the build's copy when a source fails.
+the trials table, each trial's list from trial 6 on and every leaf live from the records (decision 0021, step D6), with
+tokens computed leading; a replay benchmark in the status block and in "Working on now"; the home page's line and the
+/science/ card; and the build's copy (the records at the build) when a source fails.
 
   cd e2e/browser && uv run --with-requirements requirements.txt pytest -q test_site_prove2me.py
 
@@ -653,34 +658,43 @@ def test_a_campaigns_text_is_plain_text(pages, site, records):
 
 @pytest.mark.parametrize("broken", ["campaigns", "results", "campaigns not a list"])
 def test_the_numbers_stay_the_builds_when_the_records_fail(pages, site, data, records, broken):
-    """When the campaigns or the results fail (the tasks answer), the headline numbers, the submissions and the trials
-    table stay the build's; the task table still takes the tasks."""
+    """When the campaigns or the results fail (the tasks answer), the headline numbers, the submissions, the trials
+    table and every leaf stay the build's (the records at the build: 8 of 8 accepted, 17 runs proved); the task table
+    still takes the tasks."""
     kw = {"campaigns": 500} if broken == "campaigns" else {"results": 500} if broken == "results" else {"campaigns": {"campaigns": {}}}
     page = _records_page(pages, records, site=site, **kw)
     page.wait_for_timeout(1500)
-    t = data["totals"]
     kpis = page.locator("[data-p2m-kpis]")
     expect(kpis).to_have_attribute("data-source", "build")
-    expect(kpis.locator("[data-kpi=accepted] dd")).to_have_text(str(t["accepted"]))
-    expect(kpis.locator("[data-kpi=runs] dd")).to_have_text(str(t["proved"]))
+    expect(kpis.locator("[data-kpi=accepted] dd")).to_have_text("8")
+    expect(kpis.locator("[data-kpi=runs] dd")).to_have_text("17")
     expect(page.locator("[data-p2m-trials]")).to_have_attribute("data-source", "build")
-    expect(page.locator("[data-p2m-submissions] tbody tr")).to_have_count(len(data["submissions"]))
-    expect(page.locator("[data-p2m-trials-live]")).to_be_hidden()
+    expect(page.locator("[data-p2m-scorecard]")).to_have_attribute("data-source", "build")
+    expect(page.locator("[data-p2m-submissions] tbody tr")).to_have_count(len(records["results"]["results"]))
+    expect(page.locator("[data-p2m-trials-live]")).to_contain_text("at the site’s last build, 18 November 2026, 14:58 UTC")
     page.locator("[data-p2m-alltasks] > summary").click()
     expect(page.locator("[data-p2m-alltasks] tr[data-task-id='t8-p2m-03d4b4-s1-h02-a2']")).to_have_attribute("data-source", "live")
 
 
-def test_without_javascript_the_page_is_the_builds(pages, site, data):
-    """No JavaScript: the build's numbers, submissions and trials, with tokens computed in the tables."""
+def test_without_javascript_the_page_is_the_builds(pages, site, data, records):
+    """No JavaScript: the numbers, submissions, trials, leaves and "Working on now" as the records were at the build
+    (trials 1 to 5 the frozen data's), with tokens computed in the tables; nothing to push by hand."""
     page = pages(js=False)
     page.goto(site + PAGE)
-    t = data["totals"]
-    expect(page.locator("[data-p2m-kpis] [data-kpi=accepted] dd")).to_have_text(str(t["accepted"]))
-    expect(page.locator("[data-p2m-kpis] [data-kpi=open] dt")).to_have_text(f"open leaves proved, of {t['open_leaves']} tried")
-    expect(page.locator("[data-p2m-trials] tbody tr")).to_have_count(len(data["trials"]) + len([p for p in data.get("probes", []) if p["state"] == "finished"]))
+    expect(page.locator("[data-p2m-kpis] [data-kpi=accepted] dd")).to_have_text("8")
+    expect(page.locator("[data-p2m-kpis] [data-kpi=open] dt")).to_have_text("open leaves proved, of 26 tried")
+    rows = page.locator("[data-p2m-trials] tbody tr")
+    assert [r.get_attribute("data-trial") for r in rows.all()] == ["1", "2", "3", "4", "5", "6p", "6", "7p", "7", "8"]
     expect(page.locator("[data-p2m-trials] thead")).to_contain_text("Tokens computed")
-    for tr in data["trials"]:
-        expect(page.locator(f"details#trial-{tr['trial']}")).to_have_count(1)
+    for n in range(1, 9):
+        expect(page.locator(f"details#trial-{n}")).to_have_count(1)
+    expect(page.locator("[data-p2m-submissions] tbody tr")).to_have_count(len(records["results"]["results"]))
+    expect(page.locator("[data-p2m-subs-note]")).to_contain_text("The newest accepted proof is p2m-527634 (N12), from trial 8")
+    now = page.locator("[data-p2m-now][data-source=build][data-trial=t8]")
+    expect(now.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
+    expect(now.locator("li[data-current-leaf]")).to_have_count(6)
+    expect(page.locator("[data-p2m-leaf-table] tr[data-leaf-id=p2m-527634]")).to_have_attribute("data-outcome", "accepted")
+    expect(page.locator("[data-p2m-next]")).to_have_text("In the queue now: trial 8 on scaffold v9 (2 tasks running, 9 waiting).")
 
 
 def test_home_and_science_overview_read_the_records(pages, site, records):
@@ -793,19 +807,106 @@ def test_the_status_block_with_one_trial_and_with_none(pages, site, records):
 
 
 def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, site, data):
-    """The gateway down (every /v1 request fails), and without JavaScript: the build's trial and proofs, no queue, no
-    trial lines, no nodes, and a line that says so."""
+    """The gateway down (every /v1 request fails), and without JavaScript: the build's copy, as the records were at the
+    build: the trial, the queue and its bar, the trial's line and the proofs; no nodes; and a line that says when."""
     for js in (True, False):
         page = _page(pages, js=js)
         page.goto(site + PAGE)
         page.wait_for_timeout(1500 if js else 0)
         box = page.locator("[data-p2m-status]")
         expect(box).to_have_attribute("data-source", "build")
-        expect(box.locator("[data-st=head]")).to_have_text(re.compile(r"^(Trial \d+ is (running|being prepared)|No trial is running)"))
-        expect(box.locator("[data-st-queue]")).to_be_hidden()
-        expect(box.locator("[data-st=queue]")).to_be_hidden()
-        expect(box.locator("[data-st-trials]")).to_be_hidden()
+        expect(box.locator("[data-st=head]")).to_have_text("Trial 8 is running, scaffold v9, since 16 Nov.")
+        expect(box.locator("[data-st=queue]")).to_have_text("11 tasks in the queue: 2 running, 9 waiting.")
+        expect(box.locator("[data-st-bar] > .grp[data-trial=t8]")).to_have_count(1)
+        expect(box.locator("[data-st-trials] li")).to_have_count(1)
         expect(box.locator("[data-num=nodes]")).to_be_hidden()
-        accepted = sum(1 for s in data["submissions"] if s["verdict"] == "accepted")
-        expect(box.locator("[data-num=accepted] dd")).to_have_text(f"{accepted} of {len(data['submissions'])}")
-        expect(box.locator("[data-st=updated]")).to_contain_text("As of the site’s last build")
+        expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
+        expect(box.locator("[data-st=updated]")).to_have_text(
+            "As of the gateway’s records at the site’s last build, 18 Nov, 14:58 UTC. The page refreshes it every minute when it can reach the gateway.")
+
+
+# ---- a replay benchmark (owner, 2026-11-23: bench-v13 ran ahead of trial 10 and the page showed "0 running")
+
+def _with_bench(records):
+    """The records with a replay benchmark as the gateway served bench-v13 on 2026-11-23 (label trial=bench-v13, scaffold
+    v13, no campaign): on two of trial 8's leaves, 1 task done, 2 running and 1 waiting, started after trial 8's waiting
+    tasks were made; trial 8's 2 running tasks wait again, so it waits behind the benchmark."""
+    rec = json.loads(json.dumps(records))
+    for t in rec["tasks"]["tasks"]:
+        if t["labels"].get("trial") == "t8" and t["state"] == "leased":
+            t.update(state="queued", started_at=None)
+    leaves = {"p2m-754bbc": "N11", "p2m-580c57": "N14"}
+    for i, (leaf, state) in enumerate([("p2m-754bbc", "done"), ("p2m-754bbc", "leased"), ("p2m-580c57", "leased"), ("p2m-580c57", "queued")], 1):
+        rec["tasks"]["tasks"].append(_ptask(f"bench-v13-{leaf}-s1-h0{i}", "bench-v13", leaves[leaf], leaf, "hole", state, hole=i,
+                                            outcome="proved" if state == "done" else None, created_at=f"2026-11-18T14:0{i}:00Z",
+                                            started_at=None if state == "queued" else "2026-11-18T14:30:00Z")
+                                     | {"labels": {"trial": "bench-v13", "leaf": leaf, "alias": leaves[leaf], "group": "open", "scaffold": "v13",
+                                                   "outline": "1", "hole": str(i)}})
+    return rec
+
+
+def test_a_benchmark_ahead_of_the_trial_in_the_status_block_and_working_on_now(pages, site, records):
+    """Every open task counts in the queue, the benchmark as its own part named under the bar; a line says what the
+    benchmark is and that it runs ahead of the trial, and the trial's line that it waits behind it. "Working on now" has
+    the benchmark's block first (a replay on scaffold v13, not a trial; its leaves and tasks) and the trial's after it,
+    which says it waits; the leaf anchors stay on the trial's rows. "What comes next" says the same, and the benchmark
+    counts in no trial, leaf or submission."""
+    page = _status_page(pages, site, _with_bench(records))
+    box = page.locator("[data-p2m-status][data-source=live][data-trials=t8][data-benches=bench-v13]")
+    expect(box).to_be_visible()
+    expect(box.locator("[data-st=queue]")).to_have_text(
+        "14 tasks in the queue: 2 running, 12 waiting (bench-v13: 2 running, 1 waiting; Trial 8: 0 running, 11 waiting).")
+    q = box.locator("[data-st-queue]")
+    expect(q.locator("[data-st-bar] > .grp")).to_have_count(2)
+    expect(q.locator("[data-st-bar] > .grp-bench[data-bench=bench-v13] [data-part]")).to_have_count(2)
+    assert [" ".join(x.text_content().split()) for x in q.locator("[data-st-qlabels] > span").all()] == ["bench-v13 · 3", "Trial 8 · 11"]
+    lines = box.locator("[data-st-trials] li")
+    expect(lines).to_have_count(2)
+    expect(lines.nth(0)).to_have_attribute("data-bench", "bench-v13")
+    expect(lines.nth(0)).to_have_text("Benchmark bench-v13 is running, scaffold v13: it replays earlier tasks on 2 leaves to compare scaffold "
+                                      "versions, ahead of trial 8 in the queue; 2 running, 1 waiting.")
+    expect(lines.nth(1)).to_have_text("Trial 8, 46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 11 waiting; 2 of 6 leaves proved. "
+                                      "Its tasks wait behind benchmark bench-v13.")
+    expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
+
+    now = page.locator("[data-p2m-now][data-source=live][data-trial='bench-v13 t8']")
+    expect(now).to_be_visible()
+    blocks = now.locator("[data-now-trial]")
+    assert [b.get_attribute("data-now-trial") for b in blocks.all()] == ["bench-v13", "t8"]
+    bench = now.locator("[data-now-trial=bench-v13][data-bench]")
+    expect(bench.locator("[data-now-head]")).to_have_text("Benchmark bench-v13, since 18 November 2026 · a replay on scaffold v13, not a trial")
+    expect(bench.locator("[data-now-about]")).to_contain_text("It is not a trial: it submits nothing")
+    expect(bench.locator("[data-now-about]")).to_contain_text("Its tasks run before trial 8’s in the queue.")
+    expect(bench.locator("li[data-current-leaf]")).to_have_count(2)
+    expect(bench.locator("li[data-current-leaf=N11]")).to_have_attribute("data-state", "running")
+    expect(bench.locator("li[id]")).to_have_count(0)
+    t8 = now.locator("[data-now-trial=t8]")
+    expect(t8.locator("[data-now-behind]")).to_have_text("Waiting: its tasks wait behind benchmark bench-v13, which the queue runs first.")
+    expect(t8.locator("li#leaf-p2m-754bbc")).to_have_count(1)
+    expect(page.locator("[data-p2m-next]")).to_have_text(
+        "In the queue now: benchmark bench-v13 on scaffold v13 (2 tasks running, 1 waiting), ahead of trial 8 on scaffold v9 (11 tasks waiting).")
+    expect(page.locator("[data-p2m-kpis][data-source=live] [data-kpi=runs] dd")).to_have_text("17")
+    expect(page.locator("[data-p2m-trials] tbody tr[data-trial^=bench]")).to_have_count(0)
+    page.locator("[data-p2m-alltasks] > summary").click()
+    expect(page.locator("[data-p2m-alltasks] tr[data-task-id^=bench]")).to_have_count(0)
+
+
+def test_every_leaf_comes_live_from_the_records(pages, site, records):
+    """"Every leaf": the scorecard, the filters and the list from the records (trial 8's leaves among them, N12 accepted),
+    trials 1 to 5 the frozen data's; the reader's filter stays across the refresh; the counts in "How to read this" too."""
+    rec = json.loads(json.dumps(records))
+    for r in rec["results"]["results"]:
+        if r["item"] == "p2m-527634":
+            r["state"] = "pending"      # differs from the build's copy, so the live one shows
+    page = _records_page(pages, rec, site=site)
+    card = page.locator("[data-p2m-scorecard][data-source=live]")
+    expect(card).to_be_visible()
+    expect(card.locator("tfoot [data-cell=accepted]")).to_have_text("5")
+    page.locator("[data-p2m-list] > summary").click()
+    row = page.locator("[data-p2m-leaf-table] tr[data-leaf-id=p2m-527634]")
+    expect(row).to_have_attribute("data-outcome", "proved")
+    expect(row.locator("[data-cell=trials]")).to_have_text("8")
+    page.locator("[data-p2m-filters] [data-filter=outcome][data-value=accepted]").click()
+    expect(row).to_be_hidden()
+    expect(page.locator("[data-p2m-list-count]")).to_have_text(re.compile(r"^Showing 5 of \d+$"))
+    expect(page.locator("[data-p2m-not-scored]")).to_have_text("4")
