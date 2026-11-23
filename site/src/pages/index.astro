@@ -8,6 +8,7 @@ import { posts, postURL, shortDate, isoDate } from '../data/devlog';
 import { science } from '../data/science';
 import { p2m } from '../data/prove2me';
 import { historyOf, scienceView } from '../data/prove2me-records';
+import { buildRecords } from '../data/prove2me-build';
 import { homeLine } from '../data/prove2me-view';
 import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
@@ -15,9 +16,10 @@ import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 // filter: drafts only in a build with DEVLOG_DRAFTS=1.
 const latest = (await posts()).slice(0, 3);
 
-// The prove2me line: the build's numbers; the browser redoes them with the gateway's records (see the script).
+// The prove2me line: the records as the build fetched them (prove2me-build.ts); the browser redoes them with the
+// gateway's records (see the script).
 const p2mHistory = historyOf(p2m);
-const p2mView = scienceView(p2mHistory, null);
+const p2mView = scienceView(p2mHistory, (await buildRecords()).records);
 
 // Home GPUs around the gateway: [x, y, scale]. Coordinates in the 560 x 460 viewBox.
 const hub = { x: 280, y: 228 };
