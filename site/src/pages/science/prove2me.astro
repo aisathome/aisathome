@@ -747,14 +747,15 @@ const leafCols = [
 		set('head', tx.head);
 		set('queue', tx.queue);
 		set('updated', tx.updated);
-		// the whole queue: a part per trial (its running tasks, then its waiting ones), its name under it
+		// the whole queue: a part per benchmark and per trial (its running tasks, then its waiting ones), its name under it
 		const qbox = statusBox.querySelector<HTMLElement>('[data-st-queue]')!;
 		const q = (v.queue ?? []).filter((x) => x.running + x.queued > 0);
 		qbox.hidden = !q.length;
+		let nth = 0; // the trials' parts alternate their colour; a benchmark's has its own
 		statusBox.querySelector('[data-st-bar]')!.replaceChildren(
-			...q.map((x, i) => {
-				const g = el('span', `grp grp-${i % 2}`);
-				g.dataset.trial = x.label;
+			...q.map((x) => {
+				const g = el('span', `grp ${x.bench ? 'grp-bench' : `grp-${nth++ % 2}`}`);
+				g.dataset[x.bench ? 'bench' : 'trial'] = x.label;
 				g.style.flexGrow = String(x.running + x.queued);
 				for (const [k, n] of [['running', x.running], ['queued', x.queued]] as const) {
 					if (!n) continue;
@@ -769,7 +770,7 @@ const leafCols = [
 		statusBox.querySelector('[data-st-qlabels]')!.replaceChildren(
 			...q.map((x) => {
 				const l = el('span', '', `${shortName(x.label)} · ${x.running + x.queued}`);
-				l.dataset.trial = x.label;
+				l.dataset[x.bench ? 'bench' : 'trial'] = x.label;
 				l.style.flexGrow = String(x.running + x.queued);
 				return l;
 			}),
@@ -778,7 +779,7 @@ const leafCols = [
 		lines.replaceChildren(
 			...tx.lines.map((t, i) => {
 				const li = el('li', '', t);
-				li.dataset.trial = v.trials[i].label;
+				li.dataset[i < v.benches.length ? 'bench' : 'trial'] = tx.keys[i];
 				return li;
 			}),
 		);
@@ -791,6 +792,7 @@ const leafCols = [
 		}
 		statusBox.dataset.source = v.source === 'live' ? 'live' : stNodes ? 'nodes' : 'build';
 		statusBox.dataset.trials = v.trials.map((t) => t.label).join(' ');
+		statusBox.dataset.benches = v.benches.map((b) => b.label).join(' ');
 	};
 	const showRecords = (live: Records) => {
 		if (!recordsKnown) return;
@@ -1111,8 +1113,9 @@ const leafCols = [
 	.p2m-status p { margin: 0.4rem 0 0; }
 	.p2m-status [hidden] { display: none !important; }
 	.p2m-st-head { font-weight: 600; color: var(--sl-color-white); }
-	/* The whole queue: one part per trial (the parts alternate in tone and are named under the bar), each with its
-	   running tasks hatched and its waiting ones outlined; the sentence above says it all in words. */
+	/* The whole queue: one part per benchmark (its own tone) and per trial (the trials' parts alternate in tone), each
+	   named under the bar, with its running tasks hatched and its waiting ones outlined; the sentence above says it all
+	   in words. */
 	.p2m-st-queue { font-size: 0.9rem; color: var(--sl-color-gray-2); }
 	.p2m-queue { margin: 0.5rem 0 0; }
 	.p2m-bar, .p2m-qlabels { display: flex; gap: 4px; }
@@ -1120,6 +1123,7 @@ const leafCols = [
 	.p2m-bar .grp, .p2m-qlabels > span { flex: 1 1 0; min-width: 4.5rem; }
 	.p2m-bar .grp { display: flex; gap: 2px; --q: var(--sl-color-accent); }
 	.p2m-bar .grp-1 { --q: var(--sl-color-gray-2); }
+	.p2m-bar .grp-bench { --q: var(--sl-color-gray-3); }
 	.p2m-bar .seg { flex: 1 1 0; min-width: 6px; border-radius: 0.2rem; }
 	.p2m-status .q-running { background: repeating-linear-gradient(135deg, var(--q, var(--sl-color-gray-2)) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
 	.p2m-status .q-queued { background: transparent; box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
