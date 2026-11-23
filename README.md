@@ -1,5 +1,19 @@
 # AIs@home
 
+Open-weight AI on volunteers' GPUs: chat, an API and real science, without depending on a big company's data
+centre.
+
+- **Chat and API** with an open-weight model (Qwen3.8 27B), served by volunteers' GPUs; the API is OpenAI-compatible.
+- **Science:** the same model, as an agent, proves lemmas from real maths papers in Lean on consumer GPUs; prove2me
+  checks and accepts the proofs ([live](https://aisathome.org/science/prove2me/)).
+- **Run a node** on an NVIDIA GPU with 16 GB or more, on Linux or Windows. It earns credit, not money.
+- **Open source** (Apache-2.0): the gateway, the node and the agent harness. Anyone can run a gateway.
+- **Non-commercial:** no project token, nobody is paid.
+
+![How a proof runs on the network: volunteer GPU nodes, the gateway, Lean runners and prove2me](site/public/images/devlog/5-qwen-proofs-pipeline.svg)
+
+*How a prove2me proof runs on the network ([devlog 5](https://aisathome.org/devlog/5-qwen-proofs-on-consumer-hardware/)).*
+
 **Experimental, in pilot.** Open-weight AI models served by volunteers' GPUs instead of a big
 company's data centre. Volunteers run a node on their own GPU; a gateway (the project
 server) takes requests from the chat and the OpenAI-compatible API and routes them to
