@@ -244,9 +244,26 @@ func (s *AccountStore) expireAnon(now time.Time, live func(id string) bool) ([]s
 			keep = append(keep, a)
 		}
 		f.Accounts = keep
+		f.NodeHolds = dropHolds(f.NodeHolds, gone)
 		return nil
 	})
 	return gone, err
+}
+
+// dropHolds removes the holds of nodes that are gone (deleted nodes without an account): nothing of them
+// is kept, and no warning is left for a node that no longer exists.
+func dropHolds(holds []NodeHold, gone []string) []NodeHold {
+	g := map[string]bool{}
+	for _, id := range gone {
+		g[id] = true
+	}
+	keep := holds[:0]
+	for _, h := range holds {
+		if !g[h.Node] {
+			keep = append(keep, h)
+		}
+	}
+	return keep
 }
 
 // ---------------------------------------------------------------- the gateway's side
