@@ -14,7 +14,7 @@ import {
 	builtDetail, builtTaskRows, docFromCampaign, fetchRecords, historyOf, liveSummary, nowDocs, parseCampaigns, parseResults, scienceView, trialDetails,
 	type Campaign, type Records,
 } from '../src/data/prove2me-records';
-import { cardNumbers, homeLine, kpisHTML, plainHTML, smallNumbersHTML, submissionRowHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
+import { cardNumbers, homeLine, kpisHTML, plainHTML, reuseNotesHTML, smallNumbersHTML, submissionRowHTML, submissionsNoteHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
 
 const p2m = raw as unknown as Prove2me;
 const h = historyOf(p2m);
@@ -271,4 +271,26 @@ test('the build’s task rows carry tokens computed, the cache re-reads beside t
 	assert.ok(t5.tokens! < t5.tokens_with_cache!);
 	// a probe task's own counts are not in the build: unknown, not the cache-inclusive figure
 	assert.equal(rows.find((x) => x.id === 't6p-N02')!.tokens, null);
+});
+
+test('the submissions’ paragraph and the reuse notes, made from the submissions (the build’s alone, then with the records)', () => {
+	const b = scienceView(h, null);
+	assert.equal(
+		submissionsNoteHTML(b),
+		'prove2me has accepted 7 of the 7 proofs we submitted: 5 proofs of open leaves written by the model (p2m-7f145a (O04), p2m-a146ce (F01), ' +
+			'p2m-dbd69f (N03), p2m-aec6a2 (N10) and p2m-d00cfc (N07)) and 2 leaves closed by reuse (below). The newest accepted proof is p2m-d00cfc (N07), ' +
+			'from trial 7, accepted on 16 November 2026. prove2me’s theorem pages show every accepted leaf as proved. Calibration leaves are never submitted: they were proved before.',
+	);
+	const v = scienceView(h, records());
+	assert.match(submissionsNoteHTML(v), /^prove2me has accepted 8 of the 8 proofs we submitted: 6 proofs .* The newest accepted proof is p2m-527634 \(N12\), from trial 8, accepted on 18 November 2026\./);
+	// a pending one is counted as waiting
+	const pend = { ...v, submissions: [...v.submissions, { ...v.submissions.at(-1)!, leaf: 'p2m-000001', alias: 'N99', verdict: 'pending', verdict_at: null }] };
+	assert.match(submissionsNoteHTML(pend), /^prove2me has accepted 8 of the 9 proofs we submitted \(1 still wait for its verdict\)/);
+	const notes = reuseNotesHTML(v);
+	assert.equal((notes.match(/<p data-p2m-reuse-note=/g) ?? []).length, 2);
+	assert.match(notes, /data-p2m-reuse-note="N02">p2m-b1d59e \(N02\) was closed by reuse\. The leaf is the same statement as a theorem that WillR had already proved/);
+	assert.match(notes, /found the match while we prepared trial 6/);
+	assert.match(notes, /data-p2m-reuse-note="N05">.*one part of a theorem that mikedeng1 .* during trial 6/);
+	const x = { ...b, submissions: b.submissions.map((s) => ({ ...s, alias: '<i>x</i>' })) };
+	assert.ok(!submissionsNoteHTML(x).includes('<i>') && !reuseNotesHTML(x).includes('<i>'));
 });
