@@ -271,7 +271,7 @@ func TestAccountsListLimitsAndUsedToday(t *testing.T) {
 	}
 }
 
-// list appends each account's use over all time from the usage log (testdata/usage.jsonl, written
+// list appends each account's use over all time from the usage log (testdata/usage-log.txt, JSONL written
 // with usageFixtureSecret: old and new records, malformed lines, a torn last line, and users that
 // are no account: a science project, a front-end user, a config key), or "-" when it is unknown.
 func TestAccountsListTotalUsage(t *testing.T) {
@@ -282,7 +282,7 @@ func TestAccountsListTotalUsage(t *testing.T) {
 	for _, id := range []string{"gh:1", "gh:2", "gh:3"} {
 		store.SignIn(id, time.Now())
 	}
-	fixture, err := filepath.Abs(filepath.Join("testdata", "usage.jsonl"))
+	fixture, err := filepath.Abs(filepath.Join("testdata", "usage-log.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
