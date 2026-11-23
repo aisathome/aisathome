@@ -1,9 +1,9 @@
 // The status block at the top of /science/prove2me/ (prove2me-status.ts), on fixed data: the public records as the
 // gateway served them on 2026-11-18 (tests/fixtures; trial 8 running) and variations of them (a second trial open, as on
 // 2026-11-19, when trial 9 started while trial 8 still had tasks; none open). Trial 8's 46 tasks were counted from the
-// fixture by hand: 14 done and proved, 18 done otherwise, 3 cancelled, 2 leased, 9 queued. A replay benchmark (labels as
-// the gateway served bench-v13's on 2026-11-23: trial bench-v13, scaffold v13, leaf, alias, group, outline) is added to
-// them in the last tests.
+// fixture by hand: 14 done and proved, 18 done otherwise, 3 cancelled, 2 leased, 9 queued. A bench (labels as the
+// gateway served bench-v13's on 2026-11-23: trial bench-v13, scaffold v13, leaf, alias, group, outline) is added to them
+// in the last tests.
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import fixture from './fixtures/prove2me-records-2026-11-18.json';
 import type { Prove2me } from '../src/data/prove2me';
 import type { PublicTask } from '../src/data/prove2me-current';
 import { historyOf, parseCampaigns, parseResults, scienceView, type Records } from '../src/data/prove2me-records';
-import { barPart, benchLine, builtStatus, isBench, nextText, parseNodes, queueBarHTML, shortName, statusTexts, statusView, trialLine } from '../src/data/prove2me-status';
+import { barPart, builtStatus, isBench, parseNodes, queueBarHTML, shortName, statusTexts, statusView, trialLine } from '../src/data/prove2me-status';
 
 const h = historyOf(raw as unknown as Prove2me);
 const records = (): Records => ({
@@ -41,7 +41,7 @@ test('one trial open: the queue is its running and waiting tasks; its line has e
 	assert.deepEqual(v.trials.map((t) => [t.label, t.status, t.scaffold, t.start]), [['t8', 'running', 'v9', '2026-11-16T21:33:33Z']]);
 	assert.deepEqual(v.trials[0].counts, t8);
 	assert.deepEqual(v.trials[0].leaves, { proved: 2, of: 6 }); // the trials table's count of trial 8
-	assert.deepEqual(v.queue, [{ label: 't8', running: 2, queued: 9, bench: false }]);
+	assert.deepEqual(v.queue, [{ label: 't8', running: 2, queued: 9 }]);
 	assert.deepEqual(v.submissions, { submitted: 8, accepted: 8, pending: 0 });
 	const tx = statusTexts(v, at);
 	assert.equal(tx.head, 'Trial 8 is running, scaffold v9, since 16 Nov.');
@@ -56,7 +56,7 @@ test('one trial open: the queue is its running and waiting tasks; its line has e
 test('two trials open: the queue is every trial’s, the head names both, a line each', () => {
 	const v = statusView(twoOpen(), nodes)!;
 	assert.deepEqual(v.trials.map((t) => t.label), ['t8', 't9']);
-	assert.deepEqual(v.queue, [{ label: 't8', running: 2, queued: 9, bench: false }, { label: 't9', running: 1, queued: 4, bench: false }]);
+	assert.deepEqual(v.queue, [{ label: 't8', running: 2, queued: 9 }, { label: 't9', running: 1, queued: 4 }]);
 	assert.deepEqual(v.trials[1].counts, { proved: 0, ended: 2, stopped: 0, running: 1, queued: 4, total: 7 });
 	assert.deepEqual(v.trials[1].leaves, { proved: 0, of: 6 });
 	const tx = statusTexts(v, at);
@@ -85,7 +85,7 @@ test('a probe round beside a trial, a test’s tasks left out', () => {
 	const v = statusView(r, nodes)!;
 	assert.deepEqual(v.trials.map((t) => t.label), ['t8', 't9p']);
 	assert.equal(v.trials[1].leaves, null);
-	assert.deepEqual(v.queue![1], { label: 't9p', running: 1, queued: 1, bench: false });
+	assert.deepEqual(v.queue![1], { label: 't9p', running: 1, queued: 1 });
 	const tx = statusTexts(v, at);
 	assert.equal(tx.head, 'Trial 8 (scaffold v9) and outline probes for trial 9 (scaffold v10) are running.');
 	assert.equal(tx.lines[1], 'Outline probes for trial 9, 2 tasks: 1 running, 1 waiting.');
@@ -170,115 +170,75 @@ test('nodes: only a well-formed answer, busy never above slots', () => {
 	assert.deepEqual(parseNodes({ nodes: { online: 3, busy: 5, slots: 4 }, updated: '2026-11-18T14:58:00Z' }), { online: 3, busy: 4, slots: 4, updated: '2026-11-18T14:58:00Z' });
 });
 
-/** The records with a replay benchmark in the queue, as on 2026-11-23 (bench-v13 ahead of trial 10): its tasks name 3
- * leaves; 2 done, 2 running and 3 waiting, the running ones started after trial 8's waiting tasks were made. With
- * `trialIdle`, trial 8's 2 running tasks wait again (none of its tasks runs). */
-const withBench = (trialIdle: boolean, started = '2026-11-18T14:30:00Z') => {
+/** The records with a bench open, as on 2026-11-23 (bench-v13): its tasks name 3 leaves; 2 done, 2 running, 3 waiting. */
+const withBench = (open = true) => {
 	const r = records();
-	if (trialIdle) for (const t of r.tasks.tasks) if (t.labels.trial === 't8' && t.state === 'leased') Object.assign(t, { state: 'queued', started_at: null });
 	const base = r.tasks.tasks.find((t) => t.labels.trial === 't8')!;
 	const mk = (id: string, leaf: string, state: PublicTask['state'], outcome: string | null = null): PublicTask => ({
 		...base, id: `bench-v13-${leaf}-${id}`, state, outcome, parent: null, needs: [], retry_of: null, replaces: null,
 		labels: { alias: 'N14', group: 'open', leaf, outline: '1', scaffold: 'v13', trial: 'bench-v13' },
-		created_at: '2026-11-18T14:00:00Z', started_at: state === 'queued' ? null : started, finished_at: null,
+		created_at: '2026-11-18T14:00:00Z', started_at: state === 'queued' ? null : '2026-11-18T14:30:00Z', finished_at: null,
 	});
+	const o = (s: PublicTask['state']) => (open ? s : 'done');
 	r.tasks.tasks.push(
 		mk('s1', 'p2m-580c57', 'done', 'outline'), mk('s1-h01', 'p2m-580c57', 'done', 'proved'),
-		mk('s1-h02', 'p2m-580c57', 'leased'), mk('s1-rest', 'p2m-3a17bb', 'leased'),
-		mk('s1-h03', 'p2m-3a17bb', 'queued'), mk('s1-h04', 'p2m-b807fd', 'queued'), mk('s1-asm', 'p2m-b807fd', 'queued'),
+		mk('s1-h02', 'p2m-580c57', o('leased')), mk('s1-rest', 'p2m-3a17bb', o('leased')),
+		mk('s1-h03', 'p2m-3a17bb', o('queued')), mk('s1-h04', 'p2m-b807fd', o('queued')), mk('s1-asm', 'p2m-b807fd', o('queued')),
 	);
 	return r;
 };
 
-test('a benchmark running ahead of an idle trial: in the queue as its own part, a line of its own, the trial waits behind it', () => {
-	const v = statusView(withBench(true), parseNodes({ nodes: { online: 2, busy: 2, slots: 2 }, updated: '2026-11-18T14:58:00Z' }))!;
-	assert.deepEqual(v.benches, [{ label: 'bench-v13', scaffold: 'v13', leaves: 3, running: 2, queued: 3, ahead: ['t8'] }]);
-	// every prove2me task running or waiting is in the queue: the benchmark first (claimed first), then the trial
-	assert.deepEqual(v.queue, [{ label: 'bench-v13', running: 2, queued: 3, bench: true }, { label: 't8', running: 0, queued: 11, bench: false }]);
-	// the benchmark counts toward no trial: trial 8's tasks, leaves and the submissions as without it
-	assert.deepEqual(v.trials.map((t) => t.label), ['t8']);
-	assert.deepEqual(v.trials[0].counts, { ...t8, running: 0, queued: 11 });
-	assert.deepEqual(v.trials[0].leaves, { proved: 2, of: 6 });
-	assert.deepEqual(v.trials[0].behind, ['bench-v13']);
-	assert.deepEqual(v.submissions, { submitted: 8, accepted: 8, pending: 0 });
+test('a bench is shown as a trial: its part of the queue, its line, named after its label', () => {
+	const v = statusView(withBench(), parseNodes({ nodes: { online: 2, busy: 2, slots: 2 }, updated: '2026-11-18T14:58:00Z' }))!;
+	assert.deepEqual(v.trials.map((t) => [t.label, t.bench, t.scaffold, t.start, t.leaves]), [['t8', false, 'v9', '2026-11-16T21:33:33Z', { proved: 2, of: 6 }], ['bench-v13', true, 'v13', '2026-11-18T14:30:00Z', null]]);
+	// every prove2me task running or waiting is in the queue
+	assert.deepEqual(v.queue, [{ label: 't8', running: 2, queued: 9 }, { label: 'bench-v13', running: 2, queued: 3 }]);
 	const tx = statusTexts(v, at);
-	assert.equal(tx.head, 'Trial 8 is running, scaffold v9, since 16 Nov.');
-	// running tasks the GPU slots busy can account for: 2 running, 2 of 2 busy
-	assert.equal(tx.queue, '16 tasks in the queue: 2 running, 14 waiting (bench-v13: 2 running, 3 waiting; Trial 8: 0 running, 11 waiting).');
-	assert.equal(tx.nums.slots, '2 of 2');
+	assert.equal(tx.head, 'Trial 8 (scaffold v9) and bench v13 (scaffold v13) are running.');
+	assert.equal(tx.queue, '16 tasks in the queue: 4 running, 12 waiting (Trial 8: 2 running, 9 waiting; Bench v13: 2 running, 3 waiting).');
 	assert.deepEqual(tx.lines, [
-		'Benchmark bench-v13 is running, scaffold v13: it replays earlier tasks on 3 leaves to compare scaffold versions, ahead of trial 8 in the queue; 2 running, 3 waiting.',
-		'Trial 8, 46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 11 waiting; 2 of 6 leaves proved. Its tasks wait behind benchmark bench-v13.',
+		'Trial 8, 46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting; 2 of 6 leaves proved.',
+		'Bench v13, 7 tasks: 1 proved, 1 ended otherwise, 2 running, 3 waiting.',
 	]);
-	assert.deepEqual(tx.keys, ['bench-v13', 't8']);
-	assert.equal(shortName('bench-v13'), 'bench-v13');
+	assert.equal(shortName('bench-v13'), 'Bench v13');
+	// a bench alone
+	const r = withBench();
+	r.campaigns.find((c) => c.id === 't8')!.status = 'finished';
+	for (const t of r.tasks.tasks) if (t.labels.trial === 't8' && (t.state === 'queued' || t.state === 'leased')) t.state = 'cancelled';
+	assert.equal(statusTexts(statusView(r, nodes)!, at).head, 'Bench v13 is running, scaffold v13, since 18 Nov.');
 });
 
-test('a benchmark beside a trial that runs too: the trial does not wait behind it', () => {
+test('a bench that has ended is not shown', () => {
 	const v = statusView(withBench(false), nodes)!;
-	assert.deepEqual(v.queue!.map((q) => [q.label, q.running, q.queued]), [['bench-v13', 2, 3], ['t8', 2, 9]]);
-	assert.deepEqual(v.trials[0].behind, []);
-	assert.equal(statusTexts(v, at).lines[1], 'Trial 8, 46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting; 2 of 6 leaves proved.');
-});
-
-test('a benchmark that started before the trial’s waiting tasks were made is not said to be ahead of it', () => {
-	const v = statusView(withBench(true, '2026-11-18T07:00:00Z'), nodes)!;
-	assert.deepEqual(v.benches[0].ahead, []);
-	assert.deepEqual(v.trials[0].behind, []);
-	assert.equal(statusTexts(v, at).lines[0], 'Benchmark bench-v13 is running, scaffold v13: it replays earlier tasks on 3 leaves to compare scaffold versions; 2 running, 3 waiting.');
-});
-
-test('a benchmark with nothing running yet, and one that has ended', () => {
-	const r = withBench(true);
-	for (const t of r.tasks.tasks) if (t.labels.trial === 'bench-v13' && t.state === 'leased') t.state = 'queued';
-	assert.equal(statusView(r, nodes)!.trials[0].behind.length, 0); // waiting behind nothing that runs
-	assert.match(benchLine(statusView(r, nodes)!.benches[0]), /^Benchmark bench-v13 is waiting, scaffold v13: .*; 0 running, 5 waiting\.$/);
-	for (const t of r.tasks.tasks) if (t.labels.trial === 'bench-v13') t.state = 'done';
-	const v = statusView(r, nodes)!;
-	assert.deepEqual(v.benches, []);
+	assert.deepEqual(v.trials.map((t) => t.label), ['t8']);
 	assert.deepEqual(v.queue!.map((q) => q.label), ['t8']);
-	assert.equal(statusTexts(v, at).lines.length, 1);
 });
 
-test('a benchmark is no trial: the trials table, the numbers and the submissions ignore its tasks', () => {
+test('a bench counts in no result: trial 8, the submissions and the page’s numbers, trials and leaves as without it', () => {
 	const plain = records();
-	const bench = withBench(false);
+	const bench = withBench();
+	const v = statusView(bench, nodes)!;
+	assert.deepEqual(v.trials[0].counts, t8);
+	assert.deepEqual(v.trials[0].leaves, { proved: 2, of: 6 });
+	assert.deepEqual(v.submissions, statusView(plain, nodes)!.submissions);
 	const a = scienceView(h, plain);
 	const b = scienceView(h, bench);
 	assert.deepEqual(b.trials, a.trials);
 	assert.deepEqual(b.kpis, a.kpis);
 	assert.deepEqual(b.submissions, a.submissions);
-	assert.deepEqual(statusView(bench, nodes)!.submissions, statusView(plain, nodes)!.submissions);
 	assert.ok(isBench('bench-v13') && isBench('bench-v12b') && !isBench('t10') && !isBench('e2e1') && !isBench(undefined));
 });
 
-test('“What comes next” from the queue: the benchmark ahead of the trial, a trial alone, nothing', () => {
-	assert.equal(
-		nextText(statusView(withBench(true), nodes)!),
-		'In the queue now: benchmark bench-v13 on scaffold v13 (2 tasks running, 3 waiting), ahead of trial 8 on scaffold v9 (11 tasks waiting).',
-	);
-	assert.equal(nextText(statusView(records(), nodes)!), 'In the queue now: trial 8 on scaffold v9 (2 tasks running, 9 waiting).');
-	// a benchmark that is not ahead of the trial: each on its own
-	assert.equal(
-		nextText(statusView(withBench(true, '2026-11-18T07:00:00Z'), nodes)!),
-		'In the queue now: benchmark bench-v13 on scaffold v13 (2 tasks running, 3 waiting); trial 8 on scaffold v9 (11 tasks waiting).',
-	);
-	const r = records();
-	for (const t of r.tasks.tasks) if (t.state === 'queued' || t.state === 'leased') t.state = 'cancelled';
-	assert.equal(nextText(statusView(r, nodes)!), 'Nothing is in the queue now.');
-	assert.equal(nextText(builtStatus(h)), ''); // no records, no claim
-});
-
-test('the queue bar as HTML: a part per benchmark (its own tone) and per trial, escaped', () => {
-	const b = queueBarHTML(statusView(withBench(false), nodes)!);
-	assert.match(b.bar, /^<span class="grp grp-bench" data-bench="bench-v13" style="flex-grow: 5"><span class="seg q-running" data-part="running" style="flex-grow: 2"><\/span><span class="seg q-queued"/);
-	assert.match(b.bar, /<span class="grp grp-0" data-trial="t8" style="flex-grow: 11">/);
-	assert.equal(b.labels, '<span data-bench="bench-v13" style="flex-grow: 5">bench-v13 · 5</span><span data-trial="t8" style="flex-grow: 11">Trial 8 · 11</span>');
+test('the queue bar as HTML: a part per trial or bench, alternating, escaped', () => {
+	const b = queueBarHTML(statusView(withBench(), nodes)!);
+	assert.match(b.bar, /^<span class="grp grp-0" data-trial="t8" style="flex-grow: 11"><span class="seg q-running" data-part="running" style="flex-grow: 2"><\/span><span class="seg q-queued"/);
+	assert.match(b.bar, /<span class="grp grp-1" data-trial="bench-v13" style="flex-grow: 5">/);
+	assert.equal(b.labels, '<span data-trial="t8" style="flex-grow: 11">Trial 8 · 11</span><span data-trial="bench-v13" style="flex-grow: 5">Bench v13 · 5</span>');
 	assert.deepEqual(queueBarHTML(builtStatus(h)), { bar: '', labels: '' });
 });
 
 test('the build’s copy from the records: the queue and the lines, as of the build; a saved copy says so', () => {
-	const v = { ...statusView(withBench(true), null)!, source: 'build' as const };
+	const v = { ...statusView(withBench(), null)!, source: 'build' as const };
 	const tx = statusTexts(v, at);
 	assert.equal(tx.lines.length, 2);
 	assert.match(tx.queue, /^16 tasks in the queue/);

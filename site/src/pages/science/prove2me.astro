@@ -17,7 +17,7 @@ import { fromStatic, leafDetail, taskTableHTML } from '../../data/prove2me-live'
 import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
 import { mergeRows, taskTableHTML as allTasksHTML } from '../../data/task-table';
 import { p2mTaskOptions } from '../../data/prove2me-tasks';
-import { nextText, queueBarHTML, statusTexts, statusView, type StatusView } from '../../data/prove2me-status';
+import { queueBarHTML, statusTexts, statusView, type StatusView } from '../../data/prove2me-status';
 import { nowAll, nowBlocksHTML } from '../../data/prove2me-now';
 import { buildRecords } from '../../data/prove2me-build';
 
@@ -59,7 +59,7 @@ const trialDetail = (r: Run) => leafDetail((r.tasks ?? []).map(fromStatic), r.ou
 const runs = allRuns(hist, rec);
 const earlier = (leaf: string, n: number) => [...new Set(runs.filter((r) => r.leaf === leaf && r.trial < n).map((r) => r.trial))].sort((a, b) => a - b);
 const nowDocsBuilt = nowAll(null, rec);
-const nowHTML = nowBlocksHTML(nowDocsBuilt, rec.tasks, { theorems: known.theorems, reuses: reuseOf, earlier, status: st });
+const nowHTML = nowBlocksHTML(nowDocsBuilt, rec.tasks, { theorems: known.theorems, reuses: reuseOf, earlier });
 // The texts below name F01's trial-5 run; its task count comes from the data.
 const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' && r.outcome === 'proved' && r.tasks);
 // A leaf's id (p2m- and the start of prove2me's theorem id) leads everywhere; the trials' alias (O04, F01) is shown small.
@@ -120,12 +120,11 @@ const leafCols = [
 		{ depth: 2, slug: 'tasks', text: 'Every task' },
 		{ depth: 2, slug: 'trials', text: 'Trials' },
 		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
-		{ depth: 2, slug: 'next', text: 'What comes next' },
 	]}
 >
 	{/* The status block: the queue, the open benchmarks and trials and the submissions from the records the build
 	    fetched; the browser refreshes them from the gateway's records and adds /v1/stats every minute (prove2me-status.ts). */}
-	<section class="p2m-status not-content" data-p2m-status data-source="build" data-trials={st.trials.map((x) => x.label).join(' ')} data-benches={st.benches.map((b) => b.label).join(' ')} aria-labelledby="status">
+	<section class="p2m-status not-content" data-p2m-status data-source="build" data-trials={st.trials.map((x) => x.label).join(' ')} aria-labelledby="status">
 		<h2 id="status">Status</h2>
 		<p class="p2m-st-head" data-st="head">{stx.head}</p>
 		<p class="p2m-st-queue" data-st="queue" hidden={!stx.queue}>{stx.queue}</p>
@@ -138,7 +137,7 @@ const leafCols = [
 			</ul>
 		</div>
 		<ul class="p2m-st-trials" data-st-trials hidden={!stx.lines.length}>
-			{stx.lines.map((line, i) => (i < st.benches.length ? <li data-bench={stx.keys[i]}>{line}</li> : <li data-trial={stx.keys[i]}>{line}</li>))}
+			{stx.lines.map((line, i) => <li data-trial={st.trials[i].label}>{line}</li>)}
 		</ul>
 		<dl class="p2m-st-nums">
 			<div data-num="nodes" hidden><dt>nodes online (whole network)</dt><dd /></div>
@@ -387,7 +386,8 @@ const leafCols = [
 			the model gets Lean’s errors. From trial 5 a run is all of a leaf’s tasks: its outlines, one task per hole, the tries and the
 			assembly. Failed runs stay in the tables. A leaf tried again in a later trial counts as one more run, and once among the open
 			leaves tried. Runs cut short by a fault on our side, not the model’s, or stopped by us because of one, say “Not scored” and why
-			(<span data-p2m-not-scored>{lv.notScored}</span> so far); they still count among the runs.
+			(<span data-p2m-not-scored>{lv.notScored}</span> so far); they still count among the runs. A bench runs leaves of earlier trials again
+			on a newer scaffold: its runs are not counted in the numbers, the trials or the leaves, where they would count those leaves twice.
 		</li>
 		<li>
 			<strong>Model minutes</strong> are the time the model spent generating, summed over a run’s rounds (from trial 5, its tasks).
@@ -417,20 +417,6 @@ const leafCols = [
 		</li>
 	</ul>
 
-	<h2 id="next">What comes next</h2>
-	<ul>
-		{/* What the queue says, from the records (prove2me-status.ts nextText): the build's, then the browser's. */}
-		<li data-p2m-next>{nextText(st)}</li>
-		{/* The plan beyond the queue, in our words. */}
-		<li>
-			After the trials: a random sample of open leaves at a fixed budget, with the pass line written down before the run: the test of
-			whether this works at a useful rate, and what a proof costs.
-		</li>
-		<li>
-			The question behind it: can an open model on one consumer GPU close open leaves often enough that volunteers’ GPUs could do real
-			work here?
-		</li>
-	</ul>
 </StarlightPage>
 
 <script>
@@ -444,7 +430,7 @@ const leafCols = [
 		trialsFootHTML,
 	} from '../../data/prove2me-view';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
-	import { nextText, parseNodes, queueBarHTML, statusTexts, statusView, type Nodes, type StatusView } from '../../data/prove2me-status';
+	import { parseNodes, queueBarHTML, statusTexts, statusView, type Nodes, type StatusView } from '../../data/prove2me-status';
 	import { isBenchDoc, nowAll, nowBlocksHTML } from '../../data/prove2me-now';
 
 	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
@@ -524,7 +510,7 @@ const leafCols = [
 			return null;
 		}
 	})();
-	// The status block and "What comes next": the build's until the gateway's records answer; the queue from the records,
+	// The status block: the build's until the gateway's records answer; the queue from the records,
 	// the nodes from /v1/stats (each loader keeps its own newest answer and draws the block again).
 	const statusBox = document.querySelector<HTMLElement>('[data-p2m-status]');
 	let stLive: Records | null = null;
@@ -548,13 +534,11 @@ const leafCols = [
 		statusBox.querySelector<HTMLElement>('[data-st-queue]')!.hidden = !bar.bar;
 		statusBox.querySelector('[data-st-bar]')!.innerHTML = bar.bar; // escaped (prove2me-status.ts)
 		statusBox.querySelector('[data-st-qlabels]')!.innerHTML = bar.labels;
-		const next = document.querySelector<HTMLElement>('[data-p2m-next]');
-		if (next && v.queue) next.textContent = nextText(v);
 		const lines = statusBox.querySelector<HTMLElement>('[data-st-trials]')!;
 		lines.replaceChildren(
 			...tx.lines.map((t, i) => {
 				const li = el('li', '', t);
-				li.dataset[i < v.benches.length ? 'bench' : 'trial'] = tx.keys[i];
+				li.dataset.trial = v.trials[i].label;
 				return li;
 			}),
 		);
@@ -567,7 +551,6 @@ const leafCols = [
 		}
 		statusBox.dataset.source = v.source === 'live' ? 'live' : stNodes ? 'nodes' : 'build';
 		statusBox.dataset.trials = v.trials.map((t) => t.label).join(' ');
-		statusBox.dataset.benches = v.benches.map((b) => b.label).join(' ');
 	};
 	const showRecords = (live: Records) => {
 		if (!recordsKnown) return;
@@ -663,7 +646,7 @@ const leafCols = [
 		const earlier = (leaf: string, n: number) => [...new Set(runs.filter((r) => r.leaf === leaf && r.trial < n).map((r) => r.trial))].sort((a, b) => a - b);
 		const tpl = document.createElement('template');
 		// every value escaped (prove2me-now.ts)
-		tpl.innerHTML = nowBlocksHTML(docs, tasks, { theorems: known.theorems, reuses: known.reuses, earlier, status: live ? statusView(live, null) : null });
+		tpl.innerHTML = nowBlocksHTML(docs, tasks, { theorems: known.theorems, reuses: known.reuses, earlier });
 		const blocks = [...tpl.content.children] as HTMLElement[];
 		const asof = nowBox.querySelector<HTMLElement>('[data-now-asof]')!;
 		nowBox.append(probes); // out of the old blocks before they go
@@ -889,9 +872,8 @@ const leafCols = [
 	.p2m-status p { margin: 0.4rem 0 0; }
 	.p2m-status [hidden] { display: none !important; }
 	.p2m-st-head { font-weight: 600; color: var(--sl-color-white); }
-	/* The whole queue: one part per benchmark (its own tone) and per trial (the trials' parts alternate in tone), each
-	   named under the bar, with its running tasks hatched and its waiting ones outlined; the sentence above says it all
-	   in words. */
+	/* The whole queue: one part per trial or bench (the parts alternate in tone and are named under the bar), each with
+	   its running tasks hatched and its waiting ones outlined; the sentence above says it all in words. */
 	.p2m-st-queue { font-size: 0.9rem; color: var(--sl-color-gray-2); }
 	.p2m-queue { margin: 0.5rem 0 0; }
 	.p2m-bar, .p2m-qlabels { display: flex; gap: 4px; }
@@ -899,7 +881,6 @@ const leafCols = [
 	.p2m-bar .grp, .p2m-qlabels > span { flex: 1 1 0; min-width: 4.5rem; }
 	.p2m-bar .grp { display: flex; gap: 2px; --q: var(--sl-color-accent); }
 	.p2m-bar .grp-1 { --q: var(--sl-color-gray-2); }
-	.p2m-bar .grp-bench { --q: var(--sl-color-gray-3); }
 	.p2m-bar .seg { flex: 1 1 0; min-width: 6px; border-radius: 0.2rem; }
 	.p2m-status .q-running { background: repeating-linear-gradient(135deg, var(--q, var(--sl-color-gray-2)) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
 	.p2m-status .q-queued { background: transparent; box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
