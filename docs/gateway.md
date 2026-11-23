@@ -445,7 +445,9 @@ audience, expiry, nonce) and the flow uses state and PKCE. The same person signi
 GitHub and with Google gets two separate accounts. Manage accounts with
 `aisathome-gateway accounts list|limit|close|open|add|activate|waitlist|ban|contacts|contact-clear|notice` (nodes: see
 below); `list` with `-config` also shows the limits each account has and its weighted tokens
-used today (UTC), the account page's number, from `state_dir/budgets.json`. Run it as the
+used today (UTC), the account page's number, from `state_dir/budgets.json`, and its use over all
+time from the usage log (`usage_log`): requests (a retry on another node counts again), prompt +
+completion tokens and the UTC day of the last request; "-" when there is no log. Run it as the
 gateway's own user (in a container: `podman exec aisathome-gateway aisathome-gateway accounts
 ...`), otherwise the file may become unwritable for the gateway. `waitlist` holds an account
 back until you `activate` it. The usage log names accounts by a pseudonym (an HMAC of the id),

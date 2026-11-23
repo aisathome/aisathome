@@ -653,9 +653,5 @@ func (g *Gateway) accountInfo(id string) KeyInfo {
 
 // pseudonym names an account in the usage log without its GitHub, Google or email id; with
 // the session secret the operator can still map an account to its records (e.g. to delete
-// them).
-func (g *Gateway) pseudonym(id string) string {
-	m := hmac.New(sha256.New, []byte(g.acfg.SessionSecret))
-	m.Write([]byte("usage|" + id))
-	return "acct-" + base64.RawURLEncoding.EncodeToString(m.Sum(nil)[:12])
-}
+// them, and `accounts list` sums them: AccountPseudonym).
+func (g *Gateway) pseudonym(id string) string { return AccountPseudonym(g.acfg.SessionSecret, id) }
