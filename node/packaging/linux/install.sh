@@ -936,6 +936,38 @@ restore_unlinked() {
 # check_kept_token <config dir> <new node.json>: an installed token that is kept (Enter, --keep-token)
 # is the gateway's it was made for: with another gateway in the new node.json the install stops before
 # it changes anything, so that token is never sent there.
+# canon_node_config <in> <out>: node.json as the node agent will read it, written once: every object's keys
+# in lower case (the agent's Go decoder matches keys in any case), "token" dropped (it lives in token.env).
+# Two keys that are equal in any case are refused: a reader that keeps the first and one that keeps the
+# last would then see different gateways. The checks below read this file, and it is installed byte for
+# byte, so what was checked is what the node gets.
+canon_node_config() {
+  python3 - "$1" "$2" <<'PY' || die "node config $1: $(cat "$2.err" 2>/dev/null)" 2
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+class Dup(Exception): pass
+def pairs(ps):
+    out = {}
+    for k, v in ps:
+        lk = k.lower()
+        if lk in out:
+            raise Dup(f"key {k!r} appears more than once (in any case); keep one")
+        out[lk] = v
+    return out
+try:
+    c = json.load(open(src), object_pairs_hook=pairs)
+    if not isinstance(c, dict):
+        raise Dup("not a JSON object")
+except (Dup, ValueError) as e:
+    open(dst + ".err", "w").write(str(e))
+    sys.exit(1)
+c.pop("token", None)
+with open(dst, "w") as f:
+    json.dump(c, f, indent=2)
+    f.write("\n")
+PY
+}
+
 check_kept_token() {
   local old was now
   [[ -n "$token" && -r "$1/token.env" ]] || return 0
@@ -1047,6 +1079,7 @@ if [[ -z "$node_config" ]]; then
   [[ -z "$old_id$old_gw" ]] || echo "node.json: node id $node_id, gateway $gateway_url" >&2
   workdir; node_config="$work/node.json"; gen_node_config > "$node_config"
 fi
+workdir; canon_node_config "$node_config" "$work/node.canon.json"; node_config="$work/node.canon.json"
 check_kept_token "$conf" "$node_config"
 
 # 1. Unprivileged system user without a login shell.
@@ -1090,11 +1123,8 @@ fi
 install -d -o root -g aisathome -m 0750 /etc/aisathome-node
 # An installed token for another gateway goes aside, and the node stops, before the new node.json.
 set_aside_before_link "$conf" "$node_config"
-# The token lives only in token.env; drop any token from the copied config.
-python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c.pop("token",None); json.dump(c,sys.stdout,indent=2)' \
-  "$node_config" > /etc/aisathome-node/node.json.new
-install -o root -g aisathome -m 0640 /etc/aisathome-node/node.json.new /etc/aisathome-node/node.json
-rm -f /etc/aisathome-node/node.json.new
+# The canonical node.json (canon_node_config: no token, one key each), installed as checked, byte for byte.
+install -o root -g aisathome -m 0640 "$node_config" /etc/aisathome-node/node.json
 # Linking (no token now): token.env comes with `aisathome-node link` at the end; an installed one for the
 # same gateway (--link on an installed node) stays until then, so a link that does not happen leaves the
 # node as it was.
