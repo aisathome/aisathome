@@ -168,7 +168,7 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 New-Item -ItemType Directory -Force $data | Out-Null
 $cfg = Join-Path $data 'node.json'
 Set-Content -Encoding ascii $cfg `
-  '{"node_id":"ci-installer","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"ci","upstream":"http://127.0.0.1:1","models":[{"name":"ci","slots":1,"ctx":4096}]}'
+  '{"node_id":"ci-installer","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"ci","token_gateway":"ws://127.0.0.1:1/v1/node/connect","upstream":"http://127.0.0.1:1","models":[{"name":"ci","slots":1,"ctx":4096}]}'
 icacls $cfg /grant '*S-1-1-0:(R)' | Out-Null
 if ((Identities $cfg) -notcontains 'Everyone') { throw 'could not seed the Everyone entry' }
 
