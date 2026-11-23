@@ -254,7 +254,7 @@ jobs:
           # engine: the build fetched above with the small model, the standard tier's command.
           $data = Join-Path $env:ProgramData 'AIsAtHome'
           New-Item -ItemType Directory -Force $data | Out-Null
-          $cfg = @{ node_id = 'ci-windows'; gateway_url = 'ws://127.0.0.1:1/v1/node/connect'; token = 'ci'
+          $cfg = @{ node_id = 'ci-windows'; gateway_url = 'ws://127.0.0.1:1/v1/node/connect'; token = 'ci'; token_gateway = 'ws://127.0.0.1:1/v1/node/connect'
             engine = @{ tier = 'standard'; llama_server = (Join-Path $env:RUNNER_TEMP 'llama\llama\llama-server.exe')
               model = (Join-Path $env:RUNNER_TEMP 'llama\smoke-model.gguf') } }
           Set-Content -Encoding ascii (Join-Path $data 'node.json') ($cfg | ConvertTo-Json -Depth 4)
