@@ -19,6 +19,7 @@ import (
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/accountlink"
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -93,6 +94,20 @@ func testLinkEnv(f *fakeLinkGateway, layout node.Layout, restarts *[]restartCall
 		}}
 }
 
+// tokenEnvFor is token.env as written for tok, issued by gw.
+func tokenEnvFor(tok, gw string) string {
+	return "AISATHOME_NODE_TOKEN=" + tok + "\nAISATHOME_TOKEN_GATEWAY=" + gw + "\n"
+}
+
+// configGateway is the gateway_url of the node.json at path, as nodeconf reads it ("" if none or refused).
+func configGateway(path string) string {
+	m, _, err := nodeconf.ReadObject(path)
+	if err != nil {
+		return ""
+	}
+	return nodeconf.String(m, "gateway_url")
+}
+
 func mode(t *testing.T, p string) os.FileMode {
 	t.Helper()
 	fi, err := os.Stat(p)
@@ -129,7 +144,7 @@ func TestLinkSavesToTokenEnv(t *testing.T) {
 		t.Error("the output shows the token or the device code")
 	}
 	b, _ := os.ReadFile(env)
-	if string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" || mode(t, env) != 0o600 {
+	if string(b) != tokenEnvFor(linkTestToken, f.wsURL()) || mode(t, env) != 0o600 {
 		t.Errorf("token.env %q, mode %o", b, mode(t, env))
 	}
 	var c map[string]any
@@ -166,7 +181,7 @@ func TestLinkSavesToConfig(t *testing.T) {
 	var c map[string]any
 	b, _ := os.ReadFile(cfg)
 	json.Unmarshal(b, &c)
-	if c["token"] != linkTestToken || c["node_id"] != "n-1a2b3c4d" || mode(t, cfg) != 0o600 {
+	if c["token"] != linkTestToken || c["token_gateway"] != f.wsURL() || c["node_id"] != "n-1a2b3c4d" || mode(t, cfg) != 0o600 {
 		t.Errorf("node.json %s, mode %o", b, mode(t, cfg))
 	}
 	if len(restarts) != 0 {
@@ -180,7 +195,7 @@ func TestLinkSavesToConfig(t *testing.T) {
 	}
 	b, _ = os.ReadFile(cfg)
 	json.Unmarshal(b, &c)
-	if c["gateway_url"] != f2.wsURL() || f2.starts != 1 || len(restarts) != 1 || restarts[0].tokenEnv {
+	if c["gateway_url"] != f2.wsURL() || c["token_gateway"] != f2.wsURL() || f2.starts != 1 || len(restarts) != 1 || restarts[0].tokenEnv {
 		t.Errorf("node.json %s, starts %d, restarts %v", b, f2.starts, restarts)
 	}
 }
@@ -303,33 +318,41 @@ func TestLinkRefusesInjectedToken(t *testing.T) {
 func TestWriteTokenEnvChecksToken(t *testing.T) {
 	dir := t.TempDir()
 	env, cfg := filepath.Join(dir, "token.env"), filepath.Join(dir, "node.json")
+	const gw = "wss://gw.example/v1/node/connect"
+	cfgBody := `{"node_id":"box","gateway_url":"` + gw + `"}`
 	os.WriteFile(env, []byte("AISATHOME_NODE_TOKEN=nt-n-00000000.old\n"), 0o644)
-	os.WriteFile(cfg, []byte(`{"node_id":"box"}`), 0o640)
+	os.WriteFile(cfg, []byte(cfgBody), 0o640)
 	tgt := linkTarget{config: cfg, tokenEnv: env}
 	for _, tok := range injectedTokens {
-		if err := writeTokenEnv(env, tok); err == nil {
+		if err := writeTokenEnv(env, tok, gw); err == nil {
 			t.Errorf("writeTokenEnv took %q", tok)
 		}
-		if err := tgt.save(tok, "n-1a2b3c4d", false, ""); err == nil {
+		if err := tgt.save(tok, "n-1a2b3c4d", false, gw); err == nil {
 			t.Errorf("save took %q", tok)
 		}
-		if err := (linkTarget{config: cfg}).save(tok, "n-1a2b3c4d", false, ""); err == nil {
+		if err := (linkTarget{config: cfg}).save(tok, "n-1a2b3c4d", false, gw); err == nil {
 			t.Errorf("save into the config took %q", tok)
 		}
 	}
-	if err := tgt.save(linkTestToken, "n-ffffffff", false, ""); err == nil {
+	// The recorded gateway goes into the systemd EnvironmentFile too: only a plain gateway address.
+	for _, bad := range []string{"", gw + "\nLD_PRELOAD=/tmp/x.so", "wss://gw.example/v1 x", "https://gw.example/v1/node/connect", "wss://gw.example/v1/node/connect#x"} {
+		if err := writeTokenEnv(env, linkTestToken, bad); err == nil {
+			t.Errorf("writeTokenEnv took the gateway %q", bad)
+		}
+	}
+	if err := tgt.save(linkTestToken, "n-ffffffff", false, gw); err == nil {
 		t.Error("save took a token for another node id")
 	}
 	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN=nt-n-00000000.old\n" {
 		t.Fatalf("token.env changed: %q", b)
 	}
-	if b, _ := os.ReadFile(cfg); string(b) != `{"node_id":"box"}` {
+	if b, _ := os.ReadFile(cfg); string(b) != cfgBody {
 		t.Fatalf("node.json changed: %s", b)
 	}
-	if err := tgt.save(linkTestToken, "n-1a2b3c4d", false, ""); err != nil {
+	if err := tgt.save(linkTestToken, "n-1a2b3c4d", false, gw); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
+	if b, _ := os.ReadFile(env); string(b) != tokenEnvFor(linkTestToken, gw) {
 		t.Errorf("token.env %q", b)
 	}
 	if runtime.GOOS != "windows" && mode(t, env) != 0o600 {
@@ -380,7 +403,7 @@ func TestLinkOtherGatewaySavesInOrder(t *testing.T) {
 	if stops != 1 {
 		t.Errorf("the node was stopped %d times, want 1", stops)
 	}
-	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
+	if b, _ := os.ReadFile(env); string(b) != tokenEnvFor(linkTestToken, newGW) {
 		t.Errorf("token.env %q", b)
 	}
 	if b, _ := os.ReadFile(env + ".unlinked"); string(b) != old {
@@ -448,8 +471,8 @@ func TestLinkOtherGatewayNodeDoesNotStop(t *testing.T) {
 // The token write fails after the config named the new gateway: the old config comes back, then the old
 // token beside it, and a node that was on starts again, with both back in place.
 func TestLinkOtherGatewayRollsBack(t *testing.T) {
-	defer func(w func(string, string) error) { saveTokenEnv = w }(saveTokenEnv)
-	saveTokenEnv = func(string, string) error { return errors.New("disk full") }
+	defer func(w func(string, string, string) error) { saveTokenEnv = w }(saveTokenEnv)
+	saveTokenEnv = func(string, string, string) error { return errors.New("disk full") }
 	for _, wasOn := range []bool{true, false} {
 		tgt, cfgBody := otherGatewayDir(t)
 		starts := 0
@@ -506,13 +529,11 @@ func TestLinkConfigGatewayChangedMeanwhile(t *testing.T) {
 	checkUnchanged(t, "gateway changed meanwhile", tgt, cfgBody)
 }
 
-// Two saves at once go one after the other: a save waits while another holds the config folder's lock.
+// Two saves at once go one after the other: a save waits while another writer (another link, the
+// installer, the Windows setup page) holds the writers' lock, on Windows too.
 func TestLinkSaveWaitsForLock(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no lock: the token goes into node.json in one write")
-	}
 	tgt, _ := otherGatewayDir(t)
-	unlock, err := lockDir(filepath.Dir(tgt.config))
+	unlock, err := nodeconf.Lock(filepath.Dir(tgt.config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +564,31 @@ func TestLinkOtherGatewayStopsNode(t *testing.T) {
 	if code != 0 || stops != 1 || len(restarts) != 1 || configGateway(tgt.config) != f.wsURL() {
 		t.Errorf("exit %d, stops %d, restarts %v, gateway %s: %s", code, stops, restarts, configGateway(tgt.config), errb.String())
 	}
-	if b, _ := os.ReadFile(tgt.tokenEnv); string(b) != "AISATHOME_NODE_TOKEN="+linkTestToken+"\n" {
+	if b, _ := os.ReadFile(tgt.tokenEnv); string(b) != tokenEnvFor(linkTestToken, f.wsURL()) {
 		t.Errorf("token.env %q", b)
+	}
+}
+
+// A node.json with two keys equal in any case (at any level) is refused before the gateway is asked, and
+// is left as it is: readers that keep the first and the last would see different gateways.
+func TestLinkRefusesCaseVariantKeys(t *testing.T) {
+	f := newFakeLinkGateway(t, protocol.LinkApproved)
+	for _, body := range []string{
+		`{"gateway_url":"wss://a.example/v1/node/connect","Gateway_URL":"` + f.wsURL() + `"}`,
+		`{"gateway_url":"` + f.wsURL() + `","gateway_url":"wss://a.example/v1/node/connect"}`,
+		`{"gateway_url":"` + f.wsURL() + `","models":[{"name":"a","NAME":"b"}]}`,
+	} {
+		cfg := filepath.Join(t.TempDir(), "node.json")
+		os.WriteFile(cfg, []byte(body), 0o600)
+		var restarts []restartCall
+		var out, errb bytes.Buffer
+		code := testLinkEnv(f, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg, "-no-start"}, &out, &errb)
+		b, _ := os.ReadFile(cfg)
+		if code != 1 || f.starts != 0 || string(b) != body || !strings.Contains(errb.String(), "more than once") {
+			t.Errorf("%s: exit %d, gateway asked %d times, node.json %s: %s", body, code, f.starts, b, errb.String())
+		}
+		if err := updateJSON(cfg, map[string]any{"node_id": "x"}, nil, 0); err == nil {
+			t.Errorf("%s: updateJSON rewrote it", body)
+		}
 	}
 }

@@ -78,7 +78,6 @@ func (g *Gateway) accountRoutes(mux *http.ServeMux) {
 	// Nodes without an account (anon.go): registering, and what the gateway knows of a node.
 	mux.HandleFunc("POST "+protocol.RegisterPath, g.handleNodeRegister)
 	mux.HandleFunc("GET "+protocol.SelfPath, g.handleNodeSelf)
-	mux.HandleFunc("POST "+protocol.TokenKnownPath, g.handleTokenKnown)
 	mux.HandleFunc("GET /link", g.handleLinkPage)
 	mux.HandleFunc("POST /link", smallForm(g.handleLinkForm))
 }

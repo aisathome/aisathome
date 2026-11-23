@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -568,62 +567,5 @@ func TestAnonExpiryNeverUnholdsALiveNode(t *testing.T) {
 	}
 	if g.nodeHeld(id) {
 		t.Fatal("its hold stays")
-	}
-}
-
-// POST /v1/node/token-known answers by a token's hash only: an account's node token, a node without an
-// account's and a config token are known; another hash, or one of a banned account, is not.
-func TestTokenKnown(t *testing.T) {
-	dir := t.TempDir()
-	g, err := New(Config{StateDir: dir, NodeTokens: map[string]NodeToken{"config-node-token": {Operator: "op"}},
-		Accounts: &AccountsConfig{File: dir + "/accounts.json", PublicURL: "https://site.test",
-			SessionSecret: strings.Repeat("s", 32), GitHubClientID: "id", GitHubClientSecret: "secret"}}, quietLog())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { g.Close() })
-	anonTok, _, _ := g.accounts.RegisterAnon(time.Now())
-	g.accounts.SignIn("gh:1", time.Now())
-	g.accounts.SetStatus("gh:1", StatusActive)
-	acctTok, _, _, _ := g.accounts.addNodeVia("gh:1", "", time.Now(), nil, false, "")
-	g.accounts.SignIn("gh:2", time.Now())
-	g.accounts.SetStatus("gh:2", StatusActive)
-	bannedTok, _, _, _ := g.accounts.addNodeVia("gh:2", "", time.Now(), nil, false, "")
-	g.accounts.SetStatus("gh:2", StatusBanned)
-	srv := httptest.NewServer(g.Handler())
-	t.Cleanup(srv.Close)
-	ask := func(body string) (int, string) {
-		resp, err := http.Post(srv.URL+protocol.TokenKnownPath, "application/json", strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, strings.TrimSpace(string(b))
-	}
-	for tok, want := range map[string]bool{anonTok: true, acctTok: true, "config-node-token": true, bannedTok: false, "nt-n-00000000.x": false} {
-		code, out := ask(fmt.Sprintf(`{"sha256":"%s"}`, strings.ToUpper(keyHash(tok))))
-		if code != 200 || out != fmt.Sprintf(`{"known":%v}`, want) {
-			t.Errorf("token %.10s…: %d %s, want known %v", tok, code, out, want)
-		}
-	}
-	// Held: a node without an account's token is not known (a reinstall registers a fresh node, as the
-	// hold message says); an account's held node stays known.
-	_, anonID, _ := g.accounts.nodeToken(anonTok)
-	_, acctID, _ := g.accounts.nodeToken(acctTok)
-	for _, id := range []string{anonID, acctID} {
-		if err := g.accounts.HoldNode(NodeHold{Node: id, Rule: ruleModelCheck, At: time.Now()}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for tok, want := range map[string]bool{anonTok: false, acctTok: true} {
-		if code, out := ask(fmt.Sprintf(`{"sha256":"%s"}`, keyHash(tok))); code != 200 || out != fmt.Sprintf(`{"known":%v}`, want) {
-			t.Errorf("held token %.10s…: %d %s, want known %v", tok, code, out, want)
-		}
-	}
-	for _, bad := range []string{`{"sha256":"` + anonTok + `"}`, `{"sha256":"abc"}`, `{}`} {
-		if code, _ := ask(bad); code != http.StatusBadRequest {
-			t.Errorf("%s: %d", bad, code)
-		}
 	}
 }

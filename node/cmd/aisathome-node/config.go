@@ -2,13 +2,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/nodeconf"
 )
 
 // loadConfig reads the config file, then lets the environment override it, then fills what is
@@ -19,13 +19,21 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 	if err != nil {
 		return defaults(cfg, layout), fmt.Errorf("reading %s: %w", path, err)
 	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	// One canonical form (nodeconf): keys that are equal in any case are refused, so no reader of this
+	// file can see another gateway than this one.
+	if err := nodeconf.Parse(b, &cfg); err != nil {
 		return defaults(node.Config{}, layout), fmt.Errorf("parsing %s: %w", path, err)
 	}
 	// The environment wins over the config file, so an installer-provided token is never
-	// silently replaced by a token left in an example config.
+	// silently replaced by a token left in an example config; its recorded gateway comes with it.
 	if tok := getenv("AISATHOME_NODE_TOKEN"); tok != "" {
-		cfg.Token = tok
+		cfg.Token, cfg.TokenGateway = tok, getenv("AISATHOME_TOKEN_GATEWAY")
+	}
+	// A token goes only to the gateway that issued it.
+	if cfg.Token != "" {
+		if err := nodeconf.CheckTokenGateway(cfg.TokenGateway, cfg.GatewayURL); err != nil {
+			return defaults(cfg, layout), fmt.Errorf("%v: not connecting (link the node again: aisathome-node link)", err)
+		}
 	}
 	// Local UI and state, set by the Linux installer's systemd drop-in (local-ui.conf).
 	for env, field := range map[string]*string{"AISATHOME_STATE_FILE": &cfg.StateFile,

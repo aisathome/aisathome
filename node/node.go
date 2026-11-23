@@ -41,11 +41,15 @@ type Config struct {
 	// NodeID names the node. A token created on the account page ("nt-<id>.<secret>") or a
 	// pilot's credential ("pc-<hex>.<secret>") carries the id the gateway assigned, and that id
 	// is used; only tokens from the gateway's config need a node_id here.
-	NodeID     string               `json:"node_id"`
-	GatewayURL string               `json:"gateway_url"` // ws(s)://host/v1/node/connect
-	Token      string               `json:"token"`       // node token from the account page (or the operator)
-	Upstream   string               `json:"upstream"`    // local engine, e.g. http://127.0.0.1:8000
-	Models     []protocol.ModelInfo `json:"models"`
+	NodeID     string `json:"node_id"`
+	GatewayURL string `json:"gateway_url"` // ws(s)://host/v1/node/connect
+	Token      string `json:"token"`       // node token from the account page (or the operator)
+	// TokenGateway is the gateway that issued Token, recorded wherever a token is written (token.env's
+	// AISATHOME_TOKEN_GATEWAY, or here beside an inline token). The agent refuses to start when it is not
+	// GatewayURL: a token is never sent to another gateway than its issuer (package nodeconf).
+	TokenGateway string               `json:"token_gateway,omitempty"`
+	Upstream     string               `json:"upstream"` // local engine, e.g. http://127.0.0.1:8000
+	Models       []protocol.ModelInfo `json:"models"`
 	// Heartbeat interval; defaults to 10 s.
 	Heartbeat time.Duration `json:"-"`
 	// HealthInterval is how often the engine's /health is checked; after 3 failures in a

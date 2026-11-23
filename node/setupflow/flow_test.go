@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/protocol"
 )
@@ -180,7 +181,7 @@ func TestSetupFlow(t *testing.T) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg["token"] != "nt-n-0000000a.secret" || cfg["node_id"] != "n-0000000a" || cfg["gateway_url"] != "wss://staging.example.org/v1/node/connect" ||
+	if cfg["token"] != "nt-n-0000000a.secret" || cfg["token_gateway"] != "wss://staging.example.org/v1/node/connect" || cfg["node_id"] != "n-0000000a" || cfg["gateway_url"] != "wss://staging.example.org/v1/node/connect" ||
 		cfg["preset"] != "keep me" || cfg["upstream"] != nil || cfg["models"] != nil {
 		t.Fatalf("node.json %s", b)
 	}
@@ -205,7 +206,7 @@ func TestSetupFlow(t *testing.T) {
 	<-e.reload
 	b, _ = os.ReadFile(e.cfg)
 	if !strings.Contains(string(b), `"nt-n-0000000b.other"`) || !strings.Contains(string(b), `"tier": "standard"`) ||
-		!strings.Contains(string(b), DefaultGatewayURL) {
+		!strings.Contains(string(b), `"token_gateway": "`+DefaultGatewayURL+`"`) {
 		t.Fatalf("after the token change: %s", b)
 	}
 }
@@ -414,7 +415,7 @@ func TestSetupLink(t *testing.T) {
 	var cfg map[string]any
 	b, _ = os.ReadFile(e.cfg)
 	json.Unmarshal(b, &cfg)
-	if cfg["token"] != "nt-n-0000000c.fromgateway" || cfg["node_id"] != "n-0000000c" || cfg["gateway_url"] != "wss://staging.example.org/v1/node/connect" {
+	if cfg["token"] != "nt-n-0000000c.fromgateway" || cfg["token_gateway"] != "wss://staging.example.org/v1/node/connect" || cfg["node_id"] != "n-0000000c" || cfg["gateway_url"] != "wss://staging.example.org/v1/node/connect" {
 		t.Fatalf("node.json %s", b)
 	}
 	if fi, _ := os.Stat(e.cfg); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
@@ -504,7 +505,7 @@ func TestSetupAnonymous(t *testing.T) {
 	var cfg map[string]any
 	b, _ := os.ReadFile(e.cfg)
 	json.Unmarshal(b, &cfg)
-	if cfg["node_id"] != "a-0000000e" || !strings.HasPrefix(cfg["token"].(string), "nt-a-0000000e.") {
+	if cfg["node_id"] != "a-0000000e" || !strings.HasPrefix(cfg["token"].(string), "nt-a-0000000e.") || cfg["token_gateway"] != "wss://staging.example.org/v1/node/connect" {
 		t.Fatalf("node.json %s", b)
 	}
 	if err := e.f.Anonymous("", true); err == nil || reg.calls != 1 {
@@ -527,4 +528,53 @@ func TestSetupAnonymous(t *testing.T) {
 		t.Fatalf("the token went to another gateway: %q", l.token)
 	}
 	e.f.LinkCancel()
+	// Without its record (a hand-edited node.json), not even the gateway node.json names gets it.
+	if err := e.f.writeConfig(nil, "token_gateway"); err != nil {
+		t.Fatal(err)
+	}
+	l = e.linker()
+	if err := e.f.Link("wss://staging.example.org/v1/node/connect"); err != nil {
+		t.Fatal(err)
+	}
+	if l.token != "" {
+		t.Fatalf("a token without its gateway's record was sent: %q", l.token)
+	}
+	e.f.LinkCancel()
+}
+
+// The setup page writes node.json in its canonical form and under the writers' lock (nodeconf): one with
+// keys equal in any case is refused, not rewritten, and a write waits while another writer holds the lock.
+func TestWriteConfigCanonicalAndLocked(t *testing.T) {
+	e := newEnv(t, "")
+	body := `{"gateway_url":"wss://a.example/v1/node/connect","GATEWAY_URL":"wss://b.example/v1/node/connect"}`
+	os.WriteFile(e.cfg, []byte(body), 0o600)
+	if err := e.f.writeConfig(map[string]any{"node_id": "x"}); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("rewrote case-variant keys: %v", err)
+	}
+	if b, _ := os.ReadFile(e.cfg); string(b) != body {
+		t.Fatalf("node.json changed: %s", b)
+	}
+	if _, err := readConfig(e.cfg); err == nil {
+		t.Fatal("readConfig took case-variant keys")
+	}
+	os.WriteFile(e.cfg, []byte(`{"Gateway_URL":"wss://a.example/v1/node/connect"}`), 0o600)
+	unlock, err := nodeconf.Lock(filepath.Dir(e.cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- e.f.writeConfig(map[string]any{"node_id": "x"}) }()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("wrote while another writer held the lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(e.cfg); strings.Contains(string(b), "Gateway_URL") || !strings.Contains(string(b), `"gateway_url"`) {
+		t.Fatalf("not canonical: %s", b)
+	}
 }

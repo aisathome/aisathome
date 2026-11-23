@@ -82,7 +82,6 @@ account (above).
 | call | auth | body | answer |
 |---|---|---|---|
 | `POST /v1/node/register` | none | `accept_terms` (required `true`: the person was told they must be 18 or older and that running the node accepts the terms), `agent` | `token` (`nt-a-<8 hex>.<secret>`, given once), `node_id` (`a-<8 hex>`) |
-| `POST /v1/node/token-known` | none | `sha256` (of a node token, hex; never the token) | `known`: whether a node token with that hash connects to this gateway now. The installer asks this about an installed token before deciding to keep it |
 | `GET /v1/node/self` | `Bearer <node token>` | none | `node_id`, `anonymous`, `science_only`, `state` (`checking`, `admitted`, `held`, `offline`, `no_check`, or `serving` for an account's node), `checks_passed`, `checks_needed`, `message` |
 
 `register` answers HTTP 429 when the address or the network registered too many nodes, and 503 when the
