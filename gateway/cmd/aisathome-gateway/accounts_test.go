@@ -271,6 +271,137 @@ func TestAccountsListLimitsAndUsedToday(t *testing.T) {
 	}
 }
 
+// list appends each account's use over all time from the usage log (testdata/usage.jsonl, written
+// with usageFixtureSecret: old and new records, malformed lines, a torn last line, and users that
+// are no account: a science project, a front-end user, a config key), or "-" when it is unknown.
+func TestAccountsListTotalUsage(t *testing.T) {
+	const usageFixtureSecret = "usage-fixture-secret-0123456789abcdef"
+	dir := t.TempDir()
+	file := filepath.Join(dir, "accounts.json")
+	store, _ := gateway.OpenAccountStore(file)
+	for _, id := range []string{"gh:1", "gh:2", "gh:3"} {
+		store.SignIn(id, time.Now())
+	}
+	fixture, err := filepath.Abs(filepath.Join("testdata", "usage.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type cols [3]string // REQUESTS TOKENS LAST-USED
+	dash := cols{"-", "-", "-"}
+	for _, tc := range []struct {
+		name     string
+		usageLog string
+		secret   string
+		stateDir bool
+		rows     map[string]cols
+		note     string
+	}{
+		{
+			name: "from the log", usageLog: fixture, secret: usageFixtureSecret,
+			rows: map[string]cols{"gh:1": {"3", "1,202,000", "2026-11-20"}, "gh:2": {"1", "42", "2026-11-22"}, "gh:3": {"0", "0", "-"}},
+			note: "REQUESTS, TOKENS, LAST USED: all time, as far back as the usage log " + fixture + " goes (usage_log); " +
+				"requests answered or attempted by a node (a retry on another node counts again), prompt + completion " +
+				"tokens as logged (unweighted), and the UTC day of the last one; 3 malformed line(s) in the log skipped",
+		},
+		{
+			name: "beside USED TODAY", usageLog: fixture, secret: usageFixtureSecret, stateDir: true,
+			rows: map[string]cols{"gh:1": {"3", "1,202,000", "2026-11-20"}, "gh:3": {"0", "0", "-"}},
+			note: "3 malformed line(s) in the log skipped",
+		},
+		{
+			name: "another secret finds no account", usageLog: fixture, secret: usageFixtureSecret + "x",
+			rows: map[string]cols{"gh:1": {"0", "0", "-"}, "gh:2": {"0", "0", "-"}},
+			note: "3 malformed line(s)",
+		},
+		{
+			name: "no log file", usageLog: filepath.Join(dir, "missing.jsonl"), secret: usageFixtureSecret,
+			rows: map[string]cols{"gh:1": dash, "gh:3": dash},
+			note: "REQUESTS, TOKENS, LAST USED are unknown (-): there is no usage log at " + filepath.Join(dir, "missing.jsonl") + " (usage_log in the config)",
+		},
+		{
+			name: "no usage_log", secret: usageFixtureSecret,
+			rows: map[string]cols{"gh:1": dash},
+			note: "REQUESTS, TOKENS, LAST USED are unknown (-): the config has no usage_log",
+		},
+		{
+			name: "no session secret", usageLog: fixture,
+			rows: map[string]cols{"gh:1": dash},
+			note: "REQUESTS, TOKENS, LAST USED are unknown (-): the config has no accounts.session_secret",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := gateway.Config{UsageLog: tc.usageLog, Accounts: &gateway.AccountsConfig{File: file, SessionSecret: tc.secret}}
+			if tc.stateDir {
+				cfg.StateDir = t.TempDir()
+			}
+			cfgFile := filepath.Join(t.TempDir(), "gateway.json")
+			raw, _ := json.Marshal(cfg)
+			os.WriteFile(cfgFile, raw, 0o600)
+			var out bytes.Buffer
+			if err := runAccounts([]string{"-config", cfgFile, "list"}, &out, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+			head := "ID STATE KEYS CREATED USERNAME REQUESTS TOKENS LAST USED"
+			if tc.stateDir {
+				head = "ID STATE KEYS USED TODAY CREATED USERNAME REQUESTS TOKENS LAST USED"
+			}
+			if got := strings.Join(strings.Fields(lines[0]), " "); got != head {
+				t.Fatalf("header %q, want %q", got, head)
+			}
+			for _, line := range lines[1:] {
+				f := strings.Fields(line)
+				if len(f) < 3 {
+					continue
+				}
+				if want, ok := tc.rows[f[0]]; ok {
+					if got := (cols{f[len(f)-3], f[len(f)-2], f[len(f)-1]}); got != want {
+						t.Errorf("%s: %v, want %v\n%s", f[0], got, want, out.String())
+					}
+				}
+			}
+			if flat := strings.Join(strings.Fields(out.String()), " "); !strings.Contains(flat, tc.note) {
+				t.Errorf("list lacks %q:\n%s", tc.note, out.String())
+			}
+			if !strings.Contains(lines[len(lines)-1], "accounts in total") {
+				t.Errorf("the active summary must stay the last line:\n%s", out.String())
+			}
+		})
+	}
+	// -file alone: no config, so no usage log either; the columns are left out.
+	var out bytes.Buffer
+	if err := runAccounts([]string{"-file", file, "list"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "REQUESTS") || strings.Contains(out.String(), "LAST USED") {
+		t.Fatalf("-file alone shows the usage log's columns:\n%s", out.String())
+	}
+	// A log that exists but cannot be read is an error, not a column of dashes.
+	cfg := gateway.Config{UsageLog: dir, Accounts: &gateway.AccountsConfig{File: file, SessionSecret: usageFixtureSecret}}
+	if err := listAccounts(&bytes.Buffer{}, store.Snapshot(), &cfg, time.Now()); err == nil {
+		t.Fatal("an unreadable usage log listed")
+	}
+}
+
+// LAST USED is the UTC day, whatever zone a time comes in.
+func TestTotalsColumns(t *testing.T) {
+	late := time.Date(2026, 11, 21, 1, 30, 0, 0, time.FixedZone("CEST", 2*3600)) // 2026-11-20 23:30 UTC
+	totals := map[string]gateway.AccountTotals{"gh:1": {Requests: 1234, Tokens: 5678901, Last: late}}
+	for _, tc := range []struct {
+		totals map[string]gateway.AccountTotals
+		id     string
+		want   string
+	}{
+		{totals, "gh:1", "1,234 5,678,901 2026-11-20"},
+		{totals, "gh:2", "0 0 -"},
+		{nil, "gh:1", "- - -"},
+	} {
+		if got := strings.Join(totalsColumns(tc.totals, tc.id), " "); got != tc.want {
+			t.Errorf("totalsColumns(%s) = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+}
+
 func TestLimitsLineAndThousands(t *testing.T) {
 	if got := limitsLine(gateway.UserLimits{}); got != "limits per account, each account separately: unlimited tokens/day (weighted), "+
 		"unlimited requests/min, unlimited concurrent; the day resets 00:00 UTC" {

@@ -20,10 +20,17 @@ import (
 const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json | -file accounts.json] <command>
 
   list                 accounts, their state, number of keys, weighted tokens used today (UTC)
-                       and username; the account limit and sign-up state, and the limits
-                       that apply to each account (tokens/day, requests/min, concurrent).
+                       and username, then their use over all time (requests, tokens, the day
+                       of the last request); the account limit and sign-up state, and the
+                       limits that apply to each account (tokens/day, requests/min, concurrent).
                        USED TODAY is the account page's "Today" number, from the budget
-                       state the gateway saves every 5 s (needs -config with state_dir)
+                       state the gateway saves every 5 s (needs -config with state_dir).
+                       REQUESTS, TOKENS (prompt + completion, unweighted) and LAST USED (UTC)
+                       are summed from the usage log, as far back as it goes (needs -config
+                       with usage_log and accounts.session_secret, which names accounts in the
+                       log; "-" when there is no log). A request retried on another node
+                       counts again; records from before a change of session_secret are not
+                       found. It reads the whole log, so it takes a moment on a big one
   limit <n>            let at most n accounts be active; waiting accounts get in automatically
   close | open         stop or allow new sign-ups (existing accounts keep working)
   add <id>             create an active account (e.g. gh:12345) without a sign-in, for tests
@@ -576,36 +583,47 @@ func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 }
 
 // listAccounts prints the accounts, the sign-up state and, with a config, the per-account
-// limits and each account's use today.
+// limits, each account's use today and its use over all time.
 func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, now time.Time) error {
+	ids := make([]string, len(f.Accounts))
+	for i, x := range f.Accounts {
+		ids[i] = x.ID
+	}
 	var used map[string]int64 // nil: unknown, the column is left out
 	if cfg != nil && cfg.StateDir != "" {
-		ids := make([]string, len(f.Accounts))
-		for i, x := range f.Accounts {
-			ids[i] = x.ID
-		}
 		var err error
 		if used, err = gateway.AccountsUsedToday(cfg.StateDir, ids, now); err != nil {
 			return fmt.Errorf("reading today's use: %w", err)
 		}
 	}
+	totals, totalsNote, err := readTotals(cfg, ids)
+	if err != nil {
+		return err
+	}
 	active := 0
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	head := []string{"ID", "STATE", "KEYS"}
 	if used != nil {
-		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tUSED TODAY\tCREATED\tUSERNAME")
-	} else {
-		fmt.Fprintln(tw, "ID\tSTATE\tKEYS\tCREATED\tUSERNAME")
+		head = append(head, "USED TODAY")
 	}
+	head = append(head, "CREATED", "USERNAME")
+	if cfg != nil { // without a config the usage log is unknown: the columns are left out
+		head = append(head, "REQUESTS", "TOKENS", "LAST USED")
+	}
+	fmt.Fprintln(tw, strings.Join(head, "\t"))
 	for _, x := range f.Accounts {
 		if x.Status == gateway.StatusActive {
 			active++
 		}
+		row := []string{x.ID, x.Status, strconv.Itoa(len(x.Keys))}
 		if used != nil {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%q\n", x.ID, x.Status, len(x.Keys), thousands(used[x.ID]),
-				x.Created.Format("2006-01-02"), x.Username)
-		} else {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%q\n", x.ID, x.Status, len(x.Keys), x.Created.Format("2006-01-02"), x.Username)
+			row = append(row, thousands(used[x.ID]))
 		}
+		row = append(row, x.Created.Format("2006-01-02"), strconv.Quote(x.Username))
+		if cfg != nil {
+			row = append(row, totalsColumns(totals, x.ID)...)
+		}
+		fmt.Fprintln(tw, strings.Join(row, "\t"))
 	}
 	tw.Flush()
 	state := "open"
@@ -623,9 +641,58 @@ func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, no
 	case cfg != nil:
 		fmt.Fprintln(out, "today's use is not shown: the config has no state_dir, so it lives only in the gateway's memory")
 	}
+	if totalsNote != "" {
+		fmt.Fprintln(out, totalsNote)
+	}
 	// The summary stays the last line: the browser tests (and scripts) read it there.
 	fmt.Fprintf(out, "%d of %d active, %d accounts in total; sign-up is %s\n", active, f.Settings.MaxActive, len(f.Accounts), state)
 	return nil
+}
+
+// readTotals sums each account's use over all time from the usage log of cfg. A nil map means
+// unknown (the columns show "-"); the note says where the numbers come from, or why they are
+// unknown. Without a config there is neither.
+func readTotals(cfg *gateway.Config, ids []string) (map[string]gateway.AccountTotals, string, error) {
+	const unknown = "REQUESTS, TOKENS, LAST USED are unknown (-): "
+	switch {
+	case cfg == nil:
+		return nil, "", nil
+	case cfg.UsageLog == "":
+		return nil, unknown + "the config has no usage_log", nil
+	case cfg.Accounts == nil || cfg.Accounts.SessionSecret == "":
+		return nil, unknown + "the config has no accounts.session_secret, which names accounts in the usage log", nil
+	}
+	lf, err := os.Open(cfg.UsageLog)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, unknown + "there is no usage log at " + cfg.UsageLog + " (usage_log in the config)", nil
+	} else if err != nil {
+		return nil, "", fmt.Errorf("reading the usage log: %w", err)
+	}
+	defer lf.Close()
+	totals, malformed, err := gateway.ReadAccountTotals(lf, cfg.Accounts.SessionSecret, ids)
+	if err != nil {
+		return nil, "", fmt.Errorf("reading the usage log %s: %w", cfg.UsageLog, err)
+	}
+	note := "REQUESTS, TOKENS, LAST USED: all time, as far back as the usage log " + cfg.UsageLog + " goes (usage_log);\n" +
+		"  requests answered or attempted by a node (a retry on another node counts again), prompt + completion\n" +
+		"  tokens as logged (unweighted), and the UTC day of the last one"
+	if malformed > 0 {
+		note += fmt.Sprintf("; %d malformed line(s) in the log skipped", malformed)
+	}
+	return totals, note, nil
+}
+
+// totalsColumns are an account's REQUESTS, TOKENS and LAST USED: "-" when unknown (totals nil),
+// and LAST USED "-" for an account the log has no record of.
+func totalsColumns(totals map[string]gateway.AccountTotals, id string) []string {
+	if totals == nil {
+		return []string{"-", "-", "-"}
+	}
+	t, last := totals[id], "-"
+	if !t.Last.IsZero() {
+		last = t.Last.UTC().Format("2006-01-02")
+	}
+	return []string{thousands(t.Requests), thousands(t.Tokens), last}
 }
 
 // limitsLine states the limits every account has, each on its own (0 = unlimited).

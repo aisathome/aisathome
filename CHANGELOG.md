@@ -73,6 +73,13 @@ and **(site)** are live on aisathome.org once deployed.
   client. Config `model_check` (`docs/modelcheck.md`). (gateway)
 - **`aisathome-node modelcheck record -prompts FILE`** records a reference of a private prompt set,
   for the gateway's secret check. (node)
+- **`aisathome-gateway accounts list` shows each account's use over all time.** Three columns after
+  USERNAME: REQUESTS (records in the usage log: a request retried on another node counts again),
+  TOKENS (prompt + completion as logged, unweighted) and LAST USED (UTC day of the last request),
+  summed from the `usage_log` as far back as it goes, read line by line. The log names accounts by
+  a pseudonym, so it needs `-config` with `usage_log` and `accounts.session_secret`; records from
+  before a change of the secret, and those of keys, science projects and front-end users without
+  an account, are not counted. "-" with a footer line saying why when there is no log. (gateway)
 
 ### Changed
 
