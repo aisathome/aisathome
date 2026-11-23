@@ -1,0 +1,10 @@
+{
+	"_about": "Leaves the gateway's records call a proof by the model although the accepted proof imports a theorem someone else had already proved on prove2me: reuses, as trial 6's p2m-f181df (N05). The records carry no mark of it (the result's kind is proof, the task's outcome proved), so the site corrects them here, by leaf and trial (prove2me-records.ts parseResults).",
+	"p2m-faf1e3": {
+		"trial": "t9",
+		"theorem": "WilliamsonShmoys.WilliamsonShmoys_maximal_planar_supergraph_edge_count_upper__p2m_126bf562_f451_4e0b_b87e_ef5c21746e7b_a4",
+		"url": "https://prove2.me/theorems/896d696c-1e18-4de1-b5bd-ab3d52a97871",
+		"author": "Eyal1990",
+		"relation": "import"
+	}
+}

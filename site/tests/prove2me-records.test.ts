@@ -293,3 +293,29 @@ test('the submissions’ paragraph and the reuse notes, made from the submission
 	const x = { ...b, submissions: b.submissions.map((s) => ({ ...s, alias: '<i>x</i>' })) };
 	assert.ok(!submissionsNoteHTML(x).includes('<i>') && !reuseNotesHTML(x).includes('<i>'));
 });
+
+test('a curated reuse: N18 (trial 9) imports a theorem another prover had proved, so it is a reuse, not a proof by the model', async () => {
+	const { recordsOf } = await import('../src/data/prove2me-build');
+	const snap = (await import('../src/data/science/prove2me-records.json')).default;
+	// the records say "proof"; the correction makes it a reuse with the theorem it imports
+	const raw18 = (snap as { results: { results: { item: string }[] } }).results.results.find((r) => r.item === 'p2m-faf1e3')!;
+	const [r18] = parseResults({ results: [raw18] })!.items;
+	assert.deepEqual([r18.labels.kind, r18.labels.relation, r18.labels.reuses_author], ['reuse', 'import', 'Eyal1990']);
+	assert.match(r18.labels.reuses, /^WilliamsonShmoys\.WilliamsonShmoys_maximal_planar_supergraph_edge_count_upper__/);
+	// only for its own trial: the same leaf's result from another trial stays as it is
+	assert.equal(parseResults({ results: [{ ...raw18, campaign: 't10', labels: { alias: 'N18', kind: 'proof', trial: 't10' } }] })!.items[0].labels.kind, 'proof');
+	// the page's numbers from the records of 2026-11-23: 11 accepted, 8 open leaves proved by the model, 3 closed by reuse
+	const live = recordsOf(snap)!;
+	const v = scienceView(h, live);
+	assert.deepEqual([v.kpis.accepted, v.kpis.openProved, v.kpis.reused], [11, 8, 3]);
+	assert.ok(!v.kpis.openProvedLeaves.some((l) => l.leaf === 'p2m-faf1e3'));
+	const s18 = v.submissions.find((s) => s.leaf === 'p2m-faf1e3')!;
+	assert.equal(s18.kind, 'reuse');
+	assert.equal(s18.reuses!.url, 'https://prove2.me/theorems/896d696c-1e18-4de1-b5bd-ab3d52a97871');
+	assert.match(submissionRowHTML(s18), /imports <a href="https:\/\/prove2\.me\/theorems\/896d696c/);
+	assert.match(reuseNotesHTML(v), /data-p2m-reuse-note="N18">p2m-faf1e3 \(N18\) was closed by reuse\. The model’s proof imports a theorem that Eyal1990 had already proved on prove2me/);
+	assert.match(submissionsNoteHTML(v), /^prove2me has accepted 11 of the 11 proofs we submitted: 8 proofs of open leaves written by the model .* and 3 leaves closed by reuse/);
+	// trial 9: its run of N18 is no run (as trial 6's N05), 1 of 6 open runs proved
+	const t9 = v.trials.find((t) => t.label === '9')!;
+	assert.deepEqual([t9.open.proved, t9.open.runs], [1, 5]);
+});
