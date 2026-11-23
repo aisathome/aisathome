@@ -2,12 +2,13 @@
 // be the trial or the bench"): every trial that has not finished (prove2me-records.ts nowDocs), then every bench with
 // open tasks (prove2me-status.ts isBench; no campaign, its tasks name it), shown as a trial is.
 //
-// One HTML renderer for the build (from the records the build fetched) and the browser (live, every minute), so the
-// two never say different things. Every value is escaped; a campaign's text is plain text, the data document's
-// Markdown-light (prove2me-current.ts mdLightHTML).
+// A block names the trial or bench, its start and scaffold, then its leaves and their tasks; no description of the
+// trial or its budget (owner, 2026-11-23: state what is being worked on). One HTML renderer for the build (from the
+// records the build fetched) and the browser (live, every minute), so the two never say different things. Every value
+// is escaped.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { day, mdLightHTML, submissionText, theoremURL, trialQueue, type CurrentDoc, type TasksView } from './prove2me-current';
+import { day, submissionText, theoremURL, trialQueue, type CurrentDoc, type TasksView } from './prove2me-current';
 import { leafTokensText, liveLeaves, taskTableHTML, type LiveLeaf } from './prove2me-live';
 import { leafPlan, leafPlanHTML } from './prove2me-outlines';
 import { nowDocs, type Records } from './prove2me-records';
@@ -15,13 +16,6 @@ import { benchName, isBench } from './prove2me-status';
 
 const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const andList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
-const plainHTML = (s: string) =>
-	s
-		.trim()
-		.split(/\n\s*\n/)
-		.filter((p) => p.trim())
-		.map((p) => `<p>${esc(p.trim().replace(/\s*\n\s*/g, ' '))}</p>`)
-		.join('');
 const roleLabel: Record<string, string> = { calibration: 'Calibration', open: 'Open', comparison: 'Comparison' };
 
 /** The bench documents: one per bench with tasks running or waiting, its leaves in the order its tasks were
@@ -120,15 +114,12 @@ function blockHTML(doc: CurrentDoc, tasks: TasksView, ctx: NowCtx, taken: Set<st
 		...doc.leaves.map((l) => leafHTML(doc, l, live.find((x) => x.leaf === l.alias), ctx, taken)),
 		...live.filter((x) => !doc.leaves.some((l) => l.alias === x.leaf)).map((x) => leafHTML(doc, undefined, x, ctx, taken)),
 	];
-	const about = doc.schema === 'campaign' || isBenchDoc(doc) ? plainHTML(t.description) : mdLightHTML(t.description);
 	// the trial's submissions of leaves it does not list (a leaf closed by reuse while the trial was prepared)
 	const others = doc.submissions.filter((s) => !doc.leaves.some((l) => l.id === s.leaf));
 	const subs = others.map((s) => `${s.leaf} (${s.alias}), ${submissionText(s)} on ${day(s.verdict_at ?? s.submitted_at, false)}`).join('; ');
 	return (
 		`<div class="now-trial" data-now-trial="${esc(t.id)}" data-status="${esc(t.status)}">` +
 		`<p class="head" data-now-head>${esc(nowHead(doc))}</p>` +
-		`<div class="about" data-now-about${about ? '' : ' hidden'}>${about}</div>` +
-		`<p class="caps" data-now-budget${t.budget ? '' : ' hidden'}>${t.budget ? esc(`Budget: ${t.budget}.`) : ''}</p>` +
 		`<ul data-now-leaves>${items.join('')}</ul>` +
 		`<p class="meta" data-now-subs${others.length ? '' : ' hidden'}>${others.length ? esc(`Also from this trial: ${subs}.`) : ''}</p>` +
 		`</div>`

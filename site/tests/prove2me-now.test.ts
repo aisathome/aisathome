@@ -55,7 +55,8 @@ test('the blocks: the bench’s leaves and tasks as a trial’s; a leaf’s anch
 	assert.match(bench, /data-now-head>Bench v13, since 18 November 2026 · scaffold v13</);
 	assert.match(bench, /data-current-leaf="N14"[^>]*data-state="running"/);
 	assert.ok(!bench.includes('id="leaf-'));
-	assert.match(bench, /data-now-about hidden>/);
+	// no description of the trial or its budget
+	assert.ok(!html.includes('data-now-about') && !html.includes('data-now-budget') && !html.includes('Budget:'));
 });
 
 test('every value is escaped', () => {

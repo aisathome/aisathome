@@ -87,41 +87,11 @@ export function submissionRowHTML(s: SubRec): string {
 	);
 }
 
-/** The paragraph under the submissions, made from them (owner, 2026-11-23: not a fixed story of the first two). */
-export function submissionsNoteHTML(v: ScienceView): string {
-	const subs = v.submissions;
-	const acc = subs.filter((s) => s.verdict === 'accepted');
-	const proofs = acc.filter((s) => s.kind !== 'reuse');
-	const reuses = acc.filter((s) => s.kind === 'reuse');
-	const pending = subs.filter((s) => s.verdict === 'pending').length;
-	const when = (s: SubRec) => s.verdict_at ?? s.submitted_at;
-	const newest = [...proofs].sort((a, b) => when(b).localeCompare(when(a)))[0];
-	return esc(
-		`prove2me has accepted ${acc.length} of the ${subs.length} proofs we submitted${pending ? ` (${pending} still wait for its verdict)` : ''}: ` +
-			`${plural(proofs.length, 'proof')} of open leaves written by the model${proofs.length ? ` (${andList(proofs.map((s) => named(s.leaf, s.alias)))})` : ''}` +
-			`${reuses.length ? ` and ${plural(reuses.length, 'leaf', 'leaves')} closed by reuse (below)` : ''}.` +
-			(newest ? ` The newest accepted proof is ${named(newest.leaf, newest.alias)}, from trial ${newest.trial}, accepted on ${day(when(newest))}.` : '') +
-			` prove2me’s theorem pages show every accepted leaf as proved. Calibration leaves are never submitted: they were proved before.`,
-	);
-}
+/** The submissions as the table lists them: newest trial first, the newest submission first within a trial. */
+export const newestFirst = (subs: SubRec[]) => [...subs].sort((a, b) => b.trial - a.trial || b.submitted_at.localeCompare(a.submitted_at));
 
-/** A note per leaf prove2me accepted as closed by reuse: whose theorem it reuses and how we found it. */
-export function reuseNotesHTML(v: ScienceView): string {
-	return v.submissions
-		.filter((s) => s.kind === 'reuse' && s.verdict === 'accepted' && s.reuses?.theorem)
-		.map((s) => {
-			const who = s.reuses!.author ?? 'someone else';
-			const found = s.found === 'probes' ? `while we prepared trial ${s.trial}` : `during trial ${s.trial}`;
-			const how =
-				s.reuses!.relation === 'import'
-					? `The model’s proof imports a theorem that ${who} had already proved on prove2me, with nearly the same statement; our index of prove2me’s library offered it ${found}.`
-					: s.reuses!.relation === 'part'
-					? `The leaf is one part of a theorem that ${who} had already proved on prove2me: its conclusion contains the leaf’s statement. Our index of prove2me’s library offered that theorem as a similar statement ${found}, and the model’s proof is one line that uses it.`
-					: `The leaf is the same statement as a theorem that ${who} had already proved on prove2me under another name. Our index of prove2me’s library found the match ${found}, and the model’s proof is one line that imports that theorem.`;
-			return `<p data-p2m-reuse-note="${esc(s.alias || s.leaf)}">${esc(`${named(s.leaf, s.alias)} was closed by reuse. ${how} Our full check and then prove2me accepted it, but none of the mathematics is ours, so it is not counted among the open leaves proved.`)}</p>`;
-		})
-		.join('');
-}
+/** The table's rows, newest trial first (the table shows about five and scrolls for the rest). */
+export const submissionRowsHTML = (v: ScienceView) => newestFirst(v.submissions).map(submissionRowHTML).join('');
 
 // ---- the trials table
 

@@ -10,7 +10,7 @@ import { counts, day, hhmm, outcomeLabel, p2m, plainTitle, span, sumTokens, theo
 import { FROZEN_THROUGH, taskTableRows } from '../../data/prove2me-current';
 import { allRuns, builtDetail, builtTaskRows, historyOf, leavesView, scienceView, trialDetails, type TrialDetail } from '../../data/prove2me-records';
 import {
-	kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, reuseNotesHTML, smallNumbersHTML, submissionRowHTML, submissionsNoteHTML, trialDetailHTML, trialRowHTML,
+	kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialDetailHTML, trialRowHTML,
 	trialsFootHTML,
 } from '../../data/prove2me-view';
 import { fromStatic, leafDetail, taskTableHTML } from '../../data/prove2me-live';
@@ -182,17 +182,16 @@ const leafCols = [
 	</section>
 
 	<h2 id="submissions">Submitted to prove2me</h2>
-	<div class="p2m-wrap not-content">
+	{/* Newest trial first; the area shows about five and scrolls for the rest (a keyboard can scroll it too). */}
+	<div class="p2m-wrap p2m-subs-scroll not-content" data-p2m-subs-scroll tabindex="0" role="region" aria-label="Submitted to prove2me, newest trial first">
 		<table class="p2m-table" data-p2m-submissions data-source="build">
 			<thead>
 				<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">From</th><th scope="col">Submitted</th><th scope="col">prove2me’s verdict</th></tr>
 			</thead>
-			<tbody set:html={view.submissions.map(submissionRowHTML).join('')} />
+			<tbody set:html={submissionRowsHTML(view)} />
 		</table>
 	</div>
-	{/* Made from the submissions (prove2me-view.ts), the build's and then the browser's. */}
-	<p data-p2m-subs-note set:html={submissionsNoteHTML(view)} />
-	<div data-p2m-reuse-notes set:html={reuseNotesHTML(view)} />
+	<p class="caps">Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the model.</p>
 
 	<h2 id="working-on-now">Working on now</h2>
 	<script is:inline type="application/json" data-p2m-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
@@ -420,7 +419,7 @@ const leafCols = [
 	import { CURRENT_URL, day, fetchAllTasks, hhmm, parseCurrent, probeRound, refutedOutlines, taskTableRows, theoremURL, walkPages } from '../../data/prove2me-current';
 	import { CAMPAIGNS_URL, RESULTS_URL, allRuns, getJSON, leavesView, parseCampaigns, parseResults, scienceView, trialDetails, type History, type Records } from '../../data/prove2me-records';
 	import {
-		kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, reuseNotesHTML, smallNumbersHTML, submissionRowHTML, submissionsNoteHTML, trialDetailHTML, trialRowHTML,
+		kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialDetailHTML, trialRowHTML,
 		trialsFootHTML,
 	} from '../../data/prove2me-view';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
@@ -429,6 +428,26 @@ const leafCols = [
 
 	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
 	// replaces or joins them (trials 1 to 5 stay the build's).
+	/** The submissions' scroll area: as tall as its head and first five rows, at most 85% of the window (a
+	 * phone's stacked rows); the CSS height stands without this. */
+	function fitSubmissions() {
+		const box = document.querySelector<HTMLElement>('[data-p2m-subs-scroll]');
+		if (!box) return;
+		const rows = [...box.querySelectorAll<HTMLElement>('tbody > tr')];
+		if (rows.length <= 5) {
+			box.style.maxHeight = 'none';
+			return;
+		}
+		box.style.maxHeight = '';
+		const top = box.getBoundingClientRect().top - box.scrollTop;
+		const end = rows[4].getBoundingClientRect().bottom;
+		if (end > top) box.style.maxHeight = `${Math.min(Math.ceil(end - top) + 2, Math.round(window.innerHeight * 0.85))}px`;
+	}
+	fitSubmissions();
+	// again whenever the table's size changes (the fonts arriving, live rows, a narrower window)
+	const subsTable = document.querySelector('[data-p2m-subs-scroll] table');
+	if (subsTable && 'ResizeObserver' in window) new ResizeObserver(() => fitSubmissions()).observe(subsTable);
+	window.addEventListener('resize', fitSubmissions);
 	const taskBox = document.querySelector<HTMLElement>('[data-p2m-alltasks]');
 	const taskKnown = JSON.parse(document.querySelector('[data-p2m-tasks-known]')?.textContent || '{"rows":[],"leafIds":{},"leaves":{},"holes":{}}') as {
 		rows: TaskTableRow[];
@@ -561,7 +580,8 @@ const leafCols = [
 		if (small) small.innerHTML = smallNumbersHTML(v, recordsKnown.f01Tasks ?? undefined, (a) => recordsKnown.aliasIds[a] ?? a);
 		const subs = document.querySelector<HTMLElement>('[data-p2m-submissions]');
 		if (subs) {
-			subs.querySelector('tbody')!.innerHTML = v.submissions.map(submissionRowHTML).join(''); // every value escaped (prove2me-view.ts)
+			subs.querySelector('tbody')!.innerHTML = submissionRowsHTML(v); // every value escaped (prove2me-view.ts)
+			fitSubmissions();
 			subs.dataset.source = 'live';
 		}
 		const table = document.querySelector<HTMLElement>('[data-p2m-trials]');
@@ -582,10 +602,6 @@ const leafCols = [
 		const times = document.querySelector<HTMLElement>('[data-p2m-cache-times]');
 		if (times && v.kpis.computed > 0) times.textContent = String(Math.round(v.kpis.withCache / v.kpis.computed));
 		// the submissions' paragraph and the reuse notes, made from the submissions
-		const subsNote = document.querySelector<HTMLElement>('[data-p2m-subs-note]');
-		if (subsNote) subsNote.innerHTML = submissionsNoteHTML(v); // escaped (prove2me-view.ts)
-		const reuseNotes = document.querySelector<HTMLElement>('[data-p2m-reuse-notes]');
-		if (reuseNotes) reuseNotes.innerHTML = reuseNotesHTML(v);
 		showLeaves(h, live);
 		// each trial's list from trial 6 on: replaced in place (what is open stays open), a new one in order
 		const lists = document.querySelector<HTMLElement>('[data-p2m-trial-lists]');
@@ -910,6 +926,9 @@ const leafCols = [
 	.p2m-note { margin: 0.6rem 0 0; font-size: 0.8rem; }
 
 	.p2m-wrap { overflow-x: auto; margin-top: 1rem; }
+	.p2m-subs-scroll { max-height: min(26rem, 85vh); overflow-y: auto; overscroll-behavior: contain; }
+	.p2m-subs-scroll:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+	.p2m-subs-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--sl-color-bg); }
 	.p2m-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 	.p2m-table :is(th, td) { padding: 0.45rem 0.75rem 0.45rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
 	.p2m-table :is(th, td):last-child { padding-right: 0; }
