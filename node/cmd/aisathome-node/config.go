@@ -29,10 +29,10 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 	if tok := getenv("AISATHOME_NODE_TOKEN"); tok != "" {
 		cfg.Token, cfg.TokenGateway = tok, getenv("AISATHOME_TOKEN_GATEWAY")
 	}
-	// A token goes only to the gateway that issued it.
+	// A token goes only to the gateway that issued it: one without that record is not trusted at all.
 	if cfg.Token != "" {
 		if err := nodeconf.CheckTokenGateway(cfg.TokenGateway, cfg.GatewayURL); err != nil {
-			return defaults(cfg, layout), fmt.Errorf("%v: not connecting (link the node again: aisathome-node link)", err)
+			return defaults(cfg, layout), fmt.Errorf("%w: not connecting (link the node again: aisathome-node link)", err)
 		}
 	}
 	// Local UI and state, set by the Linux installer's systemd drop-in (local-ui.conf).

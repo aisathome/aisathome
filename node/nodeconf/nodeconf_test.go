@@ -78,8 +78,8 @@ func TestCheckTokenGateway(t *testing.T) {
 	if err := CheckTokenGateway("wss://a/v1/node/connect", "wss://a/v1/node/connect"); err != nil {
 		t.Error(err)
 	}
-	if err := CheckTokenGateway("", "wss://a/v1/node/connect"); err != nil {
-		t.Error(err)
+	if err := CheckTokenGateway("", "wss://a/v1/node/connect"); !errors.Is(err, ErrNoTokenGateway) {
+		t.Errorf("no record: %v", err)
 	}
 	if err := CheckTokenGateway("wss://prod/v1/node/connect", "wss://staging/v1/node/connect"); !errors.Is(err, ErrTokenGateway) {
 		t.Errorf("another gateway's token: %v", err)

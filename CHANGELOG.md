@@ -79,7 +79,7 @@ and **(site)** are live on aisathome.org once deployed.
 - **A node token is kept only with the gateway that issued it.** Every token written (the installer,
   `aisathome-node link` and `register`, the Windows setup page) now comes with that gateway:
   `AISATHOME_TOKEN_GATEWAY` in `token.env`, or `token_gateway` beside a token in `node.json`. The node
-  refuses to start when that gateway is not the one its `node.json` names, and the installer moves an
+  refuses to start when that record is missing or names another gateway than its `node.json`, and the installer moves an
   installed token without one, or another gateway's, aside (`token.env.unlinked`) and never keeps or sends
   it: link the node again (`sudo aisathome-node link`) or reinstall. A `node.json` with two keys that are
   equal in any case (`gateway_url` and `Gateway_URL`) is refused everywhere; the installer, `link`,

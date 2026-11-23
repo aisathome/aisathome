@@ -163,7 +163,7 @@ func TestRunWithSetup(t *testing.T) {
 	exe, _ := os.Executable()
 	enginePort := freePort(t)
 	os.WriteFile(layout.Model, []byte("gguf"), 0o600)
-	os.WriteFile(layout.Config, []byte(fmt.Sprintf(`{"node_id":"n-0000000a","token":"nt-n-0000000a.s","gateway_url":"ws://127.0.0.1:1/v1/node/connect",
+	os.WriteFile(layout.Config, []byte(fmt.Sprintf(`{"node_id":"n-0000000a","token":"nt-n-0000000a.s","token_gateway":"ws://127.0.0.1:1/v1/node/connect","gateway_url":"ws://127.0.0.1:1/v1/node/connect",
 		"engine":{"tier":"standard","llama_server":%q,"port":%d}}`, exe, enginePort)), 0o600)
 	if code, b := p.post("/api/setup/leave", `{}`); code != 200 {
 		t.Fatalf("leave: %d %s", code, b)
@@ -190,7 +190,7 @@ func TestRunWithSetup(t *testing.T) {
 	waitGone(t, pid)
 
 	// A node.json the node cannot use: the setup page says why; the agent keeps running.
-	os.WriteFile(layout.Config, []byte(`{"token":"nt-n-0000000a.s","engine":{"tier":"huge"}}`), 0o600)
+	os.WriteFile(layout.Config, []byte(`{"gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"nt-n-0000000a.s","token_gateway":"ws://127.0.0.1:1/v1/node/connect","engine":{"tier":"huge"}}`), 0o600)
 	if code, b := p.post("/api/setup/leave", `{}`); code != 200 {
 		t.Fatalf("leave: %d %s", code, b)
 	}
@@ -232,7 +232,7 @@ func TestRunRefusesTakenEnginePort(t *testing.T) {
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
 	exe, _ := os.Executable()
-	cfgPath := writeConfig(t, fmt.Sprintf(`{"node_id":"n1","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"t",
+	cfgPath := writeConfig(t, fmt.Sprintf(`{"node_id":"n1","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"t","token_gateway":"ws://127.0.0.1:1/v1/node/connect",
 		"engine":{"tier":"standard","llama_server":%q,"model":%q,"port":%d}}`, exe, filepath.Join(dir, "m.gguf"), port))
 	ctx, cancel := context.WithCancel(context.Background())
 	var logw syncBuffer

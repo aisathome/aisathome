@@ -368,7 +368,7 @@ func TestRunStartsAndStopsEngine(t *testing.T) {
 	exe, _ := os.Executable()
 	port := freePort(t)
 	model := filepath.Join(dir, "model.gguf")
-	cfgPath := writeConfig(t, fmt.Sprintf(`{"node_id":"n1","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"t",
+	cfgPath := writeConfig(t, fmt.Sprintf(`{"node_id":"n1","gateway_url":"ws://127.0.0.1:1/v1/node/connect","token":"t","token_gateway":"ws://127.0.0.1:1/v1/node/connect",
 		"engine":{"tier":"standard","llama_server":%q,"model":%q,"port":%d}}`, exe, model, port))
 	engineLog := filepath.Join(dir, "logs", "engine.log")
 
