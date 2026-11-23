@@ -536,7 +536,14 @@ func (g *Gateway) handleTokenKnown(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "sha256: the node token's SHA-256, 64 hex digits")
 		return
 	}
-	known := g.accounts != nil && g.accounts.tokenHashKnown(h)
+	var known bool
+	if g.accounts != nil {
+		account, nodeID, ok := g.accounts.tokenHashKnown(h)
+		// A held node without an account is not worth keeping: its hold message tells the operator to
+		// reinstall, and the reinstall then moves the token aside and registers a fresh node (subject to
+		// the registration limits). An account's held node stays the account's.
+		known = ok && !(isAnon(account) && g.nodeHeld(nodeID))
+	}
 	if !known {
 		g.mu.Lock()
 		for tok := range g.tokens {
@@ -550,10 +557,13 @@ func (g *Gateway) handleTokenKnown(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, protocol.TokenKnown{Known: known})
 }
 
-// tokenHashKnown reports whether a node token with SHA-256 h connects now (nodeToken by hash).
-func (s *AccountStore) tokenHashKnown(h string) bool {
+// tokenHashKnown reports whether a node token with SHA-256 h connects now (nodeToken by hash), and whose.
+func (s *AccountStore) tokenHashKnown(h string) (account, nodeID string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok := s.byNode[h]
-	return ok && r.acct.nodesWork()
+	r, found := s.byNode[h]
+	if !found || !r.acct.nodesWork() {
+		return "", "", false
+	}
+	return r.acct.ID, r.node.ID, true
 }
