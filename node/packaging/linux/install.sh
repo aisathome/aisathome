@@ -892,12 +892,18 @@ interactive() { [[ -t 0 ]]; }
 # a usable token (the node stays as it is and is updated) unless its gateway says it is gone or a held node
 # without an account's (token_state; the reinstall a hold message advises registers anew), and registers
 # otherwise.
+#
+# Called under the writers' lock (take_lock), and token.env is read once: the token and its record come from
+# the same contents, so a concurrent change can never pair one file's token with another's record.
 read_token() {
-  local old="" rec=""
-  if [[ -r "$1" ]]; then
-    old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1" | head -n 1)"
-    rec="$(sed -n 's/^AISATHOME_TOKEN_GATEWAY=//p' "$1" | head -n 1)"
-  fi
+  local env="" line old="" rec=""
+  [[ ! -r "$1" ]] || env="$(cat "$1")"
+  while IFS= read -r line; do
+    case $line in
+      AISATHOME_NODE_TOKEN=*) [[ -n $old ]] || old="${line#AISATHOME_NODE_TOKEN=}" ;;
+      AISATHOME_TOKEN_GATEWAY=*) [[ -n $rec ]] || rec="${line#AISATHOME_TOKEN_GATEWAY=}" ;;
+    esac
+  done <<<"$env"
   if [[ -n "$old" && "$rec" != "$gateway_url" ]]; then
     [[ $keep_token = 0 ]] || die "--keep-token: the installed token was issued by ${rec:-an unrecorded gateway}, not $gateway_url, and is never sent there: link the node (--link), or paste a node token for $gateway_url" 2
     park_token=1 old=""
@@ -953,6 +959,17 @@ token_state() {
   if [[ $code == 401 ]]; then echo gone
   elif [[ $code == 200 && $out =~ \"anonymous\":[[:space:]]*true && $out =~ \"state\":[[:space:]]*\"held\" ]]; then echo held
   else echo ok; fi
+}
+
+# take_lock: the writers' lock (node.lock beside node.json; aisathome-node link and register and the Windows
+# setup page take the same, node/nodeconf), on fd 8. The installer holds it from reading the installed token
+# until the rollback (restore_unlinked) is disarmed right before its link or register step, which take the
+# lock themselves: nothing else changes token.env or node.json between this install's decision, its writes
+# and a rollback of them.
+take_lock() {
+  mkdir -p -m 0750 "$conf"
+  exec 8>"$conf/node.lock"
+  flock -w 60 8 || die "another install or aisathome-node link is changing this node; run the installer again when it is done"
 }
 
 # A gateway change on a node that has a token (linking, or a new token pasted for the new gateway): the
@@ -1121,9 +1138,7 @@ if [[ -n "$node_config" ]]; then
   [[ "$gateway_url" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] ||
     die "--node-config: its gateway_url '$gateway_url' must look like wss://host/v1/node/connect" 2
 fi
-# What the token decision below was made on: checked again under the writers' lock before anything is
-# written (another install or `aisathome-node link` may change these files meanwhile).
-conf_snap="$(cat "$conf/token.env" "$conf/node.json" 2>/dev/null | sha256sum)"
+take_lock
 read_token "$conf/token.env"
 [[ $anonymous = 0 ]] || anon_notice
 if [[ -z "$node_config" ]]; then
@@ -1172,12 +1187,6 @@ fi
 
 # 4. Config and token.
 install -d -o root -g aisathome -m 0750 /etc/aisathome-node
-# The writers' lock (aisathome-node link and register take the same, node/nodeconf), for this whole
-# check-and-write; the files must be as they were when the token was decided on.
-exec 8>"$conf/node.lock"
-flock -w 60 8 || die "another install or aisathome-node link is changing this node; run the installer again when it is done"
-[[ "$(cat "$conf/token.env" "$conf/node.json" 2>/dev/null | sha256sum)" == "$conf_snap" ]] ||
-  die "this node's token or node.json changed during the install (another install or aisathome-node link): nothing was written; run the installer again"
 # An installed token that is not this gateway's goes aside, and the node stops, before the new node.json.
 set_aside_before_link "$conf" "$node_config"
 # The canonical node.json (canon_node_config: no token, one key each), installed as checked, byte for byte.
@@ -1192,7 +1201,6 @@ fi
 # The speculation asked for (not what ran: a later update on a card with room may turn it on).
 printf '%s\n' "${want_spec:-$(installed_spec)}" > /etc/aisathome-node/speculation; chmod 0644 /etc/aisathome-node/speculation
 [[ ! -e /etc/aisathome-node/token.env ]] || { chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env; }
-exec 8>&- # the lock: link and register, at the end, take it themselves
 
 # 5. systemd units (the sandbox and llama-server's unit are defined above).
 
@@ -1379,6 +1387,7 @@ speed_check
 linked=1
 # From here a link that does not happen leaves an installed token for another gateway aside.
 token_aside=0
+exec 8>&- # the writers' lock, held since read_token: released only now that no rollback can run; link and register take it themselves
 if [[ $link = 1 ]] && ! link_node; then
   linked=0
 fi

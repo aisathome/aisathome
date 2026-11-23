@@ -45,8 +45,8 @@ type Config struct {
 	GatewayURL string `json:"gateway_url"` // ws(s)://host/v1/node/connect
 	Token      string `json:"token"`       // node token from the account page (or the operator)
 	// TokenGateway is the gateway that issued Token, recorded wherever a token is written (token.env's
-	// AISATHOME_TOKEN_GATEWAY, or here beside an inline token). The agent refuses to start when it is not
-	// GatewayURL: a token is never sent to another gateway than its issuer (package nodeconf).
+	// AISATHOME_TOKEN_GATEWAY, or here beside an inline token). The agent refuses to start when it is
+	// missing or not GatewayURL: a token is never sent to another gateway than its issuer (package nodeconf).
 	TokenGateway string               `json:"token_gateway,omitempty"`
 	Upstream     string               `json:"upstream"` // local engine, e.g. http://127.0.0.1:8000
 	Models       []protocol.ModelInfo `json:"models"`

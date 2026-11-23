@@ -166,10 +166,17 @@ func ParseTokenEnv(b []byte) (token, gateway string) {
 // ErrTokenGateway: a token's recorded gateway is not the one the config connects to.
 var ErrTokenGateway = errors.New("the node token was issued by another gateway than the config names")
 
-// CheckTokenGateway reports ErrTokenGateway (wrapped) when a token's recorded gateway differs from the
-// gateway the node connects to. An empty record is the caller's to judge.
+// ErrNoTokenGateway: a token without a recorded issuing gateway, which is never trusted.
+var ErrNoTokenGateway = errors.New("the node token has no record of the gateway that issued it")
+
+// CheckTokenGateway reports whether a token with this recorded issuing gateway may go to gateway: only when
+// the record names exactly that gateway. No record is ErrNoTokenGateway, another gateway ErrTokenGateway
+// (both wrapped).
 func CheckTokenGateway(record, gateway string) error {
-	if record != "" && record != gateway {
+	if record == "" {
+		return fmt.Errorf("%w (AISATHOME_TOKEN_GATEWAY in token.env, or token_gateway in node.json)", ErrNoTokenGateway)
+	}
+	if record != gateway {
 		return fmt.Errorf("%w: issued by %s, config names %s", ErrTokenGateway, record, gateway)
 	}
 	return nil

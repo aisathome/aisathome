@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/nodeconf"
 )
 
 func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -25,7 +27,7 @@ func writeConfig(t *testing.T, body string) string {
 var winLayout = node.WindowsLayout(env(map[string]string{"ProgramData": `C:\ProgramData`}))
 
 func TestLoadConfig(t *testing.T) {
-	p := writeConfig(t, `{"node_id":"n1","token":"from-file","upstream":"http://127.0.0.1:8000","preset":"file-preset"}`)
+	p := writeConfig(t, `{"node_id":"n1","gateway_url":"wss://gw.example/v1/node/connect","token":"from-file","token_gateway":"wss://gw.example/v1/node/connect","upstream":"http://127.0.0.1:8000","preset":"file-preset"}`)
 
 	// Linux: the file as written; no state file unless one is configured.
 	cfg, err := loadConfig(p, env(nil), node.LinuxLayout)
@@ -34,7 +36,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 
 	// The environment wins over the file.
-	cfg, _ = loadConfig(p, env(map[string]string{"AISATHOME_NODE_TOKEN": "from-env", "AISATHOME_STATE_FILE": "/var/lib/s.json",
+	cfg, _ = loadConfig(p, env(map[string]string{"AISATHOME_NODE_TOKEN": "from-env", "AISATHOME_TOKEN_GATEWAY": "wss://gw.example/v1/node/connect", "AISATHOME_STATE_FILE": "/var/lib/s.json",
 		"AISATHOME_RESTART_TRIGGER": "/run/t", "AISATHOME_PRESET": "env-preset"}), node.LinuxLayout)
 	if cfg.Token != "from-env" || cfg.StateFile != "/var/lib/s.json" || cfg.RestartTrigger != "/run/t" || cfg.Preset != "env-preset" {
 		t.Fatalf("environment: %+v", cfg)
@@ -74,7 +76,8 @@ func TestLoadConfigTokenGateway(t *testing.T) {
 	}{
 		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x", "AISATHOME_TOKEN_GATEWAY": staging}, true},
 		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x", "AISATHOME_TOKEN_GATEWAY": prod}, false},
-		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x"}, true}, // no record: a hand-made config (development)
+		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x"}, false}, // no record: never trusted (code review 2026-11-23)
+		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x", "AISATHOME_TOKEN_GATEWAY": ""}, false},
 	} {
 		cfg, err := loadConfig(p, env(tc.env), node.LinuxLayout)
 		if (err == nil) != tc.ok {
@@ -95,6 +98,13 @@ func TestLoadConfigTokenGateway(t *testing.T) {
 	}
 	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+staging+`","token":"nt-n-2.y","token_gateway":"`+prod+`"}`), env(nil), node.LinuxLayout); err == nil {
 		t.Error("an inline token for another gateway loaded")
+	}
+	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+staging+`","token":"nt-n-2.y"}`), env(nil), node.LinuxLayout); !errors.Is(err, nodeconf.ErrNoTokenGateway) {
+		t.Errorf("an inline token without its record: %v", err)
+	}
+	// No token (a node still to be linked): nothing to check.
+	if _, err := loadConfig(p, env(nil), node.LinuxLayout); err != nil {
+		t.Errorf("no token: %v", err)
 	}
 	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+prod+`","Gateway_URL":"`+staging+`"}`), env(nil), node.LinuxLayout); err == nil ||
 		!strings.Contains(err.Error(), "more than once") {

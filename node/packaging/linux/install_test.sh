@@ -742,18 +742,50 @@ n_speed="$(grep -n '^speed_check$' "$installer" | cut -d: -f1)"
   fail "token_aside is not cleared right before the link step"
 n_user="$(grep -n '^id aisathome >/dev/null' "$installer" | cut -d: -f1)"
 [[ -n "$n_read" && -n "$n_user" && $n_read -lt $n_user ]] || fail "the installed token is not judged before the install changes anything"
-# The writers' lock (node.lock, as aisathome-node link takes it): taken before the token goes aside, the
-# files checked unchanged since the token was decided on, released after token.env and before link/register
-# (which take it themselves).
-n_snap="$(grep -n '^conf_snap=' "$installer" | cut -d: -f1)"
-n_lock="$(grep -n '^flock -w 60 8 ' "$installer" | cut -d: -f1)"
-n_open="$(grep -n '^exec 8>"\$conf/node.lock"$' "$installer" | cut -d: -f1)"
-n_same="$(grep -n '"\$conf_snap" \]\] ||$' "$installer" | cut -d: -f1)"
-n_tokw="$(grep -n "AISATHOME_TOKEN_GATEWAY=%s" "$installer" | cut -d: -f1)"
+# The writers' lock (node.lock, as aisathome-node link takes it; code review 2026-11-23): taken right before the
+# installed token is read, and held through the token decision, the writes and the speed test; released only
+# right after the rollback is disarmed (token_aside=0), before link/register (which take it themselves).
+n_take="$(grep -n '^take_lock$' "$installer" | cut -d: -f1)"
 n_free="$(grep -n '^exec 8>&-' "$installer" | cut -d: -f1)"
-[[ -n "$n_snap" && -n "$n_open" && -n "$n_lock" && -n "$n_same" && -n "$n_tokw" && -n "$n_free" && $n_snap -lt $n_read &&
-   $n_open -lt $n_lock && $n_lock -lt $n_same && $n_same -lt $n_aside && $n_tokw -lt $n_free && $n_free -lt $n_clear ]] ||
-  fail "the writers' lock is not held from the re-check through token.env, or not released before link/register"
+[[ -n "$n_take" && $(wc -l <<<"$n_take") -eq 1 && $((n_take + 1)) -eq $n_read ]] || fail "the writers' lock is not taken right before the installed token is read"
+[[ -n "$n_free" && $(wc -l <<<"$n_free") -eq 1 && $((n_clear + 1)) -eq $n_free && $n_free -lt $n_link ]] ||
+  fail "the writers' lock is not released right after the rollback is disarmed (and only there)"
+[[ $(grep -c 'flock ' "$installer") -eq 1 && $(grep -c 'exec 8>' "$installer") -eq 2 ]] || fail "the installer takes or drops the writers' lock somewhere else"
+grep -q 'conf_snap\|sha256sum)" ==' "$installer" && fail "a re-check snapshot is back (the lock is held instead)"
+# read_token reads token.env once: the token and its record come from the same contents.
+[[ $(sed -n '/^read_token() {/,/^}/p' "$installer" | grep -o '"\$1"' | wc -l) -eq 2 ]] && sed -n '/^read_token() {/,/^}/p' "$installer" | grep -q '^  \[\[ ! -r "\$1" \]\] || env="\$(cat "\$1")"$' ||
+  fail "read_token does not read token.env exactly once"
+# A fresh install (neither token.env nor node.json, not even the folder) and a retry after an unfinished link
+# (node.json only) or with token.env only: the decision block, as the installer runs it under set -euo
+# pipefail, reaches its end, and holds the writers' lock there (code review 2026-11-23: a snapshot of the
+# missing files stopped the install silently).
+eval "$(sed -n '/^take_lock() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
+sed -n '/^# A supplied node.json is made canonical first/,/^# 1\. Unprivileged/p' "$installer" > "$tmp/decide.sh"
+grep -q '^take_lock$' "$tmp/decide.sh" || fail "the decision block has no take_lock"
+decide() { # decide <conf dir> <flags...> <<< stdin; sets out and code
+  local d="$1"; shift
+  out="$( (set -euo pipefail; conf="$d" node_config="" gateway_url="$stgw" link=0 anonymous=0 keep_token=0 park_token=0 old_id="" old_gw="" token="" work="$tmp/w"
+    for f in "$@"; do eval "$f"; done
+    interactive() { false; }; die() { echo "$1" >&2; exit "${2:-1}"; }; workdir() { mkdir -p "$work"; }
+    pick_node_id() { :; }; gen_node_config() { echo '{}'; }; canon_node_config() { cp "$1" "$2"; }; anon_notice() { :; }
+    token_state() { echo ok; }
+    source "$tmp/decide.sh"
+    flock -n "$conf/node.lock" true 2>/dev/null && echo "lock free" || echo "lock held"
+    echo "reached token=$token link=$link anonymous=$anonymous park=$park_token") 2>&1)"; code=$?; }
+for how in fresh nodejson-only tokenenv-only; do
+  d="$tmp/decide-$how"; rm -rf "$d"
+  case $how in
+    nodejson-only) mkdir -p "$d"; printf '{"gateway_url": "%s"}\n' "$stgw" > "$d/node.json" ;;
+    tokenenv-only) mkdir -p "$d"; printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=%s\n' "$secret" "$stgw" > "$d/token.env" ;;
+  esac
+  decide "$d" "link=1" <<<""
+  ok "$how install, --link"; has "$how install, --link" "reached token= link=1"; has "$how install, --link" "lock held"
+  decide "$d" <<<"nt-piped"
+  ok "$how install, piped token"; has "$how install, piped token" "reached token=nt-piped"
+  decide "$d" "anonymous=1" <<<""
+  ok "$how install, --anonymous"; has "$how install, --anonymous" "reached"
+done
+unset -f take_lock decide
 grep -q "^LockFile = \"node.lock\"\|LockFile = \"node.lock\"" "$(dirname "$installer")/../../nodeconf/nodeconf.go" || fail "the installer's lock file is not the Go writers' (nodeconf.LockFile)"
 grep -q '^trap on_exit EXIT$' "$installer" || fail "no EXIT trap on_exit"
 [[ $(grep -c '^ *trap .* EXIT' "$installer") -eq 1 ]] || fail "another EXIT trap would replace on_exit"
