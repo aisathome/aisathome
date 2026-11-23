@@ -1308,7 +1308,7 @@ Wants=network-online.target
 Requires=aisathome-llama.service
 PartOf=aisathome-llama.service
 # No token yet (the install's link step did not finish): the agent stays off rather than failing
-# and restarting every few seconds; `aisathome-node link` writes the token and starts it.
+# and restarting every few seconds; "aisathome-node link" writes the token and starts it.
 ConditionFileNotEmpty=/etc/aisathome-node/token.env
 
 [Service]

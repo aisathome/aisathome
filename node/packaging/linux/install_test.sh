@@ -643,6 +643,28 @@ for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
 done
 unset -f installed_value set_aside_before_link stop_node restore_unlinked check_kept_token on_exit aside_dir kept install_until systemctl
 
+# No command runs inside an unquoted here-document by accident: a `…` in a unit's comment ran
+# "aisathome-node link" as root during every install (2026-11-23: the link waited 10 minutes and its output
+# went into the unit file). The one $(…) meant to run is listed.
+python3 - "$installer" <<'PY' || fail "a command substitution inside an unquoted here-document (above)"
+import re, sys
+lines = open(sys.argv[1]).read().split("\n")
+allowed = ["Start at boot: $(systemctl is-enabled --quiet aisathome-node"]
+bad, i = False, 0
+while i < len(lines):
+    m = re.search(r"<<-?\s*(['\"]?)([A-Za-z_]+)\1", lines[i])
+    if m and not lines[i].lstrip().startswith("#"):
+        quoted, tag, start = bool(m.group(1)), m.group(2), i
+        i += 1
+        while i < len(lines) and lines[i].strip() != tag:
+            if not quoted and ("`" in lines[i] or ("$(" in lines[i] and not any(a in lines[i] for a in allowed))):
+                print(f"install.sh:{i + 1}: {lines[i].strip()}", file=sys.stderr)
+                bad = True
+            i += 1
+    i += 1
+sys.exit(1 if bad else 0)
+PY
+
 # canon_node_config: node.json once, as the agent reads it: keys in lower case, no token, and two keys that
 # are equal in any case refused (a first-wins and a last-wins reader would see different gateways; Codex
 # review 2026-11-22). The keep-token check reads the canonical file, and that file is what is installed.
