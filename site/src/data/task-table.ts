@@ -1,5 +1,5 @@
-// A table of a science project's tasks (2026-11-15, first used by the prove2me page; simplified the same day, owner's
-// design): five columns (the group, usually a leaf, shown once per group; the task as a readable label; its result in
+// A table of a science project's tasks (2026-11-15, first used by the prove2me page; simplified the same
+// day): five columns (the group, usually a leaf, shown once per group; the task as a readable label; its result in
 // one plain phrase; its work, steps · minutes · tokens; when it finished), rows grouped as the project orders them, two
 // drop-down filters and a four-way "Show" switch (all, proved, not proved, running), and "Showing N of M". The row data
 // has generic field names so another project's tasks fit the same table; what is project-specific (the group, the

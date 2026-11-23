@@ -3,7 +3,7 @@
 // only if the interpreter gets none from its arguments: "curl … | python3 -c 'import sys, re; …'"
 // or "curl … | python3 parse.py" reads the download as data on standard input, as "curl … | jq"
 // does. Agents fetch a page and clean it up like that all the time, and the old pattern, which
-// stopped at the interpreter's name, held the owner's RTX 4090 node for five hours for one
+// stopped at the interpreter's name, held an RTX 4090 node for five hours for one
 // (2026-11-21).
 //
 // So for an interpreter the guard reads the rest of its command as the shell would (words,

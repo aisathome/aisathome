@@ -1,6 +1,6 @@
 // Science runners' host metrics for the network pressure statistics (pressure.go): what limits the
 // runners that check the science (CPU, memory, disk, the Lean build slots), next to what limits the
-// GPUs. A small collector on each runner (the ops repo's runner bootstrap, a systemd timer) posts
+// GPUs. A small collector on each runner (part of the runner's setup, a systemd timer) posts
 // one report a minute to POST /v1/projects/<id>/runner-metrics with that project's key; the gateway
 // checks it against a strict schema and adds it to the hour's and the day's buckets.
 //

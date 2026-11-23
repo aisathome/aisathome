@@ -145,7 +145,7 @@ func TestLoginLinkPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	if r := e.req(t, "GET", old, "", nil); sessionCookie(r) != nil {
-		t.Fatal("a link made under the old password signed in after the password changed (Codex review)")
+		t.Fatal("a link made under the old password signed in after the password changed (found in review)")
 	}
 	if r := e.req(t, "GET", askLink(t, e), "", nil); sessionCookie(r) == nil {
 		t.Fatal("a link made under the new password did not sign in")

@@ -165,7 +165,7 @@ func TestPIIDetection(t *testing.T) {
 		{"Amex 3782 822463 10005", true},
 		{"Mastercard 5555555555554444", true},
 		{"card 4111-1111-1111-1111", true}, // dashes between digits are separators, not a minus
-		// the Codex review of 21f1ddd: a card next to a short "/" operand, a path, and networks an
+		// the review of 21f1ddd: a card next to a short "/" operand, a path, and networks an
 		// issuer table missed (Diners 3095, 13-digit Maestro), all Luhn-valid
 		{"card 4111111111111111/12/27", true},
 		{"GET /cards/4111111111111111", true},
@@ -231,12 +231,12 @@ func TestPIIIgnoresArithmeticAndIDs(t *testing.T) {
 		"v = 4111111111111111.5",                                                 // the digits before a decimal point
 		"offset -4111111111111111 bytes",                                         // a negative number
 		"step_start timestamp " + ts + " ok",                                     // a millisecond timestamp: no card starts with 1
-		"timestamp " + us,                                                        // in microseconds (the Codex review of 9c299ec)
+		"timestamp " + us,                                                        // in microseconds (the review of 9c299ec)
 		"timestamp " + ns,                                                        // and nanoseconds
 		"id " + nodate,                                                           // no birth date
 		"drwxr-xr-x 3 1000 1000 4096 Nov  8 16:55 .cache",                        // ls -l columns (2026-11-08, a prove2me session)
 		"total 411 111 111 111 116 bytes",                                        // thousands separated by spaces
-		"-rw-r--r-- 1 65534 65534 4109 Nov  8 16:55 output.log",                  // and with owner nobody (Codex review of 073c340)
+		"-rw-r--r-- 1 65534 65534 4109 Nov  8 16:55 output.log",                  // and with owner nobody (review of 073c340)
 	} {
 		if k := piiKind(msg(c)); k != "" {
 			t.Errorf("%q: flagged as %s", c, k)

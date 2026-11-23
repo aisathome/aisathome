@@ -125,7 +125,7 @@ func TestEngineSettings(t *testing.T) {
 	}
 
 	// Relative paths in node.json are the agent's working directory's: the engine runs in its
-	// program's folder, so a relative path would be looked up there instead (Codex review).
+	// program's folder, so a relative path would be looked up there instead (found in review).
 	cfg = node.Config{Engine: &node.EngineConfig{Tier: "standard", LlamaServer: filepath.Join("llama", "ls"), Model: "m.gguf"}}
 	wd, _ := os.Getwd()
 	if es, err = engineSettings(&cfg, node.LinuxLayout, "/opt"); err != nil || es.Exe != filepath.Join(wd, "llama", "ls") ||
@@ -214,7 +214,7 @@ func TestEngineSpeculation(t *testing.T) {
 		want  string
 	}{
 		// An explicit llama_server: on Windows the default one is the pinned release, whatever
-		// engineBuild says (Codex review 2026-11-14: these cases failed there).
+		// engineBuild says (review 2026-11-14: these cases failed there).
 		"dflash2, b12323 (no #31533)": {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "dflash2"}, 12323, "needs llama.cpp b12342"},
 		"dflash2, build unknown":      {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "dflash2"}, 0, "unknown llama.cpp build"},
 		"dflash2, no draft file":      {node.EngineConfig{Tier: "big", Model: model, LlamaServer: exe, Speculation: "dflash2"}, 12342, "missing"},
@@ -229,7 +229,7 @@ func TestEngineSpeculation(t *testing.T) {
 		}
 	}
 
-	// The card must have the tier's free memory plus the drafter's (Codex review 2026-11-15:
+	// The card must have the tier's free memory plus the drafter's (review 2026-11-15:
 	// MinFree was never checked, so a node short of room started an engine that failed to
 	// allocate). Exactly enough runs; one MiB less, or no reading of the card, is refused.
 	build = 12342
@@ -251,7 +251,7 @@ func TestEngineSpeculation(t *testing.T) {
 	if _, err = engineSettings(&cfg, node.LinuxLayout, dir); err == nil || !strings.Contains(err.Error(), "cannot read the GPU's free memory") {
 		t.Errorf("no nvidia-smi: %v", err)
 	}
-	// The card the engine will use (Codex review 2026-11-15: the check took the largest card
+	// The card the engine will use (review 2026-11-15: the check took the largest card
 	// whatever CUDA_VISIBLE_DEVICES said): cuda_device, else the first visible device, else the
 	// largest (no device named). An empty list leaves the engine no GPU.
 	card.FreeMiB, cardErr = 24126, nil

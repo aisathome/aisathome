@@ -1,4 +1,4 @@
-// The prove2me page's trials, submissions and headline numbers from the gateway's records (decision 0021, step D6):
+// The prove2me page's trials, submissions and headline numbers from the gateway's records:
 // its public campaigns (prove2me's trials and outline probe rounds), external results (prove2me's verdicts on our
 // submissions) and tasks, read live in the browser:
 //
@@ -601,9 +601,9 @@ export function builtTaskRows(p: Prove2me): TaskTableRow[] {
 	return p.tasks.map((r) => ({ ...r, tokens: computed.get(r.id) ?? null, tokens_with_cache: r.tokens }));
 }
 
-/** "Working on now": every trial that has not finished (preparing or running), oldest first (owner, 2026-11-20: trial 9
+/** "Working on now": every trial that has not finished (preparing or running), oldest first (2026-11-20: trial 9
  * dropped out of it when trial 10 was posted, with six of its tasks still open). Each is the gateway's trial campaign as
- * a document (decision 0021: the gateway is the record), or the project's data document instead when it names that
+ * a document (the gateway is the record), or the project's data document instead when it names that
  * trial (it alone has each outline's holes) or a newer one the gateway has no campaign of yet. With no trial open, the
  * newest trial as before (it has ended; the next trial's outline probes show under it). Without the campaigns, the
  * document alone; empty with neither. */

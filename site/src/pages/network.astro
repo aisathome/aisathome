@@ -766,7 +766,7 @@ import LiveStats from '../components/LiveStats.astro';
 	@container (min-width: 46rem) { .board-sums { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 	.board-sums div {
 		/* The number's size follows the tile's width (cqi), so a large total such as 2,259,043 stays inside it
-		   (owner, 2026-11-13: it spilled out of its card); min-width 0 lets the grid cell shrink below the text. */
+		   (2026-11-13: it spilled out of its card); min-width 0 lets the grid cell shrink below the text. */
 		container-type: inline-size;
 		min-width: 0;
 		display: flex;

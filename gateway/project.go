@@ -1,4 +1,4 @@
-// Workload classes and science projects (decision 0011, step 1).
+// Workload classes and science projects.
 //
 // Every chat request has a class: "chat" (people in the chat front end), "agent" (people's own
 // API keys) or "science" (a project's key). When nodes are busy, a waiting request of a higher
@@ -9,7 +9,7 @@
 // A project is an operator-run workload: it exists only in the gateway config, is called with its
 // own keys (by SHA-256), has its own daily quota instead of an account's, and may use at most
 // max_node_share of the nodes that may serve it at once. What the gateway knows of a project is
-// that data (decision 0019: no project's name or workflow in the code): its task kinds, whether its
+// that data (no project's name or workflow is in the code): its task kinds, whether its
 // queue is public, and where its public page is.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -64,7 +64,7 @@ type Project struct {
 	// no nodes of its own).
 	AgentOK bool `json:"agent_ok,omitempty"`
 	// PilotProbationOK lets the project's agents (with AgentOK) use connector pilots whose account is
-	// still in probation (decision 0020 addendum: science only; Lean checks every proof).
+	// still in probation (science only: Lean checks every proof).
 	PilotProbationOK bool `json:"pilot_probation_ok,omitempty"`
 	// LegacyMinTrust is the removed "min_trust" (removed.go): accepted and ignored.
 	LegacyMinTrust string `json:"min_trust,omitempty"`
@@ -80,7 +80,7 @@ type Project struct {
 	PublicQueue bool `json:"public_queue,omitempty"`
 	// Kinds: the task kinds the project may create besides "other" (tasks.go): one per scaffold
 	// generation ("p2m-v7"), each 1-32 lower-case letters, digits, '_' or '-'. Its workers claim by
-	// kind. A config written before decision 0019 has none and stays valid.
+	// kind. A config written before the typed task schema has none and stays valid.
 	Kinds []string `json:"kinds,omitempty"`
 	// Page: the project's public page on the website, a path ("/science/prove2me/"); the account
 	// page links a node's science work to it. PageAnchor: a label name ("leaf") whose value places a

@@ -29,7 +29,7 @@ cobblestone for decode: one output token of a 27B model is about 2 × 27e9 FLOPs
   same node served the same requester (account, chat user or key) within 10 minutes. Only
   chained hashes of 256-byte blocks are kept, bounded per node (32 conversations of up to
   128k tokens) and in all (256 nodes). The node's cache claim is ignored.
-- **No credit if no value is delivered** (owner, 2026-10-18). Credit is for what reached the
+- **No credit if no value is delivered**. Credit is for what reached the
   client:
   - `ok` (the client got the whole answer, end included): the prompt, all output and the
     end-of-turn token.

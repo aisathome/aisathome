@@ -1,4 +1,4 @@
-// Linked accounts end to end (decision 0020 addendum, map PR 4b): a connector user's pilots serve under
+// Linked accounts end to end: a connector user's pilots serve under
 // an unclaimed account until its person claims it from the account page; the connector checks the key
 // and answers; the pilot reconnects as the person's node, with the account's chat switch. "Run on
 // BOINC" makes a linked user from the account page.
@@ -176,7 +176,7 @@ func snapshotText(f gateway.AccountsFile) string {
 	return b.String()
 }
 
-// A waitlisted account claims its BOINC user (owner, 2026-11-19): the pilot reconnects as its node
+// A waitlisted account claims its BOINC user: the pilot reconnects as its node
 // and keeps serving science; the account still has no chat.
 func TestWaitlistedClaimEndToEnd(t *testing.T) {
 	a := linkRig(t)

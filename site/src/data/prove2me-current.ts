@@ -1,4 +1,4 @@
-// "Working on now" without a deploy (owner, 2026-11-15; decision 0019: project content stays out of the gateway): the
+// "Working on now" without a deploy (project content stays out of the gateway): the
 // page reads two public documents every minute and builds the list from them.
 //
 //  - prove2me's own data document, /data/prove2me/current.json (schema "prove2me-current/2", "/1" still read), which
@@ -12,13 +12,13 @@
 //    running task the gateway's own live counters when it has them (`live`: requests, prompt_tokens with the cache
 //    reads in them, cached_tokens, completion_tokens, model_s; gateway tasks_live.go).
 //
-// The task list stands on its own (decision 0021, 2026-11-17): the gateway is the record of every trial from trial 6 on,
+// The task list stands on its own (2026-11-17): the gateway is the record of every trial from trial 6 on,
 // so the table of every task and the trials table take every such trial from it, not only the document's (trial 7's
 // tasks vanished from the page when trial 8 started). Trials 1 to 5 stay the build's frozen history.
 //
-// Since step D7 (2026-11-18) the research tooling no longer writes the document (the host still serves its last copy,
+// Since 2026-11-18 the project's tooling no longer writes the document (the host still serves its last copy,
 // trial 8): "Working on now" is one block per trial campaign of the gateway that has not finished, oldest first, the
-// document standing in only for its own trial or a newer one (prove2me-records.ts nowDocs; owner, 2026-11-20: trial 9
+// document standing in only for its own trial or a newer one (prove2me-records.ts nowDocs; 2026-11-20: trial 9
 // vanished from it when trial 10 was posted).
 //
 // When either is missing or not what it should be, the page keeps the copy the build rendered. Pure functions, no
@@ -33,7 +33,7 @@ export const CURRENT_URL = '/data/prove2me/current.json';
 export const TASKS_URL = '/v1/tasks?project=prove2me&limit=500';
 /** At most this many pages of GET /v1/tasks (500 tasks each) in one load. */
 export const TASK_PAGES = 20;
-/** Trials 1 to 5 are frozen history (decision 0021): the build's rows of them stand, though the gateway still has tasks
+/** Trials 1 to 5 are frozen history: the build's rows of them stand, though the gateway still has tasks
  * of trials 4 and 5 (their counts there lack the cache reads). From trial 6 on, the gateway is the record. */
 export const FROZEN_THROUGH = 5;
 /** A trial's label on a task: t<N>, or t<N>p for the outline probes that chose trial N's leaves. */

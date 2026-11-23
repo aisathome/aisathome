@@ -1,4 +1,4 @@
-// The prove2me page's token and date helpers for its tables. Tokens (decision 0021, 2026-11-17): the computed tokens
+// The prove2me page's token and date helpers for its tables. Tokens (2026-11-17): the computed tokens
 // lead (what the GPU worked through fresh: the model's reads without the cache, plus its writes); the reads again from
 // the cache, most of an agent's reading, show only on hover as "with cache re-reads". Pure functions and no data, so
 // the browser's script can import them.

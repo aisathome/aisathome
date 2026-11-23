@@ -1,26 +1,24 @@
-// Chat rules for volunteers' nodes (item 12 tier 2; GDPR decisions 2026-11-19 D3 and D12; decision 0020
-// addendum 2026-11-19 "chat from day one"). A node or pilot serves people's requests (chat, agents and
+// Chat rules for volunteers' nodes (since 2026-11-19, chat from day one). A node or pilot serves people's requests (chat, agents and
 // API calls) only if its operator account has accepted the current operator terms
 // (OperatorTermsVersion; the version and the time are recorded). Science (project keys) carries no
 // personal data and is not affected; the requester's own nodes are outside the rule. Where a node runs
-// makes no difference (owner, 2026-11-19, revising D4).
+// makes no difference.
 //
-// Accepted when the account creates a node on the account page (owner, 2026-11-20: the form says that
+// Accepted when the account creates a node on the account page (2026-11-20: the form says that
 // creating and running the node accepts the terms, and the creation records it, via "node-created"; an
 // account that switched to "science only" stays so), or approves a node's link under that same line
 // (nodelink.go, via "node-linked"), with the account page's button (accounts whose
 // nodes came before, or that switched back), or, for a connector's user (a BOINC volunteer), by the
 // connector when the user accepted there (handleConnectorTerms: the BOINC bridge, once
-// BOINC records the user's ENROLL consent to terms_of_use.txt, which holds the operator terms verbatim,
-// D8). A config node token counts as accepted when it names the version its operator accepted
-// ("operator_terms"); there are no trusted nodes outside the rule (owner, 2026-11-20).
+// BOINC records the user's ENROLL consent to terms_of_use.txt, which holds the operator terms verbatim). A config node token counts as accepted when it names the version its operator accepted
+// ("operator_terms"); there are no trusted nodes outside the rule.
 //
 // A draft of the terms (a version starting with "draft-") is accepted by nobody: while one is current, no
 // node serves people's requests but the requester's own.
 //
 // No eligible node free: the request waits for one as any request does, and is never sent elsewhere.
 // The rule is on unless the config says chat_rules_off (a private gateway of one's own nodes, or tests).
-// Every node stays untrusted (decision 0007 and its addendum of 2026-11-20): personal data goes only to
+// Every node stays untrusted (since 2026-11-20): personal data goes only to
 // the requester's own nodes.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -42,7 +40,7 @@ import (
 var OperatorTermsVersion = "2026-11-19"
 
 // The operator terms as the account page shows them above the tick: the section "Requests your node
-// answers" of the operator terms the owner approved on 2026-11-19, word for word.
+// answers" of the operator terms of 2026-11-19, word for word.
 const (
 	operatorTermsIntro = "Users may not put personal data into their chats, and we send your node no account, name, email address or IP address. " +
 		"Whatever a request contains, you agree to:"
@@ -72,7 +70,7 @@ var OperatorTermsText = func() string {
 }()
 
 // UserRule is the rule for people who chat, shown under the age line on the sign-in page and on the
-// account page (owner, 2026-11-19).
+// account page.
 const UserRule = "Don't put personal data (yours or other people's) into chats: answers are computed on volunteers' machines. " +
 	"If you need a GDPR-compliant or EU-hosted service for personal data, use an established provider."
 

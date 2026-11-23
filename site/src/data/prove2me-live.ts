@@ -1,10 +1,10 @@
-// "Working on now" on the prove2me page (owner, 2026-11-13: the page lagged behind the trial): a trial's tasks turned
-// into the leaves the page lists, each with a table of its tasks (owner, 2026-11-14: "I also want insights into the
+// "Working on now" on the prove2me page (2026-11-13: the page lagged behind the trial): a trial's tasks turned
+// into the leaves the page lists, each with a table of its tasks (2026-11-14: "I also want insights into the
 // tasks"). The build renders the committed JSON's list with the same code; in the browser the tasks come from the
 // gateway's GET /v1/tasks, read into the QueueTask shape below (prove2me-current.ts). No data here, so the browser's
 // bundle stays small.
 //
-// Tokens (decision 0021, 2026-11-17: the computed tokens lead): "tokens computed" are what the GPU processed fresh
+// Tokens (2026-11-17: the computed tokens lead): "tokens computed" are what the GPU processed fresh
 // (what the model read without the cache, plus what it wrote); "with cache re-reads" adds what it read again from the
 // cache, which is most of an agent's reading. The gateway's explicit fields (tokens_computed, tokens_with_cache) give
 // both for a task whose worker reported its cache reads (from 2026-11-14 on); a task finished before that takes its

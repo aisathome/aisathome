@@ -379,7 +379,7 @@ class Forwarder(unittest.TestCase):
 
     def test_control_bytes_cannot_split_off_a_second_request(self):
         """A target that passes the base-path check but holds LF, TAB, CR, NUL or DEL could be split into two
-        requests by a lenient endpoint, the second to another path with the key (Codex review, 2026-11-10):
+        requests by a lenient endpoint, the second to another path with the key (review, 2026-11-10):
         refused before the endpoint is contacted, as are bare CR/LF elsewhere in the head and control bytes
         in a method or header value."""
         up = Upstream()

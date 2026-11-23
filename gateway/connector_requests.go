@@ -1,4 +1,4 @@
-// Connector requests (decision 0020 and its addendum, map section 3): what a signed-in person asks a
+// Connector requests: what a signed-in person asks a
 // connector to do for their account. The connector (the BOINC bridge, with BOINC's stock web RPCs)
 // carries it out and answers; the gateway finishes it. Kinds:
 //

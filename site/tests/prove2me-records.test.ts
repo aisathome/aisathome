@@ -1,4 +1,4 @@
-// The prove2me page's trials, submissions and headline numbers from the gateway's records (step D6), on fixed data:
+// The prove2me page's trials, submissions and headline numbers from the gateway's records, on fixed data:
 // the build's committed history (science/prove2me.json) and the public records as the gateway served them on
 // 2026-11-18 (tests/fixtures: campaigns t4 to t8 with the probe rounds, 8 accepted results, 154 tasks). The expected
 // numbers were counted from the same files by hand (a run is a leaf of a trial with a task that started; a leaf
@@ -180,7 +180,7 @@ test('"Working on now": every trial not finished, oldest first; the data documen
 	assert.deepEqual(nowDocs(null, null), []);
 	assert.deepEqual(ids(nowDocs(doc(8), null)), ['t8:prove2me-current/2'], 'without the campaigns, the document alone');
 
-	// Bug (owner, 2026-11-20): trial 10 was posted while trial 9 still ran; only trial 10 was shown. Both now, oldest first,
+	// Bug: trial 10 was posted while trial 9 still ran; only trial 10 was shown. Both now, oldest first,
 	// each with its own text and budget; the stale document of trial 8 (no longer written) stays out.
 	const t8 = r.campaigns.find((c) => c.id === 't8')!;
 	const later = (n: number, status: Campaign['status'], text: string) => ({ ...t8, id: `t${n}`, title: `Trial ${n}`, status, text, labels: { ...t8.labels, budget: `budget ${n}` } });

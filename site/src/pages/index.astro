@@ -1,5 +1,5 @@
 ---
-// The home page ("volunteer science" design, chosen by the owner 2026-10-10): bold condensed
+// The home page ("volunteer science" design, 2026-10-10): bold condensed
 // headlines, a warm accent and a drawn network of home GPUs (volunteer computing). Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import LiveStats from '../components/LiveStats.astro';
@@ -12,7 +12,7 @@ import { buildRecords } from '../data/prove2me-build';
 import { homeLine } from '../data/prove2me-view';
 import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
-// The newest dev log posts (design C of three, owner 2026-10-19), with the dev log's own publish
+// The newest dev log posts (design C of three), with the dev log's own publish
 // filter: drafts only in a build with DEVLOG_DRAFTS=1.
 const latest = (await posts()).slice(0, 3);
 

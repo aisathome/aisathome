@@ -1,4 +1,4 @@
-// A leaf's outlines in words (owner, 2026-11-15: the task table and its one-line count were hard to follow). Newest
+// A leaf's outlines in words (2026-11-15: the task table and its one-line count were hard to follow). Newest
 // outline first, each with its state (in progress, refuted and why, proved, abandoned and why), one row per hole with
 // its state (proved, false, closed by the pre-pass, the index or the ledger, running with its live steps, queued, not
 // tried, cancelled), the holes left in the outline's file ("in place") and the assembly; above them one line for the

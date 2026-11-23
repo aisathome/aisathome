@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// The shape of the call that held the owner's RTX 4090 node for five hours on 2026-11-21: an
+// The shape of the call that held an RTX 4090 node for five hours on 2026-11-21: an
 // opencode agent fetched a docs page and stripped its HTML with an inline Python program. The
 // download is data on python's standard input, not its program. Synthetic (a made-up address and
 // program): the real call is guard evidence, kept 14 days and shown only to admins.

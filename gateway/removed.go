@@ -1,4 +1,4 @@
-// Config fields removed with trusted nodes (owner, 2026-11-20): every node is untrusted. The one
+// Config fields removed with trusted nodes: every node is untrusted. The one
 // exception, a requester's own nodes, which may receive that requester's personal data, is no level of
 // trust: it is one's own data on one's own machine (routing.go). A config that still sets a removed
 // field starts: the field is accepted, ignored, and named once in the log.

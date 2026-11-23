@@ -198,8 +198,8 @@ export function fmtDuration(s: number): string {
 export const BUSY_LIMIT = 0.8;
 export const WAIT_LIMIT_S = 30;
 
-// The runners' limits, from the runner profile (research prove2me NOTES, "Runner profile" 2026-11-18, and
-// docs/reviews/2026-11-19-runner-scaling.md; a 7.6 GB runner with one Lean build slot):
+// The runners' limits, from the runner profile measured on 2026-11-18 and the runner scaling review of
+// 2026-11-19 (a 7.6 GB runner with one Lean build slot):
 /** Runner memory: evicted file pages read again, per second, averaged over runner-minutes. A warm Lean start re-reads
  * ~32k pages (about 530/s over a minute with one start a minute; ~1,200/s with 1 GB less page cache, still fine); two
  * checks at once thrashed at ~3,800/s (p2m-check 8 s -> 38 s) and a start with 2 GB less re-read 2.7 M pages. 2,000/s

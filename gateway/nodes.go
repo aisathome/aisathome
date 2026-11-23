@@ -1,6 +1,6 @@
-// Self-registered nodes (decision 0007): signed-in accounts create node tokens on the account
+// Self-registered nodes: signed-in accounts create node tokens on the account
 // page, and the gateway routes chats to their nodes as untrusted volunteers. Every node is untrusted,
-// config tokens' too (decision 0007, addendum 2026-11-20); only an account's own nodes may get its
+// config tokens' too (since 2026-11-20); only an account's own nodes may get its
 // personal data (routing.go).
 //
 // A node token is "nt-<node id>.<secret>": the gateway assigns the id ("n-<8 hex>"), so a
@@ -30,7 +30,7 @@ import (
 // Limits on self-registered nodes.
 const (
 	// DefaultMaxNodes and DefaultMaxNodesPerAccount apply unless the accounts file says
-	// otherwise. Owner, 2026-10-22: 25, 10 and 10 per address, up from 10, 3 and 3. The share
+	// otherwise. Since 2026-10-22: 25, 10 and 10 per address, up from 10, 3 and 3. The share
 	// cap (overShareLocked) limits how much of the traffic one operator sees, however many
 	// nodes it has; low node limits only kept volunteers with several GPUs out.
 	DefaultMaxNodes           = 25 // node tokens over all accounts
@@ -88,7 +88,7 @@ type AccountNode struct {
 // unconfirmed reports whether n came by a link (a code someone may have sent the account's owner) and
 // its owner has not yet confirmed that it is their machine. Such a node is not the account's own: it gets
 // none of the account's personal data, and serves the account's requests only as a stranger's node would
-// (route.own). Owner, 2026-11-22.
+// (route.own).
 func (n AccountNode) unconfirmed() bool { return n.Via == ViaNodeLink && n.Confirmed == nil }
 
 // NodeHold records a node stopped by a guard (guard.go). It gets no requests until the

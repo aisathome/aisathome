@@ -1,4 +1,4 @@
-// The science page's data part: the numbers by type on top (the Scorecard the owner chose,
+// The science page's data part: the numbers by type on top (the Scorecard design,
 // 2026-10-31), then a short filterable, sortable list. Every number comes from science-stats.ts;
 // rows and "How to read this" are science-render.ts's. The build renders it from the committed data
 // (the page works without JavaScript); the browser renders it again from the gateway's when that

@@ -1,4 +1,4 @@
-// Connector pilots end to end (decision 0020): a connector creates and binds a pilot, a
+// Connector pilots end to end: a connector creates and binds a pilot, a
 // real node agent connects with the pilot's credential, and the gateway routes, meters and ends it.
 //
 // SPDX-License-Identifier: Apache-2.0

@@ -1,4 +1,4 @@
-// The prove2me page's parts that read the gateway's records (step D6): the headline numbers, the "Small numbers" text,
+// The prove2me page's parts that read the gateway's records: the headline numbers, the "Small numbers" text,
 // the submissions, the trials table and each trial's own list from trial 6 on, the home page's line and the /science/
 // card. One HTML renderer each (every value escaped), for the build (from the build's history) and the browser (with
 // the gateway's records, prove2me-records.ts) alike, so the two never say different things.

@@ -87,7 +87,7 @@ You must be 18 or older; running it means you accept the terms: https://aisathom
 NOTICE
 }
 
-# Two tiers, chosen by the size of the card only (owner, 2026-10-22/23 and 2026-11-09): one model
+# Two tiers, chosen by the size of the card only: one model
 # file per tier, 1 request at a time, and a context set by the card, never by the machine's
 # other load.
 #   standard  cards with 15.5 to 23 GB (16 GB class): UD-Q3_K_XL, 1 x 80k  (81,920),  KV q4_0
@@ -97,8 +97,8 @@ NOTICE
 # When the tier does not fit in the card's free memory, the installer stops with a message; it
 # never picks a smaller context. Per-slot context means one long request cannot starve the
 # others (a single shared pool can: "Context size has been exceeded" on 2026-10-08).
-# Measured with llama.cpp v0.5.0 and these flags (research notes, tiers, 2026-10-22/23, and
-# 16 GB, 2026-10-31 and 2026-11-09):
+# Measured with llama.cpp v0.5.0 and these flags (24 GB tier, 2026-10-22/23, and
+# 16 GB tier, 2026-10-31 and 2026-11-09):
 #   standard, UD-Q3_K_XL: RTX 5070 Ti (15,839 MiB visible to CUDA), llama-server's own peak
 #     at a 95% full context is 13,659 MiB at 65,536 and 14,211 at 90,112, so about 14,030 at
 #     81,920. With other programs holding memory on the card, 81,920 needs less than 90,112,
@@ -153,7 +153,7 @@ min_tps="${MIN_DECODE_TPS:-20}" speed_ctx=32000
 reasoning_budget="${REASONING_BUDGET:-8192}"
 # Host-RAM prompt cache in MiB (llama-server --cache-ram; default there 8192, 0 = off). It
 # bounds how much conversation data stays warm in RAM; llama-server has no idle-time limit.
-# cache_ram_for <total RAM MiB>: half the machine's RAM, at most 16384 (owner, 2026-11-12);
+# cache_ram_for <total RAM MiB>: half the machine's RAM, at most 16384;
 # 2048 when the RAM is not known (0). One cached agent conversation of the hybrid model is
 # 1-1.5 GiB at 19-44k tokens and an entry larger than the cache is dropped, so 2048 held one
 # conversation; 16384 raised cache hits after a switch between two conversations from 29% to
@@ -179,7 +179,7 @@ release_base="${AISATHOME_RELEASE_URL:-https://github.com/aisathome/aisathome/re
 [[ "$release_base" =~ ^(https|file):// ]] || die "AISATHOME_RELEASE_URL must start with https:// or file://" 2
 [[ -z "$alias" || "$alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "MODEL_ALIAS may only contain letters, digits, '.', '_' and '-'" 2
 
-# The network's models, one per tier (owner, 2026-10-22 and 2026-11-09): Qwen3.8 27B from
+# The network's models, one per tier: Qwen3.8 27B from
 # unsloth, pinned to a commit of the Hugging Face repository and checked by SHA-256. Sha256 and
 # size are each file's LFS pointer at that commit (Checked 2026-10-23 for UD-IQ4_XS: the Hub
 # API's paths-info and the resolve URL's x-linked-etag / x-linked-size headers; UD-Q3_K_XL:

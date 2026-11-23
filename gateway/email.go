@@ -101,7 +101,7 @@ type rule struct {
 	per time.Duration
 }
 
-// Send limits (research addendum). A request over any of them gets the usual answer and no
+// Send limits. A request over any of them gets the usual answer and no
 // mail.
 var (
 	perAddress = []rule{{1, time.Minute}, {5, time.Hour}, {10, 24 * time.Hour}}

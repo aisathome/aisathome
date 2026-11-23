@@ -1,4 +1,4 @@
-// Contact address (owner, 2026-11-18): a user may ask to be emailed about important changes and
+// Contact address: a user may ask to be emailed about important changes and
 // outages. It is opt-in: the box on the sign-in page starts unticked, and its state travels
 // with that one sign-in (the OAuth flow, or the pending email sign-in), never in a cookie of its
 // own. Only then does the gateway ask the provider for an address (GitHub: scope user:email and

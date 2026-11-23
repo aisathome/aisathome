@@ -1,4 +1,4 @@
-// Token counts by the gateway (credit, decision 0007): the prompt is the request the gateway
+// Token counts by the gateway (credit): the prompt is the request the gateway
 // forwarded, rendered with the model's chat template (Qwen3.8's chat_template.jinja, rewritten
 // here in Go); the output is the text, reasoning and tool calls the gateway relayed. Nodes
 // report their own counts too; with a tokenizer configured those are only recorded for

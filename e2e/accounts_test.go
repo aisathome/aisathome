@@ -1,4 +1,4 @@
-// Accounts (decision 0006): GitHub sign-in, waitlist and cap, self-service keys, the chat's
+// Accounts: GitHub sign-in, waitlist and cap, self-service keys, the chat's
 // forward_auth check, one budget for an account's chat and API use, and limits on account forms.
 //
 // SPDX-License-Identifier: Apache-2.0

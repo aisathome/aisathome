@@ -1,4 +1,4 @@
-// The network's tasks in one public schema (decision 0019, D8; owner 2026-11-14): GET /v1/tasks,
+// The network's tasks in one public schema: GET /v1/tasks,
 // without a key, across every project with public_queue on (project.go), for the site's task tables
 // and the "All tasks" page. A project without public_queue is never in it.
 //

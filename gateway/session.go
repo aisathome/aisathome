@@ -1,4 +1,4 @@
-// A session stays on one model file (owner, 2026-11-09). Nodes of different tiers serve the
+// A session stays on one model file. Nodes of different tiers serve the
 // same roles ("deep", "agent") from different files (a 24 GB node UD-IQ4_XS, a 16 GB node
 // UD-Q3_K_XL) under different model names. Once a conversation has an answer from one model,
 // its later requests for a role go only to nodes serving that same model: a silent change of

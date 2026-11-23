@@ -1,4 +1,4 @@
-// The prove2me page's live tasks (decision 0021): every trial from trial 6 on comes from the gateway's GET /v1/tasks,
+// The prove2me page's live tasks: every trial from trial 6 on comes from the gateway's GET /v1/tasks,
 // page after page, not only the data document's current trial; trials 1 to 5 stay the build's.
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';

@@ -1,4 +1,4 @@
-// Self-registered nodes (decision 0007, backlog 15): node tokens on the account page, the
+// Self-registered nodes: node tokens on the account page, the
 // cut-off (revoke, ban), the per-address cap, the share cap, node preferences, personal data on
 // one's own node and the own-only switch; and the node connection itself: bound ids, revocation while
 // connecting, frame limits, stalled reconnects.
@@ -240,7 +240,7 @@ func TestNodesPerAddress(t *testing.T) {
 			tokens, ids = append(tokens, tok), append(ids, id)
 		}
 	}
-	for i := 0; i < 10; i++ { // 10 connected nodes per address (owner, 2026-10-22; was 3)
+	for i := 0; i < 10; i++ { // 10 connected nodes per address (was 3)
 		dialNode(t, a.rig, ids[i], tokens[i], "203.0.113.7")
 	}
 	a.waitNodes(t, 10)
@@ -666,8 +666,8 @@ func TestReplacingConnectionsWarn(t *testing.T) {
 	}
 }
 
-// Without settings in the accounts file: 10 node tokens per account, 25 over all accounts
-// (owner, 2026-10-22); the page counts against the actual limit.
+// Without settings in the accounts file: 10 node tokens per account, 25 over all accounts;
+// the page counts against the actual limit.
 func TestNodeLimitDefaults(t *testing.T) {
 	a := nodeRig(t, nil)
 	s, _ := a.signIn(t, 1)

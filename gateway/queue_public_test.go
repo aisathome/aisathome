@@ -149,7 +149,7 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 	}
 }
 
-// A task with the typed fields (decision 0019) shows its role and labels on the public queue, and
+// A task with the typed fields shows its role and labels on the public queue, and
 // its spec is not read even when it says otherwise; one without them still shows its spec's fields.
 func TestPublicQueueReadsTypedFields(t *testing.T) {
 	r := publicRig(t)
@@ -178,7 +178,7 @@ func TestPublicQueueReadsTypedFields(t *testing.T) {
 	}
 }
 
-// The cache reads (owner, 2026-11-14: the page showed about a tenth of the Qwen tokens): a result's
+// The cache reads (2026-11-14: the page showed about a tenth of the Qwen tokens): a result's
 // cached_tokens and steps come through; a result without cached_tokens has none in the view (not a
 // 0, which would claim no cache reads), a reported 0 stays 0, and a negative count is refused.
 func TestPublicQueueCachedTokens(t *testing.T) {
@@ -254,7 +254,7 @@ func (b *blockingWriter) Write(p []byte) (int, error) {
 }
 
 // A reader that never takes its bytes holds up nobody else: the cache lock covers the build, not
-// the write (Codex review 2026-11-14: a slow client could block every project's public queue).
+// the write (review 2026-11-14: a slow client could block every project's public queue).
 func TestPublicQueueSlowReaderBlocksNobody(t *testing.T) {
 	r := publicRig(t)
 	bw := &blockingWriter{h: http.Header{}, entered: make(chan struct{}, 1), release: make(chan struct{})}

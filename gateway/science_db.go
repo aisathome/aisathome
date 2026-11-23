@@ -1,4 +1,4 @@
-// The gateway's science records store (decision 0021, point 7): an embedded SQLite database,
+// The gateway's science records store: an embedded SQLite database,
 // state_dir/science.db, for the records that are not tasks: campaigns and external results
 // (campaigns.go), connector pilots and their credit (pilots.go), connector requests
 // (connector_requests.go), and later others of the same kind.

@@ -186,7 +186,7 @@ or misusing data harder, less valuable and more visible.
 | Node machine | The node's operator | Everything on the machine | Engine bound to `127.0.0.1`; services sandboxed; no core dumps, no swap for the services, no prompt logging, a bounded prompt cache in RAM. These reduce traces; they cannot stop an operator who wants to look. The terms forbid logging or inspecting prompts |
 | Public views | Anyone | Aggregates and public task fields | See below |
 
-**Every node is untrusted**, the maintainer's included (owner, 2026-11-20). The one exception is a
+**Every node is untrusted**, the maintainer's included. The one exception is a
 requester's own nodes: they may get what that requester sends, its personal data included (its
 own data on its own machine). Anything that must run on hardware the operator controls, such as
 recording the model check's reference, runs on machines that never serve users.

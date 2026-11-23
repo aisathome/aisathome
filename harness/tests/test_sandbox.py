@@ -306,7 +306,7 @@ class Recipe(unittest.TestCase):
 
     def test_the_container_runs_as_the_user_who_owns_the_tree(self):
         """The project's workspace is made by the invoking user: by default the model's container (and the
-        export) runs as that user, not a fixed 1000 (Codex review, 2026-11-10); root is refused."""
+        export) runs as that user, not a fixed 1000 (review, 2026-11-10); root is refused."""
         with mock.patch.object(container.os, "getuid", return_value=1234), \
                 mock.patch.object(container.os, "getgid", return_value=1235):
             sb = self.sandbox("proj/A01", "A01")
@@ -320,7 +320,7 @@ class Recipe(unittest.TestCase):
 
     def test_a_container_that_cannot_be_removed_stops_the_session(self):
         """A leftover container that `docker rm -f` did not remove could still change the tree: before()
-        raises, so no segment, checkpoint or export runs on it (Codex review, 2026-11-10)."""
+        raises, so no segment, checkpoint or export runs on it (review, 2026-11-10)."""
         sb = self.sandbox("proj/A01", "A01")
         sb.before()
         self.stuck = {sb.name}
@@ -484,7 +484,7 @@ class Host_(unittest.TestCase):
     @unittest.skipUnless(shutil.which("flock"), "needs flock(1)")
     def test_slots_work_read_only_and_the_host_follows_no_link(self):
         """The sandboxes see the slot directory read-only, so the model can neither replace a lock file nor
-        plant a link there (Codex review, 2026-11-10): buildslot.sh locks with a read descriptor, against the
+        plant a link there (review, 2026-11-10): buildslot.sh locks with a read descriptor, against the
         host's own lock."""
         script = Path(container.__file__).with_name("buildslot.sh")
         with tempfile.TemporaryDirectory() as d:
@@ -563,7 +563,7 @@ class Host_(unittest.TestCase):
 
     def test_the_host_opens_no_slot_file_through_a_link(self):
         """A link in the slot directory (planted while it was writable, by an older harness's sandbox) is
-        refused, never followed: the host creates and locks nothing elsewhere (Codex review, 2026-11-10)."""
+        refused, never followed: the host creates and locks nothing elsewhere (review, 2026-11-10)."""
         with tempfile.TemporaryDirectory() as d:
             h = Host(state=Path(d), slots=1, build_min_free_gb=0)
             slots = h.slot_dir

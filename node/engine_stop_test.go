@@ -142,7 +142,7 @@ func TestGatewayRejectionReasonIsShown(t *testing.T) {
 
 // An engine the agent runs that is not running (waiting to restart: its port is held by
 // another program, whose /health answers 200) must not count as healthy: the node would send
-// volunteers' requests to that program (Codex review).
+// volunteers' requests to that program (found in review).
 func TestEngineNotRunningIsNotHealthy(t *testing.T) {
 	var hits atomic.Int32
 	gw, conns := fakeGateway(t)
@@ -169,7 +169,7 @@ func TestEngineNotRunningIsNotHealthy(t *testing.T) {
 
 // Stop engine while the agent is between its hello and the gateway's welcome: there is no
 // session to leave yet, so the session must not start (it would offer capacity with the engine
-// stopped until three health checks failed; Codex review).
+// stopped until three health checks failed; found in review).
 func TestStopEngineDuringHandshake(t *testing.T) {
 	var hits atomic.Int32
 	var a *Agent

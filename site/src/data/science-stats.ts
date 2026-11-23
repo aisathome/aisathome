@@ -1,4 +1,4 @@
-// The numbers on top of the science page, per type of task and over time (S3, the owner's order of
+// The numbers on top of the science page, per type of task and over time (since
 // 2026-10-29), computed from the same normalized data as the rest of the page, so nothing here can
 // disagree with the rows below it. Pure: no rendering.
 //

@@ -1,4 +1,4 @@
-// Two tiers in one network (owner, 2026-11-09): 24 GB nodes serve qwen3.8-27b (UD-IQ4_XS) and
+// Two tiers in one network: 24 GB nodes serve qwen3.8-27b (UD-IQ4_XS) and
 // 16 GB nodes qwen3.8-27b-q3 (UD-Q3_K_XL), both for the roles "deep" and "agent". A session stays
 // on the model it started on, and answers name the model that answered.
 //

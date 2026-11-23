@@ -253,7 +253,7 @@ func TestRunRefusesTakenEnginePort(t *testing.T) {
 }
 
 // When the node fails (the watchdog), the agent must exit so the service's recovery restarts
-// it: the setup's local UI must not keep it alive (Codex review).
+// it: the setup's local UI must not keep it alive (found in review).
 func TestWithSetupExitsWhenTheNodeFails(t *testing.T) {
 	dir := t.TempDir()
 	uiPort := freePort(t)

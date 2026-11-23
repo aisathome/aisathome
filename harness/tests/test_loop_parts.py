@@ -59,7 +59,7 @@ class ModelTime(Tmp):
 
     def test_an_open_step_stops_counting_at_an_endpoint_error(self):
         """After an error the model waits for opencode's retry: that wait is not model time, so neither the
-        cap inside a segment nor a stopped segment's open_step_s counts it (Codex review, 2026-11-10). A step
+        cap inside a segment nor a stopped segment's open_step_s counts it (review, 2026-11-10). A step
         that finishes after an error counts as before."""
         self.ev.write_text(line("step_start", 0) + line("step_finish", 1000) + line("step_start", 2000)
                            + line("error", 3000, error={"message": "503"}))

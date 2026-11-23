@@ -1,4 +1,4 @@
-// Discarded answers (node verification, BACKLOG 11d): a requester that throws an answer away sends
+// Discarded answers (node verification): a requester that throws an answer away sends
 // its next prompt without it. The gateway recognises that the way it recognises a session
 // (session.go): per requester it remembers, for each answer that reached the client, the prompt it
 // answered and the forms the answer reappears in later (meter.conversations). A later prompt of

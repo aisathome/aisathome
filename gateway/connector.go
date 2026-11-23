@@ -1,4 +1,4 @@
-// Connectors (decision 0020): an outside system that brings machines to the
+// Connectors: an outside system that brings machines to the
 // network in bounded serving sessions, pilots (pilots.go). BOINC's bridge is the first; nothing here
 // knows BOINC beyond the configuration. A connector exists only in the gateway config, has its own
 // keys (by SHA-256) and an optional address allowlist, and its key opens only its own endpoints:
@@ -13,7 +13,7 @@
 //	GET  /v1/connectors/{id}/requests                people's pending requests (connector_requests.go)
 //	POST /v1/connectors/{id}/requests/{rid}          a request's result
 //
-// Pilots as nodes (decision 0007): a bound pilot is a node of the account its connector user maps to
+// Pilots as nodes: a bound pilot is a node of the account its connector user maps to
 // (account_links.go), under the same rules as any account node: no personal data, the share cap per
 // operator, the guards, tools only past the account's probation (or, for a project with
 // pilot_probation_ok, on pilots during it). It is never its account's "own" node, not even for

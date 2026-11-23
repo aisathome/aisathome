@@ -1,5 +1,5 @@
-// Why an agent request has nowhere to go (backlog v0.2.0 H, 2026-10-13): the consent advice
-// sent the owner hunting for a key problem when his own node was offline or busy.
+// Why an agent request has nowhere to go (2026-10-13): the consent advice sent a user hunting
+// for a key problem when their own node was offline or busy.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e

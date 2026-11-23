@@ -481,7 +481,7 @@ func (g *Gateway) accountData(id string) pageData {
 	if c := g.credit.account(id); c != nil {
 		d.CreditToday, d.CreditTotal, d.CreditRAC = fmtCredit(c.TodayAt(now)), fmtCredit(c.Total), fmtCredit(c.RAC(now))
 	}
-	if g.acfg.probation > 0 { // off by default (owner, 2026-10-12)
+	if g.acfg.probation > 0 { // off by default
 		if a.FirstNode != nil {
 			d.ProbationEnd = a.FirstNode.Add(g.acfg.probation)
 		}

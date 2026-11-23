@@ -49,7 +49,7 @@ draft (files, sizes, `BUILD-INFO`, generated notes). Tags with a `-` (for exampl
 
 **Release notes:** move `CHANGELOG.md`'s Unreleased entries into a new section for the
 version (with the date and the update commands for a node), and use that text as the
-release's notes. The owner approves the text before the draft is published; then publish it.
+release's notes. A maintainer reviews the text before the draft is published; then publish it.
 
 **After publishing:** set the version and the installer's size in bytes in
 `site/src/data/node-release.ts` (the download block on `/node/` shows them) and deploy the site.
@@ -65,7 +65,7 @@ there: the button then links to `releases/latest/download` and needs no change p
 - **CUDA image:** update the digest in `release.yml` and the driver minimums in
   `install.sh`, the packaging README and the site page if the CUDA version changes.
 - **Model:** the pin (repository, revision, file, SHA-256, size) lives in `install.sh`; keep
-  the gateway's tokenizer pin (ops) on the same model. A new model file (even another quant of
+  the gateway's tokenizer pin (in the deployment) on the same model. A new model file (even another quant of
   the same model) needs the tiers re-measured (`tier_min_free`, the speed floor) and a new
   model-check reference, and every node switches in the same release: the network never mixes
   model files.

@@ -47,7 +47,7 @@ check (below) uses a secret set.
 
 ## The gateway's check (`model_check`)
 
-The gateway checks every node and pilot itself (`gateway/modelcheck.go`, BACKLOG 11): it sends
+The gateway checks every node and pilot itself (`gateway/modelcheck.go`): it sends
 **secret** probe prompts at random times and compares the answers with a reference by the method
 above (KL per group of 4 prompts, confident flips, the same limits).
 
@@ -138,7 +138,7 @@ not catch a node agent modified to recognise probes and route them to the real m
 greedy, asks for top-20 logprobs and has no tools, which few real requests do (science traffic
 always has tools, so on a science-only pilot a chat-shaped request stands out). The cover share
 removes "logprobs" as a sign but not the rest. The check proves that the right model was reachable
-when probed, not that it wrote the other answers: that is the replay's job (BACKLOG 11f).
+when probed, not that it wrote the other answers: that is the replay's job.
 
 ## File format
 

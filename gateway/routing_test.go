@@ -381,7 +381,7 @@ func (s *stickyRig) piiRoute(acct string) *route {
 	return rt
 }
 
-// Personal data goes only to the requester's own node (owner, 2026-11-20): never to any other node,
+// Personal data goes only to the requester's own node: never to any other node,
 // sticky or under its share, and the own node serves it even when the account prefers no node.
 func TestPersonalDataOnlyToOwnNode(t *testing.T) {
 	s := newOwnRig(t)
@@ -547,7 +547,7 @@ func TestOwnNodeNotPreferredWithoutPreference(t *testing.T) {
 	}
 }
 
-// The emergency switch reaches requests that already wait for a node (Codex review of 8596f41): turned
+// The emergency switch reaches requests that already wait for a node (review of 8596f41): turned
 // on meanwhile, it keeps the stranger's node that frees up from them; turned off, they get it.
 func TestOwnOnlyReachesWaitingRequests(t *testing.T) {
 	s := newOwnRig(t)

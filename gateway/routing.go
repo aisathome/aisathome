@@ -171,7 +171,7 @@ func (rt *route) own(n *nodeConn) bool {
 }
 
 // allows reports whether n may see the request, ignoring context and free slots. Every node is
-// untrusted (decision 0007, addendum 2026-11-20); the one exception is the requester's own node, which
+// untrusted (since 2026-11-20); the one exception is the requester's own node, which
 // sees nothing the requester did not send itself, so it may get the requester's personal data too: one's
 // own data on one's own machine. Caller holds g.mu (n.held, n.probEnd).
 func (rt *route) allows(n *nodeConn, now time.Time) bool {

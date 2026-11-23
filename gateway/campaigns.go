@@ -1,4 +1,4 @@
-// Campaigns and external results (decision 0021, point 1): a project's public record of what it ran
+// Campaigns and external results: a project's public record of what it ran
 // and what came of it outside the network, kept in the science database (science_db.go).
 //
 // A campaign is a named round of a project's work (prove2me calls them trials): an id ("t8"), a
@@ -8,7 +8,7 @@
 // submitted proof): its source ("prove2me"), the service's own id for it (external_id), the campaign,
 // item and task it belongs to, a link, a state (pending, accepted, rejected, error), the service's
 // verdict text and when it was submitted and judged. The gateway knows nothing of what a campaign or
-// a result means for a project (decision 0019): that stays in labels and in the project's own code.
+// a result means for a project: that stays in labels and in the project's own code.
 //
 // Write, with the project's key (campaigns_http.go):
 //

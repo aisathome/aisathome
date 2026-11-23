@@ -1,4 +1,4 @@
-// The task schema of decision 0019: kinds per project, typed fields, closed_by, compatibility with
+// The typed task schema: kinds per project, typed fields, closed_by, compatibility with
 // tasks and clients from before, and the removed review loop.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -282,7 +282,7 @@ func TestTaskOlderClients(t *testing.T) {
 	}
 }
 
-// A task file written before decision 0019 (TauCeti's review loop: class, chain, stage, findings,
+// A task file written before the typed schema (TauCeti's review loop: class, chain, stage, findings,
 // reviews, a debt) loads, can be listed, claimed by its kind, finished and exported, and is written
 // back without the removed fields; a chain record left on disk is never read.
 func TestTaskFileFromBeforeLoads(t *testing.T) {
@@ -293,7 +293,7 @@ func TestTaskFileFromBeforeLoads(t *testing.T) {
 	old := `{"id":"T5-NS-3.a-A","project":"lab","kind":"attempt","class":5,"findings_source":"prereview","chain":"T5-NS-3.a",
 "stage":"ready-for-operator","round_kind":"","title":"An old attempt","spec":{"attempt":"T5-NS-3.a-A"},"base_ref":"a57def6","pr":12,
 "created_by":"owner","state":"queued","tries":0,"max_tries":3,"seq":7,"created_at":"2026-10-30T10:00:00Z","updated_at":"2026-10-30T10:00:00Z",
-"review":{"verdict":"red","by":"owner-codex","at":"2026-10-30T11:00:00Z"},"qwen_review":{"verdict":"green","by":"q","judge":"qwen","at":"2026-10-30T11:00:00Z"},
+"review":{"verdict":"red","by":"reviewer-a","at":"2026-10-30T11:00:00Z"},"qwen_review":{"verdict":"green","by":"q","judge":"qwen","at":"2026-10-30T11:00:00Z"},
 "decision":{"decision":"approved","by":"owner","at":"2026-10-30T12:00:00Z"},"loop_pending":{"step":"stop","why":"x"},"next_fix":{"id":"P1","kind":"fix_round","spec":{}}}`
 	if err := os.WriteFile(taskFile(dir, "T5-NS-3.a-A"), []byte(old), 0o600); err != nil {
 		t.Fatal(err)
@@ -344,7 +344,7 @@ func TestTaskLoopEndpointsGone(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		{"POST", tasksPath + "/A/review", map[string]any{"verdict": "green", "by": "owner-codex"}},
+		{"POST", tasksPath + "/A/review", map[string]any{"verdict": "green", "by": "reviewer-a"}},
 		{"POST", tasksPath + "/A/decide", map[string]any{"decision": "approved", "by": "owner"}},
 		{"POST", tasksPath + "/A/continue", map[string]any{"created_by": "owner"}},
 		{"POST", "/v1/projects/lab/science", map[string]any{"project": "Lab"}},

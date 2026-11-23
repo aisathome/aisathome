@@ -1,4 +1,4 @@
-// Live counts of a running task's model calls (owner, 2026-11-15): a task runs for up to about two
+// Live counts of a running task's model calls: a task runs for up to about two
 // hours, and until its worker reports the result the public views showed nothing of its progress.
 //
 // The gateway counts, per running task, the model calls it relays itself for it: the calls whose

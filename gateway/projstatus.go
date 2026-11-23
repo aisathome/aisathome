@@ -1,4 +1,4 @@
-// Operations status of a science project's runner (theme A2): the runner posts a status JSON
+// Operations status of a science project's runner: the runner posts a status JSON
 // every minute to POST /v1/projects/<id>/status with that project's key; the gateway checks it
 // against a strict schema, keeps the latest one in state_dir, and shows it with its own data
 // (nodes online) and the health warnings (health.go) on the admin-only page /account/ops
@@ -159,7 +159,7 @@ var (
 	runKinds = []string{"", "new", "rerun", "rerun-more-time", "fix-review", "fix-ci", "fix-internal", "review", "followup"}
 )
 
-// reviewerModel: a status names no reviewer model in a task's title (owner, 2026-10-24).
+// reviewerModel: a status names no reviewer model in a task's title.
 var reviewerModel = regexp.MustCompile(`(?i)claude|anthropic|\bopus\b|\bsonnet\b|\bhaiku\b|\bcodex\b|\bgpt-|\bgemini\b`)
 
 // checkPublic accepts printable text up to maxLen bytes that names no reviewer model and holds

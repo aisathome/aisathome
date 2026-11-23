@@ -1,13 +1,13 @@
-// Science task coordinator (decision 0015, phase 1; decision 0019): a project's task queue lives in
+// Science task queue: a project's task queue lives in
 // the gateway. The project's tools submit tasks; workers claim the next queued task of their kinds
 // with a lease, renew it with heartbeats, and report a result or a failure. A lease that is not
 // renewed in time returns the task to the queue (or fails it after max_tries tries), so a worker
 // that dies never holds a task for ever. The gateway is the single source of truth for the queue
 // and its state; what a result means (the next task, a review, a ledger) is the project's business,
-// outside it: the gateway acts on no project's workflow (decision 0019, which removed TauCeti's
-// review loop from here).
+// outside it: the gateway acts on no project's workflow (TauCeti's review loop, which once ran
+// here, was removed).
 //
-// Tries and interruptions (owner 2026-10-29: "a try should not be counted when there is spot
+// Tries and interruptions (2026-10-29: "a try should not be counted when there is spot
 // interruption"): a claim starts a try, unless it continues one that was interrupted. A lease
 // ends in an interruption when its worker gives the task back (`fail` with `requeue`: the
 // runner's SIGTERM path on a spot stop) — the next claim, by any worker, continues that try — or
@@ -32,7 +32,7 @@
 // And without a key, the public fields of the projects that publish their queue (queue_public.go,
 // tasks_public.go): GET /v1/projects/{id}/queue and GET /v1/tasks.
 //
-// The task schema (decision 0019, D1-D3): a task carries, written at its creation, its `kind` (the
+// The task schema: a task carries, written at its creation, its `kind` (the
 // claim key: one scaffold generation of a project, "p2m-v7", from the project's declared kinds, or
 // "other", which every project may use), its `role` in the project's pipeline (outline, hole, ...),
 // its relations to other tasks of the project (`parent`, `needs`, `retry_of`, `replaces`: names only;
@@ -41,17 +41,17 @@
 // something else closed it (another task's id, or "reuse:<by>"). All of these are public. A task made
 // before them has none; its spec still says what the public views read for it (queue_public.go).
 //
-// Claim order (the owner's work priority, 2026-10-29): tasks that were leased before and came back
+// Claim order (the operator's work priority, 2026-10-29): tasks that were leased before and came back
 // (an expired lease, a worker's requeue) first, then by the task's `order` (lower first, default 0;
 // a project that runs its tasks in a planned sequence, such as prove2me's calibration leaves before
-// its comparison set, owner 2026-11-11), then oldest first. A claim names the kinds its worker runs
+// its comparison set), then oldest first. A claim names the kinds its worker runs
 // (`kinds`; none: any), so a worker never takes a task of a scaffold generation it does not have. A
 // task that came back is held for its last worker for the lease's hold (affinityWindow unless the
-// claim set hold_seconds; it has the checkpoint; owner 2026-10-27, decision 5), then anyone may
+// claim set hold_seconds; it has the checkpoint), then anyone may
 // claim it. A claim may name one task (`task`): a worker takes back the task whose lease it lost, to
 // resume from its own checkpoint.
 //
-// Retention (owner 2026-11-17, replacing the export gate of 2026-10-27): the gateway keeps every
+// Retention (replacing the export gate of 2026-10-27): the gateway keeps every
 // task. A finished task is never dropped and never makes create refuse a new one; `exported` is an
 // optional mark for a project's own snapshots and gates nothing. A task that ended at least the
 // project's task_compact_days ago (default 30) is compacted: its spec, events, lease, error and live
@@ -67,7 +67,7 @@
 // not yet compacted are bounded per project.
 //
 // A failed write (a full disk, a read-only directory) is treated as a crash of that project's
-// queue, and recovers the same way (owner 2026-10-31). What is on disk is the truth: a call whose
+// queue, and recovers the same way. What is on disk is the truth: a call whose
 // change did not reach the disk answers 503 and changes nothing, so it may be repeated, and the
 // project's memory is dropped and read again at the next call or sweep, with no rollback to get
 // wrong. Two exceptions, information only: the classes of the nodes that served a running task's
@@ -114,15 +114,15 @@ const (
 	// taskSweepEvery: expired leases return to the queue at least this often, and on every call.
 	taskSweepEvery = 30 * time.Second
 	// affinityWindow: a task that came back from a lease waits this long for its last worker,
-	// which holds its checkpoint (owner 2026-10-27: about 10 minutes).
+	// which holds its checkpoint (2026-10-27: about 10 minutes).
 	affinityWindow = 10 * time.Minute
 	// maxTaskOrder bounds a task's order (Task.Order) either way.
 	maxTaskOrder = 1_000_000
-	// legacyMaxClass: a claim's max_class, from before decision 0019 removed the claim classes, is
+	// legacyMaxClass: a claim's max_class, from before the typed task schema removed the claim classes, is
 	// still taken (older clients) and means nothing now; its range is the old one.
 	legacyMaxClass = 6
 
-	// The typed fields' bounds (decision 0019).
+	// The typed fields' bounds.
 	maxTaskNeeds       = 64  // ids in needs
 	maxTaskLabels      = 16  // entries in labels
 	maxTaskLabelValue  = 200 // bytes per label value
@@ -130,7 +130,7 @@ const (
 	maxProjectKinds    = 32  // kinds a project declares
 	maxTaskNodeClasses = 4   // node_classes kept per task
 	// kindOther: the kind every project may use without declaring it; the kind of every task made
-	// before decision 0019 by prove2me.
+	// before the typed task schema by prove2me.
 	kindOther = "other"
 )
 
@@ -161,11 +161,11 @@ type Task struct {
 	ID      string `json:"id"` // the client's id, unique per project
 	Project string `json:"project"`
 	// Kind is the claim key: one of the project's declared kinds (a scaffold generation, p2m-v7), or
-	// "other". Tasks from before decision 0019 may carry an old kind (attempt, fix_round, ...).
+	// "other". Tasks from before the typed schema may carry an old kind (attempt, fix_round, ...).
 	Kind string `json:"kind"`
 	// Role: the task's part in its project's pipeline (outline, hole, rest, assembly), public.
 	Role string `json:"role,omitempty"`
-	// The relations to other tasks of the project, written at creation (decision 0019, D1): Parent
+	// The relations to other tasks of the project, written at creation: Parent
 	// (the task that defined this one's place), Needs (the tasks whose results it uses; information
 	// only), RetryOf (the try before this one), Replaces (the task this one supersedes). ClosedBy:
 	// set at the task's end when it ended without work, what closed it.
@@ -212,7 +212,7 @@ type Task struct {
 	// PreferWorker holds a task that came back for its last worker until PreferUntil.
 	PreferWorker string     `json:"prefer_worker,omitempty"`
 	PreferUntil  *time.Time `json:"prefer_until,omitempty"`
-	// ExportedAt: the owner's export took the task as it was at that UpdatedAt; nil = not (again).
+	// ExportedAt: the operator's export took the task as it was at that UpdatedAt; nil = not (again).
 	ExportedAt *time.Time `json:"exported_at,omitempty"`
 	// CompactedAt: when the task was compacted (see Retention above); SpecSHA256: the SHA-256 (hex)
 	// of its spec as created, for a repeated create.
