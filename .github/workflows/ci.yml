@@ -29,12 +29,17 @@ jobs:
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then echo "not gofmt-formatted:"; echo "$unformatted"; exit 1; fi
-      - name: no references to the internal notes
-        # The project's research notes are internal: public code and pages cite public sources.
-        # Web addresses are removed first (a public page may well live under /research/).
+      - name: no references to internal notes or other repositories
+        # Public code and pages cite public sources and explain themselves: no internal decision or
+        # backlog numbers, no other repository's name or paths, no dated sign-offs, no AI attribution
+        # trailers. Each term is written with a bracket class or a {n} count, so the pattern does not
+        # match itself and this file is checked too. Web addresses are removed first (a public page
+        # may well live under /research/).
         run: |
-          pat='research repo|bench/kvquant|research/[a-z]'
-          if git grep -n -i -E "$pat" -- ':!.github' | sed -E 's#[a-z]+://[^ )>"]*##g' | grep -i -E "$pat"; then exit 1; fi
+          pat='research[ ]repo|bench/kv[q]uant|research/[a-z]|outreach/[a-z0-9]|docs/review[s]/|\bops[ ]repo|aihome[-]ops|ai[@]home|~/per[s]onal'
+          pat="$pat"'|owner,? 20[0-9]{2}|decision 00[0-9]{2}|GDPR[ ]decision|backlog [0-9]|coordinat[o]r'
+          pat="$pat"'|Co-Authored[-]By|Generated with \[Claude|code-review[s][.]d|bin/code-revie[w]'
+          if git grep -n -i -E "$pat" | sed -E 's#[a-z]+://[^ )>"]*##g' | grep -i -E "$pat"; then exit 1; fi
       - name: go vet
         run: go vet ./...
       - name: save the Go caches (main only)
@@ -104,7 +109,7 @@ jobs:
         with:
           persist-credentials: false
           # The release tags: e2e/compat_test.go builds the latest two node releases and runs
-          # the basic chat through them (decision 0013); without tags it fails in CI.
+          # the basic chat through them; without tags it fails in CI.
           fetch-depth: 0
       - id: go
         uses: ./.github/actions/go
