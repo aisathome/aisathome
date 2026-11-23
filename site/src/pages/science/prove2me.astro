@@ -144,12 +144,6 @@ const leafCols = [
 			<div data-num="slots" hidden><dt>GPU slots busy now</dt><dd /></div>
 			<div data-num="accepted"><dt>proofs accepted by prove2me, of submitted</dt><dd>{stx.nums.accepted}</dd></div>
 		</dl>
-		<ul class="p2m-st-lines">
-			<li>{p2m.model}, an open-weight model, works on every task on the AIs@home network’s GPUs.</li>
-			<li>A proof is submitted only after our own full Lean check passes it; prove2me’s check then decides.</li>
-			<li>Each task is one attempt: an outline of a leaf, one of its holes, or putting the pieces together.</li>
-			<li>Have an NVIDIA GPU with 16 GB or more? <a href="/node/">Run a node</a>. It earns <a href="/node/credit/">credit</a> in BOINC’s unit, not money.</li>
-		</ul>
 		<p class="p2m-st-updated" data-st="updated">{stx.updated}</p>
 	</section>
 
@@ -895,9 +889,6 @@ const leafCols = [
 	.p2m-st-nums div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
 	.p2m-st-nums dd { margin: 0; font: 700 1.25rem/1.2 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
 	.p2m-st-nums dt { font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
-	.p2m-st-lines { margin: 0.8rem 0 0; padding: 0 0 0 1.1rem; font-size: 0.85rem; color: var(--sl-color-gray-2); }
-	.p2m-st-lines li { margin: 0.15rem 0 0; }
-	.p2m-st-lines a { color: var(--sl-color-accent-high); }
 	.p2m-st-updated { font-size: 0.8rem; color: var(--sl-color-gray-3); }
 	/* Global: the build and the browser draw parts of the page as HTML (prove2me-view.ts, prove2me-live.ts), which
 	   scoped styles would miss; every class here is the page's own (p2m-, tt-) or under main. */
