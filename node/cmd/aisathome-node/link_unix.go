@@ -20,16 +20,3 @@ func keepOwner(path string, old os.FileInfo) error {
 	}
 	return nil
 }
-
-// lockDir takes an exclusive lock on a folder until unlock is called (closing the folder releases it).
-func lockDir(dir string) (unlock func(), err error) {
-	f, err := os.Open(dir)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() { f.Close() }, nil
-}

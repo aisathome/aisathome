@@ -18,6 +18,7 @@ import (
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/accountlink"
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/node/setupflow"
 	"github.com/aisathome/aisathome/protocol"
@@ -102,16 +103,15 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 		return fail(errors.New("this node is not set up yet: finish the setup on its local page, which has a \"Link to my account\" button"))
 	}
 	gw := strings.TrimSpace(*gateway)
-	cfg := map[string]json.RawMessage{}
-	if b, err := os.ReadFile(t.config); err == nil {
-		if err := json.Unmarshal(b, &cfg); err != nil {
-			return fail(fmt.Errorf("%s is not valid JSON: %v", t.config, err))
-		}
-	} else if !errors.Is(err, os.ErrNotExist) || t.tokenEnv != "" {
-		return fail(fmt.Errorf("reading the config: %w", err))
+	cfg, exists, err := nodeconf.ReadObject(t.config) // canonical: case variants refused
+	if err != nil {
+		return fail(err)
+	}
+	if !exists && t.tokenEnv != "" {
+		return fail(fmt.Errorf("reading the config: %s does not exist", t.config))
 	}
 	if gw == "" {
-		gw = configGateway(t.config) // the key as the agent reads it (any case)
+		gw = nodeconf.String(cfg, "gateway_url")
 	}
 	if gw == "" {
 		gw = setupflow.DefaultGatewayURL
@@ -139,9 +139,8 @@ func (e linkEnv) main(ctx context.Context, args []string, stdout, stderr io.Writ
 		info.Name = *name
 	}
 	c := e.client(base)
-	cfgGW := configGateway(t.config) // as the agent reads it (any case of gateway_url)
-	if tok := t.installedToken(cfg); node.Anonymous(tok) && (cfgGW == "" || cfgGW == gw) {
-		// Only to the gateway that issued it: -gateway to another one starts a plain link there.
+	if tok, issuer := t.installedToken(cfg); node.Anonymous(tok) && issuer == gw {
+		// Only to the gateway its record says issued it: any other starts a plain link there.
 		c.Token = tok // the gateway deletes its identity without an account once it is linked
 		fmt.Fprintln(stdout, "This node runs without an account (science only). Linking moves it to your account with a new node token.")
 	}
@@ -213,20 +212,17 @@ Link this node to your AIs@home account:
 	fmt.Fprintf(w, "Waiting for the approval (the code works for %d minutes; Ctrl+C stops)...\n", mins)
 }
 
-// installedToken is the node's token now: token.env's, else the config's ("" if none).
-func (t linkTarget) installedToken(cfg map[string]json.RawMessage) string {
+// installedToken is the node's token now and its recorded issuing gateway: token.env's, else the
+// config's ("" if none).
+func (t linkTarget) installedToken(cfg map[string]json.RawMessage) (token, issuer string) {
 	if t.tokenEnv != "" {
 		if b, err := os.ReadFile(t.tokenEnv); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
-				if v, ok := strings.CutPrefix(strings.TrimSpace(line), "AISATHOME_NODE_TOKEN="); ok {
-					return strings.TrimSpace(v)
-				}
+			if tok, gw := nodeconf.ParseTokenEnv(b); tok != "" {
+				return tok, gw
 			}
 		}
 	}
-	var tok string
-	json.Unmarshal(cfg["token"], &tok)
-	return tok
+	return nodeconf.String(cfg, "token"), nodeconf.String(cfg, "token_gateway")
 }
 
 // checkWritable reports whether path can be replaced: its folder takes a new file.
@@ -248,13 +244,19 @@ func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error
 	if id, ok := node.IssuedAnyTokenNodeID(token); !ok || id != nodeID {
 		return errors.New("the gateway sent a token that is not a node token")
 	}
-	// A lock on the config's folder: two links at once leave one link's config and token.
-	unlock, err := lockDir(filepath.Dir(t.config))
+	// The writers' lock (nodeconf.Lock, the installer's too), for the whole check-and-write: the config
+	// is read again under it, so a change since the link began is seen.
+	unlock, err := nodeconf.Lock(filepath.Dir(t.config))
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if cg := configGateway(t.config); !setGateway && cg != "" && cg != gw {
+	cfg, _, err := nodeconf.ReadObject(t.config)
+	if err != nil {
+		return err
+	}
+	cg := nodeconf.String(cfg, "gateway_url")
+	if !setGateway && cg != "" && cg != gw {
 		return fmt.Errorf("the config's gateway changed to %s while linking to %s", cg, gw)
 	}
 	set := map[string]any{"node_id": nodeID}
@@ -262,15 +264,15 @@ func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error
 		set["gateway_url"] = gw
 	}
 	if t.tokenEnv != "" {
-		if setGateway && configGateway(t.config) != gw {
-			return t.saveOtherGateway(token, set)
+		if setGateway && cg != gw {
+			return t.saveOtherGateway(token, gw, set)
 		}
-		if err := writeTokenEnv(t.tokenEnv, token); err != nil {
+		if err := writeTokenEnv(t.tokenEnv, token, gw); err != nil {
 			return err
 		}
 		return updateJSON(t.config, set, nil, 0)
 	}
-	set["token"] = token
+	set["token"], set["token_gateway"] = token, gw // the token with the gateway that issued it
 	return updateJSON(t.config, set, nil, 0o600)
 }
 
@@ -280,7 +282,7 @@ func (t linkTarget) save(token, nodeID string, setGateway bool, gw string) error
 // (a start already under way may have read the old token.env), then the config gets the new gateway,
 // then token.env the new token. If the node does not stop, nothing is changed. If a write fails, the
 // old config comes back, then the old token beside it, and a node that was on starts again.
-func (t linkTarget) saveOtherGateway(token string, set map[string]any) error {
+func (t linkTarget) saveOtherGateway(token, gw string, set map[string]any) error {
 	oldCfg, err := os.ReadFile(t.config)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -331,72 +333,48 @@ func (t linkTarget) saveOtherGateway(token string, set map[string]any) error {
 	if err := updateJSON(t.config, set, nil, 0); err != nil {
 		return rollback(err, false)
 	}
-	if err := saveTokenEnv(t.tokenEnv, token); err != nil {
+	if err := saveTokenEnv(t.tokenEnv, token, gw); err != nil {
 		return rollback(err, true)
 	}
 	return nil
 }
 
-// configGateway is the gateway_url in a config file ("" if none or unreadable), its key matched as the
-// agent matches it (encoding/json: any case, the last one wins).
-func configGateway(path string) string {
-	var c struct {
-		GatewayURL string `json:"gateway_url"`
+// writeTokenEnv replaces a systemd EnvironmentFile with the token and the gateway that issued it
+// (nodeconf.TokenEnv), atomically and with mode 0600. It checks both again right at the write: only the
+// form the gateway issues and a plain gateway address can go into the file, so neither can add environment
+// settings for the node's service.
+func writeTokenEnv(path, token, gw string) error {
+	b, err := nodeconf.TokenEnv(token, gw, func(t string) bool { _, ok := node.IssuedAnyTokenNodeID(t); return ok })
+	if err != nil {
+		return err
 	}
-	if b, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(b, &c)
-	}
-	return c.GatewayURL
-}
-
-// writeTokenEnv replaces a systemd EnvironmentFile with the one line AISATHOME_NODE_TOKEN=<token>,
-// atomically and with mode 0600. It checks the token again right at the write: only the form the
-// gateway issues (no newline, space, quote, "=" or "#") can go into the file, so a token cannot
-// add environment settings for the node's service.
-func writeTokenEnv(path, token string) error {
-	if _, ok := node.IssuedAnyTokenNodeID(token); !ok {
-		return errors.New("not writing token.env: the token is not a node token")
-	}
-	return writeReplacing(path, []byte("AISATHOME_NODE_TOKEN="+token+"\n"), 0o600)
+	return writeReplacing(path, b, 0o600)
 }
 
 // saveTokenEnv is writeTokenEnv; tests replace it to make the write after the config fail.
 var saveTokenEnv = writeTokenEnv
 
-// updateJSON sets keys in a JSON object file and deletes drop, keeping everything else. A key set
-// replaces the same key in another case too (the agent reads keys in any case). mode 0 keeps the file's
-// mode; otherwise the file gets mode (a config holding a token: 0600).
+// updateJSON sets keys in a node.json and deletes drop, keeping everything else, in its canonical form
+// (nodeconf: case variants refused, lower-case keys). mode 0 keeps the file's mode; otherwise the file
+// gets mode (a config holding a token: 0600).
 func updateJSON(path string, set map[string]any, drop []string, mode os.FileMode) error {
-	m := map[string]json.RawMessage{}
-	if b, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(b, &m); err != nil {
-			return fmt.Errorf("%s is not valid JSON: %v", path, err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for k := range m {
-		for s := range set {
-			if k != s && strings.EqualFold(k, s) {
-				delete(m, k)
-			}
-		}
-	}
-	for k, v := range set {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		m[k] = b
-	}
-	for _, k := range drop {
-		delete(m, k)
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
+	m, _, err := nodeconf.ReadObject(path)
 	if err != nil {
 		return err
 	}
-	return writeReplacing(path, append(b, '\n'), mode)
+	for k, v := range set {
+		if err := nodeconf.Set(m, k, v); err != nil {
+			return err
+		}
+	}
+	for _, k := range drop {
+		delete(m, strings.ToLower(k))
+	}
+	b, err := nodeconf.Encode(m)
+	if err != nil {
+		return err
+	}
+	return writeReplacing(path, b, mode)
 }
 
 // writeReplacing replaces path through a new file in the same folder, renamed over it. mode 0 keeps the

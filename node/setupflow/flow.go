@@ -25,6 +25,7 @@ import (
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/accountlink"
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/protocol"
 )
@@ -250,7 +251,7 @@ func readConfig(path string) (node.Config, error) {
 	if err != nil {
 		return cfg, err
 	}
-	return cfg, json.Unmarshal(b, &cfg)
+	return cfg, nodeconf.Parse(b, &cfg) // canonical: case variants refused
 }
 
 // refreshConfig reads what the page shows from node.json: whether it is complete, the gateway
@@ -679,7 +680,7 @@ func (f *Flow) Start(token, gateway string) error {
 	if card.Several {
 		eng["cuda_device"] = card.uuid
 	}
-	if err := f.writeConfig(map[string]any{"token": strings.TrimSpace(token), "node_id": id, "gateway_url": gw, "engine": eng},
+	if err := f.writeConfig(map[string]any{"token": strings.TrimSpace(token), "token_gateway": gw, "node_id": id, "gateway_url": gw, "engine": eng},
 		"upstream", "models"); err != nil {
 		return err
 	}
@@ -701,7 +702,7 @@ func (f *Flow) ChangeToken(token, gateway string) error {
 	if !Configured(f.d.ConfigPath, f.d.Model) {
 		return errors.New("the node is not set up yet: finish the setup steps first")
 	}
-	if err := f.writeConfig(map[string]any{"token": strings.TrimSpace(token), "node_id": id, "gateway_url": gw}); err != nil {
+	if err := f.writeConfig(map[string]any{"token": strings.TrimSpace(token), "token_gateway": gw, "node_id": id, "gateway_url": gw}); err != nil {
 		return err
 	}
 	f.d.Log.Info("setup: token changed; restarting the node", "node", id, "gateway", gw)
@@ -746,7 +747,7 @@ func (f *Flow) Link(gateway string) error {
 	defer scancel()
 	l := f.d.NewLinker(base)
 	if cfg, err := readConfig(f.d.ConfigPath); err == nil && configured && node.Anonymous(cfg.Token) &&
-		(cfg.GatewayURL == "" || cfg.GatewayURL == gw) { // only to the gateway that issued it
+		cfg.TokenGateway == gw { // only to the gateway its record says issued it
 		if ts, ok := l.(tokenSender); ok {
 			ts.SetToken(cfg.Token) // a node without an account: linking moves it to the account
 		}
@@ -902,32 +903,33 @@ func (f *Flow) leave() {
 // written next to itself and renamed over it, so it inherits the data folder's permissions
 // (the installer's: administrators and the service account only).
 func (f *Flow) writeConfig(set map[string]any, drop ...string) error {
-	m := map[string]json.RawMessage{}
-	if b, err := os.ReadFile(f.d.ConfigPath); err == nil {
-		if err := json.Unmarshal(b, &m); err != nil {
-			return fmt.Errorf("%s is not valid JSON (%v); fix or delete it, then run the setup again", f.d.ConfigPath, err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	for k, v := range set {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		m[k] = b
-	}
-	for _, k := range drop {
-		delete(m, k)
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(f.d.ConfigPath), 0o755); err != nil {
 		return err
 	}
-	return writeAtomic(f.d.ConfigPath, append(b, '\n'))
+	// The writers' lock (nodeconf.Lock; `aisathome-node link` takes it too) for the whole read-and-write,
+	// and the canonical form: case variants refused, lower-case keys.
+	unlock, err := nodeconf.Lock(filepath.Dir(f.d.ConfigPath))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	m, _, err := nodeconf.ReadObject(f.d.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("%v; fix or delete it, then run the setup again", err)
+	}
+	for k, v := range set {
+		if err := nodeconf.Set(m, k, v); err != nil {
+			return err
+		}
+	}
+	for _, k := range drop {
+		delete(m, strings.ToLower(k))
+	}
+	b, err := nodeconf.Encode(m)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(f.d.ConfigPath, b)
 }
 
 // writeAtomic writes b to path through a temporary file in the same folder.

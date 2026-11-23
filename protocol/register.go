@@ -9,21 +9,9 @@ import "time"
 
 // Paths on the gateway's HTTPS address (the connect URL's host).
 const (
-	RegisterPath   = "/v1/node/register"
-	SelfPath       = "/v1/node/self"
-	TokenKnownPath = "/v1/node/token-known"
+	RegisterPath = "/v1/node/register"
+	SelfPath     = "/v1/node/self"
 )
-
-// TokenKnownRequest is the body of POST TokenKnownPath: the SHA-256 (hex) of a node token, never the token.
-// The gateway keeps only these hashes; a hash authenticates nowhere, so an installer may ask any gateway.
-type TokenKnownRequest struct {
-	SHA256 string `json:"sha256"`
-}
-
-// TokenKnown is the answer: whether a node token with that hash connects to this gateway now.
-type TokenKnown struct {
-	Known bool `json:"known"`
-}
 
 // RegisterRequest is the body of POST RegisterPath.
 type RegisterRequest struct {

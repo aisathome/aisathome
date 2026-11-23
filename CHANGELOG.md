@@ -83,6 +83,17 @@ and **(site)** are live on aisathome.org once deployed.
 
 ### Changed
 
+- **A node token is kept only with the gateway that issued it.** Every token written (the installer,
+  `aisathome-node link` and `register`, the Windows setup page) now comes with that gateway:
+  `AISATHOME_TOKEN_GATEWAY` in `token.env`, or `token_gateway` beside a token in `node.json`. The node
+  refuses to start when that gateway is not the one its `node.json` names, and the installer moves an
+  installed token without one, or another gateway's, aside (`token.env.unlinked`) and never keeps or sends
+  it: link the node again (`sudo aisathome-node link`) or reinstall. A `node.json` with two keys that are
+  equal in any case (`gateway_url` and `Gateway_URL`) is refused everywhere; the installer, `link`,
+  `register` and the setup page take one lock (`node.lock` beside `node.json`) while they change these
+  files. The gateway's `POST /v1/node/token-known` is gone (nothing asks it any more). (node, gateway)
+
+
 - **No more trusted nodes: every node is untrusted.** Personal data in a request (an email address,
   a card number, an IBAN, a Norwegian national identity number) goes only to the requester's own
   node; with none online the request is refused at once (400, `"code": "personal_data"`, "This looks

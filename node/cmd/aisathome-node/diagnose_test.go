@@ -135,10 +135,18 @@ func keys(m map[string]string) []string {
 // A node.json that is not valid JSON is left out, and its token (any form, also an operator's)
 // is still redacted from the logs (Codex review).
 func TestDiagnoseBrokenConfig(t *testing.T) {
+	// Not JSON; and two token keys equal in any case (the agent refuses that file, and the first token is
+	// not the one Go's decoder keeps).
+	for _, body := range []string{`{"token": "operator-token-Zq81xx", "upstream": }`, `{"TOKEN": "operator-token-Zq81xx", "token": "other-Yy22"}`} {
+		diagnoseBrokenConfig(t, body)
+	}
+}
+
+func diagnoseBrokenConfig(t *testing.T, body string) {
 	dir := t.TempDir()
 	const token = "operator-token-Zq81xx"
 	l := node.Layout{Config: filepath.Join(dir, "node.json"), LogFile: filepath.Join(dir, "node.log")}
-	os.WriteFile(l.Config, []byte(`{"token": "`+token+`", "upstream": }`), 0o600)
+	os.WriteFile(l.Config, []byte(body), 0o600)
 	os.WriteFile(l.LogFile, []byte("using "+token+"\n"), 0o600)
 	d := diagnosis{layout: l, cfgPath: l.Config, exeDir: dir, uiPort: 1, smi: diagSMI{}, now: time.Now,
 		run: func(context.Context, string, ...string) (string, error) { return "", nil }}

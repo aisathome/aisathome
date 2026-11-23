@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/localui"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/node/tray"
@@ -122,7 +123,7 @@ func runCommand(ctx context.Context, name string, args ...string) (string, error
 var reToken = regexp.MustCompile(`nt-(n-[0-9a-f]{8})\.[A-Za-z0-9._~+/=-]+`)
 
 // reTokenField is a "token" value in a node.json that is not valid JSON.
-var reTokenField = regexp.MustCompile(`"token"\s*:\s*"([^"]+)"`)
+var reTokenField = regexp.MustCompile(`(?i)"token"\s*:\s*"([^"]+)"`)
 
 // redact removes the known secrets and anything shaped like a node token.
 func (d *diagnosis) redact(s string) string {
@@ -217,9 +218,10 @@ func (d *diagnosis) config(add func(name, content string)) node.Config {
 		d.fail("node.json", err)
 		return cfg
 	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		// Not readable as a config, so its token is unknown: the file stays out of the zip, and
-		// anything that looks like a token's value is redacted from the rest (logs).
+	if err := nodeconf.Parse(b, &cfg); err != nil {
+		// Not readable as a config (also: keys equal in any case, as the agent refuses it), so its token
+		// is unknown: the file stays out of the zip, and anything that looks like a token's value is
+		// redacted from the rest (logs).
 		d.fail("node.json", fmt.Errorf("not valid JSON (%v); not included", err))
 		for _, m := range reTokenField.FindAllStringSubmatch(string(b), -1) {
 			d.secrets = append(d.secrets, m[1])

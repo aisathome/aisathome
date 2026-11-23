@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/accountlink"
+	"github.com/aisathome/aisathome/node/nodeconf"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/node/setupflow"
 )
@@ -83,15 +83,14 @@ func (e linkEnv) register(ctx context.Context, args []string, stdout, stderr io.
 	if e.layout.Setup && !setupflow.Configured(t.config, e.layout.Model) {
 		return fail(errors.New("this node is not set up yet: finish the setup on its local page, which has a \"Start without an account\" button"))
 	}
-	cfg := map[string]json.RawMessage{}
-	if b, err := os.ReadFile(t.config); err == nil {
-		if err := json.Unmarshal(b, &cfg); err != nil {
-			return fail(fmt.Errorf("%s is not valid JSON: %v", t.config, err))
-		}
-	} else if !errors.Is(err, os.ErrNotExist) || t.tokenEnv != "" {
-		return fail(fmt.Errorf("reading the config: %w", err))
+	cfg, exists, err := nodeconf.ReadObject(t.config) // canonical: case variants refused
+	if err != nil {
+		return fail(err)
 	}
-	if tok := t.installedToken(cfg); tok != "" {
+	if !exists && t.tokenEnv != "" {
+		return fail(fmt.Errorf("reading the config: %s does not exist", t.config))
+	}
+	if tok, _ := t.installedToken(cfg); tok != "" {
 		what := "a node token"
 		if node.Anonymous(tok) {
 			what = "a token of its own (it already runs without an account)"
@@ -100,7 +99,7 @@ func (e linkEnv) register(ctx context.Context, args []string, stdout, stderr io.
 	}
 	gw := strings.TrimSpace(*gateway)
 	if gw == "" {
-		json.Unmarshal(cfg["gateway_url"], &gw)
+		gw = nodeconf.String(cfg, "gateway_url")
 	}
 	if gw == "" {
 		gw = setupflow.DefaultGatewayURL

@@ -4,6 +4,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,46 @@ func TestLoadConfig(t *testing.T) {
 	}
 	if _, err := loadConfig(writeConfig(t, `{"node_id":`), env(nil), node.LinuxLayout); err == nil {
 		t.Fatal("a broken config loaded")
+	}
+}
+
+// A token goes only to the gateway that issued it (code review 2026-11-23): the agent refuses to start
+// when the token's record (token.env's AISATHOME_TOKEN_GATEWAY, or node.json's token_gateway) is another
+// gateway than gateway_url; and it refuses a node.json with keys equal in any case.
+func TestLoadConfigTokenGateway(t *testing.T) {
+	const prod, staging = "wss://api.example.org/v1/node/connect", "wss://staging.example.org/v1/node/connect"
+	p := writeConfig(t, `{"gateway_url":"`+staging+`"}`)
+	for _, tc := range []struct {
+		env map[string]string
+		ok  bool
+	}{
+		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x", "AISATHOME_TOKEN_GATEWAY": staging}, true},
+		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x", "AISATHOME_TOKEN_GATEWAY": prod}, false},
+		{map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x"}, true}, // no record: a hand-made config (development)
+	} {
+		cfg, err := loadConfig(p, env(tc.env), node.LinuxLayout)
+		if (err == nil) != tc.ok {
+			t.Errorf("%v: %v, want ok %v", tc.env, err, tc.ok)
+		}
+		if err != nil && (!strings.Contains(err.Error(), "aisathome-node link") || strings.Contains(err.Error(), "nt-n-1.x")) {
+			t.Errorf("message %q", err)
+		}
+		_ = cfg
+	}
+	// The environment's token comes with the environment's record, never the file's.
+	p2 := writeConfig(t, `{"gateway_url":"`+staging+`","token":"nt-n-2.y","token_gateway":"`+staging+`"}`)
+	if _, err := loadConfig(p2, env(map[string]string{"AISATHOME_NODE_TOKEN": "nt-n-1.x", "AISATHOME_TOKEN_GATEWAY": prod}), node.LinuxLayout); err == nil {
+		t.Error("an environment token for another gateway borrowed the file's record")
+	}
+	if _, err := loadConfig(p2, env(nil), node.LinuxLayout); err != nil {
+		t.Errorf("inline token with its record: %v", err)
+	}
+	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+staging+`","token":"nt-n-2.y","token_gateway":"`+prod+`"}`), env(nil), node.LinuxLayout); err == nil {
+		t.Error("an inline token for another gateway loaded")
+	}
+	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+prod+`","Gateway_URL":"`+staging+`"}`), env(nil), node.LinuxLayout); err == nil ||
+		!strings.Contains(err.Error(), "more than once") {
+		t.Errorf("case-variant keys loaded: %v", err)
 	}
 }
 

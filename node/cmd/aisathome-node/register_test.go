@@ -96,7 +96,7 @@ func TestRegister(t *testing.T) {
 	if len(f.regs) != 1 || !f.regs[0].AcceptTerms || !strings.HasPrefix(f.regs[0].Agent, "aisathome-node/") {
 		t.Fatalf("registrations %+v", f.regs)
 	}
-	if b, _ := os.ReadFile(env); string(b) != "AISATHOME_NODE_TOKEN="+anonTestToken+"\n" || mode(t, env) != 0o600 {
+	if b, _ := os.ReadFile(env); string(b) != tokenEnvFor(anonTestToken, f.wsURL()) || mode(t, env) != 0o600 {
 		t.Fatalf("token.env %q mode %v", b, mode(t, env))
 	}
 	var c map[string]any
@@ -128,22 +128,32 @@ func TestRegister(t *testing.T) {
 
 // link on a node without an account sends its token with the code request (so the gateway can delete its
 // identity without an account once linked) and replaces it with the account's; an account's node sends none.
+//
+// Only to the gateway its record names (code review 2026-11-23): node.json is editable, so a token without a
+// record, or recorded for another gateway, is never sent, even when node.json names this one.
 func TestLinkAnonymousSendsItsToken(t *testing.T) {
 	for _, tc := range []struct {
-		token, auth string
-	}{{anonTestToken, "Bearer " + anonTestToken}, {"nt-n-00000000.old", ""}} {
+		token, record, auth string
+	}{{anonTestToken, "self", "Bearer " + anonTestToken}, {"nt-n-00000000.old", "self", ""},
+		{anonTestToken, "", ""}, {anonTestToken, "wss://issuer.example/v1/node/connect", ""}} {
 		f := newFakeRegisterGateway(t, "")
 		dir := t.TempDir()
 		cfg, env := filepath.Join(dir, "node.json"), filepath.Join(dir, "token.env")
 		os.WriteFile(cfg, []byte(`{"gateway_url":"`+f.wsURL()+`"}`), 0o640)
-		os.WriteFile(env, []byte("AISATHOME_NODE_TOKEN="+tc.token+"\n"), 0o600)
+		body := "AISATHOME_NODE_TOKEN=" + tc.token + "\n"
+		if tc.record == "self" {
+			body = tokenEnvFor(tc.token, f.wsURL())
+		} else if tc.record != "" {
+			body = tokenEnvFor(tc.token, tc.record)
+		}
+		os.WriteFile(env, []byte(body), 0o600)
 		var restarts []restartCall
 		var out, errb bytes.Buffer
 		if code := testLinkEnv(f.fakeLinkGateway, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg, "-no-start"}, &out, &errb); code != 0 {
 			t.Fatalf("exit %d: %s", code, errb.String())
 		}
 		if f.auth != tc.auth {
-			t.Errorf("token %s: Authorization %q, want %q", tc.token[:8], f.auth, tc.auth)
+			t.Errorf("token %s, record %q: Authorization %q, want %q", tc.token[:8], tc.record, f.auth, tc.auth)
 		}
 		if b, _ := os.ReadFile(env); !strings.Contains(string(b), linkTestToken) {
 			t.Errorf("token.env after the link: %q", b)
@@ -208,7 +218,7 @@ func TestLinkAnonymousTokenStaysWithItsGateway(t *testing.T) {
 	dir := t.TempDir()
 	cfg, env := filepath.Join(dir, "node.json"), filepath.Join(dir, "token.env")
 	os.WriteFile(cfg, []byte(`{"gateway_url":"wss://issuer.example/v1/node/connect"}`), 0o640)
-	os.WriteFile(env, []byte("AISATHOME_NODE_TOKEN="+anonTestToken+"\n"), 0o600)
+	os.WriteFile(env, []byte(tokenEnvFor(anonTestToken, "wss://issuer.example/v1/node/connect")), 0o600)
 	var restarts []restartCall
 	var out, errb bytes.Buffer
 	if code := testLinkEnv(f.fakeLinkGateway, node.LinuxLayout, &restarts).main(context.Background(), []string{"-config", cfg, "-gateway", f.wsURL(), "-no-start"}, &out, &errb); code != 0 {

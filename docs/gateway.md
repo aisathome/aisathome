@@ -560,10 +560,7 @@ them), a pool of `max_anon_nodes` (default 25) apart from `max_nodes`, `anon_clo
 stop new ones, at most 2 connected per address (account nodes keep their 10). Retention: one that never
 connected is deleted 24 hours after it registered, one not seen for 90 days is deleted, and a held one 24
 hours after its hold (its last
-connection is written at most once an hour). `POST /v1/node/token-known {"sha256"}` says whether a node token with that hash connects
-here (accounts', nodes without an account's and config tokens; a held node without an account's counts as
-not known, so the reinstall its hold message advises registers a fresh node); the installer asks it, with the hash only,
-before it keeps an installed token whose node.json names this gateway. `GET /v1/node/self` (its own token) tells the node's local
+connection is written at most once an hour). `GET /v1/node/self` (its own token) tells the node's local
 page its state: `checking` (with `checks_passed` of `checks_needed`), `admitted`, `held` (no reason
 given), `offline`, `no_check`. **Linking**: `aisathome-node link` on such a node sends its token with
 `/v1/node/link`; the approval page says it ran without an account; approving creates a new node on the

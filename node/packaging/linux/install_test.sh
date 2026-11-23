@@ -377,7 +377,8 @@ link=0 anonymous=0
 die() { echo "$1" >&2; exit "${2:-1}"; }
 printf '{"node_id": "box-1", "gateway_url": "wss://staging.example.org/v1/node/connect", "slots": 2}\n' > "$etc/node.json"
 secret="nt-n-0123abcd.$(printf 'S%.0s' {1..43})"
-printf 'AISATHOME_NODE_TOKEN=%s\n' "$secret" > "$etc/token.env"; chmod 600 "$etc/token.env"
+stgw=wss://staging.example.org/v1/node/connect
+printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=%s\n' "$secret" "$stgw" > "$etc/token.env"; chmod 600 "$etc/token.env"
 [[ "$(installed_value "$etc/node.json" node_id)" = box-1 ]] || fail "installed node_id"
 [[ "$(installed_value "$etc/node.json" gateway_url)" = wss://staging.example.org/v1/node/connect ]] || fail "installed gateway_url"
 [[ -z "$(installed_value "$etc/node.json" slots)" && -z "$(installed_value "$etc/none.json" node_id)" ]] || fail "installed_value: not a string, or no file"
@@ -404,7 +405,7 @@ check_id "" "nt-n-0123abcd.x" box-1 n-0123abcd
 check_id "" config-token "" "$(hostname -s)"
 check_id "" config-token 'a b' "the installed node id 'a b' is not valid; pass --node-id"
 # tok <tty 0|1> <keep 0|1> <token.env> <stdin>: sets out (stderr, then token=...) and code.
-tok() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=$2; read_token "$3"; echo "token=$token") <<<"$4" 2>&1)"; code=$?; }
+tok() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=$2; park_token=0; gateway_url="$stgw"; read_token "$3"; echo "token=$token") <<<"$4" 2>&1)"; code=$?; }
 tok 1 0 "$etc/token.env" ""
 ok "Enter keeps the token"; has "Enter keeps the token" "token=$secret"; has "Enter keeps the token" "or press Enter to keep the installed one"
 tok 1 0 "$etc/token.env" "nt-new"
@@ -417,7 +418,7 @@ tok 0 0 "$etc/token.env" ""
 [[ $code -ne 0 ]] || fail "empty piped input kept the token"; has "empty piped input" "--keep-token"
 # Enter at a terminal without an installed token chooses linking: no token, and the install ends with
 # `aisathome-node link`. --link does so without reading stdin. Piped empty input is still an error.
-tokl() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=0; link=$2; read_token "$3"; echo "token=$token link=$link") <<<"$4" 2>&1)"; code=$?; }
+tokl() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=0; link=$2; park_token=0; gateway_url="$stgw"; read_token "$3"; echo "token=$token link=$link") <<<"$4" 2>&1)"; code=$?; }
 tokl 1 0 "$etc/none.env" ""
 ok "Enter without an installed token"; has "Enter without an installed token" "token= link=1"
 has "Enter without an installed token" "Press Enter to link this node to your account"
@@ -436,51 +437,57 @@ for t in "1 0" "0 1"; do
   tok $t "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed"
 done
 tokl 0 1 "$etc/token.env" ""; [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--link)"
-# --anonymous: no token is read (the node registers after the speed test); a node that has one keeps it.
-# A token for the same gateway stays (one line says what to do); one for another gateway does not stop it
-# (it is moved aside later, set_aside_before_link, as for any gateway change).
-# toka <token.env> <stdin> [installed gateway] [gateway]
-# toka <token.env> <stdin> [installed gateway] [gateway] [what the gateway says of the token: known|unknown]
+# --anonymous: no token is read (the node registers after the speed test); a node with a token recorded for
+# this gateway keeps it; any other is moved aside later (set_aside_before_link) and never stops the install.
+# toka <token.env> <stdin> [installed gateway] [gateway]; fake_state: what the token's gateway says of it.
 toka() { out="$( (interactive() { false; }; keep_token=0; link=0; anonymous=1; park_token=0; old_gw="${3:-}"; gateway_url="${4:-wss://api.aisathome.org/v1/node/connect}"
-  token_known() { echo "${fake_known:-known}"; echo "asked $2" >> "$tmp/asked.log"; }
+  token_state() { echo "${fake_state:-ok}"; echo "asked $2" >> "$tmp/asked.log"; }
   read_token "$1"; echo "token=$token anonymous=$anonymous keep=$keep_token park=$park_token") <<<"$2" 2>&1)"; code=$?; }
 toka "$etc/none.env" "nt-ignored"
 ok "--anonymous"; has "--anonymous" "token="; lacks "--anonymous" "nt-ignored"
 has "--anonymous" "registering this node without an account (science only)"
-# A token the installed node.json names this gateway for: asked about there. Accepted: the node stays linked
-# and is updated (as --keep-token). Not known (owner 2026-11-23: a prod token beside a node.json that named
-# staging): moved aside, and the node registers without an account. Never a refusal.
+# The token's recorded gateway decides (code review 2026-11-23: node.json is editable, so it never decides who
+# issued a token, and nothing is asked of any gateway): recorded for this gateway, the node stays linked; no
+# record, or another gateway's, the token is moved aside and the node registers.
+printf 'AISATHOME_NODE_TOKEN=%s\n' "$secret" > "$tmp/norec.env"
+printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=wss://api.aisathome.org/v1/node/connect\n' "$secret" > "$tmp/prod.env"
+toka "$etc/token.env" "" "$stgw" "$stgw"
+ok "--anonymous, a token recorded for this gateway"; has "--anonymous, a token recorded for this gateway" "token=$secret anonymous=0 keep=1 park=0"
+has "--anonymous, a token recorded for this gateway" "linked to an account on $stgw: it keeps its token"
+toka "$tmp/prod.env" "" "$stgw" "$stgw" # the owner's machine: a prod token beside a node.json naming staging
+ok "--anonymous, a token recorded for another gateway"; has "--anonymous, a token recorded for another gateway" "token= anonymous=1 keep=0 park=1"
+has "--anonymous, a token recorded for another gateway" "issued by wss://api.aisathome.org/v1/node/connect, not $stgw: it is moved aside"
+[[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--anonymous, another gateway's)"
+toka "$tmp/norec.env" "" "$stgw" "$stgw"
+ok "--anonymous, a token without a record"; has "--anonymous, a token without a record" "token= anonymous=1 keep=0 park=1"
+has "--anonymous, a token without a record" "issued by an unrecorded gateway"
+[[ "$(cat "$tmp/asked.log")" = "asked $stgw" ]] || fail "a gateway was asked about a token not recorded for it: $(cat "$tmp/asked.log")"
+# Recorded for this gateway: its gateway (the issuer) says whether it still holds: a deleted or revoked token,
+# or a held node without an account's (the reinstall its hold message advises), goes aside and the node
+# registers anew.
 : > "$tmp/asked.log"
-fake_known=known toka "$etc/token.env" "" wss://api.aisathome.org/v1/node/connect wss://api.aisathome.org/v1/node/connect
-ok "--anonymous, a token this gateway accepts"; has "--anonymous, a token this gateway accepts" "token=$secret anonymous=0 keep=1 park=0"
-has "--anonymous, a token this gateway accepts" "linked to an account on wss://api.aisathome.org/v1/node/connect: it keeps its token"
-fake_known=unknown toka "$etc/token.env" "" wss://api.staging.example.org/v1/node/connect wss://api.staging.example.org/v1/node/connect
-ok "--anonymous, a token this gateway does not know"; has "--anonymous, a token this gateway does not know" "token= anonymous=1 keep=0 park=1"
-has "--anonymous, a token this gateway does not know" "not known to wss://api.staging.example.org/v1/node/connect: it is moved aside"
-[[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--anonymous, unknown token)"
-toka "$etc/token.env" "" wss://api.aisathome.org/v1/node/connect wss://api.staging.example.org/v1/node/connect
-ok "--anonymous with another gateway's token"; has "--anonymous with another gateway's token" "token= anonymous=1 keep=0 park=0"
-[[ "$(cat "$tmp/asked.log")" == $'asked wss://api.aisathome.org/v1/node/connect\nasked wss://api.staging.example.org/v1/node/connect' ]] ||
-  fail "the gateway asked about the token: $(cat "$tmp/asked.log") (another gateway's token is never sent anywhere)"
-unset -f die gw check_id tok tokl toka installed_value pick_gateway_url pick_node_id read_token interactive
-
-# token_known against a stand-in gateway: it sends the token's SHA-256 only, never the token (node.json may
-# name another gateway than the token's: code review 2026-11-23); "known": false is "unknown", anything else
-# (true, an old gateway's 404, no answer) "known".
-eval "$(sed -n '/^token_known() {/,/^}/p' "$installer")"
+fake_state=held toka "$etc/token.env" "" "$stgw" "$stgw"
+ok "--anonymous, a held node's token"; has "--anonymous, a held node's token" "token= anonymous=1 keep=0 park=1"; has "--anonymous, a held node's token" "registers again"
+fake_state=gone toka "$etc/token.env" "" "$stgw" "$stgw"
+ok "--anonymous, a deleted token"; has "--anonymous, a deleted token" "token= anonymous=1 keep=0 park=1"; has "--anonymous, a deleted token" "no longer knows"
+[[ "$(sort -u "$tmp/asked.log")" = "asked $stgw" ]] || fail "not asked of the token's own gateway: $(cat "$tmp/asked.log")"
+# token_state against a stand-in gateway: the token goes in the Authorization header of GET /v1/node/self only.
+eval "$(sed -n '/^token_state() {/,/^}/p' "$installer")"
 cat > "$tmp/selfgw.py" <<'PY'
-import http.server, sys
-import hashlib, json
-GOOD = hashlib.sha256(("nt-n-0000000a." + "G" * 43).encode()).hexdigest()
+import http.server, sys, json
+T = {"nt-n-0000000a.ok": (200, {"node_id": "n-0000000a", "anonymous": False, "state": "held"}),
+     "nt-a-0000000b.held": (200, {"node_id": "a-0000000b", "anonymous": True, "state": "held"}),
+     "nt-a-0000000c.ok": (200, {"node_id": "a-0000000c", "anonymous": True, "state": "admitted"})}
 class H(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        if b"nt-n-" in raw or "nt-n-" in str(self.headers) or "Authorization" in self.headers or self.path != "/v1/node/token-known":
-            self.send_response(400); self.end_headers(); open(sys.argv[1], "a").write("LEAK\n"); return
-        known = json.loads(raw).get("sha256") == GOOD
-        self.send_response(200); self.end_headers(); self.wfile.write(json.dumps({"known": known}).encode())
     def do_GET(self):
-        open(sys.argv[1], "a").write("LEAK\n"); self.send_response(401); self.end_headers()
+        tok = self.headers.get("Authorization", "").removeprefix("Bearer ")
+        if self.path != "/v1/node/self" or tok in self.path:
+            open(sys.argv[1], "a").write("BAD " + self.path + "\n")
+        code, body = T.get(tok, (401, {"error": {"message": "unknown node token"}}))
+        self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers()
+        self.wfile.write((json.dumps(body, separators=(",", ":")) + "\n").encode())
+    def do_POST(self):
+        open(sys.argv[1], "a").write("BAD POST\n"); self.send_response(400); self.end_headers()
     def log_message(self, *a): pass
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 print(s.server_port, flush=True)
@@ -489,13 +496,30 @@ PY
 : > "$tmp/leak.log"
 coproc SELFGW { exec python3 "$tmp/selfgw.py" "$tmp/leak.log"; }
 read -r selfport <&"${SELFGW[0]}"
-[[ "$(token_known "nt-n-0000000a.$(printf 'G%.0s' {1..43})" "ws://127.0.0.1:$selfport/v1/node/connect")" == known ]] || fail "token_known: an accepted token"
-[[ "$(token_known "nt-n-0000000b.$(printf 'G%.0s' {1..43})" "ws://127.0.0.1:$selfport/v1/node/connect")" == unknown ]] || fail "token_known: a token the gateway does not know"
+sgw="ws://127.0.0.1:$selfport/v1/node/connect"
+[[ "$(token_state nt-n-0000000a.ok "$sgw")" == ok ]] || fail "token_state: an account's node (even held) stays"
+[[ "$(token_state nt-a-0000000b.held "$sgw")" == held ]] || fail "token_state: a held node without an account"
+[[ "$(token_state nt-a-0000000c.ok "$sgw")" == ok ]] || fail "token_state: an admitted node without an account"
+[[ "$(token_state nt-a-0000000d.gone "$sgw")" == gone ]] || fail "token_state: a token the gateway does not know"
 kill "$SELFGW_PID" 2>/dev/null; wait "$SELFGW_PID" 2>/dev/null
-[[ "$(token_known "nt-n-0000000b.x" "ws://127.0.0.1:9/v1/node/connect")" == known ]] || fail "token_known: no answer must keep the token"
-[[ ! -s "$tmp/leak.log" ]] || fail "token_known sent the token (not only its hash) to the gateway"
-grep -A12 '^token_known() {' "$installer" | grep -q 'Authorization' && fail "token_known sends an Authorization header"
-unset -f token_known
+[[ "$(token_state nt-a-0000000d.gone "ws://127.0.0.1:9/v1/node/connect")" == ok ]] || fail "token_state: no answer must keep the token"
+[[ ! -s "$tmp/leak.log" ]] || fail "token_state: $(cat "$tmp/leak.log")"
+sed -n '/^token_state() {/,/^}/p' "$installer" | grep 'curl' | grep -q -- '-H @-' || fail "token_state: the token is not read from stdin by curl"
+sed -n '/^token_state() {/,/^}/p' "$installer" | grep 'curl' | sed 's/.*| curl/curl/' | grep -q '\$1' && fail "token_state: the token is on curl's command line"
+unset -f token_state
+# Without --anonymous: a token not recorded for this gateway is never kept: Enter links instead, and
+# --keep-token stops before anything changes.
+tok 1 0 "$tmp/prod.env" ""
+ok "Enter, another gateway's token"; has "Enter, another gateway's token" "token="; lacks "Enter, another gateway's token" "token=$secret"
+has "Enter, another gateway's token" "the install ends with linking"
+tok 0 1 "$tmp/norec.env" ""
+usage_err "--keep-token, a token without a record"; has "--keep-token, a token without a record" "issued by an unrecorded gateway"
+lacks "--keep-token, a token without a record" "moved aside" # refused before anything is decided
+tok 1 0 "$tmp/norec.env" "nt-pasted"
+ok "a pasted token over an unrecorded one"; has "a pasted token over an unrecorded one" "token=nt-pasted"
+grep -q "token_known\|/v1/node/token-known" "$installer" && fail "the installer still uses the token-known hash check"
+unset -f die gw check_id tok tokl toka installed_value pick_gateway_url pick_node_id read_token interactive
+
 # A dry run reads the installed node.json (a copy of the installer pointed at the fake one).
 sed "s|^conf=/etc/aisathome-node\$|conf=$etc|" "$installer" > "$tmp/install-conf.sh"
 grep -q "^conf=$etc\$" "$tmp/install-conf.sh" || fail "no conf= line to point at the fake install"
@@ -504,32 +528,28 @@ ok "rerun keeps node.json"; has "rerun keeps node.json" '"node_id": "box-1"'
 has "rerun keeps node.json" '"gateway_url": "wss://staging.example.org/v1/node/connect"'
 out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --node-id n2 --gateway-url wss://gw.example.org/v1/node/connect 2>&1)"; code=$?
 ok "flags over installed"; has "flags over installed" '"node_id": "n2"'; has "flags over installed" '"gateway_url": "wss://gw.example.org/v1/node/connect"'
-# The owner's machine (2026-11-23): installed node.json names the one-liner's gateway, token.env holds a token
-# that gateway does not know. The dry run and the real run must agree: the dry run says how the account is
-# decided, and the real run's decision (as root it reads the token) moves the token aside and registers,
-# never refuses.
-out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --anonymous --gateway-url wss://staging.example.org/v1/node/connect 2>&1)"; code=$?
+# An installed node.json with keys equal in any case is refused, as the agent and aisathome-node link refuse it.
+cp "$etc/node.json" "$tmp/node.json.keep"
+printf '{"node_id": "box-1", "gateway_url": "%s", "Gateway_URL": "wss://other.example/v1/node/connect"}\n' "$stgw" > "$etc/node.json"
+out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run 2>&1)"; code=$?
+[[ $code -ne 0 ]] || fail "an installed node.json with case-variant keys was read"; has "installed node.json, case variants" "appears more than once"
+cp "$tmp/node.json.keep" "$etc/node.json"
+# The owner's machine (2026-11-23): installed node.json names the one-liner's gateway, token.env holds a prod
+# token. The dry run and the real run agree: the dry run says a token is kept only if recorded for this
+# gateway, and the real run moves this one aside and registers, never refuses.
+out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --anonymous --gateway-url "$stgw" 2>&1)"; code=$?
 ok "dry run, --anonymous over a token"; has "dry run, --anonymous over a token" "account: none; the install ends with registering this node without an account"
-has "dry run, --anonymous over a token" "an installed token the gateway still accepts is kept instead"
-seq_run() { out="$( (eval "$(sed -n '/^installed_value() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
-  interactive() { false; }; die() { echo "$1" >&2; exit "${2:-1}"; }; token_known() { echo "$fake_known"; }
-  anonymous=1 link=0 keep_token=0 park_token=0 gateway_url=wss://staging.example.org/v1/node/connect
-  old_gw="$(installed_value "$etc/node.json" gateway_url)"
-  read_token "$etc/token.env"; echo "anonymous=$anonymous park=$park_token keep=$keep_token") 2>&1 </dev/null)"; code=$?; }
-fake_known=unknown seq_run
-ok "real run, a token the gateway does not know"; has "real run, a token the gateway does not know" "anonymous=1 park=1 keep=0"
-lacks "real run, a token the gateway does not know" "already linked"
-fake_known=known seq_run
-ok "real run, a token the gateway accepts"; has "real run, a token the gateway accepts" "anonymous=0 park=0 keep=1"
+has "dry run, --anonymous over a token" "an installed token recorded for this gateway is kept instead"
 
 # A gateway change on a node that has a token (linking, or a pasted token for the new gateway): the
 # installed token is moved aside and the node stopped BEFORE the new node.json is installed (so the new
 # node.json and the old token never sit side by side, and the old token is never sent to the new
 # gateway), and comes back with its node.json only if the install stops before its link step.
-eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_before_link() {/,/^}/p;/^stop_node() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^check_kept_token() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
-declare -F set_aside_before_link stop_node restore_unlinked check_kept_token on_exit >/dev/null || fail "set_aside_before_link, stop_node, restore_unlinked, check_kept_token or on_exit not found"
+# (park_token=1: read_token found the installed token is not this install's gateway's, as on a gateway change.)
+eval "$(sed -n '/^installed_value() {/,/^}/p;/^set_aside_before_link() {/,/^}/p;/^stop_node() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
+declare -F set_aside_before_link stop_node restore_unlinked on_exit >/dev/null || fail "set_aside_before_link, stop_node, restore_unlinked or on_exit not found"
 oldtok="nt-n-0123abcd.$(printf 'O%.0s' {1..43})"
-node_was_on=0 park_token=0
+node_was_on=0 park_token=1
 # aside_dir <dir> <installed gateway>: a fake /etc/aisathome-node with node.json and token.env, and the
 # node's service off.
 aside_dir() {
@@ -557,9 +577,9 @@ oldgw=wss://gw.example.org/v1/node/connect newgw=wss://api.aisathome.org/v1/node
 printf '{"gateway_url": "%s"}\n' "$oldgw" > "$tmp/same.json"
 printf '{"gateway_url": "%s"}\n' "$newgw" > "$tmp/new.json"
 aside="$tmp/aside"
-# Same gateway: the token stays (a link that does not happen leaves the node as it was).
+# A token recorded for this gateway (park_token=0): it stays (a link that does not happen leaves the node as it was).
 aside_dir "$aside" "$oldgw"; token_aside=0
-out="$(set_aside_before_link "$aside" "$tmp/same.json"; echo "aside=$token_aside" 2>&1)"
+out="$(park_token=0; set_aside_before_link "$aside" "$tmp/same.json"; echo "aside=$token_aside" 2>&1)"
 [[ -s "$aside/token.env" && ! -e "$aside/token.env.unlinked" && "$out" = *"aside=0"* ]] || fail "same gateway: the token was moved"
 # Another gateway: moved aside, with a copy of the node.json it was made for; never printed.
 aside_dir "$aside" "$oldgw"; token_aside=0
@@ -593,14 +613,13 @@ aside_dir "$aside" "$oldgw"; token_aside=0
   fail "set aside: the node is not stopped after the token went aside: $(cat "$tmp/systemctl.log")"
 park_token=0; : > "$tmp/systemctl.log"; aside_dir "$aside" "$oldgw"; set_aside_before_link "$aside" "$tmp/same.json" 2>/dev/null
 [[ ! -s "$tmp/systemctl.log" ]] || fail "same gateway: the node was stopped"
-# Same gateway, but a token the gateway does not know (park_token): moved aside and the node stopped, before
-# the new node.json.
-echo active > "$tmp/node.state"
+# Same gateway in node.json, but a token not recorded for it (the owner's machine): moved aside and the node
+# stopped, before the new node.json.
 : > "$tmp/systemctl.log"; aside_dir "$aside" "$oldgw"; echo active > "$tmp/node.state"; park_token=1
-set_aside_before_link "$aside" "$tmp/same.json" 2>"$tmp/aside.err"; park_token=0
-[[ ! -e "$aside/token.env" && -s "$aside/token.env.unlinked" ]] || fail "an unknown token for the same gateway stayed"
-[[ "$(cat "$tmp/systemctl.log")" = "systemctl stop aisathome-node token.env:aside gw:$oldgw" ]] || fail "unknown token: the node was not stopped: $(cat "$tmp/systemctl.log")"
-grep -q "not known to $oldgw" "$tmp/aside.err" || fail "unknown token: no message"
+set_aside_before_link "$aside" "$tmp/same.json" 2>"$tmp/aside.err"
+[[ ! -e "$aside/token.env" && -s "$aside/token.env.unlinked" ]] || fail "a token not recorded for this gateway stayed"
+[[ "$(cat "$tmp/systemctl.log")" = "systemctl stop aisathome-node token.env:aside gw:$oldgw" ]] || fail "unrecorded token: the node was not stopped: $(cat "$tmp/systemctl.log")"
+grep -q "not $oldgw's: moved aside" "$tmp/aside.err" || fail "unrecorded token: no message"
 token_aside=0
 # install_until <how> [state]: a node that is on (or in state), then an install (with on_exit) that sets the token aside,
 # installs the new node.json and ends with <how>; sets out (its messages) and code.
@@ -632,16 +651,24 @@ aside_dir "$aside" "$oldgw"; : > "$tmp/systemctl.log"
 ( conf="$aside" work="" token_aside=0 node_was_on=0; trap on_exit EXIT
   set_aside_before_link "$conf" "$tmp/new.json"; cp "$tmp/new.json" "$conf/node.json"; exit 1 ) 2>/dev/null
 ! grep -q start "$tmp/systemctl.log" || fail "abort before linking: a node that was off was started"
-# A kept installed token (Enter, --keep-token) with another gateway in the new node.json: the install
-# stops (exit 2) before it changes anything; a pasted token, or the same gateway, goes on.
-kept() { out="$( (token="$1"; die() { echo "$1" >&2; exit "${2:-1}"; }; check_kept_token "$aside" "$2"; echo "went on") 2>&1)"; code=$?; }
-aside_dir "$aside" "$oldgw"
-kept "$oldtok" "$tmp/new.json"
-usage_err "kept token, another gateway"; has "kept token, another gateway" "--link"; lacks "kept token, another gateway" "$oldtok"; lacks "kept token, another gateway" "went on"
-kept "$oldtok" "$tmp/same.json"; ok "kept token, same gateway"; has "kept token, same gateway" "went on"
-kept "nt-n-0000000b.$(printf 'P%.0s' {1..43})" "$tmp/new.json"; ok "pasted token, another gateway"; has "pasted token, another gateway" "went on"
-kept "" "$tmp/new.json"; ok "linking, another gateway"; has "linking, another gateway" "went on"
-[[ -s "$aside/token.env" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" ]] || fail "check_kept_token changed the install"
+# Rollback with a pasted token (code review 2026-11-23): the install wrote a new token for the new gateway, then
+# stopped: the node is stopped first, the new token removed, then the old node.json and only then the old
+# token come back, so at no moment does a token sit beside another gateway's node.json.
+aside_dir "$aside" "$oldgw"; echo active > "$tmp/node.state"; : > "$tmp/systemctl.log"
+( conf="$aside" work="" token_aside=0 node_was_on=0; trap on_exit EXIT
+  set_aside_before_link "$conf" "$tmp/new.json"; cp "$tmp/new.json" "$conf/node.json"
+  printf 'AISATHOME_NODE_TOKEN=nt-n-0000000c.NEW\nAISATHOME_TOKEN_GATEWAY=%s\n' "$newgw" > "$conf/token.env"
+  echo active > "$tmp/node.state" # a start under way picked the new files up
+  exit 1 ) 2>/dev/null
+[[ "$(sed -n 2p "$tmp/systemctl.log")" = "systemctl stop aisathome-node token.env:here gw:$newgw" ]] ||
+  fail "rollback with a pasted token: the node was not stopped before the files went back: $(cat "$tmp/systemctl.log")"
+[[ "$(tail -n 1 "$tmp/systemctl.log")" = "systemctl start aisathome-node token.env:here gw:$oldgw" ]] ||
+  fail "rollback with a pasted token: the node did not start again with its old files: $(cat "$tmp/systemctl.log")"
+[[ "$(cat "$aside/token.env")" = "AISATHOME_NODE_TOKEN=$oldtok" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" ]] ||
+  fail "rollback with a pasted token: the old token and node.json are not back"
+grep -q -- '-NEW' "$aside/token.env" && fail "rollback with a pasted token: the new token stayed"
+sed -n '/^restore_unlinked() {/,/^}/p' "$installer" | awk '/stop_node/{s=NR} /rm -f "\$1\/token.env"/{r=NR} /node.json.unlinked" "\$1\/node.json"/{n=NR} /token.env.unlinked" "\$1\/token.env"/{t=NR} END{exit !(s && s<r && r<n && n<t)}' ||
+  fail "restore_unlinked: not stop, remove the new token, old node.json, old token, in that order"
 # on_exit puts the token back when the installer ends early: an error exit and a signal (TERM).
 for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
   aside_dir "$aside" "$oldgw"
@@ -651,7 +678,8 @@ for how in "exit 1" "kill -TERM \$BASHPID; sleep 5"; do
   [[ "$(cat "$aside/token.env" 2>/dev/null)" = "AISATHOME_NODE_TOKEN=$oldtok" && "$(installed_value "$aside/node.json" gateway_url)" = "$oldgw" ]] ||
     fail "on_exit ($how) before linking: the old token and node.json are not back"
 done
-unset -f installed_value set_aside_before_link stop_node restore_unlinked check_kept_token on_exit aside_dir kept install_until systemctl
+unset -f installed_value set_aside_before_link stop_node restore_unlinked on_exit aside_dir install_until systemctl
+park_token=0
 
 # No command runs inside an unquoted here-document by accident: a `…` in a unit's comment ran
 # "aisathome-node link" as root during every install (2026-11-23: the link waited 10 minutes and its output
@@ -695,11 +723,11 @@ python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); assert c == {"gatew
   fail "canonical node.json: $(cat "$tmp/canon.json")"
 [[ "$(installed_value "$tmp/canon.json" gateway_url)" = wss://b.example/v1/node/connect ]] || fail "the canonical gateway as read"
 grep -q 'nt-secret' "$tmp/canon.json" && fail "the token stayed in the canonical node.json"
-# In the installer: canonical before the keep-token check, and nothing rewrites it between the check and
-# the install (the file checked is the file installed).
-n_canon="$(grep -n '^workdir; canon_node_config "\$node_config" "\$work/node.canon.json"; node_config="\$work/node.canon.json"$' "$installer" | cut -d: -f1)"
-n_kept="$(grep -n '^check_kept_token "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
-[[ -n "$n_canon" && -n "$n_kept" && $n_canon -lt $n_kept ]] || fail "node.json is not canonical before the keep-token check"
+# In the installer: a supplied node.json is canonical before the token is judged against its gateway, and
+# nothing rewrites it between the check and the install (the file checked is the file installed).
+n_canon="$(grep -n '^  workdir; canon_node_config "\$node_config" "\$work/node.canon.json"; node_config="\$work/node.canon.json"$' "$installer" | head -n 1 | cut -d: -f1)"
+n_read="$(grep -n '^read_token "\$conf/token.env"$' "$installer" | cut -d: -f1)"
+[[ -n "$n_canon" && -n "$n_read" && $n_canon -lt $n_read ]] || fail "node.json is not canonical before the token is judged against its gateway"
 grep -q 'json.dump(c,sys.stdout' "$installer" && fail "node.json is rewritten after the checks"
 unset -f canon canon_node_config installed_value die
 # In the installer: the token goes aside (whether linking or given a token) before the new node.json is
@@ -712,9 +740,21 @@ n_speed="$(grep -n '^speed_check$' "$installer" | cut -d: -f1)"
 [[ -n "$n_aside" && -n "$n_json" && $n_aside -lt $n_json ]] || fail "the old token is not moved aside before the new node.json is installed"
 [[ -n "$n_clear" && $(wc -l <<<"$n_clear") -eq 1 && -n "$n_link" && -n "$n_speed" && $n_speed -lt $n_clear && $n_clear -lt $n_link && $((n_link - n_clear)) -le 2 ]] ||
   fail "token_aside is not cleared right before the link step"
-n_kept="$(grep -n '^check_kept_token "\$conf" "\$node_config"$' "$installer" | cut -d: -f1)"
 n_user="$(grep -n '^id aisathome >/dev/null' "$installer" | cut -d: -f1)"
-[[ -n "$n_kept" && -n "$n_user" && $n_kept -lt $n_user ]] || fail "a kept token is not checked against the gateway before the install changes anything"
+[[ -n "$n_read" && -n "$n_user" && $n_read -lt $n_user ]] || fail "the installed token is not judged before the install changes anything"
+# The writers' lock (node.lock, as aisathome-node link takes it): taken before the token goes aside, the
+# files checked unchanged since the token was decided on, released after token.env and before link/register
+# (which take it themselves).
+n_snap="$(grep -n '^conf_snap=' "$installer" | cut -d: -f1)"
+n_lock="$(grep -n '^flock -w 60 8 ' "$installer" | cut -d: -f1)"
+n_open="$(grep -n '^exec 8>"\$conf/node.lock"$' "$installer" | cut -d: -f1)"
+n_same="$(grep -n '"\$conf_snap" \]\] ||$' "$installer" | cut -d: -f1)"
+n_tokw="$(grep -n "AISATHOME_TOKEN_GATEWAY=%s" "$installer" | cut -d: -f1)"
+n_free="$(grep -n '^exec 8>&-' "$installer" | cut -d: -f1)"
+[[ -n "$n_snap" && -n "$n_open" && -n "$n_lock" && -n "$n_same" && -n "$n_tokw" && -n "$n_free" && $n_snap -lt $n_read &&
+   $n_open -lt $n_lock && $n_lock -lt $n_same && $n_same -lt $n_aside && $n_tokw -lt $n_free && $n_free -lt $n_clear ]] ||
+  fail "the writers' lock is not held from the re-check through token.env, or not released before link/register"
+grep -q "^LockFile = \"node.lock\"\|LockFile = \"node.lock\"" "$(dirname "$installer")/../../nodeconf/nodeconf.go" || fail "the installer's lock file is not the Go writers' (nodeconf.LockFile)"
 grep -q '^trap on_exit EXIT$' "$installer" || fail "no EXIT trap on_exit"
 [[ $(grep -c '^ *trap .* EXIT' "$installer") -eq 1 ]] || fail "another EXIT trap would replace on_exit"
 ! grep -q 'set_aside_token' "$installer" || fail "the old after-the-fact set_aside_token is still called"
