@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/protocol"
+	"github.com/coder/websocket"
 )
 
 const (
@@ -351,7 +352,14 @@ func (g *Gateway) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 // sweepAnon deletes the nodes without an account past their retention.
+//
+// It holds sweepMu throughout, as sweepNodes does: deleting a held node also deletes its hold, and a sweep
+// that read the node's token as live before the deletion and its hold as gone after it would let a
+// guard-held node take requests until its connection closed. With the sweeps one at a time, the deleted
+// nodes' connections are marked unusable (held) and closed here, before any sweep can see the hold gone.
 func (g *Gateway) sweepAnon() {
+	g.sweepMu.Lock()
+	defer g.sweepMu.Unlock()
 	g.mu.Lock()
 	live := make(map[string]bool, len(g.node))
 	for id := range g.node {
@@ -363,11 +371,22 @@ func (g *Gateway) sweepAnon() {
 		g.log.Error("nodes without an account: expired ones not deleted; retried", "err", err)
 		return
 	}
+	var drop []*nodeConn
+	g.mu.Lock()
+	for _, id := range gone {
+		if n := g.node[id]; n != nil && n.anon {
+			n.held = true // takes nothing more, until its connection is gone
+			drop = append(drop, n)
+		}
+	}
+	g.mu.Unlock()
 	for _, id := range gone {
 		g.log.Info("node without an account deleted (retention)", "node", id)
 	}
-	if len(gone) > 0 {
-		g.sweepNodes()
+	for _, n := range drop {
+		if n.conn != nil {
+			n.conn.Close(websocket.StatusPolicyViolation, "node deleted")
+		}
 	}
 }
 
@@ -501,4 +520,40 @@ func (g *Gateway) anonHeldMessage(id string) (string, *time.Time) {
 	}
 	return "Held after a safety check on one of its answers: it gets no work. This node is deleted " + when +
 		"; if you think this is a mistake, write to contact@aisathome.org.", at
+}
+
+// handleTokenKnown serves POST /v1/node/token-known {"sha256"}: whether a node token with that SHA-256
+// connects to this gateway now (an account's or a node without an account's, or one from the config). The
+// installer asks before it decides what to do with an installed token whose issuer it cannot be sure of
+// (node.json is editable): it sends the hash, never the token, so no gateway it asks learns a credential.
+func (g *Gateway) handleTokenKnown(w http.ResponseWriter, r *http.Request) {
+	var body protocol.TokenKnownRequest
+	if !decodeLinkBody(w, r, &body) {
+		return
+	}
+	h := strings.ToLower(body.SHA256)
+	if len(h) != 64 || strings.Trim(h, "0123456789abcdef") != "" {
+		apiError(w, http.StatusBadRequest, "sha256: the node token's SHA-256, 64 hex digits")
+		return
+	}
+	known := g.accounts != nil && g.accounts.tokenHashKnown(h)
+	if !known {
+		g.mu.Lock()
+		for tok := range g.tokens {
+			if keyHash(tok) == h {
+				known = true
+			}
+		}
+		g.mu.Unlock()
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, protocol.TokenKnown{Known: known})
+}
+
+// tokenHashKnown reports whether a node token with SHA-256 h connects now (nodeToken by hash).
+func (s *AccountStore) tokenHashKnown(h string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.byNode[h]
+	return ok && r.acct.nodesWork()
 }

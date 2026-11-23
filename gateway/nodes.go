@@ -686,6 +686,9 @@ func (g *Gateway) sweepNodes() {
 			st[i].rules = g.rulesFor(n.account, NodeToken{})
 		}
 	}
+	if g.sweepHook != nil { // tests: something happens between reading the tokens and reading the holds
+		g.sweepHook()
+	}
 	var drop []*nodeConn
 	cleared := false
 	g.mu.Lock()

@@ -856,9 +856,10 @@ read_token() {
   if [[ $anonymous = 1 ]]; then
     # A token for another gateway is moved aside further on (set_aside_before_link), as for any gateway
     # change, and never sent to this one. A token the installed node.json says is for this gateway is
-    # asked about there (where the node sends it anyway): one the gateway accepts stays, and the node
-    # stays linked to its account and is updated; one it does not know (revoked, or from another gateway
-    # under an edited node.json) is moved aside too, and the node registers without an account.
+    # asked about there by its hash only (token_known; node.json is editable, so it may name the wrong
+    # gateway): one the gateway knows stays, and the node stays linked to its account and is updated; one
+    # it does not know (revoked, or another gateway's under an edited node.json) is moved aside too, and
+    # the node registers without an account.
     if [[ -n "$old" && "${old_gw:-}" == "$gateway_url" ]]; then
       if [[ "$(token_known "$old" "$gateway_url")" == known ]]; then
         anonymous=0 keep_token=1 token="$old"
@@ -892,15 +893,18 @@ read_token() {
   [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}; to link the node to your account in the browser instead: --link"
 }
 
-# token_known <token> <gateway_url>: "unknown" when the gateway answers 401 to the token on
-# /v1/node/self, else "known" (accepted, or a gateway that cannot tell: the token stays). The token goes
-# in a header read from stdin, never in argv.
+# token_known <token> <gateway_url>: "unknown" when the gateway says no node token with this token's
+# SHA-256 connects there (POST /v1/node/token-known), else "known" (it does, or a gateway that cannot tell:
+# the token stays). Only the hash leaves this machine, never the token: node.json is editable, so the
+# gateway it names is not trusted with a credential that may be another gateway's. A hash authenticates
+# nowhere (gateways keep only these hashes).
 token_known() {
-  local base code
+  local base hash out
   base="${2/#wss:/https:}"; base="${base/#ws:/http:}"; base="${base%%/v1/*}"
-  code="$(printf 'Authorization: Bearer %s\n' "$1" |
-    curl -s -o /dev/null -w '%{http_code}' --max-time 20 --proto '=https,http' -H @- "$base/v1/node/self" || true)"
-  if [[ "$code" == 401 ]]; then echo unknown; else echo known; fi
+  hash="$(printf '%s' "$1" | sha256sum | cut -c1-64)"
+  out="$(curl -s --max-time 20 --proto '=https,http' -H 'Content-Type: application/json' \
+    -d "{\"sha256\":\"$hash\"}" "$base/v1/node/token-known" || true)"
+  if [[ "$out" =~ \"known\":[[:space:]]*false ]]; then echo unknown; else echo known; fi
 }
 
 # A gateway change on a node that has a token (linking, or a new token pasted for the new gateway): the
