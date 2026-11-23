@@ -14,8 +14,7 @@ centre.
 
 *How a prove2me proof runs on the network ([devlog 5](https://aisathome.org/devlog/5-qwen-proofs-on-consumer-hardware/)).*
 
-**Experimental, in pilot.** Open-weight AI models served by volunteers' GPUs instead of a big
-company's data centre. Volunteers run a node on their own GPU; a gateway (the project
+**How it works.** Volunteers run a node on their own GPU; a gateway (the project
 server) takes requests from the chat and the OpenAI-compatible API and routes them to
 nodes. Anyone can run a gateway. Site and docs: <https://aisathome.org>.
 
