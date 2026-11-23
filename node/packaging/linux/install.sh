@@ -580,7 +580,7 @@ check_model_file() {
 # ---- end of tier -----------------------------------------------------------------------------
 
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
-work="" token_aside=0 node_was_on=0
+work="" token_aside=0 node_was_on=0 park_token=0
 # on_exit: removes the work folder, and puts an installed token back if the install stopped before
 # its link step (token_aside=1: set_aside_before_link, restore_unlinked).
 on_exit() { [[ -z "$work" ]] || rm -rf "$work"; [[ $token_aside = 0 ]] || restore_unlinked "$conf"; }
@@ -855,9 +855,19 @@ read_token() {
   [[ -r "$1" ]] && old="$(sed -n 's/^AISATHOME_NODE_TOKEN=//p' "$1" | head -n 1)"
   if [[ $anonymous = 1 ]]; then
     # A token for another gateway is moved aside further on (set_aside_before_link), as for any gateway
-    # change; a token for this gateway stays, and so does the node: it is linked to an account.
-    [[ -z "$old" || "${old_gw:-}" != "$gateway_url" ]] ||
-      die "This node is already linked to an account (it has a node token for $gateway_url), so it is not made a node without an account. To update it, run in this folder: sudo ./install.sh --keep-token" 2
+    # change, and never sent to this one. A token the installed node.json says is for this gateway is
+    # asked about there (where the node sends it anyway): one the gateway accepts stays, and the node
+    # stays linked to its account and is updated; one it does not know (revoked, or from another gateway
+    # under an edited node.json) is moved aside too, and the node registers without an account.
+    if [[ -n "$old" && "${old_gw:-}" == "$gateway_url" ]]; then
+      if [[ "$(token_known "$old" "$gateway_url")" == known ]]; then
+        anonymous=0 keep_token=1 token="$old"
+        echo "account: this node is linked to an account on $gateway_url: it keeps its token and is updated (not made a node without an account)" >&2
+        return 0
+      fi
+      park_token=1
+      echo "account: the installed token is not known to $gateway_url: it is moved aside ($1.unlinked), and this node registers without an account" >&2
+    fi
     token=""; echo "account: none; the install ends with registering this node without an account (science only)" >&2; return 0
   fi
   if [[ $link = 1 ]]; then
@@ -882,6 +892,17 @@ read_token() {
   [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}; to link the node to your account in the browser instead: --link"
 }
 
+# token_known <token> <gateway_url>: "unknown" when the gateway answers 401 to the token on
+# /v1/node/self, else "known" (accepted, or a gateway that cannot tell: the token stays). The token goes
+# in a header read from stdin, never in argv.
+token_known() {
+  local base code
+  base="${2/#wss:/https:}"; base="${base/#ws:/http:}"; base="${base%%/v1/*}"
+  code="$(printf 'Authorization: Bearer %s\n' "$1" |
+    curl -s -o /dev/null -w '%{http_code}' --max-time 20 --proto '=https,http' -H @- "$base/v1/node/self" || true)"
+  if [[ "$code" == 401 ]]; then echo unknown; else echo known; fi
+}
+
 # A gateway change on a node that has a token (linking, or a new token pasted for the new gateway): the
 # installed token is the old gateway's and must never be sent to the new one. It is moved aside
 # (token.env.unlinked, with the installed node.json copied to node.json.unlinked) BEFORE the new
@@ -895,7 +916,7 @@ set_aside_before_link() {
   local was now state
   was="$(installed_value "$1/node.json" gateway_url)"
   now="$(installed_value "$2" gateway_url)"
-  [[ -s "$1/token.env" && "$was" != "$now" ]] || return 0
+  [[ -s "$1/token.env" && ( "$was" != "$now" || $park_token = 1 ) ]] || return 0
   state="$(systemctl show -p ActiveState --value aisathome-node 2>/dev/null || true)"
   [[ $state != active && $state != activating && $state != reloading ]] || node_was_on=1
   rm -f "$1/node.json.unlinked"
@@ -903,7 +924,11 @@ set_aside_before_link() {
   mv -f "$1/token.env" "$1/token.env.unlinked"
   token_aside=1
   stop_node || die "the node did not stop (systemctl stop aisathome-node), so the install stops before it changes the gateway; the installed token and node.json stay as they were"
-  echo "The installed token is for ${was:-another gateway}, not $now: moved aside to $1/token.env.unlinked." >&2
+  if [[ $park_token = 1 ]]; then
+    echo "The installed token is not known to $now: moved aside to $1/token.env.unlinked." >&2
+  else
+    echo "The installed token is for ${was:-another gateway}, not $now: moved aside to $1/token.env.unlinked." >&2
+  fi
 }
 
 # stop_node: stops the node's service; succeeds only if it is off afterwards (or not installed).
@@ -1056,7 +1081,7 @@ if [[ $dry_run = 1 ]]; then
   echo "tier: $tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
   echo "speed test after the install: at least $min_tps tokens/s after a $speed_ctx-token prompt"
   if [[ $anonymous = 1 ]]; then
-    echo "account: none; the install ends with registering this node without an account (aisathome-node register)"
+    echo "account: none; the install ends with registering this node without an account (aisathome-node register); an installed token the gateway still accepts is kept instead (the node stays linked to its account)"
     anon_notice
   else
     [[ $keep_token = 1 ]] || echo "account: $([[ $link = 1 ]] && echo "the install ends" || echo "at a terminal, Enter at the token question ends the install") with linking this node to your account in the browser (aisathome-node link)"
