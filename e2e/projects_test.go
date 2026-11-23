@@ -1,4 +1,4 @@
-// Workload classes and science projects (decision 0011): a project key has its own quota
+// Workload classes and science projects: a project key has its own quota
 // instead of an account's budget, its requests wait behind people's, and the statistics count
 // classes and projects.
 //

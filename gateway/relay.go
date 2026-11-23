@@ -336,7 +336,7 @@ func (rl *relay) commit(rec *usageRecord) {
 	rec.Signals = signalsOf(&rl.mt.genOut, rec.facts.out, rec.facts.reasoning, rec.Usage.DurationMs)
 	g.checkAnswer(rec, req.body, rl.maxTokens) // in enforce mode a failed answer's credit is voided here
 	if n.anon {
-		rec.Credit = 0 // a node without an account earns no credit (owner, 2026-11-22; anon.go)
+		rec.Credit = 0 // a node without an account earns no credit (anon.go)
 	}
 	g.checks.add(rec)
 	if n.pilot != "" { // into the pilot's record, never the public ledger (pilots.go)

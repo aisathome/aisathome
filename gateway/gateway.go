@@ -40,7 +40,7 @@ type Gateway struct {
 	pubq     publicQueues     // built public views of task queues (queue_public.go)
 	ptasks   publicTaskList   // the built list of GET /v1/tasks (tasks_public.go)
 	speeds   nodeSpeeds       // nodes' recent answer speeds, for their operators (nodework.go)
-	tasks    *taskStore       // projects' task queues (tasks.go, decision 0015)
+	tasks    *taskStore       // projects' task queues (tasks.go)
 	sci      *scienceDB       // campaigns and external results (science_db.go, campaigns.go)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests

@@ -1,4 +1,4 @@
-// Nodes without an account (owner, 2026-11-22). The installer registers the machine with no sign-in
+// Nodes without an account. The installer registers the machine with no sign-in
 // (POST /v1/node/register); the gateway makes it an unclaimed account ("ax:<hex>") holding one node ("a-<8
 // hex>") and hands the node its token once, stored hashed like any node token.
 //
@@ -46,7 +46,7 @@ const (
 	anonAccountPrefix = "ax:"
 	anonNodePrefix    = "a-"
 	// DefaultMaxAnonNodes is the pool of nodes without an account unless the accounts file says
-	// otherwise (owner, 2026-11-22).
+	// otherwise.
 	DefaultMaxAnonNodes = 25
 	maxAnonPerIP        = 2                    // connected nodes without an account per client address
 	anonUnconnected     = 24 * time.Hour       // a registered node that never connected is deleted after this
@@ -63,7 +63,7 @@ const (
 
 // Registration limits (rule, events: email.go), in memory only.
 var (
-	anonRegPerAddr = []rule{{3, 24 * time.Hour}} // owner, 2026-11-22
+	anonRegPerAddr = []rule{{3, 24 * time.Hour}}
 	anonRegNetwork = []rule{{30, time.Hour}}
 )
 
@@ -182,7 +182,7 @@ func (s *AccountStore) removeAnon(account string) error {
 // anonExpired reports whether the node without an account a is past its retention at now: it never
 // connected within anonUnconnected of registering, or it was not seen for anonKeep, or it has no node left
 // (revoked), or a hold (held: node id to when) is anonHeldKeep old: a held node would otherwise keep its
-// pool slot (owner, 2026-11-22; linked to an account before then, it is no longer anonymous). A connected
+// pool slot (linked to an account before then, it is no longer anonymous). A connected
 // node (live) is not expired for being unseen. Banned ones stay, as banned accounts do.
 func anonExpired(a *Account, now time.Time, live func(id string) bool, held map[string]time.Time) bool {
 	if !isAnon(a.ID) || a.Status != StatusUnclaimed {

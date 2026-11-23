@@ -1,4 +1,4 @@
-// The science task coordinator (decision 0015, phase 1; decision 0019): a project's tools submit
+// The science task queue: a project's tools submit
 // tasks to the gateway, workers claim them by kind with leases and report results, the admins can
 // read the queue, and the public reads the public fields of the projects that publish theirs.
 //
@@ -36,7 +36,7 @@ func taskCall(t *testing.T, a *acctRig, method, path, key string, body any) (int
 // Four workers claim at once: every task is leased exactly once; a task with a lower order goes
 // first; a worker completes with a result, the result is in the gateway, and only the project key or
 // an admin's session can read it.
-func TestTaskCoordinatorFlow(t *testing.T) {
+func TestTaskQueueFlow(t *testing.T) {
 	a := newAcctRigWith(t, 100, nil, withProjects)
 	const path = "/v1/projects/sciproj/tasks"
 	for i := 0; i < 20; i++ {
@@ -152,10 +152,10 @@ func TestTaskCoordinatorFlow(t *testing.T) {
 	}
 }
 
-// Phases 2 and 3 (decision 0015): a runner gives its task back on a spot stop and takes it back
+// Leases, affinity and export: a runner gives its task back on a spot stop and takes it back
 // by id to resume from its checkpoint, while a second runner gets other work; the result, what
 // closed it and the export marker are stored; the admins see the queue on /account/ops, nobody else.
-func TestTaskCoordinatorLeasesExport(t *testing.T) {
+func TestTaskQueueLeasesExport(t *testing.T) {
 	a := newAcctRigWith(t, 100, nil, withProjects)
 	const path = "/v1/projects/sciproj/tasks"
 	for _, task := range []map[string]any{
@@ -235,7 +235,7 @@ func TestTaskCoordinatorLeasesExport(t *testing.T) {
 	}
 }
 
-// Interruptions do not use up tries (owner 2026-10-29): a runner on a spot instance that is
+// Interruptions do not use up tries: a runner on a spot instance that is
 // stopped every hour gives its task back and takes it back by id, more often than max_tries,
 // and the task stays on its first try; a lease that expires is taken back by the same runner
 // within the window without a new try, by another runner after it with one; a real failure ends

@@ -325,7 +325,7 @@ func TestBannedCannotClaim(t *testing.T) {
 	}
 }
 
-// A waitlisted account may link (owner, 2026-11-19): claim, Run on BOINC, its pilots serve under it
+// A waitlisted account may link: claim, Run on BOINC, its pilots serve under it
 // and follow its switch; the waitlist still keeps it from keys, the chat and the API.
 func TestWaitlistedCanLink(t *testing.T) {
 	r := newLinkRig(t, func(c *Config) { c.Connectors[0].PilotsChatEnabled = true })

@@ -1,6 +1,6 @@
 # On a v* tag: run the CI checks, build static binaries, llama-server with CUDA, the
 # prebuilt node bundle and the Windows installer (also under a name without the version, for a
-# stable download link), plus SHA256SUMS, and attach them to a draft GitHub Release (the owner
+# stable download link), plus SHA256SUMS, and attach them to a draft GitHub Release (a maintainer
 # publishes it after review). A manual run (workflow_dispatch) on a branch is the dry run: it
 # builds everything without publishing and keeps the files as a workflow artifact for 7 days
 # (for a test install on a rented GPU).

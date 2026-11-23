@@ -76,7 +76,7 @@ func TestSessionBinds(t *testing.T) {
 
 // A short chat is compared to its end: a new conversation that shares the system prompt (and
 // even the first question) with an earlier short one is not held to its model, however long
-// the system prompt, while that chat's own next turn is (Codex review, 2026-11-09).
+// the system prompt, while that chat's own next turn is (review, 2026-11-09).
 func TestSessionBindsShortChatSharedSystemPrompt(t *testing.T) {
 	s := newSessionBinds()
 	now := time.Now()
@@ -105,7 +105,7 @@ func TestSessionBindsShortChatSharedSystemPrompt(t *testing.T) {
 }
 
 // A secret placeholder's nonce changes with every request; the session still holds, and other
-// placeholder text does not make a conversation match (Codex review, 2026-11-09).
+// placeholder text does not make a conversation match (review, 2026-11-09).
 func TestSessionBindsPlaceholderNonce(t *testing.T) {
 	s := newSessionBinds()
 	now := time.Now()
@@ -122,7 +122,7 @@ func TestSessionBindsPlaceholderNonce(t *testing.T) {
 }
 
 // A placeholder's padding follows its number: the same secret as number 99 in one request and
-// number 100 in the next (99 other credentials before it) still continues the session (Codex
+// number 100 in the next (99 other credentials before it) still continues the session (review
 // review round 2, 2026-11-09).
 func TestSessionBindsPlaceholderPadding(t *testing.T) {
 	ph := func(others int) string { // the placeholder of fakeKey after others earlier secrets
@@ -349,7 +349,7 @@ func TestChatPrepareSessionModel(t *testing.T) {
 // A switch of model by name in a tool loop holds: once a new user message follows, the template
 // drops the reasoning of every answer since the last user message, and the switched-to model's
 // answer must still be recognised in that form, or the older binding would route the session
-// silently back to the first model (Codex review, 2026-11-10).
+// silently back to the first model (review, 2026-11-10).
 func TestSessionSwitchInToolLoopHolds(t *testing.T) {
 	g := newTestGateway(t, Config{})
 	defer g.Close()

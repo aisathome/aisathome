@@ -453,7 +453,7 @@ const (
 // Luhn passes one long number in ten, so a prove2me definition's exact rationals, or a log of
 // millisecond timestamps, sent a whole agent session to trusted nodes only, and with none online
 // every later request of it failed (2026-11-07). Only what cannot be a card is left out, so a
-// real card is never missed (Codex review of 21f1ddd: an issuer table and any "/" did): a number
+// real card is never missed (review of 21f1ddd: an issuer table and any "/" did): a number
 // in a fraction of two long numbers, a decimal's digits, a negative number, and a 13-digit number
 // that starts with 1 (a millisecond timestamp; no network issues 13-digit cards there).
 func piiKind(body map[string]any) string {
@@ -558,7 +558,7 @@ func idIn(groups []string) string {
 // groups of four with a last group of at most four (4-4-4-4, 4-4-4-4-3), or Amex/Diners style
 // (4-6-5, 4-6-4). Other groupings are not joined: a directory listing's numeric columns ("1 65534
 // 65534 4109": links, owner, group, size) would pass Luhn joined, and every wider rule tried
-// matched some listing (the Codex reviews of c6321a7 and 073c340). So a card typed in unusual
+// matched some listing (the reviews of c6321a7 and 073c340). So a card typed in unusual
 // groups (8-8) is not detected, as one typed with dots or slashes between groups never was.
 func cardLayout(g []string) bool {
 	if len(g) == 1 {
@@ -581,7 +581,7 @@ func cardLayout(g []string) bool {
 // cardNumber reports whether d (digits only) could be a payment card number: 13 to 19 digits
 // and the Luhn check, except a number that starts with 1 and is not 15 digits long. Those are
 // timestamps in milli-, micro- or nanoseconds (13, 16 and 19 digits, 2001 to 2286); the only
-// cards that start with 1 are UATP's (the airlines'), which have 15 digits (Codex review of
+// cards that start with 1 are UATP's (the airlines'), which have 15 digits (review of
 // 9c299ec).
 func cardNumber(d string) bool {
 	n := len(d)

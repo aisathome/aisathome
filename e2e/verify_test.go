@@ -1,4 +1,4 @@
-// Answer checks and per-node signals (node verification, BACKLOG 11c/11d; gateway/verify.go,
+// Answer checks and per-node signals (node verification; gateway/verify.go,
 // signals.go, discard.go): a node that pads its answers faster than any GPU, thinks past its budget
 // or writes past max_tokens is flagged in observe mode and earns nothing in enforce mode; the usage
 // record carries the signals, the task, and the answers a request discarded.

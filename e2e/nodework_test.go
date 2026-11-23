@@ -1,4 +1,4 @@
-// The operator's view of a node on the account page (owner, 2026-11-13): its average speed and
+// The operator's view of a node on the account page: its average speed and
 // what it serves right now, with a science task named and linked, and never a person's request
 // content.
 //

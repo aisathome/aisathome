@@ -86,7 +86,7 @@ type Config struct {
 	// Absent or null: the built-in list (rustup, uv, ruff, nvm, Deno, Bun, Homebrew, elan, Poetry);
 	// [] turns it off (every such answer holds its node again); a list replaces it.
 	GuardOfficialInstallers []string `json:"guard_official_installers"`
-	// Projects are operator-run workloads (science, decision 0011) with their own keys, quota
+	// Projects are operator-run workloads (science) with their own keys, quota
 	// and the lowest priority (project.go).
 	Projects []Project `json:"projects,omitempty"`
 	// ChatRulesOff turns off the chat rule for volunteers' nodes (chatrules.go: the operator terms).

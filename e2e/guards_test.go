@@ -1,6 +1,6 @@
-// Agents on volunteer nodes (decision 0007 addendum, backlog 23): consent per API key,
+// Agents on volunteer nodes: consent per API key,
 // probation, guards on tool calls (also split or malformed ones), no retry of a stopped answer;
-// and routing by required context (backlog 17).
+// and routing by required context.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e
@@ -420,7 +420,7 @@ func TestRoutingByContext(t *testing.T) {
 }
 
 // A Standard node alone takes a real session's prompt of 65k on its 81,920: bytes/3 of the JSON
-// made that about 90k, and the request got a 400 (backlog item 1). " the" is one token of four
+// made that about 90k, and the request got a 400. " the" is one token of four
 // bytes, about what real prompts run. A prompt that does not fit is still refused, unsent.
 func TestStandardNodeAloneTakes65k(t *testing.T) {
 	var hits atomic.Int32
@@ -447,7 +447,7 @@ func TestStandardNodeAloneTakes65k(t *testing.T) {
 }
 
 // Without consent and with no own node online, an agent request fails with a message
-// that points at the account page's box (owner, 2026-10-11).
+// that points at the account page's box.
 func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {
 	var vol atomic.Int32
 	a := nodeRig(t, nil)
@@ -511,7 +511,7 @@ func TestNoProbationByDefault(t *testing.T) {
 	}
 }
 
-// The consent box is ticked by default (owner, 2026-10-12); a key made without it is marked.
+// The consent box is ticked by default; a key made without it is marked.
 func TestConsentBoxTickedByDefault(t *testing.T) {
 	a := nodeRig(t, nil)
 	s, _ := a.signIn(t, 1)
@@ -1200,7 +1200,7 @@ func TestGuardHoldsInstallFromUnknownIndex(t *testing.T) {
 	}
 }
 
-// The evidence of a stop (owner, 2026-11-19: a hold that recorded only its rule left nobody able
+// The evidence of a stop (2026-11-19: a hold that recorded only its rule left nobody able
 // to tell an official installer from an attack). An official installer piped into a shell stops
 // the answer but does not hold the node; an unknown script still holds it. Each hold keeps the
 // matched piece of the node's call with its secrets redacted, never the prompt, and so does the

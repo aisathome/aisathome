@@ -350,7 +350,7 @@ and **(site)** are live on aisathome.org once deployed.
 
 - **A download piped into an interpreter's data no longer holds a node.** The guard stopped
   `curl … | python3 -c '…'` and `curl … | python3 parse.py`, where the download is only data on
-  standard input, as if it ran the download, and held the owner's node for five hours for an agent
+  standard input, as if it ran the download, and held a node for five hours for an agent
   that cleaned up a web page that way. Piped into python, node, ruby, perl or php, a download now
   counts only when the interpreter gets no program from its arguments (`| python3`, `| python3 -`,
   `/dev/stdin`, an interactive flag, `python -m code`, an inline program that itself runs code such
@@ -543,20 +543,20 @@ A node no longer hangs on a silent gateway link, and 16 GB cards keep room for a
   USED TODAY column gives each account's weighted tokens since 00:00 UTC, chat and API together:
   the account page's "Today" number, read from the budget state the gateway saves in `state_dir`
   every 5 s. Needs `-config`; with `-file` alone the list is as before. (gateway)
-- **The science task queue: affinity, review, decision and export** (decision 0015, phases 2
-  and 3, the gateway's part). A task that comes back to the queue (its lease expired, or the
+- **The science task queue: affinity, review, decision and export** (the gateway's
+  part). A task that comes back to the queue (its lease expired, or the
   worker gave it back) waits 10 minutes for its last worker, which holds its checkpoint; then any
   worker may take it. A claim may name one task (`"task": "<id>"`), so a worker takes back its own
   task after a restart. On a done task, `POST .../tasks/<task>/review` stores the internal
   review's verdict (`green` or `red`, reviewer, round, findings, a one-line summary, a detail
-  object up to 16 KB) and `.../decide` the owner's decision (`approved`, `rejected`, or `opened`
+  object up to 16 KB) and `.../decide` the operator's decision (`approved`, `rejected`, or `opened`
   with the PR number); the latest replaces the earlier one. `.../exported` marks a finished task
-  as taken into the owner's ledger (with the `updated_at` it read; a task changed since is
+  as taken into the operator's ledger (with the `updated_at` it read; a task changed since is
   refused, so the next export takes the change). Finished tasks are now dropped only once
   exported, and creating tasks is refused (429) while 200 finished tasks or 64 MB wait for the
   export; `GET .../tasks?exported=false` lists them. `/account/ops` shows the queue (open tasks in
   claim order, the newest finished ones, their review and decision) to admins only. (gateway)
-- **A task queue for science projects in the gateway** (decision 0015, phase 1: the API; the runner
+- **A task queue for science projects in the gateway** (the API; the runner
   does not use it yet). A project's tools submit tasks to `POST /v1/projects/<id>/tasks` with the
   project key (idempotent by the client's task id: the same task again is no duplicate, other
   content under the same id is refused); workers claim the next one at `.../tasks/claim` with a

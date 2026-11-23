@@ -1,4 +1,4 @@
-// Accounts and connectors (decision 0020, addendum 2026-11-17): every user a connector names (a BOINC
+// Accounts and connectors: every user a connector names (a BOINC
 // user id) maps to one account here. An account linked to that user serves its pilots; without one,
 // the first pilot of that user creates an unclaimed account keyed by a link to it, which its person
 // claims later from the account page (connector_requests.go: claimLink merges the unclaimed account

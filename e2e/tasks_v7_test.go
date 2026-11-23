@@ -1,4 +1,4 @@
-// The task schema of decision 0019 through the real server: kinds declared per project, typed fields,
+// The typed task schema through the real server: kinds declared per project, typed fields,
 // GET /v1/tasks across projects, older task files and clients, and the removed review loop.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -151,7 +151,7 @@ func TestTaskV7ThroughTheServer(t *testing.T) {
 	}
 	check("running")
 
-	// A task file from before decision 0019 (TauCeti's loop fields), planted before a restart.
+	// A task file from before the typed schema (TauCeti's loop fields), planted before a restart.
 	l.srv.Close()
 	l.g.Close()
 	oldFile := `{"id":"T5-NS-3.a-A","project":"sciproj","kind":"attempt","class":5,"findings_source":"prereview","chain":"T5-NS-3.a",

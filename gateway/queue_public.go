@@ -1,4 +1,4 @@
-// The public view of a project's task queue (owner, 2026-11-13: the prove2me page lagged behind its
+// The public view of a project's task queue (2026-11-13: the prove2me page lagged behind its
 // trial because it showed a list made when the site was built). GET /v1/projects/{id}/queue, without
 // a key, for a project with public_queue on; any other project answers 404.
 //
@@ -12,7 +12,7 @@
 //     prompt tokens computed, those re-read from the cache, and those written) and model minutes;
 //   - while it runs, `live`: the gateway's own count of its model calls so far (tasks_live.go);
 //   - the trial, the leaf and its group, the theorem's name, and for a hole task its role, outline
-//     generation and hole number: from the task's typed fields (decision 0019: its role and its labels
+//     generation and hole number: from the task's typed fields (its role and its labels:
 //     trial, leaf, group, theorem, outline and hole) when it has them, else, for a task made before
 //     them, from its spec (prove2me's scaffold v5: spec.trial, .leaf, .group, .theorem, .v5).
 //
@@ -88,7 +88,7 @@ type specRef struct {
 	Gen, Hole                         int
 }
 
-// typed: the task was made with the typed fields (decision 0019); its spec is not read.
+// typed: the task was made with the typed fields; its spec is not read.
 func (t *Task) typed() bool { return t.Role != "" || len(t.Labels) > 0 }
 
 // keepPublic returns v when it matches re, else "".

@@ -1,4 +1,4 @@
-// Pilot records (decision 0020): a pilot is one bounded serving session that
+// Pilot records: a pilot is one bounded serving session that
 // a connector (the BOINC bridge is the first) hands to a volunteer's machine. The gateway is the
 // source of truth for it: the connector asks for a pilot, gets its id ("p-" and 12 hex digits) and a
 // credential, makes its own work item with the same name, and later tells the gateway who runs it

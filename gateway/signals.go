@@ -1,4 +1,4 @@
-// Per-answer signals in the usage record (node verification, BACKLOG 11d): numbers that, summed
+// Per-answer signals in the usage record (node verification): numbers that, summed
 // per node over many answers, show a node that degrades or pads answers inside science sessions.
 // None of them is a verdict on one answer; they are compared against the maintainer's own nodes' rates
 // (`accounts node-checks`) and decide what a person or, later, the replay sampler looks at.

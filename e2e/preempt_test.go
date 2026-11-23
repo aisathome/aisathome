@@ -1,4 +1,4 @@
-// Preempting science for people (BACKLOG v0.3.1): a chat or agent request that has waited
+// Preempting science for people: a chat or agent request that has waited
 // preempt_after_seconds for a node stops a science request there and gets the node; the
 // science request is sent again by the gateway if nothing of it reached its client, or ends
 // with a retryable error event. People's requests are never preempted.

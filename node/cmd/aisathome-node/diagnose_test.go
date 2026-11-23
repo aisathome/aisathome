@@ -133,7 +133,7 @@ func keys(m map[string]string) []string {
 }
 
 // A node.json that is not valid JSON is left out, and its token (any form, also an operator's)
-// is still redacted from the logs (Codex review).
+// is still redacted from the logs (found in review).
 func TestDiagnoseBrokenConfig(t *testing.T) {
 	// Not JSON; and two token keys equal in any case (the agent refuses that file, and the first token is
 	// not the one Go's decoder keeps).

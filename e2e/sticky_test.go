@@ -358,7 +358,7 @@ func nextTurnOnDone(t *testing.T, r *rig) {
 	}
 }
 
-// The share cap counts conversations, not requests (owner, 2026-10-18): an agent session of
+// The share cap counts conversations, not requests: an agent session of
 // many turns on one volunteer's node stays there, while other requesters' new conversations
 // still spread under the cap, the session's node getting its share of them. Counting every
 // request would put that operator over a third and move the session off its cache.

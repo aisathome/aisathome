@@ -125,7 +125,7 @@ func TestCampaignPutPatch(t *testing.T) {
 		t.Fatalf("items %v", it)
 	}
 
-	// finish, with the owner's closing text
+	// finish, with the project's closing text
 	out = r.want(200, "PATCH", campPath+"/t8", testProjectKey, map[string]any{"status": "finished", "text": "Closing words."})
 	c = out["campaign"].(map[string]any)
 	if c["status"] != "finished" || c["ended_at"] == nil || c["text"] != "Closing words." || c["title"] != "Trial 8 (v9)" ||

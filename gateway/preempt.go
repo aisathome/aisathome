@@ -1,4 +1,4 @@
-// Preempting science for people (BACKLOG v0.3.1, owner 2026-10-24).
+// Preempting science for people.
 //
 // The workload classes (project.go) order the queue, but a science request that holds a node
 // keeps it until it ends, and an agent runner's step takes minutes. On a network of one node a

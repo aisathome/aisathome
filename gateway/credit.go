@@ -1,11 +1,11 @@
-// Credit (decision 0007, backlog 18): recognition for the GPU time a node gives, in BOINC's
-// unit. Decided by the owner on 2026-10-11: credit follows GPU time, anchored to BOINC's
+// Credit: recognition for the GPU time a node gives, in BOINC's
+// unit. Since 2026-10-11, credit follows GPU time, anchored to BOINC's
 // cobblestone for decode. An output token is 0.125 credit (about 2 × 27e9 FLOPs at 4.32e11
 // FLOPs per credit), a new prompt token a tenth of that (prefill is
 // that much faster per token) and a cached prompt token a hundredth. Nothing is paid for it.
 //
 // Tokens are counted by the gateway (count.go, tokenizer.go) and cache hits decided by it
-// (prefixcache.go). No credit if no value is delivered (owner, 2026-10-18): a cancelled
+// (prefixcache.go). No credit if no value is delivered: a cancelled
 // answer earns only for the output that reached the client, and nothing if none did. No credit
 // for answers to the node's own account (self_served), for failed or blocked answers. Volunteers' credit is kept per account and per node; nodes from
 // config tokens (the maintainer's) earn for their operator name, kept apart from accounts.
@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-// Credit per token (owner, 2026-10-11).
+// Credit per token.
 const (
 	CreditPerOutputToken = 0.125
 	CreditPerPromptToken = 0.0125

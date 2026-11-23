@@ -101,9 +101,9 @@ A preempted attempt is logged with outcome `preempted`, counted as `preempted` p
 project in `/v1/stats`, credited to the node for what reached the client (as a cancelled
 answer), and charged to the project's quota only if something reached the client.
 
-A **project** is a workload the operator runs (decision 0011), for example an agent runner.
+A **project** is a workload the operator runs, for example an agent runner.
 Everything the gateway knows of a project is this data; no project's name or workflow is in the
-code (decision 0019). It exists only in the config, has its own keys, its own daily quota instead of
+code. It exists only in the config, has its own keys, its own daily quota instead of
 an account's budget, the lowest priority, and a cap on its share of the nodes:
 
 ```json
@@ -129,7 +129,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `daily_tokens` | The project's budget in weighted tokens per UTC day, shared by all its keys; `0` = no limit. Accounts' budgets never apply to it. Over it, requests get 429 with `Retry-After`. |
 | `max_node_share` | At most this share of the nodes that may serve a request work for the project at once (rounded down, at least one node, so a small network still does science when people leave it idle); `0` = no cap. |
 | `agent_ok` | The project's requests with tools (agents) may go to volunteer nodes past their probation, as an account key with consent may; without it they go to no node (a project has no nodes of its own). Requests that look like personal data are refused, and secrets are redacted, as for everyone. |
-| `pilot_probation_ok` | With `agent_ok`: the project's agents may also use connector pilots (below) whose account is still in probation (decision 0020: science, where every proof is checked). Standalone nodes in probation stay excluded. |
+| `pilot_probation_ok` | With `agent_ok`: the project's agents may also use connector pilots (below) whose account is still in probation (science only, where every proof is checked). Standalone nodes in probation stay excluded. |
 | `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
 | `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
 | `kinds` | The task kinds the project may create besides `other`: one per scaffold generation (`p2m-v7`), 1-32 lower-case letters, digits, `_` or `-`. Its workers claim by kind, so a worker never takes a task of a generation it does not run. None: `other` only. |
@@ -138,7 +138,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `task_compact_days` | Days after a finished task's end until it is compacted (below), 1-3650; default 30. |
 | `public_links` | The https prefixes (each ending in `/`, at most 8) that the project's campaign items and external results may link to (below). None: they carry no links. |
 
-Before decision 0019 the gateway also ran TauCeti's review loop (`auto_rounds`, `review_loop`,
+Before the typed task schema the gateway also ran TauCeti's review loop (`auto_rounds`, `review_loop`,
 `max_review_rounds`, and the `review`, `decide` and `continue` calls) and kept TauCeti's public
 results (`/v1/projects/<id>/science`). They are gone; a config that still has those keys starts,
 and they are ignored.
@@ -162,7 +162,7 @@ trials do (calibration leaves first, then a comparison set, then new leaves). Th
 nothing at a task's end: its worker reports `complete` or `fail` and that is all, and what comes
 next is the project's business.
 
-A task may also carry, written when it is created (decision 0019), the typed fields every project
+A task may also carry, written when it is created, the typed fields every project
 shares, all of them public:
 
 | Field | What |
@@ -264,12 +264,12 @@ the disk returns; the worker takes them back without losing a try.
 
 ### Campaigns and external results
 
-A project's public record of what it ran and what came of it outside the network (decision 0021),
+A project's public record of what it ran and what came of it outside the network,
 kept in the science database. What they mean for a project stays in its labels and its own code.
 
 - A **campaign** is a named round of work (prove2me's trials): `id` (1-64 letters, digits, `.`, `_`,
   `-`), `title`, `status` (`preparing`, `running`, `finished`), `started_at`, `ended_at`, `labels`
-  (as a task's), `text` (at most 4 KiB, line breaks allowed: for instance the owner's closing
+  (as a task's), `text` (at most 4 KiB, line breaks allowed: for instance the project's closing
   words) and `items`, the things it works on (at most 200): `{id, title, url, role, labels}`.
 - An **external result** is what an outside service said about a piece of the work (prove2me's
   verdict on a submitted proof): `source` (`prove2me`), `external_id` (the service's own id),
@@ -407,18 +407,18 @@ seconds, at most 300 each), `sessions`, `sessions_peak` (agent sessions running)
 `spot_notice` (the cloud announced the interruption). One report a minute per runner (429
 otherwise). The report goes into the hour's and the day's buckets of `GET /v1/stats/pressure`
 (`runner`, `runners`); the runner id is kept in memory only, to count runners and to rate-limit,
-and is never saved or served. A project without `public_queue` gets `{"counted": false}`. The
-ops repo's runner collector (`aihome-runner-metrics`) sends it.
+and is never saved or served. A project without `public_queue` gets `{"counted": false}`. A
+metrics collector on each runner sends it.
 
-### Demand for autoscaling (design; item 7v builds it)
+### Demand for autoscaling (design; not built yet)
 
 The public `demand` counts only projects with `public_queue`. Runner autoscaling needs every
 project: the gateway will compute the same number over all projects in the same sample
 (`pressureNow`, one more sum: no new walk of the nodes), keep it out of every public answer, and
 serve it to the operator only, either as a field of the admin page's status or as a CloudWatch
-metric pushed by an ops timer that reads it with an admin-only key. The ASG then targets
+metric pushed by a timer in the deployment that reads it with an admin-only key. The ASG then targets
 ceil(demand / workers per runner). Not built here: the IAM, the metric and the scaling policy
-are item 7v's.
+are part of the deployment.
 
 ## A chat front end (Open WebUI)
 
@@ -433,7 +433,7 @@ port. The front-end key's `only_operator` also binds the accounts it carries.
 With accounts, Open WebUI logs users in from headers set by the gateway's
 `/account/auth` (`X-Auth-Email`, `X-Auth-Role`). That is safe only if the reverse proxy
 removes any client-sent copies of these headers and Open WebUI is reachable only through
-that proxy; the ops repo's Caddyfile does both, and its browser tests check it.
+that proxy; the deployment's Caddyfile does both, and its browser tests check it.
 
 ## Accounts (sign-in, self-service keys)
 
@@ -495,7 +495,7 @@ never by their GitHub, Google or email id.
 
 ## Volunteer nodes (self-registered)
 
-**Every node is untrusted** (owner, 2026-11-20): a volunteer's, a pilot and a config token's alike,
+**Every node is untrusted**: a volunteer's, a pilot and a config token's alike,
 the maintainer's included; whoever controls a machine can read what it serves. The one exception
 is no trust: a requester's **own nodes** (standalone nodes registered to the requesting account,
 not its pilots) may get what that requester sends, its personal data included, since that is its
@@ -520,7 +520,7 @@ working; ids of the form `n-<8 hex>` are reserved for account nodes. In the usag
 account node's operator is the account's pseudonym, and `self_served` marks requests an
 account's own node answered.
 
-**Linking a node without a token** (`gateway/nodelink.go`, owner 2026-11-22; RFC 8628 style). A node
+**Linking a node without a token** (`gateway/nodelink.go`; RFC 8628 style). A node
 with no token asks `POST /v1/node/link` (no authentication; JSON: what it reports about itself,
 `name`, `gpu`, `vram_mib`, `os`, `agent`, all optional and unchecked) and gets a `device_code` (its
 secret for polling), a `user_code` such as `KXQT-4821`, `verification_uri` (`<public_url>/link`),
@@ -539,15 +539,15 @@ only between the approval and the node's next poll; a node approved but never pi
 minutes, and at least a minute after the approval) is revoked. Limits, in memory only: 20 codes per
 address in 10 minutes and 60 an hour, 300 an hour over the gateway, 500 pending at once; 10 wrong codes
 per account an hour and 30 per address; only an active account looks a code up (a waitlisted one is
-told to come back). Caddy must send `<domain>/link` to the gateway (the ops repo's Caddyfile does).
+told to come back). Caddy must send `<domain>/link` to the gateway (the deployment's Caddyfile does).
 Against RFC 8628's remote phishing (someone sends a person their code, and the person approves it), a
 linked node is **not the account's own node until its owner confirms it once** on the account page
-("This is my machine", recorded as `"confirmed"` with its time; owner 2026-11-22). Until then it gets
+("This is my machine", recorded as `"confirmed"` with its time). Until then it gets
 none of the account's personal data (such a request is refused as with no own node), and the account's
 other requests reach it only as they would a stranger's node. The account page and the approval page
 say so. Chat stays behind the operator terms exactly as for any node.
 
-**Nodes without an account** (`gateway/anon.go`, owner 2026-11-22). `POST /v1/node/register`
+**Nodes without an account** (`gateway/anon.go`). `POST /v1/node/register`
 (`{"accept_terms": true, "agent"}`, no authentication; the installer calls it after its speed test,
 `install.sh --anonymous`, `node.sh`, the Windows setup page's "Start without an account", or
 `aisathome-node register -accept-terms`) makes an unclaimed account `ax:<32 hex>` with one node
@@ -622,8 +622,7 @@ nodes).
 
 ### Answer checks and node signals
 
-The gateway pays per token only for tokens it can show came from the model (node verification,
-owner decision D1 of 2026-11-19). Every answer that can earn credit (`ok`, `cancelled`, `preempted`),
+The gateway pays per token only for tokens it can show came from the model (node verification). Every answer that can earn credit (`ok`, `cancelled`, `preempted`),
 from every node, pilots alike, is checked against three rules no honest node
 breaks, all from what the gateway itself counted and timed (`gateway/verify.go`):
 
@@ -673,12 +672,12 @@ degenerate answers. `accounts node-checks [days] [node]` gives the same from the
 ## Chat rules: operator terms
 
 On top of the rules above, a node serves people's requests (chat, agents, API calls)
-only once its account has accepted the operator terms (GDPR decision D3 of 2026-11-19;
-`gateway/chatrules.go`). Where a node runs makes no difference (owner, 2026-11-19). Science (a
+only once its account has accepted the operator terms
+(`gateway/chatrules.go`). Where a node runs makes no difference. Science (a
 project's key) carries no personal data and is not affected. The requester's own nodes (not pilots)
 are outside the rule.
 
-- **Accepting** (owner, 2026-11-20: on by default, with an opt-out). **Creating a node** on the
+- **Accepting** (2026-11-20: on by default, with an opt-out). **Creating a node** on the
   account page accepts the operator terms (section "Requests your node answers", approved on
   2026-11-19): the "Add a node" form says "By creating this node and running it you accept the
   operator terms (§6)" with a link, the new token's panel repeats it, and the creation records
@@ -702,7 +701,7 @@ are outside the rule.
 When the rule leaves no node free, a request waits for one as any request does and is never sent
 elsewhere; after the queue time it gets a 503 that says why (`operator_terms`). The account page
 shows, per connected node, whether it serves chat and why not. The sign-in page states the age
-limit (18+, D12) and the rule for people who chat (no personal data in chats); the account page
+limit (18+) and the rule for people who chat (no personal data in chats); the account page
 repeats the rule.
 
 | Field | Meaning |
@@ -712,8 +711,8 @@ repeats the rule.
 
 ## Connectors and pilots
 
-A **connector** is an outside system that brings machines in bounded serving sessions, **pilots**
-(decision 0020). The BOINC project's bridge is the first: a BOINC work unit is one pilot, a run of
+A **connector** is an outside system that brings machines in bounded serving sessions, **pilots**.
+The BOINC project's bridge is the first: a BOINC work unit is one pilot, a run of
 `aisathome-node pilot` that serves for up to 4 hours. The gateway is the source of truth: it mints
 the pilot, decides what it may serve, meters it and decides its credit; the connector only creates
 work items with the pilot's name, says who runs each, and reports when it is done. Nothing in the
@@ -837,7 +836,7 @@ With `accounts` set on a connector, an active account's page offers, per connect
   the stored attach key (BOINC changes the weak key with the password or the address).
 - A person with a pseudonymous user who wants their own address (one cross-project id, Gridcoin)
   changes it on the connector's site, logged in with the shown login and their password. The password
-  stays optional (owner, 2026-11-19); the form says to choose one to log in to the BOINC site later. A
+  stays optional; the form says to choose one to log in to the BOINC site later. A
   claimed user's card says the person can log in there with their account key (stock BOINC accepts it
   in place of the password). (Stock
   BOINC's `am_set_info.php` is disabled, so the gateway has no `set_email` form; the request kind
@@ -858,7 +857,7 @@ finished ones are deleted after 30 days. The page says while a request waits and
 When the connector says yes, the user is linked (`create_link` and `claim` alike):
 
 - only to an **active or waitlisted** account (a banned one gets no link, also if it was banned while
-  the request waited). A waitlisted account (owner, 2026-11-19) may claim, run on BOINC, see its
+  the request waited). A waitlisted account may claim, run on BOINC, see its
   pilots and use the chat switch, and its pilots serve under it as any account's do; the waitlist
   still keeps it from the chat, the API and keys until it is let in;
 - a user linked to the same account keeps its link with the new key;
@@ -889,7 +888,7 @@ secret: rotating it changes what the page shows, not the login the connector hol
 
 ### What a pilot may serve
 
-A bound pilot is an **account node** under decision 0007 and every rule in "Volunteer
+A bound pilot is an **account node** under every rule in "Volunteer
 nodes" above: no personal data, the share cap per operator (the account's
 pseudonym), the guards and holds, requests with tools only with the requester's consent and past
 the account's probation, except that a project with `pilot_probation_ok` may use pilots during
@@ -903,7 +902,7 @@ API calls, when any of these holds:
 |---|---|
 | its user is in `no_chat_users` | Science United's hosts: their owners cannot reach a switch |
 | its account's "chat on pilots" is off | the person's choice (on by default, also for unclaimed accounts) |
-| `pilots_chat_enabled` is false (the default) | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (decision 0020: they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots, the maintainer's own test pilots too (`trusted_users`, which let those serve chat, is gone) |
+| `pilots_chat_enabled` is false (the default) | **people's prompts reach strangers' machines only after anti-retention measures and the privacy notice and GDPR review are in place** (they are done before outside hosts join). Until the operator turns this on at launch, only science (which carries no user data) reaches pilots, the maintainer's own test pilots too (`trusted_users`, which let those serve chat, is gone) |
 
 And it serves people's requests only under the chat rules above: its account accepted the operator
 terms. Changes to the switch, `no_chat_users` or `pilots_chat_enabled` (on reload) reach connected pilots within

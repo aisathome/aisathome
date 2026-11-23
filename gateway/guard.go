@@ -1,4 +1,4 @@
-// Guards on answers from every node but the requester's own (decision 0007 addendum). A
+// Guards on answers from every node but the requester's own. A
 // volunteer can read and change what its node answers; an agent such as opencode may run a tool
 // call without a person reading it. So tool calls from such nodes are held back until complete and
 // checked before the client sees them: download-and-execute, credential files, encoded

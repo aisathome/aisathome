@@ -1,6 +1,6 @@
 // The status block at the top of /science/prove2me/: where the work stands now, from the gateway's public records.
 //
-//  - the queue: every prove2me task running or waiting now, whatever trial it belongs to (owner, 2026-11-19: a new trial
+//  - the queue: every prove2me task running or waiting now, whatever trial it belongs to (2026-11-19: a new trial
 //    can start while the last one still has tasks), as one bar in parts per trial, from GET /v1/tasks?project=prove2me;
 //  - one line per open trial (a trial or probe-round campaign that is running or being prepared, or a trial label with
 //    open tasks and no campaign yet): its tasks by state (proved, ended otherwise, stopped, running, waiting) and, for a

@@ -1,5 +1,5 @@
-// Accounts: self-service sign-in with GitHub, Google or email, API keys and a waitlist
-// (research decision 0006). The gateway stores only the provider's user id: GitHub's numeric
+// Accounts: self-service sign-in with GitHub, Google or email, API keys and a waitlist.
+// The gateway stores only the provider's user id: GitHub's numeric
 // id ("gh:<id>") or Google's account identifier ("google:<sub>"). Email accounts get a random
 // id ("em:<hex>") and keep only a keyed hash of the address (email.go). No name, no password,
 // no token, and no address unless the user opts in to notices (contact.go). Accounts beyond
@@ -45,8 +45,8 @@ type AccountsConfig struct {
 	MaxKeys            int          `json:"max_keys,omitempty"`  // API keys per account; default 3
 	Admins             []string     `json:"admins,omitempty"`    // account ids ("gh:123", "google:<sub>", "em:<hex>") that are chat admins
 	// NodeProbation is how long after an account's first node token its nodes serve chats
-	// but no agents (requests with tools). A Go duration; default "0" (none: the owner
-	// decided on 2026-10-12 that all nodes serve all requests from the start).
+	// but no agents (requests with tools). A Go duration; default "0" (none: since
+	// 2026-10-12 all nodes serve all requests from the start).
 	NodeProbation string `json:"node_probation,omitempty"`
 	probation     time.Duration
 
@@ -138,14 +138,14 @@ const (
 	StatusUnclaimed = "unclaimed"
 )
 
-// DefaultMaxActive is the limit a new accounts file starts with (owner, 2026-10-10).
+// DefaultMaxActive is the limit a new accounts file starts with.
 const DefaultMaxActive = 100
 
 // AccountSettings are the operator's switches, kept in the accounts file.
 type AccountSettings struct {
 	MaxActive int  `json:"max_active"`       // active accounts at most; the rest wait
 	Closed    bool `json:"closed,omitempty"` // no new accounts at all ("raid mode")
-	// Self-registered nodes (decision 0007, nodes.go).
+	// Self-registered nodes (nodes.go).
 	MaxNodes           int    `json:"max_nodes,omitempty"`             // node tokens over all accounts; 0 = DefaultMaxNodes
 	MaxNodesPerAccount int    `json:"max_nodes_per_account,omitempty"` // node tokens per account; 0 = DefaultMaxNodesPerAccount
 	NodesClosed        bool   `json:"nodes_closed,omitempty"`          // no new node tokens (existing ones keep working)
@@ -203,7 +203,7 @@ type AccountLink struct {
 	Linked    time.Time `json:"linked"`
 	// AttachKey is the connector's attach-only key for that user (BOINC's weak account key: it can
 	// attach machines to the user and nothing else), kept so that the account page can show the
-	// attach steps at any time (decision 0020, map decision 5). "" for a link the operator made.
+	// attach steps at any time. "" for a link the operator made.
 	AttachKey string `json:"attach_key,omitempty"`
 	// Via says how the link came: LinkCreated (the connector made the user from the account page),
 	// LinkClaimed (the person proved it with the attach key), or "" (the operator).
@@ -230,8 +230,8 @@ type AccountKey struct {
 	Hash    string    `json:"sha256"`
 	Prefix  string    `json:"prefix"`
 	Created time.Time `json:"created"`
-	// Agents: the user allowed volunteer nodes for requests with tools (decision 0007
-	// addendum). Without it such requests go only to the account's own nodes.
+	// Agents: the user allowed volunteer nodes for requests with tools.
+	// Without it such requests go only to the account's own nodes.
 	Agents bool `json:"agents,omitempty"`
 }
 

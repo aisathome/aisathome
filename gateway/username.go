@@ -1,4 +1,4 @@
-// Usernames (owner, 2026-10-11): like the name of a BOINC account. Setting one is the
+// Usernames: like the name of a BOINC account. Setting one is the
 // consent to appear publicly, with one's credit, in the leaderboard and in the BOINC-format
 // statistics; without one an account counts in totals only and never appears by name or id.
 // Clearing it takes the account out of the next leaderboard and export.

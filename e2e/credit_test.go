@@ -1,4 +1,4 @@
-// Credit (backlog 18): tokens counted by the gateway, cache hits decided by it, no credit for
+// Credit: tokens counted by the gateway, cache hits decided by it, no credit for
 // serving oneself, the ledger across restarts, usernames as consent to appear publicly, the
 // leaderboard and the BOINC-format exports.
 //
@@ -355,7 +355,7 @@ func TestCreditOnlyForDeliveredAnswers(t *testing.T) {
 	}
 }
 
-// No credit if no value is delivered (owner, 2026-10-18): a cancelled answer earns credit only
+// No credit if no value is delivered: a cancelled answer earns credit only
 // for what reached the client, and nothing at all, not even for its prompt, if nothing did.
 func TestCreditOnlyForWhatReachedTheClient(t *testing.T) {
 	stream := `{"model":"deep","stream":true,"messages":[{"role":"user","content":"hi"}]}`

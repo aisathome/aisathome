@@ -71,7 +71,7 @@ class SafeFs(Tmp):
 
     def test_a_short_write_never_leaves_a_truncated_file(self):
         """os.write may write fewer bytes than asked (a full disk, a quota): the rest is written, and a write
-        that makes no progress fails with the target unchanged and no temporary file left (Codex review,
+        that makes no progress fails with the target unchanged and no temporary file left (review,
         2026-11-10)."""
         real = os.write
         data = bytes(range(256)) * 40
@@ -93,7 +93,7 @@ class SafeFs(Tmp):
 
 class KeyOnRedirect(Tmp):
     """The host-side calls to the endpoint (its /models, the probe) send the key to the endpoint only: a
-    redirect to another host follows without it (Codex review, 2026-11-10)."""
+    redirect to another host follows without it (review, 2026-11-10)."""
 
     def serve(self, handler) -> str:
         srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -500,7 +500,7 @@ class Session(Tmp):
 
     def test_the_time_cap_counts_an_interrupted_step(self):
         """A step the time cap stopped in the middle (no step_finish) spent model time: a resume gets none
-        of it back (Codex review, 2026-11-10). Its segment records it as open_step_s."""
+        of it back (review, 2026-11-10). Its segment records it as open_step_s."""
         long_step = ('import sys, time\n'
                      'sys.stdout.write(\'{"type":"step_start","timestamp":%d,"sessionID":"ses_x"}\\n\' '
                      '% ((time.time() - 70) * 1000)); sys.stdout.flush(); time.sleep(30)\n')
@@ -526,7 +526,7 @@ class Session(Tmp):
 
     def test_a_leftover_container_goes_before_anything_reads_the_tree(self):
         """A resume whose budget is spent runs no segment, yet checkpoints and exports: a container left by
-        the earlier run is removed first, so it cannot change the tree after the final diff (Codex review,
+        the earlier run is removed first, so it cannot change the tree after the final diff (review,
         2026-11-10)."""
         s = self.make(self.EV)
         loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 1)
@@ -540,7 +540,7 @@ class Session(Tmp):
 
     def test_a_failed_final_checkpoint_leaves_no_stale_diff(self):
         """When the final diff cannot be made (git failed), an earlier checkpoint's model.diff would pass for
-        the final tree: it is removed and run.json says so (Codex review, 2026-11-10)."""
+        the final tree: it is removed and run.json says so (review, 2026-11-10)."""
         s = self.make(self.EV)
         loop.run_session(s, "https://api.example.org/v1", None, "m", 10, 5)
         (s.raw / "model.diff").write_text("diff of an earlier tree\n")

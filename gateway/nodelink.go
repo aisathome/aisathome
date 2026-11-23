@@ -1,5 +1,5 @@
 // Linking a node to an account without pasting a token: a device code, approved in the browser (RFC 8628
-// style; owner, 2026-11-22). The node asks for a code (POST /v1/node/link) and shows the person a short
+// style). The node asks for a code (POST /v1/node/link) and shows the person a short
 // user code and a link; the person signs in on /link, sees what the node reported about itself and
 // approves or denies; the node polls (POST /v1/node/link/poll) and gets its node token once.
 //
@@ -25,7 +25,7 @@
 // The risk RFC 8628 §5.4 names (remote phishing): someone sends a person their own code, and the person
 // approves it, linking the sender's machine to the person's account. So a linked node is not the account's
 // own node until its owner confirms it once on the account page ("This is my machine",
-// AccountNode.Confirmed; owner 2026-11-22): until then it gets none of the account's personal data and
+// AccountNode.Confirmed): until then it gets none of the account's personal data and
 // serves the account's requests only as a stranger's node would (route.own). The page says what is being
 // approved, shows the node's own details and says to approve only a code a machine of one's own shows.
 //

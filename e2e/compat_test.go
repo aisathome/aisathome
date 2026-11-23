@@ -1,4 +1,4 @@
-// Compatibility with released node agents (decision 0013: the gateway works with the current
+// Compatibility with released node agents (the gateway works with the current
 // and the previous node release). The protocol version: nodes without one speak version 1, the
 // gateway accepts a configured range and refuses others with a message the node shows.
 //
@@ -133,7 +133,7 @@ func (r *rig) runReleased(t *testing.T, bin, id string, engine *httptest.Server)
 }
 
 // The basic chat (streaming and not) through each of the latest node releases, built from
-// their tags: the gateway must keep working with them (decision 0013).
+// their tags: the gateway must keep working with them.
 func TestReleasedNodesChat(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds old node agents")

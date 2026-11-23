@@ -37,7 +37,7 @@ type KeyInfo struct {
 	// form. Enable only for clients that render no remote content and execute nothing.
 	RestoreSecrets bool `json:"restore_secrets,omitempty"`
 	// VolunteerAgents lets this key's requests with tools (agents) reach volunteer nodes past
-	// their probation; without it they go only to the requester's own nodes (decision 0007 addendum).
+	// their probation; without it they go only to the requester's own nodes.
 	// Never carried over to end users behind a front end.
 	VolunteerAgents bool `json:"volunteer_agents,omitempty"`
 	// ServedBy marks the operator's own keys (a test runner, dogfooding): their chat answers

@@ -104,7 +104,7 @@ func TestRegisterAnon(t *testing.T) {
 		t.Fatalf("over the pool: %v", err)
 	}
 	if DefaultMaxAnonNodes != 25 || (AccountSettings{}).MaxAnonNodesOrDefault() != 25 {
-		t.Error("the default pool is not 25 (owner, 2026-11-22)")
+		t.Error("the default pool is not 25")
 	}
 }
 

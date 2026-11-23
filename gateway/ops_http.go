@@ -1,4 +1,4 @@
-// The operations page /account/ops (theme A2), for admin accounts only (accounts.admins): every
+// The operations page /account/ops, for admin accounts only (accounts.admins): every
 // task and attempt of a science project's runner from its latest status (projstatus.go), with
 // the gateway's own view (nodes online, their versions, which node served an attempt's last
 // step) and the health warnings (health.go) at the top. Admin-only because it shows operator
@@ -120,7 +120,7 @@ type opsData struct {
 	Cost        string
 	CostNote    string
 	Now         string
-	Tasks       []opsTask // the gateway's task queue (decision 0015): open, then recent finished
+	Tasks       []opsTask // the gateway's task queue: open, then recent finished
 	TaskCounts  string
 	TaskExport  int // finished tasks not exported (an optional snapshot; it gates nothing)
 	Forbidden   bool

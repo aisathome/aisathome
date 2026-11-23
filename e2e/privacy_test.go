@@ -189,7 +189,7 @@ func twoNodeRig(t *testing.T, homeHits, strangerHits *atomic.Int32) *rig {
 	return r
 }
 
-// Personal data reaches no node but the requester's own (owner, 2026-11-20): a key without an account
+// Personal data reaches no node but the requester's own: a key without an account
 // has none, so the request is refused at once, with the user rule, whichever nodes are online; the
 // maintainer's config-token node is no exception any more.
 func TestPersonalDataRouting(t *testing.T) {

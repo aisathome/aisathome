@@ -3,7 +3,7 @@
 // BOINC's db_dump). Only accounts with a username appear,
 // by that name and a numeric id; the rest count in totals only. No CPIDs yet: a CPID a user
 // typed in proves nothing, and publishing one next to a verification path would make the
-// project a CPID-theft vector (NOTES §3).
+// project a CPID-theft vector.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -68,7 +68,7 @@ func (g *Gateway) grantCredit(n *nodeConn, c float64, now time.Time) {
 }
 
 // delivered is the part of an answer that reached the client: what a cancelled answer earns
-// credit for (owner, 2026-10-18: no credit if no value is delivered).
+// credit for (2026-10-18: no credit if no value is delivered).
 type delivered struct {
 	genOut
 	chunks int // chunks with generated text, for credit from node-reported counts

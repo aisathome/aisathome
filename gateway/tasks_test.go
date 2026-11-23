@@ -461,7 +461,7 @@ func TestTaskPersistence(t *testing.T) {
 }
 
 // The queue is bounded in its open tasks only. Finished tasks are kept for good, exported or not
-// (owner 2026-11-17, replacing the export gate of 2026-10-27): more than the old cap of 200
+// (replacing the export gate of 2026-10-27): more than the old cap of 200
 // unexported finished tasks never refuses a create, and an export drops nothing.
 func TestTaskBounds(t *testing.T) {
 	r := newTaskRig(t, "")
@@ -652,7 +652,7 @@ func (r *taskRig) counts(id string) (int, int) {
 	return t.Tries, t.Interruptions
 }
 
-// Interruptions do not use up tries (owner 2026-10-29): a task given back by its worker (the
+// Interruptions do not use up tries: a task given back by its worker (the
 // runner on a spot stop) continues its try at the next claim, by any worker; an expired lease
 // continues it only when the same worker takes the task back within the window; a real failure
 // ends the task; a task interrupted maxInterruptions times fails; the state survives a restart.

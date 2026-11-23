@@ -1,4 +1,4 @@
-// The chat rules for volunteers' nodes (gateway/chatrules.go): the operator terms (GDPR decision D3).
+// The chat rules for volunteers' nodes (gateway/chatrules.go): the operator terms.
 //
 // SPDX-License-Identifier: Apache-2.0
 package e2e
@@ -128,7 +128,7 @@ func servedBy(t *testing.T, r *rig, key string, n int) (map[string]int, int, str
 	return got, code, last
 }
 
-// D3, owner 2026-11-20: creating a node on the account page, under the line that says so, accepts the
+// Since 2026-11-20, creating a node on the account page, under the line that says so, accepts the
 // operator terms; "Science only on my nodes" withdraws them (science continues) and a new node does not
 // undo that choice; the account's button lets its nodes answer chats again. The page shows the approved
 // text.

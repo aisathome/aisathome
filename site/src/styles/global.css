@@ -11,7 +11,7 @@
 @import '@fontsource-variable/public-sans';
 @import '@fontsource-variable/jetbrains-mono';
 
-/* "Volunteer science" (owner's choice, 2026-10-10): warm dark, one orange accent, Big Shoulders
+/* "Volunteer science" (2026-10-10): warm dark, one orange accent, Big Shoulders
    Display for headings, Public Sans for text, JetBrains Mono for code. Self-hosted, no CDN. */
 @theme {
 	--font-sans: 'Public Sans Variable', ui-sans-serif, system-ui, sans-serif;

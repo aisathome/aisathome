@@ -1,4 +1,4 @@
-// The gateway's model check (BACKLOG 11): does a node or pilot compute like the model it announces?
+// The gateway's model check: does a node or pilot compute like the model it announces?
 //
 // The gateway sends secret probe prompts to nodes at random times, through the same connection and
 // in the same message as any request, and compares the answer's top-20 logprobs with a reference
@@ -78,7 +78,7 @@ type ModelCheckConfig struct {
 	LegacyIncludeTrusted bool `json:"include_trusted,omitempty"`
 	// Withhold makes a failing node held (no requests; its pilot's credit withheld) instead of
 	// only recorded. Off by default, and without effect until the gateway has observed for
-	// mcObserveFirst (3 days, owner D2): the limits must first hold on our own honest nodes.
+	// mcObserveFirst (3 days): the limits must first hold on our own honest nodes.
 	Withhold bool `json:"withhold"`
 	// CoverShare is the share of people's requests without tools to checked nodes that also ask
 	// for the probes' logprobs (removed before the client sees them). Absent: 0.2; 0 turns it off.

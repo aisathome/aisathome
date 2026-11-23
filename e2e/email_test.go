@@ -1,4 +1,4 @@
-// Email sign-in (research addendum 2026-10-10): one-time code and link, bound to the browser
+// Email sign-in: one-time code and link, bound to the browser
 // by a pending cookie; the same answer for every address; limits; only a keyed hash stored.
 // A fake SMTP server stands in for SES and requires STARTTLS and AUTH like SES does.
 //

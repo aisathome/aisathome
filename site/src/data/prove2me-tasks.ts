@@ -1,4 +1,4 @@
-// The prove2me page's task table (2026-11-15; simplified the same day, owner's design): prove2me's options for the
+// The prove2me page's task table (2026-11-15; simplified the same day): prove2me's options for the
 // generic task table (task-table.ts). Rows grouped by trial and leaf (newest trial first), then by outline; each task as
 // a label ("Hole 4 (outline 2)", "Probe: outline"), its result in one plain phrase (no raw outcome word), and filters by
 // trial (outline probe rounds as "Trial 7 probes"), by leaf, and the "Show" switch. The build's rows come from the

@@ -1,4 +1,4 @@
-// What an operator's node is doing, for that operator's account page (owner, 2026-11-13): its
+// What an operator's node is doing, for that operator's account page: its
 // average speed and the requests it is serving right now.
 //
 // Speed: the output tokens of a node's last speedWindow answers that ended ok, over the time the

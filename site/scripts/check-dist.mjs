@@ -92,7 +92,7 @@ else {
 }
 
 // Science (/science/tauceti/, a finished project): the data the build renders holds public fields
-// only (the research ledger it comes from has internal notes), the page and the home page agree with
+// only (the ledger it comes from has internal notes), the page and the home page agree with
 // it, and it is published as it is committed, at /science/tauceti.json (the gateway no longer has it).
 const sciFile = new URL('../src/data/science/tauceti.json', import.meta.url);
 if (!existsSync(sciFile)) errors.push('src/data/science/tauceti.json: missing');

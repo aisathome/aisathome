@@ -1,4 +1,4 @@
-// Health warnings for the operations page (theme A2): computed from a project's latest runner
+// Health warnings for the operations page: computed from a project's latest runner
 // status (projstatus.go) and the gateway's own data each time they are shown, so a warning
 // clears as soon as its cause is gone. No push: the page (/account/ops) shows them at the top,
 // and the runner's daily summary lists them (GET /v1/projects/<id>/status).
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// The rules' thresholds (owner, 2026-10-24, BACKLOG theme A2).
+// The rules' thresholds.
 const (
 	stallAfter       = 10 * time.Minute // a running attempt with no session event for this long
 	slowFactor       = 2.0              // minutes per step above this times the task type's median
