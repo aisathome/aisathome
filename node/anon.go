@@ -22,6 +22,9 @@ const selfEvery = time.Minute
 
 // selfURL is the gateway's protocol.SelfPath on the HTTPS address of a ws(s):// connect URL.
 func selfURL(gatewayURL string) (string, error) {
+	if err := CheckGatewayURL(gatewayURL); err != nil {
+		return "", err
+	}
 	u, err := url.Parse(gatewayURL)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("gateway address %q", gatewayURL)
@@ -52,7 +55,7 @@ func (a *Agent) fetchSelf(ctx context.Context) (protocol.NodeSelf, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
 	req.Header.Set("User-Agent", AgentVersion())
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := TokenClient(20 * time.Second).Do(req) // never on through a redirect
 	if err != nil {
 		return s, err
 	}

@@ -31,8 +31,11 @@ var (
 )
 
 // APIBase is the HTTPS address of a node's gateway: wss://host[:port]/... becomes https://host[:port]
-// (ws:// becomes http://, for a local test gateway).
+// (ws:// becomes http://, only for a gateway on this machine: node.CheckGatewayURL).
 func APIBase(gatewayURL string) (string, error) {
+	if err := node.CheckGatewayURL(strings.TrimSpace(gatewayURL)); err != nil {
+		return "", err
+	}
 	u, err := url.Parse(strings.TrimSpace(gatewayURL))
 	if err != nil || u.Host == "" || u.User != nil {
 		return "", fmt.Errorf("the gateway address %q is not a URL like wss://host/v1/node/connect", gatewayURL)
@@ -61,7 +64,7 @@ func (c *Client) client() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 20 * time.Second}
+	return node.TokenClient(20 * time.Second) // a node token goes with some calls: never on through a redirect
 }
 
 func (c *Client) post(ctx context.Context, path string, body, out any) error {

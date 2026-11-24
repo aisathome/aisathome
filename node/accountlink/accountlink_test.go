@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -142,5 +144,39 @@ func TestStartRefusals(t *testing.T) {
 	defer bad.Close()
 	if _, err := (&Client{Base: bad.URL}).Start(context.Background(), protocol.LinkInfo{}); err == nil {
 		t.Error("a link that is not http(s) was taken")
+	}
+}
+
+// Linking and registering carry a node's token (or get one): a redirect is refused, never followed with
+// the token (code review 2026-11-24); and a ws:// gateway off this machine is refused.
+func TestClientRefusesRedirects(t *testing.T) {
+	var leaked atomic.Value
+	leaked.Store("")
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a := r.Header.Get("Authorization"); a != "" {
+			leaked.Store(a)
+		}
+		http.NotFound(w, r)
+	}))
+	defer elsewhere.Close()
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer gw.Close()
+	c := &Client{Base: gw.URL, Token: "nt-a-0a0b0c0d.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}
+	if _, err := c.Start(context.Background(), protocol.LinkInfo{}); !errors.Is(err, node.ErrRedirect) {
+		t.Errorf("Start: %v, want the redirect refused", err)
+	}
+	if _, err := c.Self(context.Background()); !errors.Is(err, node.ErrRedirect) {
+		t.Errorf("Self: %v, want the redirect refused", err)
+	}
+	if _, err := c.Register(context.Background(), true); !errors.Is(err, node.ErrRedirect) {
+		t.Errorf("Register: %v, want the redirect refused", err)
+	}
+	if l := leaked.Load(); l != "" {
+		t.Fatalf("the token went on to the redirect's target: %q", l)
+	}
+	if _, err := APIBase("ws://gw.example/v1/node/connect"); err == nil {
+		t.Error("APIBase took ws:// to another machine")
 	}
 }

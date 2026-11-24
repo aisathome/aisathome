@@ -102,6 +102,12 @@ func TestLoadConfigTokenGateway(t *testing.T) {
 	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+staging+`","token":"nt-n-2.y"}`), env(nil), node.LinuxLayout); !errors.Is(err, nodeconf.ErrNoTokenGateway) {
 		t.Errorf("an inline token without its record: %v", err)
 	}
+	// A token never goes in plain text across a network: ws:// only to this machine.
+	const plain = "ws://gw.example/v1/node/connect"
+	if _, err := loadConfig(writeConfig(t, `{"gateway_url":"`+plain+`","token":"nt-n-2.y","token_gateway":"`+plain+`"}`), env(nil), node.LinuxLayout); err == nil ||
+		!strings.Contains(err.Error(), "not encrypted") {
+		t.Errorf("a token over ws:// to another machine: %v", err)
+	}
 	// No token (a node still to be linked): nothing to check.
 	if _, err := loadConfig(p, env(nil), node.LinuxLayout); err != nil {
 		t.Errorf("no token: %v", err)

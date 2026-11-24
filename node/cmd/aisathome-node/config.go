@@ -29,8 +29,12 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 	if tok := getenv("AISATHOME_NODE_TOKEN"); tok != "" {
 		cfg.Token, cfg.TokenGateway = tok, getenv("AISATHOME_TOKEN_GATEWAY")
 	}
-	// A token goes only to the gateway that issued it: one without that record is not trusted at all.
+	// A token goes only to the gateway that issued it: one without that record is not trusted at all; and
+	// never in plain text across a network.
 	if cfg.Token != "" {
+		if err := node.CheckGatewayURL(cfg.GatewayURL); err != nil {
+			return defaults(cfg, layout), fmt.Errorf("%w: not connecting", err)
+		}
 		if err := nodeconf.CheckTokenGateway(cfg.TokenGateway, cfg.GatewayURL); err != nil {
 			return defaults(cfg, layout), fmt.Errorf("%w: not connecting (link the node again: aisathome-node link)", err)
 		}

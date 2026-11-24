@@ -647,6 +647,9 @@ func CheckGateway(u string) (string, error) {
 	if !reGatewayURL.MatchString(u) {
 		return "", errors.New("the gateway must look like wss://host/v1/node/connect")
 	}
+	if err := node.CheckGatewayURL(u); err != nil { // ws:// only to this machine
+		return "", err
+	}
 	return u, nil
 }
 
