@@ -373,7 +373,7 @@ unset -f die check_id pick_node_id
 # /etc/aisathome-node, then a dry run of a copy of the installer that reads it.
 etc="$tmp/etc"; mkdir "$etc"
 eval "$(sed -n '/^installed_value() {/,/^}/p;/^pick_gateway_url() {/,/^}/p;/^pick_node_id() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
-link=0 anonymous=0
+link=0 anonymous=0 parked_token=""
 die() { echo "$1" >&2; exit "${2:-1}"; }
 printf '{"node_id": "box-1", "gateway_url": "wss://staging.example.org/v1/node/connect", "slots": 2}\n' > "$etc/node.json"
 secret="nt-n-0123abcd.$(printf 'S%.0s' {1..43})"
@@ -405,7 +405,7 @@ check_id "" "nt-n-0123abcd.x" box-1 n-0123abcd
 check_id "" config-token "" "$(hostname -s)"
 check_id "" config-token 'a b' "the installed node id 'a b' is not valid; pass --node-id"
 # tok <tty 0|1> <keep 0|1> <token.env> <stdin>: sets out (stderr, then token=...) and code.
-tok() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=$2; park_token=0; gateway_url="$stgw"; read_token "$3"; echo "token=$token") <<<"$4" 2>&1)"; code=$?; }
+tok() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=$2; park_token=0; parked_token=""; gateway_url="$stgw"; read_token "$3"; echo "token=$token") <<<"$4" 2>&1)"; code=$?; }
 tok 1 0 "$etc/token.env" ""
 ok "Enter keeps the token"; has "Enter keeps the token" "token=$secret"; has "Enter keeps the token" "or press Enter to keep the installed one"
 tok 1 0 "$etc/token.env" "nt-new"
@@ -517,6 +517,19 @@ usage_err "--keep-token, a token without a record"; has "--keep-token, a token w
 lacks "--keep-token, a token without a record" "moved aside" # refused before anything is decided
 tok 1 0 "$tmp/norec.env" "nt-pasted"
 ok "a pasted token over an unrecorded one"; has "a pasted token over an unrecorded one" "token=nt-pasted"
+# The token given (piped or pasted) is the installed one being moved aside: refused, never recorded as this
+# gateway's (code review 2026-11-24: an upgrade script piping the installed token over a gateway change).
+for f in prod norec; do
+  for tty in 0 1; do
+    tok "$tty" 0 "$tmp/$f.env" "$secret"
+    usage_err "the moved-aside token given again ($f, tty $tty)"; has "the moved-aside token given again ($f, tty $tty)" "is never sent there"
+    [[ "$out" != *"token=$secret"* ]] || fail "the moved-aside token was taken ($f, tty $tty)"
+  done
+done
+# At the write too: the token written as this gateway's is never the one moved aside.
+n_guard="$(grep -n '^\[\[ -z "\$token" || -z "\$parked_token" || "\$token" != "\$parked_token" \]\] || die' "$installer" | cut -d: -f1)"
+n_write="$(grep -n "AISATHOME_TOKEN_GATEWAY=%s" "$installer" | cut -d: -f1)"
+[[ -n "$n_guard" && -n "$n_write" && $n_guard -lt $n_write ]] || fail "token.env is written without refusing the moved-aside token"
 grep -q "token_known\|/v1/node/token-known" "$installer" && fail "the installer still uses the token-known hash check"
 unset -f die gw check_id tok tokl toka installed_value pick_gateway_url pick_node_id read_token interactive
 
@@ -764,7 +777,7 @@ sed -n '/^# A supplied node.json is made canonical first/,/^# 1\. Unprivileged/p
 grep -q '^take_lock$' "$tmp/decide.sh" || fail "the decision block has no take_lock"
 decide() { # decide <conf dir> <flags...> <<< stdin; sets out and code
   local d="$1"; shift
-  out="$( (set -euo pipefail; conf="$d" node_config="" gateway_url="$stgw" link=0 anonymous=0 keep_token=0 park_token=0 old_id="" old_gw="" token="" work="$tmp/w"
+  out="$( (set -euo pipefail; conf="$d" node_config="" gateway_url="$stgw" link=0 anonymous=0 keep_token=0 park_token=0 parked_token="" old_id="" old_gw="" token="" work="$tmp/w"
     for f in "$@"; do eval "$f"; done
     interactive() { false; }; die() { echo "$1" >&2; exit "${2:-1}"; }; workdir() { mkdir -p "$work"; }
     pick_node_id() { :; }; gen_node_config() { echo '{}'; }; canon_node_config() { cp "$1" "$2"; }; anon_notice() { :; }

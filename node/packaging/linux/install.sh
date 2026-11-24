@@ -617,7 +617,7 @@ check_model_file() {
 # ---- end of tier -----------------------------------------------------------------------------
 
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
-work="" token_aside=0 node_was_on=0 park_token=0
+work="" token_aside=0 node_was_on=0 park_token=0 parked_token=""
 # on_exit: removes the work folder, and puts an installed token back if the install stopped before
 # its link step (token_aside=1: set_aside_before_link, restore_unlinked).
 on_exit() { [[ -z "$work" ]] || rm -rf "$work"; [[ $token_aside = 0 ]] || restore_unlinked "$conf"; }
@@ -906,7 +906,7 @@ read_token() {
   done <<<"$env"
   if [[ -n "$old" && "$rec" != "$gateway_url" ]]; then
     [[ $keep_token = 0 ]] || die "--keep-token: the installed token was issued by ${rec:-an unrecorded gateway}, not $gateway_url, and is never sent there: link the node (--link), or paste a node token for $gateway_url" 2
-    park_token=1 old=""
+    park_token=1 parked_token="$old" old=""
     echo "token: the installed one was issued by ${rec:-an unrecorded gateway}, not $gateway_url: it is moved aside ($1.unlinked) and never sent there" >&2
   fi
   if [[ $anonymous = 1 ]]; then
@@ -944,6 +944,10 @@ read_token() {
     link=1; echo "account: the install ends with linking this node to your account in the browser" >&2; return 0
   fi
   [[ -n "$token" ]] || die "no token on stdin${old:+ (to keep the installed one: --keep-token)}; to link the node to your account in the browser instead: --link"
+  # The token given is the one being moved aside (another gateway's, or without a record): it would be
+  # recorded as this gateway's and sent here. Refused (code review 2026-11-24).
+  [[ -z "$parked_token" || "$token" != "$parked_token" ]] ||
+    die "the token given is the installed one, which is not $gateway_url's, so it is never sent there: link the node (--link), or give a node token from $gateway_url" 2
 }
 
 # token_state <token> <gateway_url>: what the gateway says of a node token (GET /v1/node/self): "gone" (it does
@@ -1195,6 +1199,9 @@ install -o root -g aisathome -m 0640 "$node_config" /etc/aisathome-node/node.jso
 # same gateway (--link on an installed node) stays until then, so a link that does not happen leaves the
 # node as it was.
 # A token is written with the gateway that issued it (this install's): the agent never sends it elsewhere.
+# Only a token kept with its own record, or a different one given for this gateway, gets here; the one moved
+# aside never does.
+[[ -z "$token" || -z "$parked_token" || "$token" != "$parked_token" ]] || die "not writing the moved-aside token as $gateway_url's" 2
 if [[ -n "$token" ]]; then
   umask 077; printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=%s\n' "$token" "$gateway_url" > /etc/aisathome-node/token.env; umask 022
 fi
