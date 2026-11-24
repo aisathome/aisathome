@@ -19,8 +19,10 @@ unification hints). `refusals` reads the file the other way round:
   terms that run code while the file compiles (`#`-commands, `run_cmd`, `run_tac`, `by_elab`, `initialize`,
   `simproc`, ...) and syntax quotations; `unsafe`, `partial`, `opaque`, `implemented_by`, `extern`; any name under
   `Lean`, `IO` or `System`; `set_option` outside a short list of options that do not change what is checked.
-- **Imports** only at the top and only from the allowed roots (by default Mathlib, its dependencies a proof uses,
-  and the project's own `Definitions`/`Theorems`; the caller narrows `Theorems` further).
+- **Imports** only in the header (every `import` token, however laid out), only plain names, only from the allowed
+  roots (by default Mathlib, its dependencies a proof uses, and the project's own `Definitions`/`Theorems`; the
+  caller narrows `Theorems` further); no `module` or `prelude` header (a `module` file's .olean exports its
+  theorems as axioms, and its proofs are not a proof's).
 
 Lines given by the task (`given`: its preamble and the statement's own lines, e.g. a `local notation` or an
 `attribute [local instance]` the statement needs) are allowed as they are, wherever they stand, and so is
@@ -60,7 +62,8 @@ META = "code that runs while the file compiles (a `#` command, run_cmd, run_tac,
 LOWLEVEL = "unsafe, partial, opaque, implemented_by or extern"
 LEAN_NAME = "a name under `Lean`, `IO` or `System`"
 OPTION = "a `set_option` outside the allowed ones (limits, linters, pretty-printing, autoImplicit)"
-IMPORT = "an import outside the allowed modules, or an import after the first command"
+IMPORT = "an import outside the allowed modules (or not a plain name), an import after the first command, or a " \
+         "`module`/`prelude` header"
 BRACED = "a string literal with `{` (possible interpolation, whose code the scan cannot be sure to see)"
 
 _B = r"(?<![\w.'!?«])"       # a token starts here: not inside a longer name (`Foo.instance`, `h'`)
@@ -90,7 +93,10 @@ TOKENS = [
 ]
 _LINE_START = re.compile(r"(?m)^(?=\S)")
 _FIRST_WORD = re.compile(r"[^\s(\[{:]+")
-_IMPORT = re.compile(r"(?m)^import\s+(\S+)")
+_HEADER_IMPORT = re.compile(r"\s*import(?![\w'!?»])\s*(\S*)")
+_ANY_IMPORT = re.compile(_B + r"import" + _E)
+_MODULE = re.compile(r"\s*(module|prelude)(?![\w'!?»])")
+_PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*")
 _SET_OPTION = re.compile(_B + r"set_option\s+([^\s]+)")
 
 
@@ -126,26 +132,27 @@ def refusals(text: str, given: set[str] | frozenset = frozenset(), import_roots:
 
     exempt = {i for i, line in enumerate(lines, 1)
               if line.strip() and (_norm(line) in given or _CLASSICAL.fullmatch(_norm(line)))}
-    seen_command = False
     for i, line in enumerate(lines, 1):
         if not line.strip() or i in exempt:
-            if line.strip():
-                seen_command = seen_command or not line.startswith("import")
             continue
         if not line[0].isspace():
             word = _FIRST_WORD.match(line)
             w = word.group(0) if word else line[0]
-            if w == "import":
-                if seen_command:
-                    hit(IMPORT, i)
-            else:
-                seen_command = True
-                if w != "|" and w not in commands:
-                    hit(STRUCTURE, i)
-    for m in _IMPORT.finditer(code):
-        n = code.count("\n", 0, m.start()) + 1
-        if n not in exempt and m.group(1).split(".")[0] not in import_roots:
-            hit(IMPORT, n)
+            if w != "|" and w not in commands:
+                hit(STRUCTURE, i)
+    # the header, as Lean reads it: `import <name>` tokens (any layout: indented, several on a line) before anything
+    # else; every name plain (no `«..»` component a file path could climb out with) and under an allowed root; an
+    # `import` token after the header, or a `module`/`prelude` header, is refused
+    line_of = lambda pos: code.count("\n", 0, pos) + 1
+    if _MODULE.match(code):
+        hit(IMPORT, line_of(_MODULE.match(code).start(1)))
+    pos = 0
+    while (m := _HEADER_IMPORT.match(code, pos)):
+        name, pos = m.group(1), m.end()
+        if line_of(m.start(1)) not in exempt and not (_PLAIN.fullmatch(name) and name.split(".")[0] in import_roots):
+            hit(IMPORT, line_of(m.start(1)))
+    for m in _ANY_IMPORT.finditer(code, pos):
+        hit(IMPORT, line_of(m.start()))
     for pat, why in TOKENS:
         for m in re.finditer(pat, code):
             n = code.count("\n", 0, m.start()) + 1

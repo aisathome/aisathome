@@ -144,6 +144,16 @@ class AllowList(unittest.TestCase):
         for opt in ("debug.skipKernelTC true", "compiler.extract_closed false", "interpreter.prefer_native true"):
             self.assertIn(proofscan.OPTION, proofscan.refusals(HEAD + f"set_option {opt}\ntheorem solution : True := trivial\n"))
 
+    def test_every_import_token_is_read(self):
+        for text in ("  import Lean\ntheorem solution : True := trivial\n",                  # indented
+                     "import Mathlib import Lean\ntheorem solution : True := trivial\n",      # two on a line
+                     "import Mathlib.«..».«..».ws.Solutions.Evil\ntheorem solution : True := trivial\n",
+                     "import Mathlib\ntheorem solution : True := trivial\n  import Mathlib.Tactic\n",
+                     "module\nimport Mathlib\ntheorem solution : True := trivial\n",
+                     "prelude\ntheorem solution : True := trivial\n"):
+            self.assertIn(proofscan.IMPORT, proofscan.refusals(text), text)
+        self.assertEqual(proofscan.refusals("\nimport Mathlib\nimport Definitions.X\n\ntheorem solution : True := trivial\n"), {})
+
     def test_cardinality_notation_is_not_a_command(self):
         self.assertEqual(proofscan.refusals(HEAD + "theorem solution (s : Finset ℕ) : #s = #s := rfl\n"), {})
         self.assertIn(proofscan.META, proofscan.refusals(HEAD + "theorem solution : True := trivial #print axioms x\n"))
@@ -168,7 +178,7 @@ class JailArgs(unittest.TestCase):
         with mock.patch.dict(os.environ, {"AWS_SECRET_ACCESS_KEY": "s3cr3t", "P2M_API_KEY_FILE": "/k"}):
             a = self.jail(cpu_s=60, cpus=2).args(["lake", "build", "X"], "harness-jail-x")
         line = " ".join(a)
-        for want in ("--rm", "--network none", "--cap-drop=ALL", "no-new-privileges", "--read-only", "--init",
+        for want in ("--rm", "--network none", "--log-driver none", "-e HTTP_PROXY= ", "-e https_proxy= ", "--cap-drop=ALL", "no-new-privileges", "--read-only", "--init",
                      f"-u {J.JAIL_USER}", "--tmpfs /tmp:rw,nosuid,nodev", "--memory 8g", "--memory-swap 8g",
                      "--pids-limit 512", "--cpus 2", "--ulimit cpu=60:60", "--ulimit core=0",
                      "type=bind,src=/h/elan,dst=/opt/elan,readonly", "type=bind,src=/h/ws,dst=/ws",
@@ -283,8 +293,43 @@ class Workspace(unittest.TestCase):
 
     def test_a_symlinked_build_dir_is_refused(self):
         (self.ws / ".lake" / "build").symlink_to(self.root)
-        with self.assertRaises(OSError):
+        with self.assertRaises(safefs.UnsafePath):
             open_build_dirs(self.ws)
+
+    def test_a_symlinked_lake_is_refused_and_its_target_left_alone(self):
+        """Another workspace's .lake behind a symlink: nothing created there, no mode changed."""
+        other = self.root / "other"
+        (other / "build").mkdir(parents=True)
+        f = other / "build" / "x.olean"
+        f.write_text("x")
+        f.chmod(0o644)
+        before = self.mode(other / "build")
+        lake = self.ws / ".lake"
+        os.rename(lake, self.root / "lake-real")
+        lake.symlink_to(other)
+        with self.assertRaises(safefs.UnsafePath):
+            open_build_dirs(self.ws)
+        self.assertEqual((self.mode(f), self.mode(other / "build"), self.mode(other)), (0o644, before, self.mode(other)))
+        self.assertNotEqual(self.mode(other) & 0o777, 0o777)
+        self.assertFalse((other / "config").exists())
+        tc = LeanToolchain(self.root / "elan")
+        with self.assertRaises(safefs.UnsafePath):
+            tc.jail("img", self.ws)
+
+    def test_a_symlinked_package_farm_is_never_a_bind_source(self):
+        pk = self.ws / ".lake" / "packages"
+        os.rename(pk, self.root / "farm")
+        pk.symlink_to(self.root / "farm")
+        with self.assertRaises(safefs.UnsafePath):
+            LeanToolchain(self.root / "elan").jail("img", self.ws)
+
+    def test_execute_bits_survive(self):
+        b = self.ws / ".lake" / "build" / "bin"
+        b.mkdir(parents=True)
+        (b / "tool").write_text("#!/bin/sh\n")
+        (b / "tool").chmod(0o755)
+        open_build_dirs(self.ws)
+        self.assertEqual(self.mode(b / "tool"), 0o777)
 
     def test_the_package_set_becomes_readable_once(self):
         (self.pset / ".lake" / "packages" / "mathlib").chmod(0o700)
@@ -362,9 +407,20 @@ class Replay(unittest.TestCase):
         self.assertEqual(argv[3:8], ["M", "p2m_check_target", "solution", "Targets.Sol_x", f"{replay.CHK}/Proof.olean"])
         self.assertEqual(argv[-1], "propext")
         self.assertEqual((self.root / "chk" / "Proof.olean").read_text(), "Solutions/Sol_x.olean")
-        self.assertEqual(j.env["LEAN_PATH"].split(":"), [replay.TRUSTED, f"{JAIL_WS}/.lake/packages/mathlib/.lake/build/lib/lean"])
+        self.assertEqual(j.env["LEAN_PATH"].split(":"), [replay.TRUSTED, f"{replay.PKGS}/mathlib/.lake/build/lib/lean"])
         self.assertEqual(j.workdir, replay.CHK)
         self.assertEqual(j.cpu_s, 30)
+        # nothing of the workspace but its package farm and the copied .olean: the build jail could write the rest
+        self.assertEqual(sorted(str(m.target) for m in j.mounts), sorted([JAIL_ELAN, replay.TRUSTED, replay.CHK, replay.PKGS]))
+        self.assertNotIn(str(self.ws.resolve()), [str(m.source) for m in j.mounts])
+
+    def test_a_symlinked_package_farm_is_never_mounted(self):
+        (self.root / "trusted").mkdir()
+        pk = self.ws / ".lake" / "packages"
+        os.rename(pk, self.root / "elsewhere")
+        pk.symlink_to(self.root / "elsewhere")
+        with self.assertRaises(safefs.UnsafePath):
+            self.run_replay()
 
     def test_a_symlinked_olean_is_never_read(self):
         f = self.ws / replay.LIB / "Solutions" / "Sol_x.olean"
@@ -375,6 +431,10 @@ class Replay(unittest.TestCase):
 
     def test_the_program_never_loads_the_proofs_module(self):
         p = replay.PROGRAM
+        # each import a plain name under an allowed root, resolving under the search path's own entries; no `module`
+        self.assertIn("unless plainName i.module && roots.contains i.module.getRoot do", p)
+        self.assertIn("for m in (mod.imports.map (·.module)).push tgtMod do\n    if (← resolvedUnder trusted m).isNone then", p)
+        self.assertIn("if mod.isModule then", p)
         self.assertIn("readModuleDataParts #[olean]", p)              # the proof as data
         self.assertIn("mod.imports.push { module := tgtMod }", p)     # its imports and the target, not itself
         self.assertIn("finalizeImport s imports {} 0 false false", p)  # no extensions, no initialisers
@@ -396,10 +456,13 @@ class RealDocker(unittest.TestCase):
             rw.mkdir()
             rw.chmod(0o777)
             (ro / "f").write_text("data")
+            cfg = Path(d) / "docker-config"           # the invoking user's client proxies (with credentials)
+            cfg.mkdir()
+            (cfg / "config.json").write_text('{"proxies": {"default": {"httpProxy": "http://user:pw@proxy.invalid:3128"}}}')
             script = ("id -u; ls /sys/class/net; env | sort | tr '\\n' ' '; echo; "
                       "touch /ro/x 2>/dev/null && echo RO-WRITABLE; touch /rw/y && echo RW-OK; "
                       "touch /etc/z 2>/dev/null && echo ROOT-WRITABLE; touch /tmp/t && echo TMP-OK")
-            with mock.patch.dict(os.environ, {"SECRET_TOKEN": "s3cr3t"}):
+            with mock.patch.dict(os.environ, {"SECRET_TOKEN": "s3cr3t", "DOCKER_CONFIG": str(cfg)}):
                 rc, out = J.Jail(img, mounts=[Mount(ro, "/ro"), Mount(rw, "/rw", ro=False)], memory_gb=1).run(
                     ["sh", "-c", script], timeout=120)
         self.assertEqual(rc, 0, out)
@@ -407,6 +470,7 @@ class RealDocker(unittest.TestCase):
         self.assertEqual(lines[0], str(J.JAIL_UID))
         self.assertEqual(lines[1], "lo")                         # no network but loopback
         self.assertNotIn("s3cr3t", out)
+        self.assertNotIn("user:pw", out)
         self.assertNotIn("RO-WRITABLE", out)
         self.assertNotIn("ROOT-WRITABLE", out)
         self.assertIn("RW-OK", out)

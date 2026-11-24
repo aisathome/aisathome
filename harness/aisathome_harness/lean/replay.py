@@ -12,7 +12,10 @@ scope (a global instance or notation can make it say something else, and `isDefE
 1. The target is a module of its own, compiled before and without the proof (the caller's job: a `Targets.*`
    module with the statement under a fixed name, proved by `sorry`). Its compiled constant is the reference.
 2. The environment is the proof's own imports plus the target's module, imported without running any
-   initialiser or loading any environment extension (as Lean's `leanchecker` does).
+   initialiser or loading any environment extension (as Lean's `leanchecker` does). Each of those imports must
+   be a plain name under an allowed root that resolves to a file under the search path's own entries (the trusted
+   outputs, the package farm, Lean's library), and the proof must not be a `module` file (whose .olean exports its
+   theorems as axioms).
 3. The proof's module is read as data (its .olean) and every constant in it is sent to the kernel
    (`Environment.replay`). Only theorems, safe definitions and axioms are accepted (an axiom then fails the axiom
    check); an inductive type, an opaque or unsafe constant, or a name the environment already has is refused.
@@ -25,7 +28,8 @@ scope (a global instance or notation can make it say something else, and `isDefE
 It prints `<MARK>_OK same_expr=<bool> axioms=[...]` or `<MARK>_FAIL <reason>: <detail>` (reasons as
 `check_command`'s, plus `not_allowed`, `kernel` and `check_error`), which `axioms.parse_check` reads; exit 0 only
 on success. `run` runs it in a jail (sandbox.jail) with only the package farm, the trusted build outputs (the
-target's and the definitions' modules, compiled before the proof) and the proof's .olean mounted, all read-only.
+target's and the definitions' modules, compiled before the proof) and a copy of the proof's .olean mounted, all
+read-only; nothing else of the workspace.
 Standard library only.
 """
 from __future__ import annotations
@@ -36,11 +40,13 @@ from pathlib import Path
 
 from .. import safefs
 from ..sandbox.container import Mount
-from .toolchain import JAIL_WS, LeanToolchain
+from ..sandbox.jail import Jail
+from .toolchain import JAIL_ELAN, LeanToolchain, packages_dir
 
 IMPORT_ROOTS = ("Mathlib", "Definitions", "Theorems", "Init", "Std", "Batteries", "Aesop", "Qq", "Plausible")
 CHK = "/chk"                 # the check's own files inside the jail (read-only)
 TRUSTED = "/trusted"         # the build outputs compiled before the proof (read-only)
+PKGS = "/pkgs"               # the workspace's package farm (read-only)
 
 PROGRAM = r"""
 import Lean
@@ -66,6 +72,18 @@ def axiomsOf (kenv : Kernel.Environment) (c : Name) : Except String (Array Name)
       unless seen.contains m do todo := todo.push m
   return .ok (axs.qsort Name.lt)
 
+/-- Every component an ordinary identifier: no `«..»`, no path separator, nothing a file path could climb out with. -/
+def plainName : Name → Bool
+  | .anonymous => true
+  | .str p s => plainName p && !s.isEmpty && (s.front.isAlpha || s.front == '_')
+      && s.all (fun c => c.isAlphanum || c == '_' || c == '\'')
+  | .num _ _ => false
+
+/-- Where `m`'s .olean is, and that it lies under one of `trusted` (real paths): the search path's own entries. -/
+def resolvedUnder (trusted : Array System.FilePath) (m : Name) : IO (Option System.FilePath) := do
+  let f ← IO.FS.realPath (← findOLean m)
+  return if trusted.any (fun t => (t.toString ++ "/").isPrefixOf f.toString) then some f else none
+
 unsafe def check (mark : String) (target decl tgtMod : Name) (olean : System.FilePath) (roots allowed : List Name) :
     IO UInt32 := do
   let fail (reason detail : String) : IO UInt32 := do
@@ -73,9 +91,17 @@ unsafe def check (mark : String) (target decl tgtMod : Name) (olean : System.Fil
     return 2
   let parts ← readModuleDataParts #[olean]
   let some (mod, _) := parts[0]? | fail "check_error" "no module data in the proof's .olean"
+  if mod.isModule then
+    -- a `module` file keeps its proofs in .olean.private and exports theorems as axioms; a proof is never one
+    return (← fail "not_allowed" "the proof is a `module` file")
+  let trusted ← (← searchPathRef.get).toArray.filterMapM fun p => do
+    if ← p.isDir then return some (← IO.FS.realPath p) else return none
   for i in mod.imports do
-    unless roots.contains i.module.getRoot do
+    unless plainName i.module && roots.contains i.module.getRoot do
       return (← fail "not_allowed" s!"the proof imports {i.module}")
+  for m in (mod.imports.map (·.module)).push tgtMod do
+    if (← resolvedUnder trusted m).isNone then
+      return (← fail "not_allowed" s!"{m} resolves outside the trusted modules")
   let imports := mod.imports.push { module := tgtMod }
   let (_, s) ← (importModulesCore imports).run
   let env ← finalizeImport s imports {} 0 false false (isModule := false)
@@ -132,12 +158,12 @@ unsafe def main (args : List String) : IO UInt32 := do
 LIB = ".lake/build/lib/lean"      # a workspace's build outputs, relative to the workspace
 
 
-def lean_path(packages: Path) -> str:
+def lean_path(packages: Path | None) -> str:
     """LEAN_PATH inside the jail: the trusted outputs first, then each package's build outputs (as `lake env`
-    lists them), from the farm at <JAIL_WS>/.lake/packages."""
+    lists them), from the farm mounted at PKGS."""
     pk = sorted(p.name for p in Path(packages).iterdir() if p.is_dir() and not p.is_symlink()) \
-        if Path(packages).is_dir() else []
-    return ":".join([TRUSTED] + [f"{JAIL_WS}/.lake/packages/{p}/.lake/build/lib/lean" for p in pk])
+        if packages is not None and Path(packages).is_dir() else []
+    return ":".join([TRUSTED] + [f"{PKGS}/{p}/.lake/build/lib/lean" for p in pk])
 
 
 def snapshot(ws: Path, dest: Path, dirs: tuple[str, ...]) -> int:
@@ -180,9 +206,12 @@ def run(tc: LeanToolchain, image: str, *, ws: Path, trusted: Path, module: str, 
     (work / "Replay.lean").write_text(PROGRAM)
     if (Path(ws) / "lean-toolchain").is_file():
         (work / "lean-toolchain").write_bytes(safefs.read_bytes(ws, "lean-toolchain"))
-    jail = tc.jail(image, ws, writable=False, mounts=[Mount(trusted, TRUSTED), Mount(work, CHK)], **limits)
-    jail.env["LEAN_PATH"] = lean_path(Path(ws) / ".lake" / "packages")
-    jail.workdir = CHK
+    # nothing of the workspace but its package farm (checked: no symlink on the way) and the proof's compiled file
+    # (copied above): the jail could have written anything else there
+    pk = packages_dir(ws)
+    ms = [Mount(Path(tc.elan_home).resolve(), JAIL_ELAN), Mount(Path(trusted).resolve(), TRUSTED),
+          Mount(Path(work).resolve(), CHK)] + ([Mount(pk, PKGS)] if pk is not None else [])
+    jail = Jail(image, mounts=ms, env={**tc.jail_env(), "LEAN_PATH": lean_path(pk)}, workdir=CHK, **limits)
     argv = ["lean", "--run", f"{CHK}/Replay.lean", mark, target, decl, target_module, f"{CHK}/Proof.olean",
             ",".join(roots), *allowed]
     if execute is not None:
