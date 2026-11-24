@@ -1,10 +1,16 @@
 ---
 title: Update your node
-description: Install a new release on a running AIs@home node, keeping its token and settings.
+description: Install a new release on a running AIs@home node, keeping its settings; a node from before v0.6.0 is linked again.
 ---
 
 New releases are listed on [GitHub](https://github.com/aisathome/aisathome/releases); each
 one says what changed and whether nodes need it.
+
+**From v0.6.0, a node token works only with the gateway that issued it.** Every token the node
+gets from v0.6.0 on carries a record of that gateway; a token from an earlier release has none, so
+the agent no longer uses it. A node installed before v0.6.0 is therefore **linked again** on its
+update to v0.6.0: it gets a new node token and a new node id on your account. Later updates keep
+the token.
 
 ## With the installer (systemd)
 
@@ -15,17 +21,25 @@ base=https://github.com/aisathome/aisathome/releases/latest/download
 curl -fLO $base/aisathome-node-bundle-linux-amd64.tar.xz && curl -fLO $base/SHA256SUMS \
   && grep ' aisathome-node-bundle-linux-amd64.tar.xz$' SHA256SUMS | sha256sum -c - \
   && tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64 \
-  && sudo ./install.sh --keep-token && aisathome-node status
+  && sudo ./install.sh && aisathome-node status
 ```
 
-`--keep-token` keeps the installed node token, so you don't paste it again. Without it, the
-installer asks as usual: press Enter on the empty prompt to keep the installed token, or
-paste a new one.
+**A node installed before v0.6.0:** the installer moves its token aside (to
+`/etc/aisathome-node/token.env.unlinked`) and asks for a node token: press **Enter**, and the
+update ends with linking the node to your account, as at a [first install](/node/install/#3-link-it-to-your-account):
+open the link it prints in your browser, sign in, check the code and approve (`--link` skips the
+question). The node gets a new node token and a new node id; press **This is my machine** on it
+under **Your nodes** on your [account page](/account). The old node stays listed there.
+
+**A node installed with v0.6.0 or later:** press Enter at the question to keep the installed token,
+or add `--keep-token` (`sudo ./install.sh --keep-token`) to skip it. `--keep-token` stops with a
+message when the installed token has no record of its gateway, or another gateway's; link the node
+then (`--link`).
 
 The installer keeps:
 
-- the token, the node id and the gateway (from `/etc/aisathome-node/node.json`); pass
-  `--node-id` or `--gateway-url` to change them;
+- the gateway and the node id (from `/etc/aisathome-node/node.json`), and the token when it is
+  kept (above); pass `--node-id` or `--gateway-url` to change the first two;
 - the model, which it checks again (about a minute); a release that pins another model
   downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; v0.4.0: a 16 GB
   card's tier runs `UD-Q3_K_XL`, 13.1 GB, in its place; the old file is replaced once the new
@@ -47,15 +61,21 @@ again.
 does **Your nodes** on your [account page](/account) while the node is connected.
 
 If you [built llama.cpp yourself](/node/install/#build-it-yourself), rebuild it if the
-release notes say so, and run the installer as you did at first, adding `--keep-token`, for
-example with `--node-release latest`.
+release notes say so, and run the installer as you did at first, for example with
+`--node-release latest`: a node installed before v0.6.0 is linked again (above); a later one keeps
+its token with `--keep-token`.
 
 ## On Windows
 
 Download the newer installer from [Install on Windows](/node/windows/) (you can
 [check it](/node/windows/#check-the-download) there) and run it over the installed one. It
-keeps the settings and the token, the local password and the node's state, and closes the tray
-icon while it updates.
+keeps the settings, the local password and the node's state, and closes the tray icon while it
+updates. A node set up with v0.6.0 or later keeps its token too.
+
+A node set up before v0.6.0 does not connect after the update: its token has no record of the
+gateway that issued it. The node's page asks for the setup again; in its last step, **Link to my
+account** links the node in your browser (it gets a new node token and a new node id; press **This
+is my machine** on it on your account page).
 
 ## Without systemd (containers)
 
@@ -71,6 +91,12 @@ swapping the bundle directory:
 
 `node.json`, the token and the model live outside the bundle, so they stay as they are.
 Keep the old directory until the node has connected, so you can go back.
+
+From v0.6.0 the agent uses a token only together with the gateway that issued it. If your start
+script passes the token in `AISATHOME_NODE_TOKEN`, pass that gateway beside it in
+`AISATHOME_TOKEN_GATEWAY` (`wss://api.aisathome.org/v1/node/connect` for a token from
+aisathome.org); a token in `node.json` needs `token_gateway` beside it. It must be the same address
+as the config's `gateway_url`. Without it the agent does not start and says why.
 
 From v0.4.0 the agent exits with an error when it has had no working link to the gateway for
 5 minutes (see [Troubleshooting](/node/operate/#troubleshooting)), so your start script must

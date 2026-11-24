@@ -5,13 +5,13 @@ export const repoURL = 'https://github.com/aisathome/aisathome';
 const latest = `${repoURL}/releases/latest/download`;
 
 export const nodeRelease = {
-	version: 'v0.5.0',
-	installerBytes: 385_703_228, // AIsAtHome-node-setup-v0.5.0.exe
+	version: 'v0.6.0',
+	installerBytes: 390_081_715, // AIsAtHome-node-setup.exe (v0.6.0)
 	// true from the first release that carries the installer under a name without the version too,
 	// AIsAtHome-node-setup.exe (release.yml adds it): the button then links to
 	// releases/latest/download, which follows every release with no change here. v0.5.0 does not
 	// have it, so until then the button links to that release's versioned file.
-	versionFreeInstaller: false,
+	versionFreeInstaller: true,
 };
 
 export const installerURL = nodeRelease.versionFreeInstaller

@@ -31,16 +31,56 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
   works).
 - About 17 GB of disk for the model. With the prebuilt bundle, the install is mostly the
   13-14 GB download; building llama.cpp yourself takes about an hour.
-- A **node token**: sign in on [your account page](/account) and choose **Add a node**
-  (up to 10 per account; at most 10 of them connected from one internet address). The network
-  takes 25 nodes for now; when it is full, the page says so. Creating the node and running it
-  means you accept the [operator terms (§6)](/about/terms/#6-requests-your-node-answers): then your
-  node answers people's chats as well as science. **Science only on my nodes** on the account page
-  turns chats off for all your nodes.
+- An **account**: sign in on [your account page](/account) with GitHub, Google or email. A node
+  links to it in your browser (below); up to 10 nodes per account, at most 10 of them connected
+  from one internet address. The network takes 25 nodes for now; when it is full, the approval
+  page says so. Without an account, a node does science only ([below](#without-an-account-science-only)).
 
-On Windows (new in v0.5.0), one installer sets up the node as a service with a tray icon, and
-the node's local page walks through the rest: see [Install on Windows](/node/windows/). On Linux,
-the [prebuilt bundle](/node/install/) installs it with one command.
+## Three steps
+
+1. **Install.** On Windows (new in v0.5.0), one installer sets up the node as a service with a
+   tray icon, and the node's local page walks through the card check, the model download and a
+   speed test: see [Install on Windows](/node/windows/). On Linux, the
+   [prebuilt bundle](/node/install/) installs it with one command.
+2. **Link it to your account.** At the end, the node shows a link and a code: on Windows the
+   **Link to my account** button opens it in your browser; on Linux the installer prints it (and
+   `sudo aisathome-node link` does it again later). Open the link in your browser, sign in, check that the page shows the same code and approve.
+   Approving creates the node on your account, and running it means you accept the
+   [operator terms (§6)](/about/terms/#6-requests-your-node-answers): then your node answers
+   people's chats as well as science. **Science only on my nodes** on the account page turns
+   chats off for all your nodes.
+3. **Confirm and check.** The node starts by itself. **Your nodes** on your account page lists it:
+   press **This is my machine** on it. Until you do, it is not one of your own nodes and gets none
+   of your personal data. On Linux, `aisathome-node status` says `CONNECTED`.
+
+Only approve a code that a machine of yours shows you. A code someone sends you would add
+*their* machine to your account; that is why a linked node gets your personal data only after you
+confirm it.
+
+**Advanced: a node token.** You can also create a node on your account page with **Add a node**
+and paste its token: on the Windows setup page under **Advanced: paste a node token**, or at the
+Linux installer's token question (or piped in for scripts: `cat token.txt | sudo ./install.sh`).
+A node run by hand reads it from its config or the `AISATHOME_NODE_TOKEN` environment variable.
+
+## Without an account (science only)
+
+Try a node without signing up: it does science work only, never people's chats, and earns no
+credit until you link it to an account. You must be 18 or older; running it means you accept the
+[terms](/about/terms/). On Linux:
+
+```bash
+curl -fsSL https://aisathome.org/node.sh | sh
+```
+
+The script downloads the latest bundle, checks it against `SHA256SUMS`, runs the installer's
+checks and asks before it installs anything. To read before you run, use the
+[steps on the install page](/node/install/) with `sudo ./install.sh --anonymous`. On Windows, the
+setup page has **Start without an account (science only)**.
+
+The node first answers a few test prompts and gets work once they pass; if they fail, its local
+page and `aisathome-node status` say so and what to do. Link it later with
+`sudo aisathome-node link` (credit starts then). A node without an account that is not seen for
+90 days is deleted.
 
 ## Tested systems
 
@@ -86,6 +126,7 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
 - **Not looking at what you serve:** don’t log, store, copy or inspect prompts or answers,
   and don’t tamper with them. This is a promise to users; see the
   [terms](/about/terms/).
-- Keeping your node token secret, and telling us if it leaks.
+- Keeping your node token secret (the node keeps it in a file only administrators can read), and
+  telling us if it leaks.
 
 Next: [install on Linux](/node/install/) or [on Windows](/node/windows/).
