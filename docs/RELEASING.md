@@ -18,6 +18,12 @@ into `CHANGELOG.md`.
    `gh workflow run release.yml --ref <branch>`). It builds everything, publishes nothing and
    keeps `dist/` as a 7-day artifact. A single architecture (`cuda_archs: 89-real`) is a
    faster first check; the full build takes an estimated 1 to 2 hours.
+   In a dry run, `llama-server` (most of that time) comes from the Actions cache when nothing
+   that goes into it changed: the llama.cpp pin, `scripts/build-llama.sh`, the CUDA image, the
+   CUDA architectures and the build command in `release.yml` make up the cache key, so a change
+   to any of them builds it afresh. The job summary says which it was. A dry run's files are
+   for testing only. A tag run never uses the cache: it always builds `llama-server` from
+   scratch, since a cache entry is not a trusted source for a published binary.
 3. **Test the artifact on a GPU** before tagging: unpack, `./install.sh --dry-run`, a real
    install with a throwaway node token from staging, one chat request through the node, then
    `uninstall.sh --purge`. Do it on at least one RTX 30 with an older driver (535) and one RTX

@@ -31,6 +31,15 @@ jobs:
 
   # llama-server with CUDA, built by scripts/build-llama.sh in NVIDIA's CUDA 12.8 devel image
   # (pinned by digest; Ubuntu 22.04, so the bundle needs glibc 2.35 or newer).
+  # Dry runs only: the build takes most of a dry run's time and its inputs rarely change, so a
+  # dry run caches its output (llama.tar) under a key made of everything that goes into it: the
+  # runner's OS image and architecture, the llama.cpp tag and commit, and a hash of the CUDA
+  # image (by digest), the CUDA architectures, the container's build command below and
+  # scripts/build-llama.sh (its flags and pins). A change to any of them is a new key, and so a
+  # fresh build; only an exact key restores (no restore-keys). The key is computable from the
+  # repository and the tar's BUILD-INFO check below cannot tell a forged entry, so a cache is
+  # not a trusted source: a tag run (a real release) never restores or saves one and always
+  # builds from scratch, like the rest of the release (no shared build cache in release builds).
   llama:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -39,29 +48,75 @@ jobs:
     env:
       CUDA_IMAGE: nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
       CUDA_ARCHS: ${{ inputs.cuda_archs || '86-real;89-real;120a-real' }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      # Runs as root inside the container; hands the output back to the runner's user.
+      BUILD_IN_CONTAINER: |
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+          git ca-certificates cmake ninja-build g++ >/dev/null
+        scripts/build-llama.sh /src/llama-out
+        chown -R "$HOST_IDS" /src/llama-out
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache key
+        id: key
+        run: |
+          tag="$(sed -n 's/^LLAMA_TAG=//p' scripts/build-llama.sh)"
+          commit="$(sed -n 's/^LLAMA_COMMIT=//p' scripts/build-llama.sh)"
+          [[ "$tag" =~ ^b[0-9]+$ && "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "no LLAMA_TAG/LLAMA_COMMIT pin in scripts/build-llama.sh"; exit 1; }
+          recipe="$({ printf '%s\n' "$CUDA_IMAGE" "$CUDA_ARCHS" "$BUILD_IN_CONTAINER"; cat scripts/build-llama.sh; } | sha256sum | cut -c1-32)"
+          {
+            echo "tag=$tag"
+            echo "commit=$commit"
+            echo "key=llama-server-${ImageOS:?}-$RUNNER_ARCH-$tag-$commit-$recipe"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore llama-server (exact key only; dry runs only)
+        id: cache
+        if: env.IS_TAG != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: llama.tar
+          key: ${{ steps.key.outputs.key }}
       - name: Free disk space (the CUDA image is about 10 GB unpacked)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Build llama-server
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           docker pull -q "$CUDA_IMAGE"
-          # The container runs as root; hand the output back to the runner's user.
           docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src \
             -e CUDA_ARCHS -e BUILD_IMAGE="$CUDA_IMAGE" -e JOBS="$(nproc)" -e HOST_IDS="$(id -u):$(id -g)" \
-            "$CUDA_IMAGE" bash -euo pipefail -c '
-              apt-get update -qq
-              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-                git ca-certificates cmake ninja-build g++ >/dev/null
-              scripts/build-llama.sh /src/llama-out
-              chown -R "$HOST_IDS" /src/llama-out'
+            "$CUDA_IMAGE" bash -euo pipefail -c "$BUILD_IN_CONTAINER"
           # A tar keeps the library symlinks and modes, which artifacts do not.
           tar -C llama-out -cf llama.tar .
-          { echo '### llama-server'; echo '```'; cat llama-out/BUILD-INFO; du -sh llama-out/bin/* llama-out/lib/* llama-out; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the build against the pins
+        # A consistency check, not a defence: a cached tar could carry a forged BUILD-INFO.
+        env:
+          TAG: ${{ steps.key.outputs.tag }}
+          COMMIT: ${{ steps.key.outputs.commit }}
+          FROM_CACHE: ${{ steps.cache.outputs.cache-hit == 'true' }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          tar -tf llama.tar ./bin/llama-server >/dev/null
+          info="$(tar -xOf llama.tar ./BUILD-INFO)"
+          want="$(printf '%s\n' "llama_cpp_tag=$TAG" "llama_cpp_commit=$COMMIT" "cuda_archs=$CUDA_ARCHS" "build_image=$CUDA_IMAGE")"
+          missing="$(grep -vxF -f <(echo "$info") <<<"$want" || true)"
+          if [ -n "$missing" ]; then echo "BUILD-INFO does not match the pins:"; echo "$missing"; echo "$info"; exit 1; fi
+          {
+            echo '### llama-server'
+            if [ "$FROM_CACHE" = true ]; then echo "From the cache (dry run): \`$KEY\`"; elif [ "$IS_TAG" = true ]; then echo "Built from scratch (tag run, no cache)"; else echo "Built, and saved to the cache as \`$KEY\`"; fi
+            echo '```'; echo "$info"; tar -tvf llama.tar | grep -E ' \./(bin|lib)/.'; du -h llama.tar; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Save llama-server to the cache (dry runs only)
+        if: env.IS_TAG != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: llama.tar
+          key: ${{ steps.key.outputs.key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: llama
