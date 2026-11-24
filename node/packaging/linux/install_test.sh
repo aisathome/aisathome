@@ -372,11 +372,13 @@ unset -f die check_id pick_node_id
 # are kept unless the operator gives new ones. The functions on their own, with a fake
 # /etc/aisathome-node, then a dry run of a copy of the installer that reads it.
 etc="$tmp/etc"; mkdir "$etc"
-eval "$(sed -n '/^installed_value() {/,/^}/p;/^pick_gateway_url() {/,/^}/p;/^pick_node_id() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
+eval "$(sed -n '/^installed_value() {/,/^}/p;/^gateway_url_ok() {/,/^}/p;/^pick_gateway_url() {/,/^}/p;/^pick_node_id() {/,/^}/p;/^trim() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
 link=0 anonymous=0 parked_token=""
 die() { echo "$1" >&2; exit "${2:-1}"; }
 printf '{"node_id": "box-1", "gateway_url": "wss://staging.example.org/v1/node/connect", "slots": 2}\n' > "$etc/node.json"
 secret="nt-n-0123abcd.$(printf 'S%.0s' {1..43})"
+# Tokens a person pastes or a script pipes: the form the gateway issues (anything else is refused).
+tnew="nt-n-0000000e.$(printf 'N%.0s' {1..43})" tpiped="nt-n-0000000f.$(printf 'P%.0s' {1..43})" tpasted="nt-a-0000000d.$(printf 'Q%.0s' {1..43})"
 stgw=wss://staging.example.org/v1/node/connect
 printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=%s\n' "$secret" "$stgw" > "$etc/token.env"; chmod 600 "$etc/token.env"
 [[ "$(installed_value "$etc/node.json" node_id)" = box-1 ]] || fail "installed node_id"
@@ -397,6 +399,16 @@ gw() { (gateway_url="$1"; pick_gateway_url "$2"; echo "$gateway_url") 2>&1; }
 [[ "$(gw wss://gw.example.org/v1/node/connect wss://staging.example.org/v1/node/connect)" = wss://gw.example.org/v1/node/connect ]] || fail "gateway: flag wins"
 [[ "$(gw "" "")" = wss://api.aisathome.org/v1/node/connect ]] || fail "gateway: default"
 [[ "$(gw "" 'http://x;y')" = *"installed gateway_url"* ]] || fail "gateway: an invalid installed URL is refused"
+# The agent's rule (node.CheckGatewayURL; code review 2026-11-24): wss://, ws:// only to this machine; refused
+# before anything carries a token there.
+for u in wss://gw.example.org/v1/node/connect ws://127.0.0.1:8080/v1/node/connect ws://localhost:8080/v1/node/connect ws://127.1.2.3/v1/node/connect; do
+  gateway_url_ok "$u" || fail "gateway_url_ok refused $u"
+done
+for u in ws://gw.example.org/v1/node/connect ws://10.0.0.2:8080/v1/node/connect ws://127.0.0.1.gw.example/v1/node/connect ws://localhost.gw.example/v1 http://127.0.0.1/ "wss://a b/"; do
+  ! gateway_url_ok "$u" || fail "gateway_url_ok took $u"
+done
+[[ "$(gw ws://gw.example.org/v1/node/connect "")" = *"ws:// only to this machine"* ]] || fail "gateway: --gateway-url ws:// to another machine is refused"
+[[ "$(gw "" ws://gw.example.org/v1/node/connect)" = *"ws:// only to this machine"* ]] || fail "gateway: an installed ws:// gateway on another machine is refused"
 check_id() { local got; got="$( (node_id="$1"; pick_node_id "$2" "$3"; echo "$node_id") 2>&1)"
   [[ "$got" = "$4" ]] || fail "node id (--node-id '$1', token '$2', installed '$3'): got '$got', want '$4'"; }
 check_id "" config-token box-1 box-1
@@ -408,12 +420,12 @@ check_id "" config-token 'a b' "the installed node id 'a b' is not valid; pass -
 tok() { out="$( (fake_tty=$1; interactive() { [[ $fake_tty = 1 ]]; }; keep_token=$2; park_token=0; parked_token=""; gateway_url="$stgw"; read_token "$3"; echo "token=$token") <<<"$4" 2>&1)"; code=$?; }
 tok 1 0 "$etc/token.env" ""
 ok "Enter keeps the token"; has "Enter keeps the token" "token=$secret"; has "Enter keeps the token" "or press Enter to keep the installed one"
-tok 1 0 "$etc/token.env" "nt-new"
-ok "a pasted token replaces it"; has "a pasted token replaces it" "token=nt-new"
+tok 1 0 "$etc/token.env" "$tnew"
+ok "a pasted token replaces it"; has "a pasted token replaces it" "token=$tnew"
 tok 0 1 "$etc/token.env" "nt-ignored"
 ok "--keep-token"; has "--keep-token" "token=$secret"; lacks "--keep-token" "nt-ignored"
-tok 0 0 "$etc/token.env" "nt-piped"
-ok "piped token"; has "piped token" "token=nt-piped"
+tok 0 0 "$etc/token.env" "$tpiped"
+ok "piped token"; has "piped token" "token=$tpiped"
 tok 0 0 "$etc/token.env" ""
 [[ $code -ne 0 ]] || fail "empty piped input kept the token"; has "empty piped input" "--keep-token"
 # Enter at a terminal without an installed token chooses linking: no token, and the install ends with
@@ -423,8 +435,8 @@ tokl 1 0 "$etc/none.env" ""
 ok "Enter without an installed token"; has "Enter without an installed token" "token= link=1"
 has "Enter without an installed token" "Press Enter to link this node to your account"
 has "Enter without an installed token" "the install ends with linking this node to your account"
-tokl 1 0 "$etc/none.env" "nt-pasted"
-ok "a token pasted at the link question"; has "a token pasted at the link question" "token=nt-pasted link=0"
+tokl 1 0 "$etc/none.env" "$tpasted"
+ok "a token pasted at the link question"; has "a token pasted at the link question" "token=$tpasted link=0"
 tokl 0 1 "$etc/token.env" "nt-ignored"
 ok "--link"; has "--link" "token= link=1"; lacks "--link" "nt-ignored"
 tokl 0 0 "$etc/none.env" ""
@@ -472,7 +484,7 @@ fake_state=gone toka "$etc/token.env" "" "$stgw" "$stgw"
 ok "--anonymous, a deleted token"; has "--anonymous, a deleted token" "token= anonymous=1 keep=0 park=1"; has "--anonymous, a deleted token" "no longer knows"
 [[ "$(sort -u "$tmp/asked.log")" = "asked $stgw" ]] || fail "not asked of the token's own gateway: $(cat "$tmp/asked.log")"
 # token_state against a stand-in gateway: the token goes in the Authorization header of GET /v1/node/self only.
-eval "$(sed -n '/^token_state() {/,/^}/p' "$installer")"
+eval "$(sed -n '/^gateway_url_ok() {/,/^}/p;/^token_state() {/,/^}/p' "$installer")"
 cat > "$tmp/selfgw.py" <<'PY'
 import http.server, sys, json
 T = {"nt-n-0000000a.ok": (200, {"node_id": "n-0000000a", "anonymous": False, "state": "held"}),
@@ -506,6 +518,9 @@ kill "$SELFGW_PID" 2>/dev/null; wait "$SELFGW_PID" 2>/dev/null
 [[ ! -s "$tmp/leak.log" ]] || fail "token_state: $(cat "$tmp/leak.log")"
 sed -n '/^token_state() {/,/^}/p' "$installer" | grep 'curl' | grep -q -- '-H @-' || fail "token_state: the token is not read from stdin by curl"
 sed -n '/^token_state() {/,/^}/p' "$installer" | grep 'curl' | sed 's/.*| curl/curl/' | grep -q '\$1' && fail "token_state: the token is on curl's command line"
+# A token recorded for a ws:// gateway on another machine is never sent there: refused before any request.
+out="$( (curl() { echo "CURL $*"; }; die() { echo "$1" >&2; exit "${2:-1}"; }; token_state "$secret" ws://gw.example.org/v1/node/connect) 2>&1)"; code=$?
+usage_err "token_state, ws:// to another machine"; lacks "token_state, ws:// to another machine" "CURL"; has "token_state, ws:// to another machine" "not encrypted"
 unset -f token_state
 # Without --anonymous: a token not recorded for this gateway is never kept: Enter links instead, and
 # --keep-token stops before anything changes.
@@ -515,8 +530,8 @@ has "Enter, another gateway's token" "the install ends with linking"
 tok 0 1 "$tmp/norec.env" ""
 usage_err "--keep-token, a token without a record"; has "--keep-token, a token without a record" "issued by an unrecorded gateway"
 lacks "--keep-token, a token without a record" "moved aside" # refused before anything is decided
-tok 1 0 "$tmp/norec.env" "nt-pasted"
-ok "a pasted token over an unrecorded one"; has "a pasted token over an unrecorded one" "token=nt-pasted"
+tok 1 0 "$tmp/norec.env" "$tpasted"
+ok "a pasted token over an unrecorded one"; has "a pasted token over an unrecorded one" "token=$tpasted"
 # The token given (piped or pasted) is the installed one being moved aside: refused, never recorded as this
 # gateway's (code review 2026-11-24: an upgrade script piping the installed token over a gateway change).
 for f in prod norec; do
@@ -526,8 +541,26 @@ for f in prod norec; do
     [[ "$out" != *"token=$secret"* ]] || fail "the moved-aside token was taken ($f, tty $tty)"
   done
 done
+# Nor a whitespace variant of it (systemd drops trailing whitespace from the saved value; code review
+# 2026-11-24): the given token is trimmed (spaces, tabs, CR) before it is compared, and must be exactly the
+# issued form.
+for v in "$secret " "$secret"$'\r' $'\t'"$secret" " $secret  "; do
+  tok 0 0 "$tmp/prod.env" "$v"
+  usage_err "the moved-aside token with whitespace"; has "the moved-aside token with whitespace" "is never sent there"
+done
+# The same with whitespace on the installed side (a hand-edited token.env: systemd drops it too).
+printf 'AISATHOME_NODE_TOKEN=%s  \r\nAISATHOME_TOKEN_GATEWAY=wss://api.aisathome.org/v1/node/connect\n' "$secret" > "$tmp/prodws.env"
+tok 0 0 "$tmp/prodws.env" "$secret"
+usage_err "the moved-aside token, whitespace in token.env"; has "the moved-aside token, whitespace in token.env" "is never sent there"
+tok 0 0 "$etc/token.env" "$tnew"$'\r'
+ok "a pasted token with a CR"; has "a pasted token with a CR" "token=$tnew"; [[ "$out" != *$'\r'* ]] || fail "the CR stayed in the token"
+for bad in "nt-new" "$tnew x" "${tnew}A" "${tnew:0:-1}" "nt-n-0000000E.$(printf 'N%.0s' {1..43})" "pc-0123456789ab.x"; do
+  tok 0 0 "$etc/none.env" "$bad"
+  usage_err "a token not in the issued form"; has "a token not in the issued form" "is not a node token"
+  [[ "$out" != *"$bad"* ]] || fail "a refused token was printed"
+done
 # At the write too: the token written as this gateway's is never the one moved aside.
-n_guard="$(grep -n '^\[\[ -z "\$token" || -z "\$parked_token" || "\$token" != "\$parked_token" \]\] || die' "$installer" | cut -d: -f1)"
+n_guard="$(grep -n '^\[\[ -z "\$token" || -z "\$parked_token" || "\$(trim "\$token")" != "\$(trim "\$parked_token")" \]\] || die' "$installer" | cut -d: -f1)"
 n_write="$(grep -n "AISATHOME_TOKEN_GATEWAY=%s" "$installer" | cut -d: -f1)"
 [[ -n "$n_guard" && -n "$n_write" && $n_guard -lt $n_write ]] || fail "token.env is written without refusing the moved-aside token"
 grep -q "token_known\|/v1/node/token-known" "$installer" && fail "the installer still uses the token-known hash check"
@@ -772,7 +805,7 @@ grep -q 'conf_snap\|sha256sum)" ==' "$installer" && fail "a re-check snapshot is
 # (node.json only) or with token.env only: the decision block, as the installer runs it under set -euo
 # pipefail, reaches its end, and holds the writers' lock there (code review 2026-11-23: a snapshot of the
 # missing files stopped the install silently).
-eval "$(sed -n '/^take_lock() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
+eval "$(sed -n '/^take_lock() {/,/^}/p;/^trim() {/,/^}/p;/^gateway_url_ok() {/,/^}/p;/^read_token() {/,/^}/p' "$installer")"
 sed -n '/^# A supplied node.json is made canonical first/,/^# 1\. Unprivileged/p' "$installer" > "$tmp/decide.sh"
 grep -q '^take_lock$' "$tmp/decide.sh" || fail "the decision block has no take_lock"
 decide() { # decide <conf dir> <flags...> <<< stdin; sets out and code
@@ -793,8 +826,8 @@ for how in fresh nodejson-only tokenenv-only; do
   esac
   decide "$d" "link=1" <<<""
   ok "$how install, --link"; has "$how install, --link" "reached token= link=1"; has "$how install, --link" "lock held"
-  decide "$d" <<<"nt-piped"
-  ok "$how install, piped token"; has "$how install, piped token" "reached token=nt-piped"
+  decide "$d" <<<"$tpiped"
+  ok "$how install, piped token"; has "$how install, piped token" "reached token=$tpiped"
   decide "$d" "anonymous=1" <<<""
   ok "$how install, --anonymous"; has "$how install, --anonymous" "reached"
 done
@@ -808,6 +841,10 @@ grep -q '^trap on_exit EXIT$' "$installer" || fail "no EXIT trap on_exit"
 # unit stays off without a token (ConditionFileNotEmpty) instead of failing every few seconds.
 run -- --dry-run
 ok "dry run, account"; has "dry run, account" "account: at a terminal, Enter at the token question ends the install with linking this node to your account in the browser (aisathome-node link)"
+run -- --dry-run --anonymous --gateway-url ws://gw.example.org/v1/node/connect
+usage_err "dry run, a ws:// gateway on another machine"; has "dry run, a ws:// gateway on another machine" "ws:// only to this machine"
+run -- --dry-run --anonymous --gateway-url ws://127.0.0.1:8080/v1/node/connect
+ok "dry run, a ws:// gateway on this machine"
 run -- --dry-run --link
 ok "dry run, --link"; has "dry run, --link" "account: the install ends with linking this node to your account in the browser"
 run -- --dry-run --keep-token
