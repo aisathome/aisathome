@@ -3,7 +3,7 @@ title: Terms of use
 description: "Terms for using the AIs@home chat and API and for running a node: an experiment, not confidential, acceptable use, what node operators agree to."
 ---
 
-*Last changed: 2026-11-19.*
+*Last changed: 2026-11-24.*
 
 AIs@home is a volunteer-run, non-commercial experiment: open-weight AI models (currently
 Qwen3.8 27B) running on volunteers' GPUs instead of a big company's data centre. It is run
@@ -12,8 +12,9 @@ The software is open source (Apache-2.0): https://github.com/aisathome/aisathome
 no project token and nobody is paid.
 
 By using the chat (https://chat.aisathome.org), the API (https://aisathome.org/use/api/) or
-running a node, you accept these terms. You must be 18 or older. If you don't accept them,
-don't use the service.
+running a node, you accept these terms. You must be 18 or older. Starting a node without an account, by choosing
+it in the installer or on the node's setup page, is running a node too. If you don't accept them, don't use the
+service.
 
 ## 1. It is an experiment
 
@@ -64,12 +65,15 @@ Do not:
 - attack, overload, probe or disrupt the network, the gateway or anyone's node;
 - try to get at other users' data, prompts or answers, or to identify other users;
 - run automated mass use beyond your limits, or resell access;
+- send unsolicited bulk messages (spam), or build tools for it;
 - impersonate AIs@home or claim we endorse what you do with the output.
 
 ## 5. Node operators
 
-Running a node is voluntary and unpaid. You create node tokens on your account page, and
-you keep control of your own machine and power bill. Credit is recognition, not money,
+Running a node is voluntary and unpaid. You add a node on your account page, by linking it with the code it shows,
+or by starting it without an account. A node without an account does science work only, earns no credit, and is
+deleted 90 days after it last connected unless you link it to an account; credit starts when you link it. It never
+answers other people's chats. You keep control of your own machine and power bill. Credit is recognition, not money,
 and we may correct or remove credit, for example after abuse. As an operator you agree to:
 
 - **not tamper with answers:** run the model and settings we specify, return the model's
@@ -110,7 +114,8 @@ permanent ban: all your nodes are cut off at once, all your node tokens revoked,
 crunch for our BOINC project, your BOINC account closed. We publish a short note about every confirmed case. Where the
 law requires it, we report the incident to the data protection authority and tell the people affected.
 
-On suspicion we may hold a node or stop routing to it while we check.
+On suspicion we may hold a node or stop routing to it while we check. For a node without an account, we cut that node
+off and may stop accepting new nodes without an account for a while.
 
 ## 8. Suspension
 
