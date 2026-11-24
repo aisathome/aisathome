@@ -10,7 +10,7 @@ CI builds it so first. It is served here by a small static server. Every request
 (/data/prove2me/current.json) is answered by the test: a fixed document, an HTTP error, or the gateway's public records
 as they were on 2026-11-18 (site/tests/fixtures). Checked here: "Working on now" live from the data document or the
 trial campaigns not finished (a block each) and the tasks; each leaf's outlines and holes in words; the headline numbers, the submissions,
-the trials table, each trial's list from trial 6 on and every leaf live from the records (decision 0021, step D6), with
+the trials table, each trial's list from trial 6 on and every leaf live from the records, with
 tokens computed leading; a bench in the status block and in "Working on now", shown as a trial; the home page's line and the
 /science/ card; and the build's copy (the records at the build) when a source fails.
 
@@ -169,7 +169,7 @@ def _fix_doc(data, **kw):
     return _doc(data, trial=96, leaves=[dict(l) for l in FIX_LEAVES], **kw)
 
 
-# ---- "Working on now" (moved from the ops repo's staging tests, 2026-11-18: they need no staging)
+# ---- "Working on now" (moved here from the staging tests, 2026-11-18: they need no staging)
 
 def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, data):
     """With the data document and GET /v1/tasks, "Working on now" is theirs (data-source=live): the document's trial,
@@ -192,7 +192,7 @@ def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, dat
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t96]")
     expect(box).to_be_visible()
     expect(box.locator("[data-now-head]")).to_have_text("Trial 96, since 15 November 2026 · scaffold v7")
-    # the block states what is worked on: no description of the trial, no budget (owner, 2026-11-23)
+    # the block states what is worked on: no description of the trial, no budget
     expect(box.locator("[data-now-about], [data-now-budget]")).to_have_count(0)
     assert "no html" not in box.inner_text() and "Budget" not in box.inner_text()
     items = box.locator("li[data-current-leaf]")
@@ -224,7 +224,7 @@ def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, dat
     expect(hole.locator("td[data-computed]")).to_have_attribute("data-computed", str(300_000 + 20_000))
     total = (2_000_000 + 8_000_000 + 100_000) + (300_000 + 1_200_000 + 20_000)
     expect(x1.locator(".meta [data-tokens]")).to_have_attribute("data-tokens", str(total))
-    # tokens computed lead (decision 0021); with the cache re-reads beside them
+    # tokens computed lead; with the cache re-reads beside them
     expect(x1.locator(".meta [data-tokens]")).to_have_text("2.4M tokens computed so far (11.6M with cache re-reads)")
     x2 = box.locator("li[data-current-leaf=X02]")
     expect(x2).to_have_attribute("data-state", "running")
@@ -269,7 +269,7 @@ def test_working_on_now_follows_a_newer_document(pages, site, data):
     expect(li.locator(".p2m-outline[data-outline='1'] [data-outline-text]")).to_have_text("being written")
 
 
-# ---- a leaf's outlines in words (owner, 2026-11-15: the task table and its one-line count were hard to follow)
+# ---- a leaf's outlines in words (2026-11-15: the task table and its one-line count were hard to follow)
 
 # Trial 6's three leaves as they stood on 15 November 2026 (GET /v1/tasks and the data document of that day), moved to
 # the fixtures' trial 98 so that nothing of the build's trial merges in: N03 (p2m-dbd69f), whose outline 1 was refuted
@@ -512,7 +512,7 @@ def test_working_on_now_keeps_the_build_copy_when_a_source_fails(pages, site, da
 
 @pytest.mark.parametrize("width", (1280, 390))
 def test_working_on_now_shows_every_trial_not_finished(pages, site, records, width):
-    """Bug (owner, 2026-11-20): trial 10 was posted while trial 9 still ran, and "Working on now" showed trial 10 only.
+    """Bug: trial 10 was posted while trial 9 still ran, and "Working on now" showed trial 10 only.
     Every trial campaign not finished has its own block, oldest first, each with its head, its own text and budget and
     its leaves with their tasks; a leaf both trials list keeps its #leaf- anchor on its first row only. When trial 8
     ends, the next minute's refresh shows trial 9 alone. At 390 px nothing scrolls sideways."""
@@ -552,7 +552,7 @@ def test_working_on_now_shows_every_trial_not_finished(pages, site, records, wid
     expect(page.locator(f"[data-now-trial=t9] li#leaf-{leaf}")).to_have_count(1)
 
 
-# ---- the gateway's records: numbers, submissions, trials (decision 0021, step D6)
+# ---- the gateway's records: numbers, submissions, trials
 
 def _records_page(pages, records, doc=404, campaigns=None, results=None, width=None, path=PAGE, site=""):
     page = _page(pages, width=width, live=(doc, records["tasks"]),
@@ -635,7 +635,7 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
 
 
 def test_a_campaigns_text_is_plain_text(pages, site, records):
-    """The campaign's closing text (the owner's words) is plain text: paragraphs, nothing as markup or a link."""
+    """The campaign's closing text (the project's words) is plain text: paragraphs, nothing as markup or a link."""
     camps = json.loads(json.dumps(records["campaigns"]))
     for c in camps["campaigns"]:
         if c["id"] == "t7":
@@ -814,8 +814,8 @@ def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, si
             "As of the gateway’s records at the site’s last build, 18 Nov, 14:58 UTC. The page refreshes it every minute when it can reach the gateway.")
 
 
-# ---- a bench (owner, 2026-11-23: bench-v13 ran beside trial 10 and the page showed "0 running"; "a bench is just
-# another form of a trial")
+# ---- a bench (2026-11-23: bench-v13 ran beside trial 10 and the page showed "0 running"; a bench is shown as
+# a trial is)
 
 def _with_bench(records):
     """The records with a bench as the gateway served bench-v13 on 2026-11-23 (label trial=bench-v13, scaffold v13, no

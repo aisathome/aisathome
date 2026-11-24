@@ -466,7 +466,7 @@ printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=wss://api.aisathome.org
 toka "$etc/token.env" "" "$stgw" "$stgw"
 ok "--anonymous, a token recorded for this gateway"; has "--anonymous, a token recorded for this gateway" "token=$secret anonymous=0 keep=1 park=0"
 has "--anonymous, a token recorded for this gateway" "linked to an account on $stgw: it keeps its token"
-toka "$tmp/prod.env" "" "$stgw" "$stgw" # the owner's machine: a prod token beside a node.json naming staging
+toka "$tmp/prod.env" "" "$stgw" "$stgw" # as seen on a real machine: a prod token beside a node.json naming staging
 ok "--anonymous, a token recorded for another gateway"; has "--anonymous, a token recorded for another gateway" "token= anonymous=1 keep=0 park=1"
 has "--anonymous, a token recorded for another gateway" "issued by wss://api.aisathome.org/v1/node/connect, not $stgw: it is moved aside"
 [[ "${out%token=*}" != *"$secret"* ]] || fail "the token was printed (--anonymous, another gateway's)"
@@ -580,7 +580,7 @@ printf '{"node_id": "box-1", "gateway_url": "%s", "Gateway_URL": "wss://other.ex
 out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run 2>&1)"; code=$?
 [[ $code -ne 0 ]] || fail "an installed node.json with case-variant keys was read"; has "installed node.json, case variants" "appears more than once"
 cp "$tmp/node.json.keep" "$etc/node.json"
-# The owner's machine (2026-11-23): installed node.json names the one-liner's gateway, token.env holds a prod
+# A machine seen on 2026-11-23: installed node.json names the one-liner's gateway, token.env holds a prod
 # token. The dry run and the real run agree: the dry run says a token is kept only if recorded for this
 # gateway, and the real run moves this one aside and registers, never refuses.
 out="$(env -i PATH="$PATH" bash "$tmp/install-conf.sh" --dry-run --anonymous --gateway-url "$stgw" 2>&1)"; code=$?
@@ -659,7 +659,7 @@ aside_dir "$aside" "$oldgw"; token_aside=0
   fail "set aside: the node is not stopped after the token went aside: $(cat "$tmp/systemctl.log")"
 park_token=0; : > "$tmp/systemctl.log"; aside_dir "$aside" "$oldgw"; set_aside_before_link "$aside" "$tmp/same.json" 2>/dev/null
 [[ ! -s "$tmp/systemctl.log" ]] || fail "same gateway: the node was stopped"
-# Same gateway in node.json, but a token not recorded for it (the owner's machine): moved aside and the node
+# Same gateway in node.json, but a token not recorded for it (as on that machine): moved aside and the node
 # stopped, before the new node.json.
 : > "$tmp/systemctl.log"; aside_dir "$aside" "$oldgw"; echo active > "$tmp/node.state"; park_token=1
 set_aside_before_link "$aside" "$tmp/same.json" 2>"$tmp/aside.err"
@@ -750,8 +750,8 @@ sys.exit(1 if bad else 0)
 PY
 
 # canon_node_config: node.json once, as the agent reads it: keys in lower case, no token, and two keys that
-# are equal in any case refused (a first-wins and a last-wins reader would see different gateways; Codex
-# review 2026-11-22). The keep-token check reads the canonical file, and that file is what is installed.
+# are equal in any case refused (a first-wins and a last-wins reader would see different gateways; found
+# in review 2026-11-22). The keep-token check reads the canonical file, and that file is what is installed.
 eval "$(sed -n '/^canon_node_config() {/,/^}/p;/^installed_value() {/,/^}/p' "$installer")"
 die() { echo "$1" >&2; exit "${2:-1}"; }
 canon() { out="$( (canon_node_config "$1" "$tmp/canon.json") 2>&1)"; code=$?; }

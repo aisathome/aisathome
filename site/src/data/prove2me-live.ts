@@ -1,6 +1,6 @@
 // "Working on now" on the prove2me page (2026-11-13: the page lagged behind the trial): a trial's tasks turned
-// into the leaves the page lists, each with a table of its tasks (2026-11-14: "I also want insights into the
-// tasks"). The build renders the committed JSON's list with the same code; in the browser the tasks come from the
+// into the leaves the page lists, each with a table of its tasks (2026-11-14: insight into the
+// tasks). The build renders the committed JSON's list with the same code; in the browser the tasks come from the
 // gateway's GET /v1/tasks, read into the QueueTask shape below (prove2me-current.ts). No data here, so the browser's
 // bundle stays small.
 //

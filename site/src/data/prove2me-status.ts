@@ -6,7 +6,7 @@
 //    open tasks and no campaign yet): its tasks by state (proved, ended otherwise, stopped, running, waiting) and, for a
 //    trial, its leaves proved (a run that proved its leaf, as the trials table counts it), from the campaigns and tasks;
 //  - a bench (a task label bench-<name>, e.g. bench-v13; no campaign) is shown as a trial is while it has open tasks:
-//    a part of the queue, a line, named "Bench v13" (owner, 2026-11-23: "a bench is just another form of a trial"). It
+//    a part of the queue, a line, named "Bench v13" (since 2026-11-23: a bench is shown as a trial is). It
 //    replays leaves of earlier trials, so its runs count in no proof, leaf or submission number;
 //  - the numbers: the network's nodes online and GPU slots busy (GET /v1/stats `nodes`: the whole network, not only
 //    prove2me) and the proofs submitted and accepted (GET /v1/projects/prove2me/results).
