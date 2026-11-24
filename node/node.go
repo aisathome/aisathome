@@ -412,7 +412,12 @@ func (a *Agent) session(ctx context.Context) error {
 	// between, that accepts the connection and then says nothing must not hold the node.
 	hctx, hcancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer hcancel()
-	c, resp, err := websocket.Dial(hctx, a.cfg.GatewayURL, &websocket.DialOptions{HTTPHeader: h})
+	// The token goes only to the configured address: never in plain text across a network, and never on
+	// through a redirect (TokenClient).
+	if err := CheckGatewayURL(a.cfg.GatewayURL); err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	c, resp, err := websocket.Dial(hctx, a.cfg.GatewayURL, &websocket.DialOptions{HTTPHeader: h, HTTPClient: TokenClient(0)})
 	if err != nil {
 		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 			// The gateway answered but refused the token: say so on the local page (setup).
