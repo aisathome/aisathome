@@ -34,10 +34,15 @@ release has no bundle yet, use [build it yourself](#build-it-yourself).
 sudo ./install.sh
 ```
 
-Paste the node token when asked (input is hidden). On a machine you reach over SSH, you can
-also put the token in a file and pipe it in: `cat token.txt | sudo ./install.sh`, then
-delete the file. A token from your account page carries the node's id; if we gave you a node
-id with your token, add `--node-id <id>`.
+When it asks for a node token, press **Enter**: the install then ends by linking the node to your
+account (step 3). Add `--link` to skip the question.
+
+**Without an account (science only):** `sudo ./install.sh --anonymous` registers the node with no
+sign-in instead of step 3. It does science work only, never people's chats, and earns no credit
+until you link it (`sudo aisathome-node link`). You must be 18 or older; running it means you
+accept the [terms](/about/terms/). The one-liner `curl -fsSL https://aisathome.org/node.sh | sh`
+does steps 1 and 2 this way and asks before it installs. The node first answers a few test prompts
+and gets work once they pass ([more](/node/#without-an-account-science-only)).
 
 The installer then:
 
@@ -66,7 +71,36 @@ for 24 GB and more), then install with `--model ~/models/<file>` as it prints, f
 `--model ~/models/Qwen3.8-27B-UD-Q3_K_XL.gguf` (the file is moved). `--model` takes only the
 exact file of the card's tier; the other tier's file is refused with a message.
 
-### 3. Check
+### 3. Link it to your account
+
+The installer's last step prints a link and a code:
+
+```
+Link this node to your AIs@home account:
+
+  1. Open this link in your browser:
+
+       https://aisathome.org/link?code=KXQT-4821
+  ...
+```
+
+Open the link in your browser (on a server without a screen, any other device works), sign in, check that
+the page shows the same code and approve. The node gets its own node token, which the installer
+keeps in `/etc/aisathome-node/token.env` (readable by root only), and starts. Approving creates the
+node on your account like **Add a node** does, and running it means you accept the
+[operator terms (§6)](/about/terms/#6-requests-your-node-answers). The code works for 10 minutes;
+if it runs out, the node stays off and `sudo aisathome-node link` starts a new link (it also links
+the node to another account later). Then press **This is my machine** on the node under **Your
+nodes** on your account page: until then it is not one of your own nodes and gets none of your
+personal data.
+
+**Advanced: paste a node token.** Create a node on [your account page](/account) (**Add a node**)
+and paste its token at the installer's question (input is hidden). On a machine you reach over
+SSH you can put the token in a file and pipe it in: `cat token.txt | sudo ./install.sh`, then
+delete the file. A token from your account page carries the node's id; if we gave you a node id
+with your token, add `--node-id <id>`.
+
+### 4. Check
 
 ```bash
 aisathome-node status
@@ -135,7 +169,8 @@ sudo ./node/packaging/linux/install.sh --llama-build ../llama.cpp/build \
 ```
 
 As with the bundle, the installer picks the tier, downloads and checks the model, writes
-`node.json`, asks for the token and runs the speed test. To use the model file you already
+`node.json`, runs the speed test and ends by linking the node to your account (or takes a pasted
+token). To use the model file you already
 downloaded, add `--model <file.gguf>` (it must be the pinned file, and it is **moved** to
 `/var/lib/aisathome-node/models/model.gguf`). To write `node.json` yourself,
 pass `--node-config node.json`:
@@ -149,7 +184,7 @@ pass `--node-config node.json`:
 }
 ```
 
-Don’t put the token in the file: the installer asks for it. Keep `name`, `slots` and `ctx` as
+Don’t put the token in the file: the installer links the node, or asks for a token. Keep `name`, `slots` and `ctx` as
 the installer would write them for your tier (`--dry-run` prints them): this is the big tier;
 on a 16 GB card the name is `qwen3.8-27b-q3` and `ctx` is 81920. Add `--dry-run` to see the
 `llama-server` command without installing.

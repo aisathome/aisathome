@@ -20,7 +20,8 @@ node's own page walks you through the rest.
   [nvidia.com/drivers](https://www.nvidia.com/drivers) or the NVIDIA app.
 - About 17 GB free on the system drive for the model (13.1 or 14.3 GB, by tier), which goes
   into `%ProgramData%\AIsAtHome`.
-- A node token from [your account page](/account) (**Add a node**).
+- An account: sign in on [your account page](/account) with GitHub, Google or email. The setup
+  links the node to it in your browser. Without one, the node does science only (below).
 
 ## 1. Download and run the installer
 
@@ -46,11 +47,27 @@ The page is `http://127.0.0.1:7381/`, on your PC only; the tray and the Start-me
    its SHA-256.
 3. **The speed test:** the card must write at least **20 tokens/s** after a 32,000-token
    prompt. Stop BOINC GPU tasks, games and overclocking tools while it runs.
-4. **The node token:** create a node on [your account page](https://aisathome.org/account) and
-   paste its token. Creating and running the node means you accept the
-   [operator terms (§6)](/about/terms/#6-requests-your-node-answers). The gateway is aisathome.org; **Other gateway** is only for testing.
+4. **Your account:** **Link to my account** opens the approval page in your browser with the
+   code filled in, and the setup page shows the code too. Sign in, check that both show the same
+   code and approve. Approving
+   creates the node on your account, and running it means you accept the
+   [operator terms (§6)](/about/terms/#6-requests-your-node-answers). The code works for 10
+   minutes. **Other gateway** is only for testing.
 
-The node then starts and connects. **Your nodes** on the account page shows it.
+The node then starts and connects. **Your nodes** on the account page shows it: press **This is my
+machine** on it there. Until then it is not one of your own nodes and gets none of your personal data.
+
+**Without an account (science only).** In step 4, tick that you are 18 or older and accept the
+[terms](/about/terms/), then press **Start without an account (science only)**. The node does
+science work only, never people's chats, and earns no credit until you link it to an account
+(**Link to my account** on the setup page; credit starts then). It first answers a few test prompts and
+gets work once they pass; its page shows where it stands.
+
+**Advanced: paste a node token.** Create a node on [your account page](/account) (**Add a node**)
+and paste its token under **Advanced: paste a node token** in step 4. Once the node runs, its page
+offers **Link to another account**, and a token under **Advanced: use another node token**.
+In PowerShell as administrator, `& "$env:ProgramFiles\AIsAtHome\aisathome-node.exe" link` links
+it from the terminal.
 
 ## The tray icon
 

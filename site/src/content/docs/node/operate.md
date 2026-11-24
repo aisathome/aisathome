@@ -12,7 +12,7 @@ description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home n
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Check the engine computes correctly | `aisathome-node modelcheck`: see [Model check](#model-check) |
 | Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` |
-| Update | `sudo ./install.sh --keep-token` from the new release's bundle: see [Update your node](/node/update/) |
+| Update | `sudo ./install.sh` from the new release's bundle (a node installed before v0.6.0 is linked again; a later one keeps its token, also with `--keep-token`): see [Update your node](/node/update/) |
 | Remove | `sudo ./uninstall.sh` in the unpacked bundle, so keep that directory (keeps the model; `--purge` removes it and the `aisathome` user too). From a source checkout: `sudo ./node/packaging/linux/uninstall.sh` |
 
 ## Local UI
