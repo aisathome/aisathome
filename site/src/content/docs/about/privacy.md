@@ -3,7 +3,7 @@ title: Privacy
 description: Who handles your data on AIs@home and its BOINC project, and what a volunteer's GPU can see.
 ---
 
-*Last changed: 2026-11-20.*
+*Last changed: 2026-11-24.*
 
 AIs@home is an experiment: open-weight AI running on volunteers' GPUs instead of a big company's data centre. This page
 covers the chat (chat.aisathome.org), the API, the website, running a node, and our BOINC project
@@ -99,6 +99,16 @@ attack from a false alarm. It is the node's text, but it can quote something fro
 **If you run a node:** your node tokens (as a hash), the names you give your nodes, what they served and the credit they
 earn; whether you have accepted the operator terms, and when.
 
+**If you link a node with a code:** while the code is waiting (at most 10 minutes), the gateway holds in memory what the
+node reported: the name you gave it, its GPU and graphics memory, operating system and node version, so the approval page
+can show you what you are approving. When you approve, the node and its name are stored as for any node; the rest is
+dropped. A linked node is not treated as your own (for example for personal data) until you confirm on your account
+page that it is your machine; we record when you did.
+
+**If you run a node without an account:** its node token (as a hash), a random node id, when it was registered and last
+connected, what it served (as for any node), holds and model-check results. No name, email address or account. Your IP
+address is used in memory to limit registrations and nodes per address, and is not stored.
+
 **Your username, if you set one, is public**, together with your credit: on the [leaderboard](/network/) and in our
 statistics files in BOINC's format, which other sites can copy. Without a username you appear in totals only.
 
@@ -170,6 +180,7 @@ invitation-only, the error log also records the email address of each new accoun
 |---|---|
 | Chat and API: passing your messages to a node, saved chats | (b) contract: it is the service you ask for |
 | Account, API keys, node tokens, usage limits and credit | (b) contract; (f) legitimate interest in preventing abuse |
+| Node without an account (token hash, node id, times, holds, model-check results) | (b) the terms accepted when the node is started; (f) legitimate interest in preventing abuse |
 | Opt-in email about changes and outages | (a) your consent, which you can withdraw at any time |
 | BOINC account, computers, tasks and IP addresses on the BOINC server | (b) contract: taking part in the project |
 | BOINC statistics exports with CPIDs | (f) legitimate interest: credit counted across projects, as BOINC volunteers expect |
@@ -213,6 +224,8 @@ A hold is temporary. Bans, of users or of node operators, are decided by a perso
 | Temporary chats | not stored |
 | Saved chats | until you delete them or your account |
 | Account, choices, usage and pilot records | as long as your account exists |
+| A code to link a node, and what the node reported with it | at most 10 minutes, in memory |
+| Node without an account | deleted 24 hours after it was started if it never connected, 24 hours after a hold, otherwise 90 days after it last connected, or at once when you link it to an account |
 | Opt-in email address | until you turn it off, we ban the account, or you delete it |
 | Server process logs (gateway) | 14 days, no message text, no IP addresses |
 | BOINC account, computers and forum posts | until you delete your account |
@@ -243,6 +256,9 @@ compute for them. We answer within one month.
 your API keys and node tokens, your usage and pilot records, your email address if you gave one, and your BOINC account,
 within one month. Backups age out within 7 days. We cannot delete copies that statistics sites took of the public BOINC
 files, or anything a node operator kept in breach of our terms.
+
+**A node without an account.** Show that it is yours by sending its node token to contact@aisathome.org, and we delete
+it. The node's own setup page shows where the token is.
 
 **Complaints.** You can complain to the Norwegian Data Protection Authority, Datatilsynet (datatilsynet.no), or to the
 authority where you live. We'd like to hear from you first.
