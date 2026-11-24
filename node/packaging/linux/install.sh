@@ -290,14 +290,31 @@ PY
 )" || die "node config $1: $err" 2
 }
 
+# gateway_url_ok <url>: a gateway address a node token may go to, as the agent rules (node.CheckGatewayURL):
+# wss://, or ws:// only to this machine (localhost, 127.x.x.x), where nothing crosses a network.
+gateway_url_ok() {
+  local h
+  [[ "$1" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] || return 1
+  [[ $1 != wss://* ]] || return 0
+  h="${1#ws://}"; h="${h%%/*}"; h="${h%%:*}"
+  [[ $h == localhost || $h =~ ^127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]
+}
+
+# trim <string>: without leading and trailing whitespace (spaces, tabs, CR), as systemd reads a value.
+trim() {
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  printf '%s' "${v%"${v##*[![:space:]]}"}"
+}
+
 # pick_gateway_url <installed>: --gateway-url, else the installed node.json's, else the
 # network's gateway.
 pick_gateway_url() {
   local from="--gateway-url"
   if [[ -z "$gateway_url" && -n "$1" ]]; then gateway_url="$1" from="the installed gateway_url"; fi
   gateway_url="${gateway_url:-wss://api.aisathome.org/v1/node/connect}"
-  [[ "$gateway_url" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] ||
-    die "$from '$gateway_url' must look like wss://host/v1/node/connect (pass --gateway-url)" 2
+  gateway_url_ok "$gateway_url" ||
+    die "$from '$gateway_url' must look like wss://host/v1/node/connect (ws:// only to this machine; pass --gateway-url)" 2
 }
 
 # node.json is written by the installer unless --node-config is given. A rerun keeps the
@@ -900,8 +917,8 @@ read_token() {
   [[ ! -r "$1" ]] || env="$(cat "$1")"
   while IFS= read -r line; do
     case $line in
-      AISATHOME_NODE_TOKEN=*) [[ -n $old ]] || old="${line#AISATHOME_NODE_TOKEN=}" ;;
-      AISATHOME_TOKEN_GATEWAY=*) [[ -n $rec ]] || rec="${line#AISATHOME_TOKEN_GATEWAY=}" ;;
+      AISATHOME_NODE_TOKEN=*) [[ -n $old ]] || old="$(trim "${line#AISATHOME_NODE_TOKEN=}")" ;;
+      AISATHOME_TOKEN_GATEWAY=*) [[ -n $rec ]] || rec="$(trim "${line#AISATHOME_TOKEN_GATEWAY=}")" ;;
     esac
   done <<<"$env"
   if [[ -n "$old" && "$rec" != "$gateway_url" ]]; then
@@ -937,6 +954,12 @@ read_token() {
   fi
   token=""
   IFS= read -rs token || true
+  # Whitespace around it (a trailing space, a CR) goes, as systemd drops it from the saved value; what is
+  # left must be exactly the form the gateway issues (the agent's rule, node.IssuedAnyTokenNodeID), so no
+  # variant of another token can pass the checks below.
+  token="$(trim "$token")"
+  [[ -z "$token" || "$token" =~ ^nt-[na]-[0-9a-f]{8}\.[A-Za-z0-9_-]{43}$ ]] ||
+    die "the token given is not a node token (nt-n-… or nt-a-… as the account page gives it; not shown here)" 2
   if [[ -z "$token" && -n "$old" ]] && interactive; then
     token="$old"; echo "token: keeping the installed one" >&2; return 0
   fi
@@ -957,6 +980,7 @@ read_token() {
 # stdin, never on a command line.
 token_state() {
   local base out code
+  gateway_url_ok "$2" || die "not asking $2 about the installed token: it is not encrypted (ws:// only to this machine)" 2
   base="${2/#wss:/https:}"; base="${base/#ws:/http:}"; base="${base%%/v1/*}"
   out="$(printf 'Authorization: Bearer %s\n' "$1" | curl -s --max-time 20 --proto '=https,http' -H @- -w '\n%{http_code}' "$base/v1/node/self" || true)"
   code="${out##*$'\n'}"
@@ -1139,8 +1163,8 @@ fi
 if [[ -n "$node_config" ]]; then
   workdir; canon_node_config "$node_config" "$work/node.canon.json"; node_config="$work/node.canon.json"
   gateway_url="$(installed_value "$node_config" gateway_url)"
-  [[ "$gateway_url" =~ ^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$ ]] ||
-    die "--node-config: its gateway_url '$gateway_url' must look like wss://host/v1/node/connect" 2
+  gateway_url_ok "$gateway_url" ||
+    die "--node-config: its gateway_url '$gateway_url' must look like wss://host/v1/node/connect (ws:// only to this machine)" 2
 fi
 take_lock
 read_token "$conf/token.env"
@@ -1201,7 +1225,7 @@ install -o root -g aisathome -m 0640 "$node_config" /etc/aisathome-node/node.jso
 # A token is written with the gateway that issued it (this install's): the agent never sends it elsewhere.
 # Only a token kept with its own record, or a different one given for this gateway, gets here; the one moved
 # aside never does.
-[[ -z "$token" || -z "$parked_token" || "$token" != "$parked_token" ]] || die "not writing the moved-aside token as $gateway_url's" 2
+[[ -z "$token" || -z "$parked_token" || "$(trim "$token")" != "$(trim "$parked_token")" ]] || die "not writing the moved-aside token as $gateway_url's" 2
 if [[ -n "$token" ]]; then
   umask 077; printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=%s\n' "$token" "$gateway_url" > /etc/aisathome-node/token.env; umask 022
 fi
