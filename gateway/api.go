@@ -401,7 +401,8 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	}
 	req := &chatReq{user: c.acct.User, who: c.userKey, charge: c.charge, self: rt.self, want: want,
 		clientStream: clientStream, logprobs: wantsLogprobs(body), body: body, red: red, conv: conv,
-		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project, task: c.task, discarded: discarded}
+		servedBy: g.servedBy(c.info, c.accountID), class: c.class, project: rt.project, task: c.task, discarded: discarded,
+		unattended: c.class == ClassScience || c.info.Unattended}
 	return &chatJob{req: req, rt: rt, reqText: reqText, queueWait: queueWait}, true
 }
 
@@ -444,12 +445,13 @@ func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJ
 		}
 		rt.exclude[n] = true
 		// Answers from every node but the requester's own are checked (guard.go); a pilot's even for
-		// its own account. An account's node is only flagged (guard.flagOnly).
+		// its own account. An account's node is only flagged (guard.flagOnly), unless no person
+		// approves the requester's tool calls (a project's or an unattended key).
 		var gd *guard
 		if !rt.own(n) {
 			gd = newGuard(job.reqText, g.knownSrc)
 			gd.installers = g.installs
-			gd.flagOnly = flagOnlyNode(n)
+			gd.flagOnly = flagOnlyNode(n) && !req.unattended
 		}
 		started, err := g.run(w, r, req, n, model, gd)
 		if errors.Is(err, errPreempted) && !started {

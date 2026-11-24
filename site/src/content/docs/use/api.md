@@ -45,7 +45,22 @@ Add a provider to `~/.config/opencode/opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "permission": { "bash": "ask", "edit": "ask" },
+  "permission": {
+    "bash": "ask",
+    "edit": "ask",
+    "external_directory": "ask",
+    "webfetch": "ask",
+    "websearch": "ask",
+    "read": {
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.netrc": "deny",
+      "*.git-credentials": "deny",
+      "~/.ssh/*": "deny",
+      "~/.aws/*": "deny",
+      "~/.config/*": "deny"
+    }
+  },
   "provider": {
     "aisathome": {
       "npm": "@ai-sdk/openai-compatible",
@@ -75,7 +90,10 @@ curl -s https://api.aisathome.org/v1/models -H "Authorization: Bearer $AISATHOME
 
 Then `export AISATHOME_API_KEY=ak-...` and run `opencode -m aisathome/agent`. Tool calls
 (reading and editing files, running commands) work. `"permission"` makes opencode ask before
-each command and file edit: keep it (see below).
+each command, file edit, web fetch or search and any access outside the project, and never
+read `.env` files or the credential files listed: keep it (see below), and never run the agent
+with `--auto`. This is the format of `opencode` 1.x; opencode2 takes the same rules as a
+`"permissions"` list ([permissions](https://opencode.ai/docs/permissions)).
 
 ## Good to know
 

@@ -109,7 +109,8 @@ gateway; [gateway.md](gateway.md) is how to run another.
    credential files, upload files, or name web addresses the request never mentioned), and
    streams the answer to the client in OpenAI's format. A node that fails before sending output
    is retried once on another node. From an account's node a flagged answer is only logged, with
-   its evidence: the guard cannot tell an honest model reading a credential file from an attack, and
+   its evidence (unless no person approves the requester's tool calls: a project's or an
+   unattended key): the guard cannot tell an honest model reading a credential file from an attack, and
    the client's own command approval is the defence. From a node without an account, a config
    token's node or a pilot, a flagged answer is never released nor sent to another node, and the
    node is held until an operator looks at it.

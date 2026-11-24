@@ -46,6 +46,10 @@ type KeyInfo struct {
 	// served them. Ignored for forward_users keys and never carried over to end users. Among
 	// accounts' keys only those of admin accounts get the headers (Gateway.servedBy).
 	ServedBy bool `json:"served_by,omitempty"`
+	// Unattended marks a client that runs tool calls without a person approving each one (a
+	// runner with opencode --auto): answers to it keep the guards' stop and hold on every node,
+	// an account's too (guard.flagOnly). A project's key is always unattended.
+	Unattended bool `json:"unattended,omitempty"`
 	// Project is set for a project's key (project.go); never read from a file.
 	Project string `json:"-"`
 }
