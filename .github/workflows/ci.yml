@@ -155,7 +155,7 @@ jobs:
       - name: Playwright and Chromium
         run: |
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install -q -r e2e/browser/requirements.txt
+          "$RUNNER_TEMP/venv/bin/pip" install -q --require-hashes -r e2e/browser/requirements.txt
           "$RUNNER_TEMP/venv/bin/python" -m playwright install --only-shell chromium
       - name: build the website (site/dist, for the site's browser tests)
         # the same Node image as the site job; from the tests' fixed records, not the live gateway's

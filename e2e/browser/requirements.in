@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# The browser tests' direct dependencies. requirements.txt pins them and everything they pull in,
+# by version and SHA-256 (pip --require-hashes); regenerate it after a change here with
+#   uv pip compile --universal --python-version 3.12 --generate-hashes requirements.in -o requirements.txt
+playwright==1.55.0
+pytest==8.4.2
