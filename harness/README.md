@@ -56,8 +56,16 @@ an AIs@home gateway. Node operators do not need it.
 - **The Lean kit** (`lean/`): a toolchain description for host builds and sandboxes, Lake package sets
   shared between tasks with hard links, a Lean lexer for the text checks (comments, strings, raw strings,
   char literals, `«»` names, interpolation), a check for `sorry`/`admit`/`native_decide` in the code a diff
-  adds, a scan for constructs a proof must not use, a Lean command that checks a theorem's type and
-  axioms, and a generic proof playbook.
+  adds, a scan for constructs a proof must not use, an allow-list for a proof file (`lean.proofscan`:
+  declarations only, no attribute, syntax extension, instance or code run while it compiles), a Lean
+  command that checks a theorem's type and axioms, a kernel replay of a compiled proof against a target
+  compiled without it (`lean.replay`), and a generic proof playbook.
+- **Builds of untrusted text in a jail** (`sandbox/jail.py`): Lean runs code while it elaborates a file
+  (an elaborator, macro or initialiser the file registers itself), so a project's own build or check of a
+  model's text runs in a throwaway container: no network, read-only root with a tmpfs at /tmp, every
+  capability dropped, a uid that is neither root nor the invoking user, CPU, memory, process and
+  file-size limits, no inherited environment, only the mounts the caller lists.
+  `LeanToolchain.jail(image, workspace)` sets one up for Lake (elan and the package farm read-only).
 - **The project contract** (`project.py`): a project is an adapter (select, workspace, prepare, session,
   check, feedback, submit) plus a `PROJECT.md` whose status block says `active`, `paused`, `local-only`
   or `ended`. `submit` refuses unless the status is `active` **and** a maintainers' agreement is recorded.

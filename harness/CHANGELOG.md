@@ -16,6 +16,28 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ### Security
 
+- A project's builds and checks of a model's text can run in a throwaway container (`sandbox.jail`,
+  `LeanToolchain.jail`): no network, read-only root with a tmpfs at /tmp, every capability dropped, a uid
+  that is neither root nor the invoking user, CPU, memory, process and file-size limits, no inherited
+  environment, elan and the package farm read-only. Lean runs code while it elaborates a file, so a
+  host-side `lake build` of a model's file ran whatever elaborator or initialiser the file registered,
+  as the host's user and with its network. `open_build_dirs` opens only a workspace's `.lake` to the
+  jail's uid; `pkgsets.make_readable` makes a package set (Mathlib's cache unpacks files mode 600)
+  readable for it.
+- An allow-list for a proof file (`lean.proofscan.refusals`): only imports from allowed roots at the top,
+  `open`/`namespace`/`section`/`end`/`universe`/`variable`/`set_option` (allowed options only) and
+  `theorem`/`lemma`/`def`/`abbrev`/`example` declarations at column 0; no attribute, syntax extension
+  (`syntax`, `notation`, `macro`, `elab`, ...), instance or new type, `#` command, `run_tac`, `by_elab`,
+  `initialize`, simproc, syntax quotation, `unsafe`/`partial`/`opaque`/`implemented_by`/`extern`, or name
+  under `Lean`, `IO` or `System`, anywhere. Lines the task gives (its preamble) stay allowed.
+  `axioms.scan`'s denylist also refuses elaborators registered through an attribute (`@[command_elab]`,
+  `@[term_elab]`, `@[tactic]`, `@[init]`, ...), `by_elab`, simprocs and `decide +native`.
+- A kernel replay of a compiled proof (`lean.replay`): a small Lean program reads the proof's .olean as
+  data, sends every constant to the kernel in an environment of the proof's imports and a target module
+  compiled before and without the proof (no initialiser runs, no extension loads), and compares the
+  proof's theorem with the compiled target constant (`==`, else the kernel's definitional equality).
+  A check file that imports the proof and restates the target there lets an instance or notation the
+  proof exports change what the target says, and lets the proof's initialisers print a verdict.
 - The egress forwarder adds the endpoint's key only to the model calls: `POST <base>/chat/completions` and
   `GET <base>/models`, the exact path. Every other path under the base path, and every other method, is
   refused (403) before the endpoint is contacted. Before, any path under the base path got the key, so code
