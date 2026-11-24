@@ -7,6 +7,17 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+## [v0.6.0] — 2026-11-24
+
+Link a node to your account without pasting a token: the node shows a link and a code, and you
+approve it in your browser. Or run a node without an account, for science only, with one command.
+Also a one-click Windows download that always gets the newest installer, a model check for your own
+engine (`aisathome-node modelcheck`), speculative decoding on 24 GB cards (off unless you turn it on)
+and llama.cpp b12342. A node token now works only with the gateway that issued it, so a node
+installed before this release is linked again on its update. On the gateway: every node is untrusted
+(personal data goes only to your own node), creating a node accepts the operator terms, and on
+account nodes the guard only logs what it would have stopped.
+
 ### Added
 
 - **Run a node without an account (science only).** `sudo ./install.sh --anonymous` (and the
@@ -15,7 +26,9 @@ and **(site)** are live on aisathome.org once deployed.
   **Start without an account (science only)** button, or `aisathome-node register -accept-terms`
   register the machine with no sign-in. Such a node serves science work only, never people's chats;
   it first answers a few test prompts (the model check, from a separate admission set) and gets work only
-  once it passed 3 checks; a failed check before then holds it, and a held one is deleted a day later. It earns no credit: credit starts once it is linked to an
+  once it passed 3 checks; a failed check before then holds it. A held one says why and what to do
+  (reinstall with the latest version) on its local page and in `aisathome-node status`, and is
+  deleted 24 hours after the hold. It earns no credit: credit starts once it is linked to an
   account with `aisathome-node link` (which moves it to the account with a new token). Its local page
   shows where it stands. Limits: 3 registrations per address a day (counted in memory only), a pool
   of 25 apart from account nodes, 2 connected per address; one that never connects is deleted after a
@@ -80,65 +93,6 @@ and **(site)** are live on aisathome.org once deployed.
   a pseudonym, so it needs `-config` with `usage_log` and `accounts.session_secret`; records from
   before a change of the secret, and those of keys, science projects and front-end users without
   an account, are not counted. "-" with a footer line saying why when there is no log. (gateway)
-
-### Changed
-
-- **A node token is kept only with the gateway that issued it.** Every token written (the installer,
-  `aisathome-node link` and `register`, the Windows setup page) now comes with that gateway:
-  `AISATHOME_TOKEN_GATEWAY` in `token.env`, or `token_gateway` beside a token in `node.json`. The node
-  refuses to start when that record is missing or names another gateway than its `node.json`, and the installer moves an
-  installed token without one, or another gateway's, aside (`token.env.unlinked`) and never keeps or sends
-  it: link the node again (`sudo aisathome-node link`) or reinstall. A `node.json` with two keys that are
-  equal in any case (`gateway_url` and `Gateway_URL`) is refused everywhere; the installer, `link`,
-  `register` and the setup page take one lock (`node.lock` beside `node.json`) while they change these
-  files. The gateway's `POST /v1/node/token-known` is gone (nothing asks it any more). (node, gateway)
-
-- **The guard only logs on account nodes (gateway).** On a node with an account, the command,
-  credential, install and address rules no longer stop the answer or hold the node: the answer
-  goes out, and the event is logged with its evidence as flagged. The guard cannot tell an honest
-  model reading a credential file from an attack, and stopping such answers could hold every node
-  of the network on one agent's retries. Run agents with command approval, preferably isolated
-  (site: API and opencode). Nodes without an account, config tokens' nodes and pilots still stop
-  and hold, and so does every node for a project's key or a key marked `"unattended": true` (a
-  client that runs tool calls without a person approving them).
-
-- **No more trusted nodes: every node is untrusted.** Personal data in a request (an email address,
-  a card number, an IBAN, a Norwegian national identity number) goes only to the requester's own
-  node; with none online the request is refused at once (400, `"code": "personal_data"`, "This looks
-  like personal data (…). Personal data isn't allowed in chats on AIs@home: answers are computed on
-  volunteers' machines. Remove it and try again.") instead of waiting for a trusted node. Guards,
-  operator terms and the model check apply to every node but the requester's own; a stopped answer
-  is no longer retried elsewhere; agents without a key's consent go only to one's own nodes. The
-  config's `trust`, `min_trust`, `trusted_users` and `include_trusted` are accepted and ignored,
-  each named once in the log; a key or account with `min_trust: "trusted"` is now served by every
-  node. `keys add -min-trust` is gone, and the emergency switch is `accounts routing own-only`
-  (an accounts file's `trusted-only` counts as it). (gateway)
-
-- **Connector review fixes, third round.** A reply already on its way can no longer verify a claim
-  made with a weak key before the account-key change; the unclaimed account a claim merges is recorded
-  from the accounts file under its lock; the science database truncates a WAL left by a stop when it
-  opens; restoring `science.db` is documented together with the accounts file. (gateway)
-
-- **Connector review fixes.** A second withdrawal of the operator terms never moves the first one back
-  (a replayed acceptance stays withdrawn); a WAL truncation a reader blocks is retried; claims made
-  with a weak key before the account-key change fail with a message instead of reaching the connector;
-  a verified request accepts only its own answer again; the unclaimed account a claim merges is
-  recorded before it is deleted; daily copies keep verified requests so a restore can finish them; a
-  reclaim stops showing the made-up BOINC login. (gateway)
-
-- **A BOINC claim needs the full account key.** "Claim a BOINC account" takes the account key at the
-  top of BOINC's "Account keys" page; the weak account key, which BOINC means to be shared, no longer
-  claims. The connector finds the user by it and answers the user and its attach key; claiming again
-  refreshes that key. The own-address form for pseudonymous BOINC users is gone (stock BOINC's
-  `am_set_info.php` is disabled): the person changes it on BOINC's site. The optional password at "Run on
-  BOINC" now says it is for logging in to the BOINC site later; a claimed user's card says the account key
-  logs in there too. A connector's operator-terms record keeps the time it sent (at most a minute
-  ahead), a withdrawal comes after any acceptance it withdraws, so a retried record no longer undoes
-  it, and an optional `country` is accepted again. Connector error texts are
-  stored without addresses or keys, the science database's WAL is truncated after a request is
-  blanked, and the daily copies mark open requests failed. (gateway)
-
-### Added
 
 - **Answer checks** (node verification, observe-only by default). Every answer that can earn credit is
   checked against three rules no honest node breaks, from the gateway's own counts and times: faster
@@ -243,7 +197,7 @@ and **(site)** are live on aisathome.org once deployed.
   flips (at most 2). Exit 0 pass, 1 fail, 2 could not check. Useful after an update or a llama.cpp
   upgrade, or with speculative decoding on; nothing leaves the computer. The references ship inside
   the program: the big tier's on llama.cpp b12342, this release's engine (a node with MTP passes it),
-  and an older one on b11146; the standard tier's (b11146) is provisional. `modelcheck record` makes
+  and an older one on b11146; the standard tier's on b12323 (an RTX 4060 Ti 16 GB). `modelcheck record` makes
   new ones at a release. See "Model check" on the operator page. (node)
 - **Architecture overview and contributing guide.** `docs/architecture.md` (the components, how a
   chat request and a science task flow, trust boundaries and what is public) and `CONTRIBUTING.md`
@@ -289,6 +243,77 @@ and **(site)** are live on aisathome.org once deployed.
   updating and uninstalling. The FAQ no longer says Windows is not supported. (site)
 
 ### Changed
+
+- **A node token is kept only with the gateway that issued it.** Every token written (the installer,
+  `aisathome-node link` and `register`, the Windows setup page) now comes with that gateway:
+  `AISATHOME_TOKEN_GATEWAY` in `token.env`, or `token_gateway` beside a token in `node.json`. The node
+  refuses to start when that record is missing or names another gateway than its `node.json`, and the
+  installer moves an installed token without one, or another gateway's, aside (`token.env.unlinked`)
+  and never keeps or sends it: link the node again (`sudo aisathome-node link`) or reinstall. Tokens
+  written before this release have no record, so **every node installed before v0.6.0 is linked
+  again on its update** (see "Updating a node"). With `--anonymous`, the installer asks only the
+  token's recorded gateway (`GET /v1/node/self`) whether it was deleted or is a held node without an
+  account's, and then moves it aside and registers anew. A token the node receives is taken only in
+  the exact form the gateway issues and written to `token.env` through a synced file renamed over it
+  (mode 0600). A `node.json` with two keys that are equal in any case (`gateway_url` and
+  `Gateway_URL`) is refused everywhere, and writers write lower-case keys only; the installer, `link`,
+  `register` and the setup page take one lock (`node.lock` beside `node.json`: flock on Linux,
+  LockFileEx on Windows) while they check and change these files. When the gateway changes, the node
+  is stopped before the new config goes in; if a step fails, the node stays stopped while the new token
+  is removed, then the old `node.json` and only then the old token come back. On a gateway change the
+  installer refuses the moved-aside token given again (also with whitespace around it) as the new
+  gateway's, and it takes a pasted or piped token only in the exact form the gateway issues.
+  (node, gateway)
+- **A node token never follows a redirect, and never goes in plain text across a network.** The node
+  connection and every request that carries a node token (`/v1/node/self`, linking, registering)
+  refuse a redirect as an error. A gateway must be `wss://` (`ws://` only to this machine) in the
+  agent's config, `link`, `register`, the setup page and the installer: **an install or a node with a
+  `ws://` gateway on another machine now stops early**, with a message. (node)
+
+- **The guard only logs on account nodes (gateway).** On a node with an account, the command,
+  credential, install and address rules no longer stop the answer or hold the node: the answer
+  goes out, and the event is logged with its evidence as flagged. The guard cannot tell an honest
+  model reading a credential file from an attack, and stopping such answers could hold every node
+  of the network on one agent's retries. Run agents with command approval, preferably isolated
+  (site: API and opencode). Nodes without an account, config tokens' nodes and pilots still stop
+  and hold, and so does every node for a project's key or a key marked `"unattended": true` (a
+  client that runs tool calls without a person approving them).
+
+- **No more trusted nodes: every node is untrusted.** Personal data in a request (an email address,
+  a card number, an IBAN, a Norwegian national identity number) goes only to the requester's own
+  node; with none online the request is refused at once (400, `"code": "personal_data"`, "This looks
+  like personal data (…). Personal data isn't allowed in chats on AIs@home: answers are computed on
+  volunteers' machines. Remove it and try again.") instead of waiting for a trusted node. Guards,
+  operator terms and the model check apply to every node but the requester's own; a stopped answer
+  is no longer retried elsewhere; agents without a key's consent go only to one's own nodes. The
+  config's `trust`, `min_trust`, `trusted_users` and `include_trusted` are accepted and ignored,
+  each named once in the log; a key or account with `min_trust: "trusted"` is now served by every
+  node. `keys add -min-trust` is gone, and the emergency switch is `accounts routing own-only`
+  (an accounts file's `trusted-only` counts as it). (gateway)
+
+- **Connector review fixes, third round.** A reply already on its way can no longer verify a claim
+  made with a weak key before the account-key change; the unclaimed account a claim merges is recorded
+  from the accounts file under its lock; the science database truncates a WAL left by a stop when it
+  opens; restoring `science.db` is documented together with the accounts file. (gateway)
+
+- **Connector review fixes.** A second withdrawal of the operator terms never moves the first one back
+  (a replayed acceptance stays withdrawn); a WAL truncation a reader blocks is retried; claims made
+  with a weak key before the account-key change fail with a message instead of reaching the connector;
+  a verified request accepts only its own answer again; the unclaimed account a claim merges is
+  recorded before it is deleted; daily copies keep verified requests so a restore can finish them; a
+  reclaim stops showing the made-up BOINC login. (gateway)
+
+- **A BOINC claim needs the full account key.** "Claim a BOINC account" takes the account key at the
+  top of BOINC's "Account keys" page; the weak account key, which BOINC means to be shared, no longer
+  claims. The connector finds the user by it and answers the user and its attach key; claiming again
+  refreshes that key. The own-address form for pseudonymous BOINC users is gone (stock BOINC's
+  `am_set_info.php` is disabled): the person changes it on BOINC's site. The optional password at "Run on
+  BOINC" now says it is for logging in to the BOINC site later; a claimed user's card says the account key
+  logs in there too. A connector's operator-terms record keeps the time it sent (at most a minute
+  ahead), a withdrawal comes after any acceptance it withdraws, so a retried record no longer undoes
+  it, and an optional `country` is accepted again. Connector error texts are
+  stored without addresses or keys, the science database's WAL is truncated after a request is
+  blanked, and the daily copies mark open requests failed. (gateway)
 
 - **The prove2me page reads the gateway's records.** Its headline numbers, the submissions, the
   trials table and every trial's own list from trial 6 on come live from the project's public
@@ -391,6 +416,43 @@ and **(site)** are live on aisathome.org once deployed.
   all and the docs' menu held only the docs; between 50 and 72rem the main links were missing.
   (site)
 - **Large credit totals fit their tiles** on the network page, on any width. (site)
+
+### Known issues
+
+- **The Windows installer is still not code-signed.** SmartScreen, Defender or the browser may
+  warn when you download or start it. Check its SHA-256 against `SHA256SUMS`, then choose
+  **More info → Run anyway**. (node)
+- **The standard tier's (16 GB) model-check reference was recorded on llama.cpp b12323**, not this
+  release's b12342; the big tier's is on b12342. (node)
+
+### Updating a node
+
+**A node installed before v0.6.0 is linked again.** Its token has no record of the gateway that
+issued it, and v0.6.0 trusts a token only with that record: the installer moves the token aside
+(`/etc/aisathome-node/token.env.unlinked`) and the update ends with linking the node to your account
+in the browser, which gives it a new node token (press **This is my machine** on it afterwards). On
+Windows, the node's page asks you to set it up again after the update: **Link to my account**. Later
+updates of a node set up with v0.6.0 keep the token as before (`--keep-token`).
+
+**Linux:** needed for linking, running without an account, speculative decoding and the model check.
+The installer keeps the gateway and the speculation setting; the model file is unchanged:
+
+```
+u=https://github.com/aisathome/aisathome/releases/download/v0.6.0
+curl -fLO $u/aisathome-node-bundle-linux-amd64.tar.xz && curl -fLO $u/SHA256SUMS \
+  && grep ' aisathome-node-bundle-linux-amd64.tar.xz$' SHA256SUMS | sha256sum -c - \
+  && tar -xJf aisathome-node-bundle-linux-amd64.tar.xz \
+  && cd aisathome-node-bundle-linux-amd64 && sudo ./install.sh
+```
+
+Press Enter at the token question to link the node (or add `--link`). A new node without an
+account: `curl -fsSL https://aisathome.org/node.sh | sh`.
+
+**Windows:** download `AIsAtHome-node-setup-v0.6.0.exe` (or `AIsAtHome-node-setup.exe`, the same
+file) and `SHA256SUMS` from the release, check the hash (`Get-FileHash AIsAtHome-node-setup-v0.6.0.exe`
+in PowerShell), and run it over the installed node: it keeps the config, password and state; then
+link the node on its page (**Link to my account**), or start it with **Start without an account
+(science only)**.
 
 ## [v0.5.0] — 2026-11-14
 
@@ -892,7 +954,8 @@ https://aisathome.org/node/
 
 **Full changelog:** https://github.com/aisathome/aisathome/commits/v0.1.0
 
-[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.5.0...main
+[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.6.0...main
+[v0.6.0]: https://github.com/aisathome/aisathome/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/aisathome/aisathome/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/aisathome/aisathome/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/aisathome/aisathome/compare/v0.2.0...v0.3.0
