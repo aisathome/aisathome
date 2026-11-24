@@ -37,6 +37,15 @@ FORBIDDEN = [
     (_KW + r"(?:run_cmd|run_elab|run_meta|run_tac|#eval|#exit)\b", "meta-level command"),
     (_KW + r"(?:elab|elab_rules|macro|macro_rules|initialize|builtin_initialize)\b", "elaborator extension"),
     (r"\bunsafe\b", "unsafe"),
+    # the same extensions registered through an attribute instead of their keyword (`elab` is `syntax` plus
+    # `@[command_elab]`), and the other commands that run code of the file while it compiles (security audit
+    # 2026-11-24); a proof file should be read with proofscan's allow-list, which needs no such list
+    (r"(?:@|" + _KW + r"attribute\s*)\[[^\]]*(?<![\w.'])(?:init|builtin_init|command_elab|term_elab|tactic|macro|"
+     r"delab|app_unexpander|command_parser|term_parser|tactic_parser|code_action|command_code_action|"
+     r"hole_code_action|env_linter|simproc|sevalproc|builtin_\w+)(?![\w'])", "elaborator extension"),
+    (_KW + r"(?:by_elab|simproc|dsimproc|simproc_decl|dsimproc_decl|test_extern|#guard_msgs|#guard)\b",
+     "meta-level command"),
+    (r"\bdecide\s*\+\s*native\b|\bnative\s*:=\s*true\b", "native_decide"),
 ]
 
 
