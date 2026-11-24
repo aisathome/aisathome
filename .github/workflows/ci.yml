@@ -416,3 +416,28 @@ jobs:
       - name: test and build the website (site/)
         working-directory: site
         run: npm ci --no-audit --no-fund && npm test && npm run build && npm run check
+
+  changelog:
+    # CHANGELOG.md entries come as files in changelog.d/ (changelog.d/README.md): they must be
+    # well-formed, and a pull request must not edit the Unreleased section directly, which made
+    # nearly every pull request conflict there. A release adds a version section and may (it runs
+    # scripts/changelog.py fold). Not part of the required check "check".
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A pull request's merge commit and its first parent, the base branch it merges into.
+          fetch-depth: 2
+      - name: changelog script tests
+        run: python3 scripts/changelog_test.py
+      - name: fragments, and no direct edit of Unreleased
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if [ "$IS_PR" = true ]; then
+            python3 scripts/changelog.py check --base HEAD^1
+          else
+            python3 scripts/changelog.py check
+          fi
