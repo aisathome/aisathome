@@ -12,7 +12,9 @@ registered by the file itself runs inside the compiler).
 - memory (no swap), process, CPU, CPU-time (RLIMIT_CPU per process), file-size and core-dump limits;
 - no environment from the caller: only `env` (and HOME=/tmp unless `env` sets it);
 - the mounts the caller lists (read-only unless a mount says otherwise), never the caller's home or secrets;
-- its output read through a size cap (`output_limit`); past the cap the rest is dropped and counted.
+- its output read through a size cap (`output_limit`); past the cap the rest is dropped and counted (Docker keeps no
+  log of it: `--log-driver none`);
+- the Docker client's proxy settings blanked (`PROXY_VARS`), so none of the invoking user's reaches the jail.
 
 The caller reads back the exit code and the capped output, and whatever the container wrote into a writable mount
 (treat it as untrusted: never follow a symlink in it). On a timeout the container is killed by its name and
@@ -34,6 +36,8 @@ from .sandbox import HARDEN, PREFIX
 
 JAIL_UID = 64000            # owns nothing on a runner; never the invoking user (refused) or root
 JAIL_USER = f"{JAIL_UID}:{JAIL_UID}"
+PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "ftp_proxy", "no_proxy", "all_proxy")
 LABEL = "harness.jail"
 
 
@@ -82,9 +86,12 @@ class Jail:
         vols = []
         for m in self.mounts:
             vols += ["--mount", f"type=bind,src={m.source},dst={m.target}" + (",readonly" if m.ro else "")]
-        env = {"HOME": "/tmp", **self.env}
+        # Docker's CLI adds the invoking user's client proxy settings (~/.docker/config.json `proxies`) to a container's
+        # environment unless the run sets them: set them empty, so no proxy URL (with credentials) reaches the jail
+        env = {**{k: "" for k in PROXY_VARS}, "HOME": "/tmp", **self.env}
         envs = sum((["-e", f"{k}={v}"] for k, v in env.items()), [])
         return (["docker", "run", "--rm", "--name", name, "--label", f"{LABEL}=1", "--network", "none",
+                 "--log-driver", "none",                   # the output comes through the attached pipe (capped) only
                  "-u", self.user, *HARDEN, "--init", "--read-only",
                  "--tmpfs", f"/tmp:rw,nosuid,nodev,size={self.tmp_mb}m,mode=1777", *lim, *vols, *envs,
                  "-w", self.workdir, "--entrypoint", "/bin/sh", self.image,
@@ -115,7 +122,12 @@ class Jail:
             rc = p.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             kill(name)
-            p.wait()
+            try:
+                p.wait(timeout=30)
+            except subprocess.TimeoutExpired:           # e.g. still pulling the image: no container to remove yet
+                p.kill()
+                p.wait()
+                kill(name)
             reader.join(5)
             out = _text(buf, dropped[0])
             _log(log, argv, out, f"timed out after {timeout:.0f}s", t0)

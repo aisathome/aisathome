@@ -20,6 +20,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import safefs
 from ..sandbox.container import Mount
 from ..sandbox.jail import Jail
 
@@ -75,35 +76,60 @@ class LeanToolchain:
         """A jail for Lake or Lean in workspace `ws` (at JAIL_WS; read-only unless `writable`, and its .lake/packages
         read-only either way), elan read-only, `mounts` besides. `limits`: Jail's (memory_gb, pids, cpus, cpu_s,
         user, ...)."""
-        ws = Path(ws)
-        ms = [Mount(self.elan_home, JAIL_ELAN), Mount(ws, JAIL_WS, ro=not writable)]
-        if (ws / ".lake" / "packages").is_dir():
-            ms.append(Mount(ws / ".lake" / "packages", f"{JAIL_WS}/.lake/packages"))
+        ws = Path(ws).resolve()
+        ms = [Mount(Path(self.elan_home).resolve(), JAIL_ELAN), Mount(ws, JAIL_WS, ro=not writable)]
+        pk = packages_dir(ws)
+        if pk is not None:
+            ms.append(Mount(pk, f"{JAIL_WS}/.lake/packages"))
         return Jail(image, mounts=ms + list(mounts), env=self.jail_env(), workdir=JAIL_WS, **limits)
+
+
+def packages_dir(ws: Path) -> Path | None:
+    """The workspace's package farm as a bind source: ws/.lake/packages reached without a symlink anywhere below the
+    workspace (UnsafePath otherwise: Docker would follow it to a host directory), or None when there is none. The
+    workspace itself is the caller's (trusted, resolved)."""
+    ws = Path(ws).resolve()
+    if safefs.is_dir(ws, ".lake/packages"):              # raises UnsafePath on a symlink on the way
+        return ws / ".lake" / "packages"
+    if os.path.lexists(ws / ".lake") and not safefs.is_dir(ws, ".lake") or os.path.lexists(ws / ".lake" / "packages"):
+        raise safefs.UnsafePath(f"{ws}/.lake/packages is not a directory")
+    return None
 
 
 def open_build_dirs(ws: Path):
     """Let a jail's uid write a workspace's build state: `.lake`, and everything under `.lake/build` and Lake's
     configuration cache `.lake/config`, become writable for everyone, nothing else (the sources, the Lake files and
     the package farm, hard links into a shared set, stay the host user's). Symlinks are neither followed nor
-    changed."""
-    lake = Path(ws) / ".lake"
-    lake.mkdir(parents=True, exist_ok=True)
-    _open(str(lake), 0o777)
+    changed: a symlink at `.lake`, `.lake/build` or `.lake/config` (or anywhere on the way) is an error
+    (safefs.UnsafePath), and below them every entry is opened without following one before its mode changes."""
+    ws = Path(ws).resolve()
     for sub in ("build", "config"):
-        d = lake / sub
-        if d.is_symlink():
-            raise OSError(f"{d} is a symlink")
-        d.mkdir(exist_ok=True)
-        for root, dirs, files in os.walk(d):
-            _open(root, 0o777)
+        safefs.mkdirs(ws, f".lake/{sub}")                # each component created or opened without a symlink
+    _open(str(ws / ".lake"), 0o777, directory=True)
+    for sub in ("build", "config"):
+        for root, dirs, files in os.walk(ws / ".lake" / sub):     # never descends through a symlinked directory
+            _open(root, 0o777, directory=True)
             for n in files:
                 _open(os.path.join(root, n), 0o666)
 
 
-def _open(p: str, mode: int):
-    """chmod an entry the invoking user owns (what a jail wrote is its uid's, created with umask 0 already);
-    never a symlink."""
-    st = os.lstat(p)
-    if st.st_uid == os.getuid() and not stat.S_ISLNK(st.st_mode) and stat.S_IMODE(st.st_mode) != mode:
-        os.chmod(p, mode)
+def _open(p: str, mode: int, directory: bool = False):
+    """Set the mode of an entry the invoking user owns (what a jail wrote is its uid's, created with umask 0 already),
+    through a descriptor opened without following a symlink (a symlink is left alone); a file keeps its execute bits
+    (Lake's built executables)."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | (os.O_DIRECTORY if directory else 0)
+    try:
+        fd = os.open(p, flags)
+    except OSError:                                      # a symlink (ELOOP), a vanished entry, an unreadable one
+        if directory and os.path.islink(p):
+            raise safefs.UnsafePath(f"{p} is a symlink")
+        return
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.getuid() or not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+            return
+        want = mode | (st.st_mode & 0o111 if stat.S_ISREG(st.st_mode) else 0)
+        if stat.S_IMODE(st.st_mode) != want:
+            os.fchmod(fd, want)
+    finally:
+        os.close(fd)

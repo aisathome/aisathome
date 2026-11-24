@@ -22,9 +22,11 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   environment, elan and the package farm read-only. Lean runs code while it elaborates a file, so a
   host-side `lake build` of a model's file ran whatever elaborator or initialiser the file registered,
   as the host's user and with its network. `open_build_dirs` opens only a workspace's `.lake` to the
-  jail's uid; `pkgsets.make_readable` makes a package set (Mathlib's cache unpacks files mode 600)
-  readable for it.
-- An allow-list for a proof file (`lean.proofscan.refusals`): only imports from allowed roots at the top,
+  jail's uid, and neither it nor a bind source is ever reached through a symlink; the Docker client's
+  proxy settings are blanked and Docker keeps no log of the output; `pkgsets.make_readable` makes a
+  package set (Mathlib's cache unpacks files mode 600) readable for it.
+- An allow-list for a proof file (`lean.proofscan.refusals`): only plain-named imports from allowed roots in
+  the header (every `import` token, however laid out; no `module` or `prelude` header),
   `open`/`namespace`/`section`/`end`/`universe`/`variable`/`set_option` (allowed options only) and
   `theorem`/`lemma`/`def`/`abbrev`/`example` declarations at column 0; no attribute, syntax extension
   (`syntax`, `notation`, `macro`, `elab`, ...), instance or new type, `#` command, `run_tac`, `by_elab`,
@@ -36,6 +38,9 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   data, sends every constant to the kernel in an environment of the proof's imports and a target module
   compiled before and without the proof (no initialiser runs, no extension loads), and compares the
   proof's theorem with the compiled target constant (`==`, else the kernel's definitional equality).
+  Every import of the proof must be a plain name under an allowed root that resolves under the search
+  path's own entries, and a `module` file is refused; the jail it runs in mounts only the package farm,
+  the trusted outputs and a copy of the proof's .olean.
   A check file that imports the proof and restates the target there lets an instance or notation the
   proof exports change what the target says, and lets the proof's initialisers print a verdict.
 - The egress forwarder adds the endpoint's key only to the model calls: `POST <base>/chat/completions` and
