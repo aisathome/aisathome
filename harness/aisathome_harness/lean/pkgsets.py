@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -237,6 +238,29 @@ def adopt(store: Path, workspace: Path) -> Path | None:
             shutil.rmtree(d)
         os.rename(tmp, d)
         return d
+
+
+READABLE = ".readable"
+
+
+def make_readable(pset: Path) -> int:
+    """Make a set's packages readable for every uid (files o+r, directories o+rx; symlinks untouched): Mathlib's
+    cache unpacks its files mode 600, and a build or check in a jail (sandbox.jail) runs as a uid of its own that
+    reads them through a tree's hard-link farm. Once per set (a marker file); returns the number of entries
+    changed. Only the set's owner can do it, and a set is never written after it is built, so nothing else changes."""
+    pset = Path(pset)
+    if not pset.is_dir() or (pset / READABLE).exists():
+        return 0
+    n = 0
+    for root, dirs, files in os.walk(pset / ".lake" / "packages"):
+        for name, bits in [(root, 0o005), *((os.path.join(root, f), 0o004) for f in files)]:
+            st = os.lstat(name)
+            if stat.S_ISLNK(st.st_mode) or (st.st_mode & bits) == bits:
+                continue
+            os.chmod(name, stat.S_IMODE(st.st_mode) | bits | (0o001 if bits == 0o004 and st.st_mode & 0o100 else 0))
+            n += 1
+    (pset / READABLE).write_text(f"{n}\n")
+    return n
 
 
 def link_packages(pset: Path, tree: Path, run: Callable[[str], object] | None = None):
