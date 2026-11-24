@@ -639,7 +639,7 @@ export async function liveSummary(h: History, get: (url: string) => Promise<unkn
 	return live ? scienceView(h, live) : null;
 }
 
-// ---- every leaf: the scorecard by role and the list of every leaf tried (owner, 2026-11-23: live like the rest)
+// ---- every leaf: the scorecard by role and the list of every leaf tried (2026-11-23: live like the rest)
 
 export type LeafRole = 'calibration' | 'open' | 'comparison';
 export type LeafOutcome = 'accepted' | 'reused' | 'proved' | 'not_proved' | 'stopped' | 'not_scored';

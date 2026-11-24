@@ -1,8 +1,8 @@
 ---
 // Science: prove2me (prove2.me), where Qwen3.8 27B on the AIs@home network tries leaves of research theorems in
-// Lean 4. Trials 1 to 5 are frozen history in src/data/science/prove2me.json (decision 0021); from trial 6 on everything
+// Lean 4. Trials 1 to 5 are frozen history in src/data/science/prove2me.json; from trial 6 on everything
 // comes from the gateway's public records (campaigns, results and tasks: prove2me-records.ts). The build fetches them
-// (prove2me-build.ts; owner, 2026-11-23: no manual data exports), so the page without JavaScript is as of the build, and
+// (prove2me-build.ts; since 2026-11-23: no manual data exports), so the page without JavaScript is as of the build, and
 // the browser reads them again every minute, with the network's share of the work from /v1/stats; when the gateway does
 // not answer, the build's copy stays. The build and the browser draw every part with the same renderers.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
@@ -70,7 +70,7 @@ const named = (id: string | undefined, alias: string) => (id && id !== alias ? `
 // Alias -> leaf id for the history the "Small numbers" text names (O04, F01); the browser's script gets it too.
 const aliasIds: Record<string, string> = Object.fromEntries(['O04', 'F01'].map((a) => [a, idOfAlias(a)]));
 // Every task: the generic task table with prove2me's options; every task of trial 6 on (and of the outline probes) from
-// the records (decision 0021), the build's and then the browser's. Each leaf's theorem and page for its group cell (the
+// the records, the build's and then the browser's. Each leaf's theorem and page for its group cell (the
 // trials', the campaigns' and the probe rounds' leaves; the browser adds the data document's), and a written outline's
 // hole count by task id for the live rows.
 const items = rec.campaigns.flatMap((c) => c.items).filter((i) => i.labels.theorem);

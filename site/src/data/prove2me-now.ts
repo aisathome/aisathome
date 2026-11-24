@@ -1,9 +1,9 @@
-// "Working on now" on /science/prove2me/: what runs or waits now, a block each (owner, 2026-11-23: "Working on now can
-// be the trial or the bench"): every trial that has not finished (prove2me-records.ts nowDocs), then every bench with
+// "Working on now" on /science/prove2me/: what runs or waits now, a block each (since
+// 2026-11-23, a trial or a bench): every trial that has not finished (prove2me-records.ts nowDocs), then every bench with
 // open tasks (prove2me-status.ts isBench; no campaign, its tasks name it), shown as a trial is.
 //
 // A block names the trial or bench, its start and scaffold, then its leaves and their tasks; no description of the
-// trial or its budget (owner, 2026-11-23: state what is being worked on). One HTML renderer for the build (from the
+// trial or its budget (2026-11-23: state what is being worked on). One HTML renderer for the build (from the
 // records the build fetched) and the browser (live, every minute), so the two never say different things. Every value
 // is escaped.
 //

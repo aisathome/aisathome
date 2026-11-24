@@ -66,8 +66,8 @@ func TestOpsPageShowsAFakeRunnersStatus(t *testing.T) {
 			t.Fatalf("%s: HTTP %d, page shows the status: %v", name, resp.StatusCode, strings.Contains(page, "T2-NEW-9"))
 		}
 	}
-	// The account page links to the operations page for admins only (2026-10-24: "how do I
-	// navigate").
+	// The account page links to the operations page for admins only
+	// (2026-10-24: it was hard to find).
 	if _, acc := a.get(t, "/account", admin); !strings.Contains(acc, `href="/account/ops"`) {
 		t.Errorf("the admin's account page has no link to /account/ops")
 	}

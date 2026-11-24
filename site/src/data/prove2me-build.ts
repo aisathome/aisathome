@@ -1,5 +1,5 @@
-// The gateway's public prove2me records for the site's build (owner, 2026-11-23: "I do not want to keep pushing this
-// data manually"): every build fetches the campaigns, results and tasks (prove2me-records.ts fetchRecords, every page)
+// The gateway's public prove2me records for the site's build (since 2026-11-23,
+// no manual data pushes): every build fetches the campaigns, results and tasks (prove2me-records.ts fetchRecords, every page)
 // from the gateway of the domain it builds for, so each deploy's page without JavaScript, and the browser's page before
 // the gateway answers, carry the records as they were at the build. The browser then reads the same records live.
 //

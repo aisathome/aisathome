@@ -7,8 +7,8 @@
 // outside it: the gateway acts on no project's workflow (TauCeti's review loop, which once ran
 // here, was removed).
 //
-// Tries and interruptions (2026-10-29: "a try should not be counted when there is spot
-// interruption"): a claim starts a try, unless it continues one that was interrupted. A lease
+// Tries and interruptions (2026-10-29: a spot interruption does not count as a try): a claim
+// starts a try, unless it continues one that was interrupted. A lease
 // ends in an interruption when its worker gives the task back (`fail` with `requeue`: the
 // runner's SIGTERM path on a spot stop) — the next claim, by any worker, continues that try — or
 // when it expires and the same worker takes the task back within its hold (a stop without
