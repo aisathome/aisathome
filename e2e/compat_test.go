@@ -109,13 +109,35 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
-// runReleased starts a built node agent against the rig's gateway; it stops with the test.
-func (r *rig) runReleased(t *testing.T, bin, id string, engine *httptest.Server) *syncBuf {
+// needsTokenGateway reports whether the node agent at ref trusts its token only together with
+// the gateway that issued it (token_gateway in node.json, from v0.6.0 on): such an agent refuses a
+// config without that record.
+func needsTokenGateway(t *testing.T, root, ref string) bool {
+	t.Helper()
+	err := exec.Command("git", "-C", root, "grep", "-q", `json:"token_gateway`, ref, "--", "node/node.go").Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 { // no match
+		return false
+	}
+	if err != nil {
+		t.Fatalf("git grep at %s: %v", ref, err)
+	}
+	return true
+}
+
+// runReleased starts a built node agent against the rig's gateway; it stops with the test. With
+// tokenGateway the config records the rig's gateway as the token's issuer, as an agent that
+// needs it (needsTokenGateway) is linked; older agents get the config they always had.
+func (r *rig) runReleased(t *testing.T, bin, id string, engine *httptest.Server, tokenGateway bool) *syncBuf {
 	t.Helper()
 	dir := t.TempDir()
-	cfg, _ := json.Marshal(node.Config{NodeID: id, Token: "node-token", Upstream: engine.URL,
+	c := node.Config{NodeID: id, Token: "node-token", Upstream: engine.URL,
 		GatewayURL: "ws" + strings.TrimPrefix(r.gw.URL, "http") + "/v1/node/connect",
-		Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2, Ctx: 32768}}})
+		Models:     []protocol.ModelInfo{{Name: "qwen3.8-27b-q4", Roles: []string{"deep"}, Slots: 2, Ctx: 32768}}}
+	if tokenGateway {
+		c.TokenGateway = c.GatewayURL
+	}
+	cfg, _ := json.Marshal(c)
 	path := filepath.Join(dir, "node.json")
 	if err := os.WriteFile(path, cfg, 0o600); err != nil {
 		t.Fatal(err)
@@ -143,7 +165,7 @@ func TestReleasedNodesChat(t *testing.T) {
 		t.Run(ref, func(t *testing.T) {
 			bin := buildRelease(t, root, ref)
 			r := newRig(t)
-			logs := r.runReleased(t, bin, "old-node", mockEngine(t, false))
+			logs := r.runReleased(t, bin, "old-node", mockEngine(t, false), needsTokenGateway(t, root, ref))
 			for deadline := time.Now().Add(20 * time.Second); r.g.NodeCount() != 1; time.Sleep(20 * time.Millisecond) {
 				if time.Now().After(deadline) {
 					t.Fatalf("the %s node agent did not connect; its log:\n%s", ref, logs)
@@ -356,7 +378,7 @@ func TestRecordHello(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &rig{gw: srv}
-	r.runReleased(t, bin, "old-node", mockEngine(t, false))
+	r.runReleased(t, bin, "old-node", mockEngine(t, false), false) // v0.2.0: no token_gateway
 	select {
 	case b := <-got:
 		if err := os.WriteFile("testdata/hello-v0.2.0.json", append(b, '\n'), 0o644); err != nil {
