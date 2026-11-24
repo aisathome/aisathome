@@ -702,8 +702,10 @@ type guard struct {
 	req        string     // requestText of the request
 	known      knownAddrs // sources known without the request (defaultKnownAddrs)
 	installers knownAddrs // official installers (guard_official.go)
-	// flagOnly: an account's node. Its command, credential, install and address rules only flag
-	// (logged with their evidence; the answer goes out, the node serves on). The guard cannot
+	// flagOnly: an account's node, and a requester whose tool calls a person approves (not a
+	// project's or an unattended key: KeyInfo.Unattended). The command, credential, install and
+	// address rules only flag (logged with their evidence; the answer goes out, the node serves
+	// on). The guard cannot
 	// tell an honest model reading a credential file from an attack, and stopping such answers
 	// could hold every node of the network; the client's own command approval is the defence.
 	// Stream rules (violation) still stop the answer.

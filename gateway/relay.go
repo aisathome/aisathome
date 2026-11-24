@@ -39,6 +39,7 @@ type chatReq struct {
 	conv         *convPrint // body as a node gets it, rendered and hashed (routing and credit)
 	arrived      time.Time  // when its body was read, for the time to its first token (pressure.go); zero = not counted
 	firstSeen    bool       // its first generated token came, on any attempt
+	unattended   bool       // a project's or an unattended key's (KeyInfo.Unattended): no person approves its tool calls
 }
 
 // maxCollected bounds a non-streaming answer; all of them share g.buffered.

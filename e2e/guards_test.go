@@ -242,8 +242,10 @@ func TestGuardStopsDangerousToolCalls(t *testing.T) {
 // On an account's node the command, credential and install rules only flag (an honest model
 // reading a credential file cannot be told from an attack): the answer reaches the
 // client whole, the usage log records the rule with outcome ok, the guard log keeps the evidence as
-// flagged, nothing is retried and the node is not held, so it serves the next request too. A node
-// without an account still stops and holds (TestAnonNodeGuardStopsAndHolds).
+// flagged, nothing is retried and the node is not held, so it serves the next request too. A key
+// marked unattended (no person approves its tool calls) still stops and holds the same node, and
+// so does a project's key (TestGuardKnownSourceDoesNotHold); a node without an account stops and
+// holds for everyone (TestAnonNodeGuardStopsAndHolds).
 func TestGuardFlagsOnAccountNodes(t *testing.T) {
 	logs := &syncBuf{}
 	logSink = logs
@@ -252,6 +254,7 @@ func TestGuardFlagsOnAccountNodes(t *testing.T) {
 	a := newAcctRigNodes(t, 100, func(c *gateway.AccountsConfig) { c.NodeProbation = "0s" }, func(c *gateway.Config) {
 		c.QueueTimeoutSec = 3
 		c.StateDir = state
+		c.Keys["runner-key"] = gateway.KeyInfo{User: "runner", VolunteerAgents: true, Unattended: true}
 	})
 	s2, _ := a.signIn(t, 2)
 	token, id, _ := a.addNode(t, s2, "")
@@ -317,6 +320,20 @@ func TestGuardFlagsOnAccountNodes(t *testing.T) {
 		}
 		return strings.Contains(es[0].Fragment, "~/.ssh/id_example") && es[0].Rule == "credential-path"
 	})
+	// An unattended key: the same answer from the same node is stopped and holds it.
+	set("cat ~/.ssh/id_example")
+	if code, out := ask(t, a.rig, "runner-key", body(true)); code != 502 || !strings.Contains(out, "safety check") || strings.Contains(out, "id_example") {
+		t.Fatalf("an unattended key: %d %s", code, out)
+	}
+	waitFor(t, func() bool { return guardHeld(t, a.rig) })
+	a.store.Refresh()
+	held := false
+	for _, p := range a.store.Snapshot().NodeHolds {
+		held = held || (p.Node == id && p.Rule == "credential-path")
+	}
+	if !held {
+		t.Fatal("an unattended key's stop did not record a hold")
+	}
 }
 
 // Unknown web addresses in plain text are flagged, not stopped.
@@ -837,7 +854,8 @@ func TestGuardHoldSticksWhenTheFileCannotBeWritten(t *testing.T) {
 // client compacted the conversation, so the request no longer names it (presumably what made
 // the guard hold a node for hours). A known source is no reason to hold a node; a real pattern still
 // holds it. An unknown address, even on the host of a known source, is flagged, not held
-// (TestGuardFlagsUnknownAddressInToolCall).
+// (TestGuardFlagsUnknownAddressInToolCall). The node is an account's: a project's key is
+// unattended (no person approves its tool calls), so its answers stop and hold as on any node.
 func TestGuardKnownSourceDoesNotHold(t *testing.T) {
 	var args atomic.Value // the tool call the engine answers with
 	args.Store(`{"command":"cd ws && git ls-remote https://github.com/leanprover-community/mathlib4.git | head -1"}`)
@@ -858,9 +876,11 @@ func TestGuardKnownSourceDoesNotHold(t *testing.T) {
 		c.QueueTimeoutSec = 3
 		c.Projects = []gateway.Project{{ID: "prove2me", KeySHA256: []string{sha(p2mKey)}, AgentOK: true}}
 	})
+	s2, _ := a.signIn(t, 2)
+	token, id, _ := a.addNode(t, s2, "") // an account's node: a project's key is unattended, so it stops and holds
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	id := a.guardedNode(ctx, engine, 2)
+	a.startTokenNode(ctx, token, engine, 2, 32768)
 	a.waitNodes(t, 1)
 	// The conversation as the client sends it after compaction: a summary that names the
 	// lakefile, not the address in it.

@@ -99,7 +99,8 @@ and **(site)** are live on aisathome.org once deployed.
   model reading a credential file from an attack, and stopping such answers could hold every node
   of the network on one agent's retries. Run agents with command approval, preferably isolated
   (site: API and opencode). Nodes without an account, config tokens' nodes and pilots still stop
-  and hold.
+  and hold, and so does every node for a project's key or a key marked `"unattended": true` (a
+  client that runs tool calls without a person approving them).
 
 - **No more trusted nodes: every node is untrusted.** Personal data in a request (an email address,
   a card number, an IBAN, a Norwegian national identity number) goes only to the requester's own
