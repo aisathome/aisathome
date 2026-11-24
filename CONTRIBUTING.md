@@ -52,6 +52,7 @@ go test -race ./...                           # e2e included (it needs the relea
 ./node/packaging/linux/install_test.sh        # the Linux installer
 ./scripts/node_sh_test.sh                     # the one-line install without an account (site/public/node.sh)
 ./scripts/bundle_test.sh                      # the prebuilt bundle's packaging
+python3 scripts/changelog.py check            # your changelog.d/ fragment
 
 cd harness && python3 -m unittest discover -s tests -t .
 
@@ -88,8 +89,12 @@ What we expect of tests:
   the messages bumps the protocol version and updates `protocol/PROTOCOL.md`.
 - **Public sources.** Code comments and docs cite public sources; a CI lint step checks this.
 - Each source file starts with an `SPDX-License-Identifier: Apache-2.0` line.
-- A change users or node operators would notice adds an entry under **Unreleased** in
-  `CHANGELOG.md`, tagged (node), (gateway), (site) or (docs).
+- A change users or node operators would notice adds a changelog entry, tagged (node),
+  (gateway), (site) or (docs), as a small file in `changelog.d/` (for example
+  `changelog.d/node-token-redirect.md`; the format is in
+  [changelog.d/README.md](changelog.d/README.md)). Do not edit `CHANGELOG.md` itself: entries
+  move there at a release, and a pull request that edits its Unreleased section fails the
+  `changelog` check.
 
 ## Pull requests
 

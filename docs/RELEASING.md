@@ -5,8 +5,11 @@ For the maintainer. Volunteers read the site page "About the binaries"
 
 ## With every change
 
-Every user-visible change adds an entry under **Unreleased** in `CHANGELOG.md`, in the same
-commit, tagged with where it applies: (node), (gateway), (site) or (docs).
+Every user-visible change adds its changelog entry as a file in `changelog.d/`, in the same
+commit, tagged with where it applies: (node), (gateway), (site) or (docs). The format is in
+[changelog.d/README.md](../changelog.d/README.md). Pull requests do not edit `CHANGELOG.md`'s
+Unreleased section (the CI job `changelog` fails when one does); only a release moves entries
+into `CHANGELOG.md`.
 
 ## Before a release
 
@@ -47,9 +50,14 @@ signed yet: Windows shows a SmartScreen warning. Review the
 draft (files, sizes, `BUILD-INFO`, generated notes). Tags with a `-` (for example
 `v0.2.0-rc1`) become pre-releases.
 
-**Release notes:** move `CHANGELOG.md`'s Unreleased entries into a new section for the
-version (with the date and the update commands for a node), and use that text as the
-release's notes. A maintainer reviews the text before the draft is published; then publish it.
+**Release notes:** on the release branch, `python3 scripts/changelog.py fold v0.7.0` (add
+`--dry-run` to see the result first) moves whatever is under Unreleased in `CHANGELOG.md` and
+every fragment in `changelog.d/` into a new section `## [v0.7.0] — <today>`, one `### Added`,
+`### Changed` and so on each, deletes the fragments and updates the compare links at the end.
+Then edit that section by hand: a short lead paragraph, the order of the entries, and the
+**Known issues** and **Updating a node** sections (with the update commands for a node). Commit
+it as the release commit and use that text as the release's notes. A maintainer reviews the text
+before the draft is published; then publish it.
 
 **After publishing:** set the version and the installer's size in bytes in
 `site/src/data/node-release.ts` (the download block on `/node/` shows them) and deploy the site.
