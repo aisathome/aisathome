@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,69 @@ func TestInstallScriptFetchesAreCountedWhateverTheClient(t *testing.T) {
 		if strings.Contains(string(out), bad) {
 			t.Errorf("the output contains %q: %s", bad, out)
 		}
+	}
+}
+
+func TestAIAssistantsFetchingForAPersonAreNamedApartFromCrawlers(t *testing.T) {
+	for ua, want := range map[string]string{
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; OAI-SearchBot/1.3; +https://openai.com/searchbot)":            "OAI-SearchBot",
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot":                   "ChatGPT-User",
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)":                      "GPTBot",
+		"Mozilla/5.0 (compatible; OpenAI-something/1.0)":                                                                              "OpenAI (other)",
+		"Claude-SearchBot/1.0 (+Claude-SearchBot@anthropic.com)":                                                                      "Claude-SearchBot",
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +Claude-User@anthropic.com)":                 "Claude-User",
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)":                     "ClaudeBot",
+		"Mozilla/5.0 (compatible; anthropic-ai)":                                                                                      "Anthropic (other)",
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)": "Perplexity-User",
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)":     "PerplexityBot",
+	} {
+		if kind, name := classify(ua); kind != kindBot || name != want {
+			t.Errorf("classify(%q) = %d %q, want %q", ua, kind, name, want)
+		}
+	}
+	for _, n := range aiUserAgents {
+		if !slices.ContainsFunc(botNames, func(b struct{ name, match string }) bool { return b.name == n }) {
+			t.Errorf("%q is not a bot name", n)
+		}
+	}
+}
+
+func TestBotFetchesOfTheCrawlerFilesAreCountedByPath(t *testing.T) {
+	a := newAgg()
+	gpt := "Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)"
+	a.Add(line(req{ip: "192.0.2.1", ua: gpt, uri: "/llms.txt"}))
+	a.Add(line(req{ip: "192.0.2.1", ua: gpt, uri: "/llms.txt?x"}))
+	a.Add(line(req{ip: "192.0.2.1", ua: gpt, uri: "/robots.txt", status: 304}))
+	a.Add(line(req{ip: "192.0.2.2", ua: googlebot, uri: "/sitemap-index.xml"}))
+	a.Add(line(req{ip: "192.0.2.2", ua: googlebot, uri: "/sitemap.xml", status: 301})) // only the files that exist
+	a.Add(line(req{ip: "192.0.2.2", ua: googlebot, uri: "/"}))                         // a page: bots only
+	a.Add(line(req{ip: "192.0.2.3", ua: firefox, uri: "/llms.txt"}))                   // a person: not counted here
+	d := a.Stats.Days["2026-10-19"]
+	want := map[string]map[string]int{"/llms.txt": {"GPTBot": 2}, "/robots.txt": {"GPTBot": 1}, "/sitemap-index.xml": {"Googlebot": 1}}
+	if fmt.Sprint(d.BotFiles) != fmt.Sprint(want) {
+		t.Errorf("bot files %v, want %v", d.BotFiles, want)
+	}
+	if d.Bots["GPTBot"] != 3 || d.Bots["Googlebot"] != 3 || d.PageViews != 0 {
+		t.Errorf("bots %v, views %d", d.Bots, d.PageViews)
+	}
+}
+
+func TestUTMSourceCountsAsTheReferrerWhenThereIsNone(t *testing.T) {
+	a := newAgg()
+	a.Add(line(req{ip: "203.0.113.1", ua: firefox, uri: "/node/?utm_source=chatgpt.com"}))
+	a.Add(line(req{ip: "203.0.113.2", ua: firefox, uri: "/node/?utm_source=www.Perplexity.ai&utm_medium=x"}))
+	a.Add(line(req{ip: "203.0.113.3", ua: firefox, uri: "/node/?utm_source=chatgpt.com", ref: "https://www.reddit.com/r/x/"})) // the Referer wins
+	a.Add(line(req{ip: "203.0.113.4", ua: firefox, uri: "/node/?utm_source=chatgpt.com", ref: "https://aisathome.org/"}))      // ours: a click on our own page
+	for _, v := range []string{"newsletter", "aisathome.org", "192.0.2.1", "evil.example/x", "a@b.example", "chatgpt.com%2Fx"} {
+		a.Add(line(req{ip: "203.0.113.9", ua: firefox, uri: "/?utm_source=" + v}))
+	}
+	d := a.Stats.Days["2026-10-19"]
+	want := map[string]int{"chatgpt.com": 1, "perplexity.ai": 1, "reddit.com": 1}
+	if fmt.Sprint(d.Referrers) != fmt.Sprint(want) {
+		t.Errorf("referrers %v, want %v", d.Referrers, want)
+	}
+	if fmt.Sprint(d.PageReferrers) != fmt.Sprint(map[string]map[string]int{"/node/": want}) {
+		t.Errorf("page referrers %v", d.PageReferrers)
 	}
 }
 
@@ -505,7 +569,9 @@ func TestRunReadsFreesAndContinues(t *testing.T) {
 
 func TestReport(t *testing.T) {
 	s := &Stats{Host: host, Updated: day1, Days: map[string]*Day{
-		"2026-10-18": {PageViews: 3, Visitors: 2, Pages: map[string]int{"/": 2, "/devlog/": 1}, Bots: map[string]int{"Googlebot": 4}},
+		"2026-10-18": {PageViews: 3, Visitors: 2, Pages: map[string]int{"/": 2, "/devlog/": 1},
+			Bots:     map[string]int{"Googlebot": 4, "ChatGPT-User": 2, "Claude-User": 1, "GPTBot": 3},
+			BotFiles: map[string]map[string]int{"/llms.txt": {"GPTBot": 3}, "/robots.txt": {"Googlebot": 1}}},
 		"2026-10-19": {PageViews: 5, Visitors: 4, Pages: map[string]int{"/": 5}, Referrers: map[string]int{"reddit.com": 2}, Tests: 7,
 			PageReferrers: map[string]map[string]int{"/": {"reddit.com": 2}}, Installs: 3, InstallFetches: map[string]int{"curl": 4, "browser": 1}},
 	}}
@@ -514,7 +580,8 @@ func TestReport(t *testing.T) {
 	got := b.String()
 	for _, want := range []string{"2026-10-18       3         2", "2026-10-19       5         4", "total            8         6",
 		"       7  /", "       2  reddit.com", "       4  Googlebot", "Referring domains by page", "       2  /  reddit.com 2",
-		"    7         3\n", "Node install script fetches", "       4  curl", "       1  browser"} {
+		"    7         3\n", "Node install script fetches", "       4  curl", "       1  browser",
+		"     10        3      0         0\n", "Bot fetches of /llms.txt", "       3  /llms.txt  GPTBot 3", "       1  /robots.txt  Googlebot 1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
 		}

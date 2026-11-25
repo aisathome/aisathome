@@ -38,6 +38,9 @@ type Day struct {
 	Installs       int            `json:"installs,omitempty"`
 	InstallFetches map[string]int `json:"install_fetches,omitempty"`
 
+	// Bot fetches of the files written for crawlers (botFiles): path -> bot name -> requests.
+	BotFiles map[string]map[string]int `json:"bot_files,omitempty"`
+
 	// Page path (a key of Pages) -> referring domain -> page views.
 	PageReferrers map[string]map[string]int `json:"page_referrers,omitempty"`
 }
@@ -64,6 +67,13 @@ const (
 // (The Windows installer and the Linux bundle are downloaded from GitHub, not from here.)
 var installPaths = []string{"/node.sh"}
 
+// Files written for crawlers and AI tools; bot requests for them are also counted by path.
+var botFiles = []string{"/llms.txt", "/robots.txt", "/sitemap-index.xml", "/sitemap-0.xml"}
+
+// AI assistants that fetch a page because a person asked them something just then (not
+// crawlers): the closest thing to a visit from an AI answer. Names from botNames.
+var aiUserAgents = []string{"ChatGPT-User", "Claude-User", "Perplexity-User"}
+
 // Referring domains per page: while the UTC day runs, exact counts for up to
 // maxPageReferrersToday domains per page (new ones beyond go under "(other)"), so the day's
 // biggest referrers are known from the whole day's counts. Once the day is over, only the
@@ -85,8 +95,10 @@ var testMarkers = []string{"aisathome-test", "aisathome-smoke"}
 var botNames = []struct{ name, match string }{
 	{"Googlebot", "googlebot"}, {"Google (other)", "google"}, {"bingbot", "bingbot"},
 	{"Applebot", "applebot"}, {"DuckDuckBot", "duckduckbot"}, {"YandexBot", "yandex"},
-	{"Baiduspider", "baiduspider"}, {"GPTBot", "gptbot"}, {"OpenAI (other)", "openai"},
-	{"ClaudeBot", "claudebot"}, {"Anthropic (other)", "anthropic"}, {"PerplexityBot", "perplexity"},
+	{"Baiduspider", "baiduspider"}, {"OAI-SearchBot", "oai-searchbot"}, {"ChatGPT-User", "chatgpt-user"},
+	{"GPTBot", "gptbot"}, {"OpenAI (other)", "openai"}, {"Claude-SearchBot", "claude-searchbot"},
+	{"Claude-User", "claude-user"}, {"ClaudeBot", "claudebot"}, {"Anthropic (other)", "anthropic"},
+	{"Perplexity-User", "perplexity-user"}, {"PerplexityBot", "perplexity"},
 	{"CCBot", "ccbot"}, {"AhrefsBot", "ahrefs"}, {"SemrushBot", "semrush"}, {"PetalBot", "petalbot"},
 	{"MJ12bot", "mj12bot"}, {"DotBot", "dotbot"}, {"Bytespider", "bytespider"},
 	{"facebookexternalhit", "facebookexternalhit"}, {"Twitterbot", "twitterbot"},
@@ -189,6 +201,12 @@ func (a *Aggregator) Add(raw []byte) {
 			d.Bots = map[string]int{}
 		}
 		d.Bots[name]++
+		if slices.Contains(botFiles, p) && l.Request.Method == "GET" && (l.Status == 200 || l.Status == 304) {
+			if d.BotFiles == nil {
+				d.BotFiles = map[string]map[string]int{}
+			}
+			d.BotFiles[p], _ = bump(d.BotFiles[p], name, len(botNames)+2)
+		}
 		return
 	}
 	if l.Status == 404 {
@@ -208,7 +226,11 @@ func (a *Aggregator) Add(raw []byte) {
 	d.PageViews++
 	var page string
 	d.Pages, page = bump(d.Pages, p, maxPaths)
-	if ref := referrerDomain(l.header("Referer"), a.Host); ref != "" {
+	ref := referrerDomain(l.header("Referer"), a.Host)
+	if l.header("Referer") == "" {
+		ref = utmSource(l.Request.URI, a.Host)
+	}
+	if ref != "" {
 		d.Referrers, _ = bump(d.Referrers, ref, maxReferrers)
 		d.addPageReferrer(page, ref)
 	}
@@ -386,6 +408,22 @@ func referrerDomain(ref, own string) string {
 		return ""
 	}
 	return host
+}
+
+// utmSource is the domain a link names in its utm_source tag (ChatGPT adds
+// ?utm_source=chatgpt.com to the links in its answers), reduced as a Referer is; empty when the
+// value is not a domain name ("newsletter") or is ours.
+func utmSource(uri, own string) string {
+	i := strings.IndexByte(uri, '?')
+	if i < 0 {
+		return ""
+	}
+	q, _ := url.ParseQuery(uri[i+1:])
+	v := q.Get("utm_source")
+	if v == "" || strings.ContainsAny(v, "/:@?#\\ ") {
+		return ""
+	}
+	return referrerDomain("https://"+v+"/", own)
 }
 
 func stripPort(h string) string {
