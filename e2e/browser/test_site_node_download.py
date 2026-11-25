@@ -117,3 +117,23 @@ def test_phone_width_no_sideways_scroll(open_page, path, ua):
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     box = page.locator("[data-node-download]").bounding_box()
     assert box["x"] >= 0 and box["x"] + box["width"] <= 360
+
+
+@pytest.mark.parametrize("js", [True, False])
+def test_home_page_has_the_one_command_and_the_windows_button(open_page, js):
+    """The home page's node block: the one-line start without an account, a link to the script's source, the Windows
+    button to the latest release, and the hero's "Run a node" goes to it, with or without JavaScript."""
+    page = open_page(path="/", js=js)
+    block = page.locator("[data-home-node]")
+    expect(block.locator("pre")).to_contain_text("curl -fsSL https://aisathome.org/node.sh | sh")
+    expect(block.get_by_role("link", name="Read the script first")).to_have_attribute(
+        "href", "https://github.com/aisathome/aisathome/blob/main/site/public/node.sh")
+    expect(block.locator("[data-dl-windows]")).to_have_attribute("href", RELEASES + "latest/download/AIsAtHome-node-setup.exe")
+    expect(block).to_contain_text("science only")
+    expect(page.locator(".hero").get_by_role("link", name="Run a node")).to_have_attribute("href", "#run-a-node")
+
+
+def test_home_page_phone_width_no_sideways_scroll(open_page):
+    page = open_page(path="/", ua=LINUX_UA, width=360)
+    expect(page.locator("[data-home-node]")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

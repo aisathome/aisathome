@@ -1,6 +1,8 @@
 // The node release the download block offers (src/components/NodeDownload.astro, on /node/ and
 // /node/windows/). After a release is published, set its version and the installer's size in
 // bytes here (docs/RELEASING.md).
+import { domain } from './site';
+
 export const repoURL = 'https://github.com/aisathome/aisathome';
 const latest = `${repoURL}/releases/latest/download`;
 
@@ -35,3 +37,21 @@ export const linuxCommand = [
 	`  && tar -xJf ${bundle} \\`,
 	'  && cd aisathome-node-bundle-linux-amd64 && sudo ./install.sh',
 ].join('\n');
+
+// The one-line start without an account (science only), on the home page and /node/: site/public/node.sh,
+// served by this site (a test site serves it with its own defaults, so the command follows the domain). It
+// always installs the latest release, so nothing here changes per release. The script's source, to read first:
+export const anonCommand = `curl -fsSL https://${domain}/node.sh | sh`;
+export const nodeShSource = `${repoURL}/blob/main/site/public/node.sh`;
+
+// What a node needs, as the home page's short list says it. The long form, with the tested
+// cards and the reasons: /node/#what-you-need. Driver minimums follow the release's CUDA build.
+export const needs = {
+	linuxDriver: '525.60.13',
+	linuxDriverRTX50: '570.26',
+	windowsDriver: '527.41',
+	windowsDriverRTX50: '570.65',
+	diskGB: 17,
+	modelGB: '13-14',
+	bundle: 'about 0.5 GB',
+};

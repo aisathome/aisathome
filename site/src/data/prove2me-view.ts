@@ -280,13 +280,14 @@ export function leafRowsHTML(v: LeavesView): string {
 
 // ---- the home page's line and the /science/ card
 
-/** The home page's prove2me line (after its count): "proofs by M accepted on prove2me so far (...). Trial 8 is running." */
+/** The home page's prove2me line (after its count): "proofs by M accepted on prove2me so far: it proved 6 of the 26 open
+ * lemmas it tried (...). Trial 8 is running." "Open lemmas" are the open leaves, in the dev log's word for them. */
 export function homeLine(v: ScienceView, model: string): string {
 	const k = v.kpis;
 	const cur = v.current ? ` Trial ${v.current.number} ${v.current.status === 'preparing' ? 'is being prepared' : 'is running'}.` : '';
 	return (
-		`${k.accepted === 1 ? 'proof' : 'proofs'} by ${model} accepted on prove2me so far (${k.openProved} of ${k.openTried} open leaves tried` +
-		`${k.reused ? `; ${k.reused} more closed by reusing a proof already there` : ''}), where theorems from research papers are stated in Lean 4 and every proof is checked by machine.${cur}`
+		`${k.accepted === 1 ? 'proof' : 'proofs'} by ${model} accepted on prove2me so far: it proved ${k.openProved} of the ${k.openTried} open lemmas it tried` +
+		`${k.reused ? ` and closed ${k.reused} more by reusing a proof already there` : ''}. prove2me states theorems from research papers in Lean 4 and checks every proof by machine.${cur}`
 	);
 }
 

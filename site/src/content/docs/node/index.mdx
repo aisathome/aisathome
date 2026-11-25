@@ -4,6 +4,8 @@ description: Give your GPU to AIs@home. Download the node for Windows or install
 ---
 
 import NodeDownload from '../../../components/NodeDownload.astro';
+import { Code } from '@astrojs/starlight/components';
+import { anonCommand, nodeShSource } from '../../../data/node-release';
 
 <NodeDownload />
 
@@ -68,11 +70,9 @@ Try a node without signing up: it does science work only, never people's chats, 
 credit until you link it to an account. You must be 18 or older; running it means you accept the
 [terms](/about/terms/). On Linux:
 
-```bash
-curl -fsSL https://aisathome.org/node.sh | sh
-```
+<Code code={anonCommand} lang="bash" />
 
-The script downloads the latest bundle, checks it against `SHA256SUMS`, runs the installer's
+The script (<a href={nodeShSource}>source</a>) downloads the latest bundle, checks it against `SHA256SUMS`, runs the installer's
 checks and asks before it installs anything. To read before you run, use the
 [steps on the install page](/node/install/) with `sudo ./install.sh --anonymous`. On Windows, the
 setup page has **Start without an account (science only)**.

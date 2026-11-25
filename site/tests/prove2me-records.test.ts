@@ -248,7 +248,7 @@ test('the home page’s line and the /science/ card', () => {
 	const v = scienceView(h, records());
 	assert.equal(
 		homeLine(v, 'Qwen3.8 27B'),
-		'proofs by Qwen3.8 27B accepted on prove2me so far (6 of 26 open leaves tried; 2 more closed by reusing a proof already there), where theorems from research papers are stated in Lean 4 and every proof is checked by machine. Trial 8 is running.',
+		'proofs by Qwen3.8 27B accepted on prove2me so far: it proved 6 of the 26 open lemmas it tried and closed 2 more by reusing a proof already there. prove2me states theorems from research papers in Lean 4 and checks every proof by machine. Trial 8 is running.',
 	);
 	assert.deepEqual(cardNumbers(v), [
 		{ key: 'accepted', value: '8', label: 'proofs accepted by prove2me, of 8 submitted' },

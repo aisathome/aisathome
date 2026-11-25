@@ -1,16 +1,20 @@
 ---
-// The home page ("volunteer science" design, 2026-10-10): bold condensed
-// headlines, a warm accent and a drawn network of home GPUs (volunteer computing). Its theme tokens live in styles/global.css and brand.css for the whole site.
+// The home page ("volunteer science" design, 2026-10-10; node first, 2026-11-25): bold condensed
+// headlines, a warm accent and a drawn network of home GPUs. Order: what it is (hero), the network
+// live, run a node in one command, what the GPUs do (science), use it, how it works, dev log.
+// Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Code } from '@astrojs/starlight/components';
 import LiveStats from '../components/LiveStats.astro';
-import { cards, guarantees, hero, links, steps } from '../data/home';
+import { cards, guarantees, hero, links, nodeBlock, steps } from '../data/home';
+import { anonCommand, installerSize, installerURL, needs, nodeRelease, nodeShSource } from '../data/node-release';
 import { posts, postURL, shortDate, isoDate } from '../data/devlog';
 import { science } from '../data/science';
 import { p2m } from '../data/prove2me';
 import { historyOf, scienceView } from '../data/prove2me-records';
 import { buildRecords } from '../data/prove2me-build';
 import { homeLine } from '../data/prove2me-view';
-import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
+import { homeDescription, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
 // The newest dev log posts (design C of three), with the dev log's own publish
 // filter: drafts only in a build with DEVLOG_DRAFTS=1.
@@ -30,14 +34,15 @@ const icons: Record<string, string> = {
 	'No open ports': 'M4 12h11M11 7l5 5-5 5M20 4v16',
 	Sandboxed: 'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',
 	'Users stay anonymous': 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c1-4 4-6 8-6s7 2 8 6M3 3l18 18',
-	'Stop any time': 'M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0',
+	'Open source': 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16',
 };
+const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 ---
 
 <StarlightPage
 	frontmatter={{
 		title: 'AIs@home',
-		description,
+		description: homeDescription,
 		// The brand once (Starlight's would be "AIs@home | AIs@home"), and what search engines read about the project.
 		head: [
 			{ tag: 'title', content: homeTitle },
@@ -52,12 +57,12 @@ const icons: Record<string, string> = {
 	<div class="home vb not-content">
 		<section class="hero grid items-center gap-8 lg:grid-cols-[1.15fr_1fr] lg:gap-12">
 			<div>
-				<p class="pill">Early experiment · Non-commercial · Open source</p>
-				<h1 id="_top">Open-weight AI on <em>volunteers’</em> GPUs</h1>
+				<p class="pill">{hero.pill}</p>
+				<h1 id="_top"><span class="nowrap">Open-weight</span> AI on <em>volunteers’</em> GPUs</h1>
 				<p class="lead">{hero.lead}</p>
 				<div class="mt-8 flex flex-wrap gap-3">
-					<a class="btn btn-primary" href={links.chat}>Start chatting</a>
-					<a class="btn btn-secondary" href={links.node}>Run a node</a>
+					<a class="btn btn-primary" href={links.nodeAnchor}>Run a node</a>
+					<a class="btn btn-secondary" href={links.chat}>Start chatting</a>
 				</div>
 				<p class="privacy">
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6z" /></svg>
@@ -89,8 +94,81 @@ const icons: Record<string, string> = {
 			</svg>
 		</section>
 
+		<LiveStats class="live" />
+
+		<section class="node" id="run-a-node" aria-labelledby="b-node" data-home-node>
+			<p class="kicker">{nodeBlock.kicker}</p>
+			<h2 id="b-node">{nodeBlock.title}</h2>
+			<p class="node-intro">{nodeBlock.intro}</p>
+
+			<div class="node-grid">
+				<div class="node-linux">
+					<p class="node-os">Linux: paste in a terminal</p>
+					<Code code={anonCommand} lang="bash" frame="terminal" title="Terminal" wrap />
+					<ol class="node-does">
+						{nodeBlock.does.map((d) => <li>{d}</li>)}
+					</ol>
+					<p class="node-links">
+						<a href={nodeShSource}>Read the script first</a>
+						<span aria-hidden="true">·</span>
+						<a href={links.nodeLinux}>The same steps by hand</a>
+					</p>
+				</div>
+
+				<div class="node-win">
+					<p class="node-os">Windows 10 or 11</p>
+					<a class="dl-btn" href={installerURL} data-dl-windows>
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d={arrow} /></svg>
+						Download for Windows
+					</a>
+					<p class="node-meta">{nodeRelease.version} · {installerSize} · <a href={`${links.nodeWindows}#check-the-download`}>Check the download</a></p>
+					<p class="node-small">
+						On the setup page, choose <b>Start without an account (science only)</b>, or link it to your account
+						right away. Windows may warn “unknown publisher” (not signed yet): <b>More info</b> → <b>Run anyway</b>.{' '}
+						<a href={links.nodeWindows}>Windows install in detail</a>
+					</p>
+				</div>
+			</div>
+
+			<div class="node-facts">
+				<div>
+					<h3>What you need</h3>
+					<ul>
+						<li>An NVIDIA GPU with <strong>24 GB or more</strong> (RTX 3090, 4090, 5090 class), or <strong>16 GB</strong> (RTX 4080, 5070 Ti, 5080 class) with at most a light desktop on it. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti) fail the speed test.</li>
+						<li>x86_64 Linux with systemd (Ubuntu 22.04, Debian 12 or newer) and driver {needs.linuxDriver} or newer ({needs.linuxDriverRTX50} for an RTX 50), or Windows 10 or 11 with driver {needs.windowsDriver} or newer ({needs.windowsDriverRTX50} for an RTX 50).</li>
+						<li>About {needs.diskGB} GB free disk: the model is {needs.modelGB} GB.</li>
+						<li>You must be 18 or older; running a node means you accept the <a href={links.terms}>terms</a>.</li>
+					</ul>
+				</div>
+				<div>
+					<h3>Stop, remove, link later</h3>
+					<dl>
+						<dt>Pause and free the GPU</dt>
+						<dd><code>sudo systemctl stop aisathome-node aisathome-llama</code> (Windows: <b>Stop engine</b> in the tray)</dd>
+						<dt>Uninstall</dt>
+						<dd><code>sudo ./uninstall.sh</code> in the folder the script unpacked (it keeps the model; <code>--purge</code> removes it). Windows: Settings → Apps.</dd>
+						<dt>Link to an account</dt>
+						<dd><code>sudo aisathome-node link</code>: then it serves chats too and earns credit (Windows: <b>Link to my account</b>).</dd>
+					</dl>
+				</div>
+			</div>
+
+			<ul class="guar grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+				{
+					guarantees.map((g) => (
+						<li>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d={icons[g.title]} /></svg>
+							<h3>{g.title}</h3>
+							<p>{g.text}</p>
+						</li>
+					))
+				}
+			</ul>
+			<a class="more" href={links.node}>Everything about running a node <span aria-hidden="true">→</span></a>
+		</section>
+
 		<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
-			<p class="sci-kicker">Science</p>
+			<p class="kicker">What the GPUs do</p>
 			<h2 id="b-sci">Our GPUs prove theorems</h2>
 			<p class="sci-text" data-home-prove2me data-source="build">
 				<strong class="sci-count" data-home-p2m-accepted>{p2mView.kpis.accepted}</strong>{' '}
@@ -99,37 +177,31 @@ const icons: Record<string, string> = {
 			</p>
 			<script is:inline type="application/json" data-home-p2m-known set:html={JSON.stringify({ history: p2mHistory, model: p2m.model }).replace(/</g, '\\u003c')} />
 			{science.merged > 0 && (
-				<p class="sci-text" data-home-tauceti>
-					<strong class="sci-count" data-home-science-merged>{science.merged}</strong>{' '}
-					<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, an open
-					library of formal mathematics where every change must pass the project’s own review. Failures are
-					counted too. A finished project: we stopped on 7 November 2026 at the maintainers’ request.{' '}
-					<a href={science.pagePath}>See every pull request <span aria-hidden="true">→</span></a>
+				<p class="sci-text sci-past" data-home-tauceti>
+					Before that: <strong data-home-science-merged>{science.merged}</strong>{' '}
+					<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, a
+					library of formal mathematics (finished, at the maintainers’ request).{' '}
+					<a href={science.pagePath}>Every pull request <span aria-hidden="true">→</span></a>
 				</p>
 			)}
-			<a class="sci-link" href="/science/" data-home-science-all>All science <span aria-hidden="true">→</span></a>
+			<a class="more" href="/science/" data-home-science-all>All science <span aria-hidden="true">→</span></a>
 		</section>
 
-		{latest.length > 0 && (
-			<section class="log-c" aria-labelledby="b-log" data-home-devlog>
-				<h2 id="b-log">Dev log</h2>
-				<ol>
-					{latest.slice(0, 3).map((p) => (
-						<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
-							<span class="log-c-num">#{p.data.number}</span>
-							<time datetime={isoDate(p.data.date)}>{shortDate(p.data.date)}</time>
-							<div>
-								<a href={postURL(p)} data-home-post-link>{p.data.title}</a>
-								<p>{p.data.summary}</p>
-							</div>
+		<section class="block" aria-labelledby="b-use">
+			<h2 id="b-use">Use it</h2>
+			<ul class="cards grid gap-5 md:grid-cols-3">
+				{
+					cards.map((c) => (
+						<li>
+							<a href={c.href}>
+								<h3>{c.title} <span aria-hidden="true">→</span></h3>
+								<p>{c.text}</p>
+							</a>
 						</li>
-					))}
-				</ol>
-				<a class="log-c-all" href="/devlog/">All posts <span aria-hidden="true">→</span></a>
-			</section>
-		)}
-
-		<LiveStats class="live" />
+					))
+				}
+			</ul>
+		</section>
 
 		<section class="block" aria-labelledby="b-how">
 			<h2 id="b-how">How it works</h2>
@@ -146,36 +218,24 @@ const icons: Record<string, string> = {
 			</ol>
 		</section>
 
-		<section class="block" aria-labelledby="b-use">
-			<h2 id="b-use">Use it, or give your GPU</h2>
-			<ul class="cards grid gap-5 md:grid-cols-3">
-				{
-					cards.map((c) => (
-						<li>
-							<a href={c.href}>
-								<h3>{c.title} <span aria-hidden="true">→</span></h3>
-								<p>{c.text}</p>
-							</a>
+		{latest.length > 0 && (
+			<section class="block log-c" aria-labelledby="b-log" data-home-devlog>
+				<h2 id="b-log">Dev log</h2>
+				<ol>
+					{latest.slice(0, 3).map((p) => (
+						<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
+							<span class="log-c-num">#{p.data.number}</span>
+							<time datetime={isoDate(p.data.date)}>{shortDate(p.data.date)}</time>
+							<div>
+								<a href={postURL(p)} data-home-post-link>{p.data.title}</a>
+								<p>{p.data.summary}</p>
+							</div>
 						</li>
-					))
-				}
-			</ul>
-		</section>
-
-		<section class="block" aria-labelledby="b-count">
-			<h2 id="b-count">Running a node</h2>
-			<ul class="guar grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-				{
-					guarantees.map((g) => (
-						<li>
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d={icons[g.title]} /></svg>
-							<h3>{g.title}</h3>
-							<p>{g.text}</p>
-						</li>
-					))
-				}
-			</ul>
-		</section>
+					))}
+				</ol>
+				<a class="log-c-all" href="/devlog/">All posts <span aria-hidden="true">→</span></a>
+			</section>
+		)}
 	</div>
 </StarlightPage>
 
@@ -184,7 +244,6 @@ const icons: Record<string, string> = {
 	// build's line stays.
 	import { liveSummary, type History } from '../data/prove2me-records';
 	import { homeLine } from '../data/prove2me-view';
-import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
 	const box = document.querySelector<HTMLElement>('[data-home-prove2me]');
 	const load = async () => {
@@ -203,8 +262,6 @@ import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 	};
 	load();
 </script>
-
-
 
 <style>
 	.vb { color: var(--sl-color-gray-2); }
@@ -231,7 +288,7 @@ import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 	}
 	h1 {
 		margin: 1.25rem 0 0;
-		font-size: clamp(3.2rem, 8.4vw, 6.6rem);
+		font-size: clamp(3rem, 7.6vw, 5.6rem);
 		font-weight: 900;
 		letter-spacing: -0.005em;
 		text-wrap: balance;
@@ -267,24 +324,22 @@ import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 	.privacy strong { color: var(--sl-color-white); }
 	.privacy a { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
 
-	/* Science (right after the hero) */
+	/* Science (after the node block) */
 	.sci {
-		margin-bottom: clamp(1rem, 3vw, 2rem);
+		margin-top: clamp(2.5rem, 6vw, 4rem);
 		padding: 1.5rem clamp(1.25rem, 3vw, 2.5rem);
 		border-left: 5px solid var(--sl-color-accent);
 		border-radius: 0.5rem;
 		background: var(--b-surface);
 	}
-	.sci-kicker { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sl-color-accent-high); }
 	.sci h2 { margin: 0.4rem 0 0.75rem; font-size: clamp(1.6rem, 3.2vw, 2.2rem); font-weight: 850; text-wrap: balance; }
 	.sci-text { max-width: 44rem; font-size: 1rem; line-height: 1.6; }
 	.sci-text + .sci-text { margin-top: 0.75rem; }
 	.sci-text a { font-weight: 600; color: var(--sl-color-gray-2); white-space: nowrap; }
 	.sci-count { font: 900 1.6rem/1 var(--font-display); color: var(--sl-color-white); }
-	.sci-link { display: inline-block; margin-top: 0.75rem; font-weight: 600; color: var(--sl-color-gray-2); }
 
-	/* Dev log (after the hero) */
-	.log-c { padding-block: clamp(1rem, 3vw, 2rem) clamp(2rem, 5vw, 3.5rem); }
+	/* Dev log (last) */
+	.log-c { padding-bottom: clamp(2rem, 5vw, 3.5rem); }
 	.log-c h2 { margin: 0 0 1.25rem; font-size: clamp(1.8rem, 3.5vw, 2.4rem); font-weight: 850; }
 	.log-c li {
 		display: grid;
@@ -389,4 +444,102 @@ import { description, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 	@media (prefers-reduced-motion: reduce) {
 		.net .links line { animation: none; }
 	}
+	/* Shared */
+	.nowrap { white-space: nowrap; }
+	.kicker { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sl-color-accent-high); }
+	.more { display: inline-block; margin-top: 1.25rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	.vb code {
+		padding: 0.05rem 0.3rem;
+		border-radius: 0.25rem;
+		background: var(--b-band);
+		font: 0.85em/1.4 var(--font-mono);
+		color: var(--sl-color-white);
+		overflow-wrap: anywhere;
+	}
+
+	/* Run a node: the one command, the Windows download, what it needs and how to stop it */
+	.node {
+		margin-top: clamp(2.5rem, 6vw, 4rem);
+		padding: clamp(1.25rem, 3vw, 2.5rem);
+		border-top: 5px solid var(--sl-color-accent);
+		border-radius: 0.5rem;
+		background: var(--b-surface);
+		scroll-margin-top: 5rem;
+	}
+	.node h2 { margin: 0.4rem 0 0.75rem; font-size: clamp(2rem, 4.5vw, 3.2rem); font-weight: 850; text-wrap: balance; }
+	.node-intro { max-width: 46rem; font-size: 1.05rem; line-height: 1.6; }
+	.node-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+		gap: 1.5rem 2.5rem;
+		margin-top: 1.75rem;
+	}
+	.node-os { margin-bottom: 0.6rem !important; font: 800 1.3rem/1.1 var(--font-display); letter-spacing: 0.03em; text-transform: uppercase; color: var(--sl-color-white); }
+	.node-linux :global(.expressive-code) { width: 100%; }
+	/* On a phone the command wraps at its spaces only: the address stays on one line. */
+	@media (max-width: 30rem) { .node-linux :global(.expressive-code) { --ec-codeFontSize: 0.78rem; --ec-codePadInl: 0.75rem; } }
+	.node-does { margin-top: 1rem !important; padding-left: 1.4rem !important; list-style: decimal; font-size: 0.95rem; line-height: 1.55; }
+	.node-does li + li { margin-top: 0.4rem; }
+	.node-does li::marker { font-weight: 800; color: var(--sl-color-accent-high); }
+	.node-links { margin-top: 0.9rem !important; display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; font-size: 0.92rem; }
+	.node a:not(.dl-btn):not(.more) { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
+	.node-win { padding-left: 2.5rem; border-left: 1px solid var(--sl-color-hairline-light); }
+	.node-meta { margin-top: 0.6rem !important; font-size: 0.9rem; font-weight: 600; color: var(--sl-color-white); }
+	.node-meta a { font-weight: 400; }
+	.node-small { margin-top: 0.9rem !important; font-size: 0.9rem; line-height: 1.55; }
+	.node-small b { color: var(--sl-color-white); }
+	.dl-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 0.9rem 1.5rem;
+		border-radius: 0.4rem;
+		background: var(--sl-color-accent);
+		color: #1c0d02;
+		font: 800 1.3rem/1 var(--font-display);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		text-decoration: none;
+		white-space: nowrap;
+		transition: background-color 0.15s;
+	}
+	.dl-btn:hover, .dl-btn:focus-visible { background: var(--sl-color-accent-high); color: #1c0d02; }
+	:global([data-theme='light']) .dl-btn, :global([data-theme='light']) .dl-btn:hover { color: #fff; }
+	.dl-btn svg { width: 1.3rem; flex: none; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+	.node-facts {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1.5rem 2.5rem;
+		margin-top: 2rem;
+		padding-top: 1.75rem;
+		border-top: 1px solid var(--sl-color-hairline-light);
+		font-size: 0.92rem;
+		line-height: 1.55;
+	}
+	.node-facts h3 { margin-bottom: 0.75rem; font-size: 1.35rem; }
+	.node-facts ul { padding-left: 1.1rem; list-style: disc; }
+	.node-facts li + li { margin-top: 0.4rem; }
+	.node-facts strong, .node-facts b { color: var(--sl-color-white); }
+	.node-facts dt { margin-top: 0.6rem; font-weight: 700; color: var(--sl-color-white); }
+	.node-facts dt:first-child { margin-top: 0; }
+	.node-facts dd { margin: 0.15rem 0 0; }
+	.node .guar { margin-top: 2.25rem; padding-top: 1.75rem; border-top: 1px solid var(--sl-color-hairline-light); }
+	.node .guar h3 { font-size: 1.35rem; }
+	@media (max-width: 50rem) {
+		.node-grid, .node-facts { grid-template-columns: minmax(0, 1fr); }
+		.node-win { padding-left: 0; padding-top: 1.5rem; border-left: 0; border-top: 1px solid var(--sl-color-hairline-light); }
+		.dl-btn { display: flex; justify-content: center; padding-inline: 1rem; }
+	}
+	@media (max-width: 24rem) {
+		.dl-btn { white-space: normal; text-align: center; }
+	}
+	@media (max-width: 40rem) {
+		/* The four promises as a compact list on a phone: the icon beside its heading. */
+		.node .guar li { display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); gap: 0 0.75rem; }
+		.node .guar svg { grid-row: span 2; width: 1.75rem; margin: 0; }
+		.node .guar h3 { margin-bottom: 0.25rem; font-size: 1.2rem; }
+	}
+	.sci-past { font-size: 0.92rem; color: var(--sl-color-gray-3); }
+	.sci-past strong { color: var(--sl-color-white); }
 </style>
+

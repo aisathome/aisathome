@@ -4,7 +4,7 @@
 // sees the Linux command first, and each panel links to the other. os="windows" shows only the
 // Windows panel (on the Windows page). Version and size: src/data/node-release.ts.
 import { Code } from '@astrojs/starlight/components';
-import { installerSize, installerURL, linuxCommand, nodeRelease } from '../data/node-release';
+import { installerSize, installerURL, linuxCommand, needs, nodeRelease } from '../data/node-release';
 
 interface Props { os?: 'windows' }
 const both = Astro.props.os !== 'windows';
@@ -14,8 +14,8 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 <section class="dl not-content" data-node-download aria-label="Download the node">
 	<div class="dl-panel" data-os-panel="windows">
 		<p class="dl-req">
-			<strong>Before you download:</strong> an NVIDIA GPU with 16 GB or more and driver 527.41 or newer
-			(570.65 for an RTX 50) · Windows 10 or 11, 64-bit · about 17 GB free disk. Slower 16 GB cards
+			<strong>Before you download:</strong> an NVIDIA GPU with 16 GB or more and driver {needs.windowsDriver} or newer
+			({needs.windowsDriverRTX50} for an RTX 50) · Windows 10 or 11, 64-bit · about {needs.diskGB} GB free disk. Slower 16 GB cards
 			(RTX 4060 Ti, 5060 Ti class) fail the installer’s speed test. <a href="/node/#what-you-need">Details</a>
 		</p>
 		<div class="dl-get">
@@ -35,7 +35,7 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 			</li>
 			<li>
 				<strong>Follow the node’s page</strong> that opens: it checks your card, downloads the model
-				(13-14 GB) and tests its speed. Then <b>Link to my account</b> opens your browser: sign in to{' '}
+				({needs.modelGB} GB) and tests its speed. Then <b>Link to my account</b> opens your browser: sign in to{' '}
 				<a href="/account">your account</a> and approve.
 			</li>
 		</ol>
@@ -46,20 +46,20 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 		<div class="dl-panel dl-linux" data-os-panel="linux" hidden>
 			<p class="dl-req">
 				<strong>Before you install:</strong> an NVIDIA RTX 30, 40 or 50 with 16 GB or more and driver
-				525.60.13 or newer (570.26 for an RTX 50) · x86_64 Linux with systemd and glibc 2.35+ (Ubuntu
-				22.04, Debian 12 or newer) · about 17 GB free disk. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti
+				{needs.linuxDriver} or newer ({needs.linuxDriverRTX50} for an RTX 50) · x86_64 Linux with systemd and glibc 2.35+ (Ubuntu
+				22.04, Debian 12 or newer) · about {needs.diskGB} GB free disk. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti
 				class) fail the installer’s speed test. <a href="/node/#what-you-need">Details</a>
 			</p>
 			<div class="dl-get">
 				<p class="dl-kicker">Install on Linux: paste in a terminal</p>
 				<Code code={linuxCommand} lang="bash" />
 				<p class="dl-meta">
-					Prebuilt bundle, {nodeRelease.version} · about 0.5 GB{' · '}<a href="/node/windows/" data-os-show="windows">Windows</a>
+					Prebuilt bundle, {nodeRelease.version} · {needs.bundle}{' · '}<a href="/node/windows/" data-os-show="windows">Windows</a>
 				</p>
 			</div>
 			<ol class="dl-steps">
 				<li><strong>Paste the command:</strong> it downloads the bundle and checks its SHA-256.</li>
-				<li><strong>The installer checks</strong> your driver, card and disk, downloads the model (13-14 GB) and tests its speed.</li>
+				<li><strong>The installer checks</strong> your driver, card and disk, downloads the model ({needs.modelGB} GB) and tests its speed.</li>
 				<li>
 					<strong>Press Enter</strong> at the token question. At the end the installer shows a link and a
 					code: open it on any device, sign in to <a href="/account">your account</a> and approve.
