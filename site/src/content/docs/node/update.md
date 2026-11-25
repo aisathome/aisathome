@@ -25,14 +25,16 @@ curl -fLO $base/aisathome-node-bundle-linux-amd64.tar.xz && curl -fLO $base/SHA2
 ```
 
 **A node installed before v0.6.0:** the installer moves its token aside (to
-`/etc/aisathome-node/token.env.unlinked`) and asks for a node token: press **Enter**, and the
-update ends with linking the node to your account, as at a [first install](/node/install/#3-link-it-to-your-account):
+`/etc/aisathome-node/token.env.unlinked`) and asks **Link this node to your account? [Y/n]**:
+answer **y** (installers before v0.7.0 ask for a node token: press **Enter**), and the update ends
+with linking the node to your account, as at a [first install](/node/install/#3-link-it-to-your-account):
 open the link it prints in your browser, sign in, check the code and approve (`--link` skips the
 question). The node gets a new node token and a new node id; press **This is my machine** on it
 under **Your nodes** on your [account page](/account). The old node stays listed there.
 
-**A node installed with v0.6.0 or later:** press Enter at the question to keep the installed token,
-or add `--keep-token` (`sudo ./install.sh --keep-token`) to skip it. `--keep-token` stops with a
+**A node installed with v0.6.0 or later:** the installer keeps the installed token without asking
+(installers before v0.7.0 ask: press Enter to keep it); `--keep-token` (`sudo ./install.sh
+--keep-token`) says so for scripts. `--keep-token` stops with a
 message when the installed token has no record of its gateway, or another gateway's; link the node
 then (`--link`).
 

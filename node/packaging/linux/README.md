@@ -20,7 +20,7 @@ curl -LO $base/aisathome-node-bundle-linux-amd64.tar.xz -LO $base/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 tar -xJf aisathome-node-bundle-linux-amd64.tar.xz && cd aisathome-node-bundle-linux-amd64
 ./install.sh --dry-run                 # checks only, no root needed
-sudo ./install.sh    # press Enter at the token question: the install ends with the link step
+sudo ./install.sh    # "Link this node to your account? [Y/n]": y ends the install with the link step
 ```
 
 The link step (`aisathome-node link`) prints a link and a code: open the link in a
@@ -121,8 +121,8 @@ For other GPUs, older systems, or if you prefer to compile.
 - Optional: a GGUF model you already have (`--model`) and your own `node.json`
   (`--node-config`, see `examples/node.json`).
 - Your account: the install ends by linking the node to it (above). Or, advanced, a node token:
-  sign in at `https://aisathome.org/account`, "Your nodes", "Add a node", and paste it at the
-  token question. The token carries the node's id, so `node_id` (and `--node-id`) is needed
+  sign in at `https://aisathome.org/account`, "Your nodes", "Add a node", and give it with
+  `--token-stdin` (pasted, hidden). The token carries the node's id, so `node_id` (and `--node-id`) is needed
   only with tokens from a gateway's config.
 
 ```bash
@@ -139,17 +139,22 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   install a known version; `latest` skips pre-releases.
 - `--node-bin ./aisathome-node` installs your own build instead.
 - An explicit `--llama-build` wins over the bundle's `llama-server` and skips its checks.
-- Your account: at a terminal, Enter on an empty line at the token question (or `--link`)
-  ends the install with `aisathome-node link`. Until the link is approved the node stays off;
-  not approved within 10 minutes, the installer stops and says how to link later
-  (`sudo aisathome-node link`, which also starts the node).
-- A node token instead (advanced, and for scripts: `cat token.txt | sudo ./install.sh`) is read
-  from stdin (hidden), never from the command line. On an installed node, Enter on an empty
-  line at the prompt keeps the installed token, and `--keep-token` keeps it without asking (for
-  scripts; empty piped input is still an error). `--link` on an installed node links it to
-  another account; until that is approved it keeps its installed token.
-- Without an account: `--anonymous` registers the node with the gateway after the speed test
-  (`aisathome-node register -accept-terms`) instead of asking for a token. Such a node does
+- Your account: at a terminal the installer asks "Link this node to your account? [Y/n]".
+  y (or Enter, or `--link` without asking) ends the install with `aisathome-node link`. Until
+  the link is approved the node stays off; not approved within 10 minutes, the installer stops
+  and says how to link later (`sudo aisathome-node link`, which also starts the node). n (or
+  `--anonymous`) runs the node without an account (below).
+- An installed node with a token for the same gateway keeps it without a question; `--keep-token`
+  says so for scripts (it stops if there is no such token). `--link` on an installed node links
+  it to another account; until that is approved it keeps its installed token.
+- A node token instead (advanced): `--token-stdin` reads it from stdin, never from the command
+  line: pasted and hidden at a terminal, or piped (`cat token.txt | sudo ./install.sh
+  --token-stdin`; a script that pipes a token without any of these flags works as before).
+- The installer leaves these decisions (and the checks of `node.json` and the gateway address) to
+  the node agent it installs, `aisathome-node config preflight`, so a `--node-bin` or
+  `--node-release` must be at least as new as the installer.
+- Without an account: n at the question, or `--anonymous`, registers the node with the gateway
+  after the speed test (`aisathome-node register -accept-terms`). Such a node does
   science work only, gets work once the gateway's model check has admitted it, and earns no
   credit until it is linked to an account (`sudo aisathome-node link`). The installer shows that,
   and that you must be 18 or older and accept the terms, before it installs. A node that has a
@@ -257,8 +262,8 @@ prompts from RAM or VRAM while they are being served.
 | Update | `sudo ./install.sh --keep-token` from the new bundle (below) |
 | Remove | `sudo ./uninstall.sh` (keeps the model; `--purge` removes it too) |
 
-**Update:** unpack the new release's bundle and run its `install.sh` with `--keep-token` (or
-press Enter at the token prompt). It keeps the token, the node id, the gateway and the
+**Update:** unpack the new release's bundle and run its `install.sh` (`--keep-token` in a
+script). It keeps the token, the node id, the gateway and the
 model (checked again, about a minute), replaces the binaries and units and restarts the
 node. Without systemd (a container), stop the two processes, swap the bundle directory for
 the new one and start them again: `node.json` and the token live outside the bundle.

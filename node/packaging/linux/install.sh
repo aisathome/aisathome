@@ -8,7 +8,8 @@
 #   sudo ./install.sh --llama-build <llama.cpp/build> \
 #        (--node-bin <aisathome-node> | --node-release <latest|vX.Y.Z>) [options]
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
-#   --enable-at-boot, --link, --anonymous, --keep-token, --dry-run, --download-only <dir> [--tier standard|big],
+#   --enable-at-boot, --link, --anonymous, --keep-token, --token-stdin, --dry-run,
+#   --download-only <dir> [--tier standard|big],
 #   --speculation off|mtp|dflash2 (default: off, or what an earlier install chose).
 #
 # Without --model, the tier's pinned model is downloaded from Hugging Face, resumed if
@@ -23,15 +24,16 @@
 # desktop) or big (24 GB+: UD-IQ4_XS, 192k); see README.md. A short speed test runs after the
 # install.
 # --dry-run runs the checks, prints the plan and the llama-server command, and exits
-# without installing (no root needed). Your account: at a terminal, press Enter at the token
-# question and the install ends by linking the node to your account in the browser (a link
-# and a code; approve on any device). --link does that without asking. A node token instead
-# (advanced, and for scripts) is read from stdin, never from argv: paste it when asked, or
+# without installing (no root needed). Your account: at a terminal the installer asks "Link
+# this node to your account? [Y/n]". y (or Enter): the install ends by linking the node to
+# your account in the browser (a link and a code; approve on any device); --link does that
+# without asking. n: the node runs without an account (science only, no credit until it is
+# linked with `aisathome-node link`) and registers with the gateway after the speed test;
+# --anonymous does that without asking. A node token instead (advanced, and for scripts) is
+# read from stdin, never from argv: --token-stdin (pasted, hidden, at a terminal), or
 # cat token.txt | sudo ./install.sh ...
-# --anonymous starts the node without an account instead (science only, no credit until it
-# is linked with `aisathome-node link`): it registers with the gateway after the speed test.
-# Updating: run the new bundle's install.sh. At a terminal, Enter on an empty line keeps the
-# installed token (--keep-token does so without asking), and a generated node.json keeps the
+# Updating: run the new bundle's install.sh. An installed token for the same gateway is kept
+# without asking (--keep-token: also from a script), and a generated node.json keeps the
 # installed node id and gateway URL unless --node-id or --gateway-url is given.
 #
 # What it touches:
@@ -46,11 +48,11 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,/^# What it touches:$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
 die() { echo "$1" >&2; exit "${2:-1}"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 llama_build="" model="" node_bin="" node_release="" node_config="" at_boot=0 dry_run=0
-node_id="" gateway_url="" download_only="" keep_token=0 link=0 anonymous=0 want_tier="" want_spec=""
+node_id="" gateway_url="" download_only="" keep_token=0 link=0 anonymous=0 token_stdin=0 want_tier="" want_spec=""
 conf=/etc/aisathome-node
 preset="${PRESET:-}" alias="${MODEL_ALIAS:-}"
 while [[ $# -gt 0 ]]; do
@@ -70,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --keep-token) keep_token=1; shift ;;
     --link) link=1; shift ;;
     --anonymous) anonymous=1; shift ;;
+    --token-stdin) token_stdin=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) usage ;;
   esac
@@ -77,6 +80,7 @@ done
 
 [[ $link = 0 || $keep_token = 0 ]] || die "use --link or --keep-token, not both" 2
 [[ $anonymous = 0 || ($link = 0 && $keep_token = 0) ]] || die "use --anonymous alone, without --link or --keep-token" 2
+[[ $token_stdin = 0 || ($link = 0 && $keep_token = 0 && $anonymous = 0) ]] || die "use --token-stdin alone, without --link, --keep-token or --anonymous" 2
 
 # Two tiers, chosen by the size of the card only: one model
 # file per tier, 1 request at a time, and a context set by the card, never by the machine's
@@ -799,7 +803,7 @@ preflight() {
   [[ -z "$node_config" ]] || a+=(-node-config "$node_config")
   [[ -z "$gateway_url" ]] || a+=(-gateway-url "$gateway_url")
   [[ -z "$node_id" ]] || a+=(-node-id "$node_id")
-  if [[ $anonymous = 1 ]]; then acct=anonymous; elif [[ $link = 1 ]]; then acct=link; elif [[ $keep_token = 1 ]]; then acct=keep; fi
+  if [[ $anonymous = 1 ]]; then acct=anonymous; elif [[ $link = 1 ]]; then acct=link; elif [[ $keep_token = 1 ]]; then acct=keep; elif [[ $token_stdin = 1 ]]; then acct=token; fi
   workdir
   j="$("$node_bin" config preflight -json -conf-dir "$conf" -out "$work" -account "$acct" \
         -model "$alias" -slots "$slots" -ctx "$ctx_per_slot" "${a[@]}" "$@")" || exit

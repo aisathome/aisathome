@@ -34,11 +34,12 @@ release has no bundle yet, use [build it yourself](#build-it-yourself).
 sudo ./install.sh
 ```
 
-When it asks for a node token, press **Enter**: the install then ends by linking the node to your
-account (step 3). Add `--link` to skip the question.
+When it asks **Link this node to your account? [Y/n]**, answer **y**: the install then ends by
+linking the node to your account (step 3). Add `--link` to skip the question. (Installers before
+v0.7.0 ask for a node token instead: press **Enter** there.)
 
-**Without an account (science only):** `sudo ./install.sh --anonymous` registers the node with no
-sign-in instead of step 3. It does science work only, never people's chats, and earns no credit
+**Without an account (science only):** answer **n**, or run `sudo ./install.sh --anonymous`: the
+node registers with no sign-in instead of step 3. It does science work only, never people's chats, and earns no credit
 until you link it (`sudo aisathome-node link`). You must be 18 or older; running it means you
 accept the [terms](/about/terms/). The one-liner `curl -fsSL https://aisathome.org/node.sh | sh`
 does steps 1 and 2 this way and asks before it installs. The node first answers a few test prompts
@@ -95,9 +96,9 @@ nodes** on your account page: until then it is not one of your own nodes and get
 personal data.
 
 **Advanced: paste a node token.** Create a node on [your account page](/account) (**Add a node**)
-and paste its token at the installer's question (input is hidden). On a machine you reach over
-SSH you can put the token in a file and pipe it in: `cat token.txt | sudo ./install.sh`, then
-delete the file. A token from your account page carries the node's id; if we gave you a node id
+and run `sudo ./install.sh --token-stdin`, which asks for it (input is hidden; installers before
+v0.7.0 take it at their token question). On a machine you reach over SSH you can put the token in
+a file and pipe it in: `cat token.txt | sudo ./install.sh --token-stdin`, then delete the file. A token from your account page carries the node's id; if we gave you a node id
 with your token, add `--node-id <id>`.
 
 ### 4. Check

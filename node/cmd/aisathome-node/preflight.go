@@ -39,8 +39,9 @@ rules what the install does with the node's config and token, and writes the fil
     only to this machine.
   - The token: one is kept or sent only to the gateway its record (AISATHOME_TOKEN_GATEWAY) names;
     any other installed token is moved aside by the installer ("park") and never written again.
-  - The account (-account): link, anonymous, keep, token (read from stdin), or "" (ask at a
-    terminal; read a token from stdin otherwise).
+  - The account (-account): link, anonymous, keep, token (read from stdin), or "": at a terminal
+    an installed token for this gateway is kept, else it asks "Link this node to your account?
+    [Y/n]" (y: link, n: without an account); without a terminal a token is read from stdin.
 
 It writes node.json (and token.env when the node gets a token now) into -out, prints what it
 decided as JSON on stdout (-json) and tells the person on stderr. -dry-run reads no token,
@@ -100,7 +101,7 @@ func (e preflightEnv) main(args []string, stdout, stderr io.Writer) int {
 	fl.StringVar(&o.nodeConfig, "node-config", "", "a node.json to install (made canonical, token dropped) instead of a generated one")
 	fl.StringVar(&o.gatewayURL, "gateway-url", "", "the gateway for a generated node.json (default: the installed one's, else "+setupflow.DefaultGatewayURL+")")
 	fl.StringVar(&o.nodeID, "node-id", "", "the node id for a generated node.json (default: the token's, else the installed one's, else the host name)")
-	fl.StringVar(&o.account, "account", "", "link, anonymous, keep, token (from stdin), or empty: ask at a terminal, else a token from stdin")
+	fl.StringVar(&o.account, "account", "", "link, anonymous, keep, token (from stdin), or empty: ask at a terminal (link? [Y/n]), else a token from stdin")
 	fl.StringVar(&o.model, "model", "", "a generated node.json's model name")
 	fl.IntVar(&o.slots, "slots", 1, "a generated node.json's slots")
 	fl.IntVar(&o.ctx, "ctx", 0, "a generated node.json's context per slot")
@@ -215,8 +216,10 @@ func (e preflightEnv) preflight(o preflightOpts, msg io.Writer) (preflightResult
 			say("%s", RegisterNotice)
 		case "link":
 			say("account: the install ends with linking this node to your account in the browser (aisathome-node link)")
-		case "", "token":
-			say("account: at a terminal, Enter at the token question ends the install with linking this node to your account in the browser (aisathome-node link)")
+		case "":
+			say("account: at a terminal the install asks \"Link this node to your account? [Y/n]\" (y: link it in the browser at the end, aisathome-node link; n: without an account, science only); an installed token recorded for this gateway is kept without asking")
+		case "token":
+			say("account: the node token from stdin (--token-stdin)")
 		}
 	} else {
 		tokenEnvPath := filepath.Join(o.confDir, "token.env")
@@ -354,17 +357,24 @@ func (e preflightEnv) decideToken(o preflightOpts, tokenEnvPath, gw string, r *p
 	return e.askToken(o, old, parked, gw, r, say)
 }
 
-// askToken is the account question without a flag: at a terminal a person answers; otherwise a script
-// pipes a token.
+// askToken is the account without a flag (or with -account token). At a terminal, an installed token for
+// this gateway is kept without asking; otherwise the person answers "Link this node to your account?
+// [Y/n]": y links in the browser at the end of the install, n runs the node without an account. A node
+// token (advanced) comes only from stdin: with -account token (pasted, not echoed, at a terminal), or piped
+// by a script that gives no flag.
 func (e preflightEnv) askToken(o preflightOpts, old, parked, gw string, r *preflightResult, say func(string, ...any)) (string, error) {
+	if o.account == "" && e.interactive {
+		if old != "" {
+			r.Account = "keep"
+			say("token: keeping the installed one (to link this node to another account instead: --link)")
+			return old, nil
+		}
+		return "", e.askLink(r, say)
+	}
 	var line string
 	var err error
 	if e.interactive {
-		if old != "" {
-			say("Paste a node token (input hidden), or press Enter to keep the installed one (to link the node to another account instead: --link):")
-		} else {
-			say("Press Enter to link this node to your account in the browser at the end of the install, or paste a node token (advanced; input hidden):")
-		}
+		say("Paste the node token (input hidden):")
 		line, err = e.readSecret()
 	} else {
 		line, err = readLine(e.stdin)
@@ -376,24 +386,51 @@ func (e preflightEnv) askToken(o preflightOpts, old, parked, gw string, r *prefl
 	if err != nil {
 		return "", err
 	}
-	switch {
-	case tok == "" && old != "" && e.interactive:
-		r.Account = "keep"
-		say("token: keeping the installed one")
-		return old, nil
-	case tok == "" && e.interactive:
-		r.Account = "link"
-		say("account: the install ends with linking this node to your account in the browser")
-		return "", nil
-	case tok == "":
+	if tok == "" {
+		if o.account == "token" {
+			return "", usagef("--token-stdin: no token on stdin")
+		}
 		hint := ""
 		if old != "" {
 			hint = " (to keep the installed one: --keep-token)"
 		}
-		return "", fmt.Errorf("no token on stdin%s; to link the node to your account in the browser instead: --link", hint)
+		return "", fmt.Errorf("no token on stdin%s; to link the node to your account in the browser instead: --link (or --anonymous: without an account)", hint)
 	}
 	r.Account = "token"
 	return tok, nil
+}
+
+// askLink asks a person at the terminal whether to link the node to an account: y (or Enter) links it in
+// the browser at the end of the install, n runs it without an account (science only).
+func (e preflightEnv) askLink(r *preflightResult, say func(string, ...any)) error {
+	for range 3 {
+		say("")
+		say("Link this node to your account? [Y/n]")
+		say("  y: link it in your browser at the end of the install (a link and a code; approve on any device)")
+		say("  n: run it without an account. %s", strings.ReplaceAll(RegisterNotice, "\n", "\n     "))
+		line, err := readLine(e.stdin)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if errors.Is(err, io.EOF) && line == "" {
+			break // the terminal closed: no answer (Enter is a line, not the end)
+		}
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "", "y", "yes":
+			r.Account = "link"
+			say("account: the install ends with linking this node to your account in the browser")
+			return nil
+		case "n", "no":
+			r.Account = "anonymous"
+			say("account: none; the install ends with registering this node without an account (science only)")
+			return nil
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		say("Answer y or n.")
+	}
+	return usagef("no answer to \"Link this node to your account?\": run the installer again, or use --link or --anonymous")
 }
 
 // checkGivenToken is a token a person pasted or a script piped: without surrounding whitespace (systemd
