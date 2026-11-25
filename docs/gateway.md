@@ -676,7 +676,8 @@ The card "Funnel" shows, for today and the 7 UTC days before it, totals only: fr
 registered without an account, nodes added to an account (account page or link), of those by an approved
 link, nodes without an account linked to an account, and distinct nodes connected for the first time. The
 nodes of the admin accounts (`accounts.admins`) are shown apart as the project's own and left out of the
-one-line conversion summary; nodes without an account cannot be told apart, and nodes on the config's
+one-line summary (which puts the site's numbers and the gateway's side by side, with no rate between them:
+first connections come from every install path, not only the install script); nodes without an account cannot be told apart, and nodes on the config's
 `node_tokens` are not counted. The counters live in the accounts file (`funnel`: numbers per day, kept
 400 days, never a node or account), each counted in the write that records its event; a node record
 keeps one flag, `connected`, so a reconnect is not a first connection. First connections count only for

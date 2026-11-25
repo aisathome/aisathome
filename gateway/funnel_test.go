@@ -175,11 +175,15 @@ func TestOpsFunnelCard(t *testing.T) {
 	if c.Total.Visitors != 1100 || c.Total.NodeViews != 20 || c.Total.Installs != 4 || c.Total.FirstConnect != 2 {
 		t.Fatalf("total %+v", c.Total)
 	}
-	for _, want := range []string{"1100 visitors", "20 node page views (1.8%)", "4 install starts (0.4% of visitors)",
-		"1 registered without an account, 1 added to an account → 1 connected for the first time (25.0% of install starts)"} {
+	for _, want := range []string{"1100 visitors", "20 node page views (1.8%)", "4 install-script fetchers (/node.sh, 0.4% of visitors; curl/Wget fetches: 5 of 7)",
+		"gateway: 1 registered without an account, 1 added to an account, 1 nodes connected for the first time (all install paths)"} {
 		if !strings.Contains(c.Summary, want) {
 			t.Errorf("summary lacks %q: %s", want, c.Summary)
 		}
+	}
+	// No rate between the install script and first connections: those come from every install path.
+	if strings.Contains(c.Summary, "of install") || strings.Contains(c.Summary, "25.0%") {
+		t.Errorf("summary relates first connections to install-script fetches: %s", c.Summary)
 	}
 
 	var b strings.Builder
@@ -210,7 +214,7 @@ func TestOpsFunnelCard(t *testing.T) {
 	os.Remove(stats)
 	c = g.opsFunnel(now)
 	if c.Site || !strings.Contains(c.SiteNote, "unavailable") || c.Rows[0].Visitors != 0 || c.Rows[0].Anon != 1 ||
-		strings.Contains(c.Summary, "visitors") || !strings.Contains(c.Summary, "1 connected for the first time") {
+		strings.Contains(c.Summary, "visitors") || !strings.Contains(c.Summary, "1 nodes connected for the first time") {
 		t.Fatalf("without the file: %+v %q", c.Rows[0], c.Summary)
 	}
 }
