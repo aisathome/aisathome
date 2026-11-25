@@ -350,16 +350,19 @@ func (g *Gateway) opsFunnel(now time.Time) *opsFunnel {
 	return c
 }
 
-// funnelSummary is the one-line conversion over the card's days, without the project's own nodes.
+// funnelSummary is the one-line summary over the card's days, without the project's own nodes. The
+// site's numbers and the gateway's stand side by side, with no rate between them: first connections
+// come from every install path (the Windows installer, the Linux bundle, by hand), not only the install
+// script, and the site statistics may lack days the gateway counted.
 func funnelSummary(t opsFunnelRow, site bool) string {
 	added, first := t.AccountNodes-t.OwnNodes, t.FirstConnect-t.OwnFirst
-	gw := fmt.Sprintf("%d registered without an account, %d added to an account → %d connected for the first time", t.Anon, added, first)
+	gw := fmt.Sprintf("gateway: %d registered without an account, %d added to an account, %d nodes connected for the first time (all install paths)", t.Anon, added, first)
 	if !t.HasGateway {
-		gw = "no gateway counts yet"
+		gw = "gateway: no counts yet"
 	}
 	if !site {
 		return fmt.Sprintf("Last %d days and today, not counting our own nodes: %s.", funnelDays, gw)
 	}
-	return fmt.Sprintf("Last %d days and today, not counting our own nodes: %d visitors → %d node page views (%s) → %d install starts (%s of visitors) → %s (%s of install starts).",
-		funnelDays, t.Visitors, t.NodeViews, rate(t.NodeViews, t.Visitors), t.Installs, rate(t.Installs, t.Visitors), gw, rate(first, t.Installs))
+	return fmt.Sprintf("Last %d days and today, not counting our own nodes: site: %d visitors → %d node page views (%s) → %d install-script fetchers (/node.sh, %s of visitors; curl/Wget fetches: %s); %s.",
+		funnelDays, t.Visitors, t.NodeViews, rate(t.NodeViews, t.Visitors), t.Installs, rate(t.Installs, t.Visitors), t.Fetches, gw)
 }
