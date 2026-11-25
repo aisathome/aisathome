@@ -113,7 +113,7 @@ Splitting into lemmas, together with a bigger budget per lemma and easier lemmas
 - There are not that many easy lemmas on prove2me. People point their Claude/Codex harnesses at prove2me, and the easy lemmas get solved quickly by those harnesses/models.
 
 ## Next steps
-If you want to help or contribute, the easiest way is to run a node. A node will receive parts of a lemma and work together with other agents to solve the overall theorem. You need an NVIDIA GPU with 16 GB or more. There is a Windows installer and a Linux install on [aisathome.org/node](https://aisathome.org/node/). A one-line install that needs no account is coming in the next node release.
+If you want to help or contribute, the easiest way is to run a node. A node will receive parts of a lemma and work together with other agents to solve the overall theorem. You need an NVIDIA GPU with 16 GB or more. There is a Windows installer and a Linux install on [aisathome.org/node](https://aisathome.org/node/). A one-line install that needs no account is coming in the next node release. *(Update, 25 November: it came with v0.6.0. On Linux, `curl -fsSL https://aisathome.org/node.sh | sh`; [read the script](https://github.com/aisathome/aisathome/blob/main/site/public/node.sh) first.)*
 
 If you do not want to run a node yourself or use the setup here, that is also possible, but I do not have a boilerplate for it. You would have to register on prove2me, find some easier theorems with the help of an agent, and prompt your way to a solution.
 

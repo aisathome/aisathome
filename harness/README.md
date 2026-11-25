@@ -9,6 +9,60 @@ It is the agent side of AIs@home: the node serves the model, the gateway routes 
 this package lets that model do checkable work. It works with any OpenAI-compatible endpoint, not only
 an AIs@home gateway. Node operators do not need it.
 
+## How the prove2me runs use it
+
+The proofs on [aisathome.org/science/prove2me](https://aisathome.org/science/prove2me/) come from this
+harness and a prove2me adapter on top of it. What runs, and where it is:
+
+**The model.** Qwen3.8 27B, Unsloth's `UD-IQ4_XS` GGUF (about 14.3 GB), on llama.cpp's `llama-server`
+on volunteers' 24 GB cards (RTX 3090/4090 so far): one request at a time, 196,608 tokens (192k) of
+context, a `q4_0` KV cache, prompt caching on. On a long-context needle test recall was 77/80 at about
+195k tokens and 62/80 at about 247k, hence the cap. From node v0.7.0 the 24 GB cards also run MTP
+speculative decoding (Qwen3.8's own multi-token-prediction head, 2 draft tokens a step, about
+1.7-1.9x output speed). The exact command, the model files' Hugging Face revision and their SHA-256 are in
+[`node/packaging/linux/install.sh`](../node/packaging/linux/install.sh) (`set_engine`, `tier_model`);
+for a 24 GB card it comes down to:
+
+```bash
+llama-server -m Qwen3.8-27B-UD-IQ4_XS.gguf --alias qwen3.8-27b -ngl all -fa on \
+  -np 1 --kv-unified-per-slot 196608 -ctk q4_0 -ctv q4_0 --cache-prompt \
+  --reasoning-budget 8192 --no-reasoning-preserve \
+  --spec-type draft-mtp -md mtp-Qwen3.8-27B-Q4_0.gguf --spec-draft-n-max 2
+```
+
+The agent reaches it through the gateway's OpenAI-compatible API (model `agent`), so a task can run on
+any node that is free.
+
+**The agent.** [opencode](https://opencode.ai) in the sandbox below (`loop.py`, `sandbox/`): Lean 4 and
+Mathlib at prove2me's versions, the model endpoint as its only way out, web tools off, a step cap and
+a cap on the model's own time, fix rounds with the compiler's errors (`rounds.py`). One task is often
+40-130 agent steps; about 96% of the prompt tokens come from llama.cpp's prompt cache, which is what
+makes this affordable on one GPU.
+
+**One proof, many tasks.**
+
+1. **Outline.** A session writes the whole proof as a Lean file that compiles with a `sorry` for each
+   step it has not proved yet.
+2. **Holes.** `lean/holes.py` turns each `sorry` into a stand-alone lemma (Mathlib's `extract_goal`
+   with its whole local context), checks that each lemma compiles on its own and that the outline
+   still compiles with the lemmas in place (a "dry assembly"); a hole that does not extract is proved
+   in place instead.
+3. **One task per hole.** Each lemma goes to the gateway's task queue as a task of its own
+   (`queue.py`, `worker.py`) and gets a fresh agent session; a lease, a checkpoint after every round
+   and a give-back on a stop let a task move between machines.
+4. **Assembly and checks.** `holes.assemble` puts the proofs back into the outline. Then the full
+   check: a text scan and an allow-list for the proof file before anything compiles (`lean/axioms.py`,
+   `lean/proofscan.py`), the build in a throwaway container with no network (`sandbox/jail.py`), and a
+   kernel replay of the compiled proof against the theorem compiled without it, allowing only Lean's
+   standard axioms (`lean/replay.py`). A hole that fails sends the lemma back to a new outline.
+5. **Submit.** Only a proof that passes goes to prove2me, which checks it again with Lean.
+
+**What is not in this repository yet:** the prove2me adapter itself (its prompts and playbooks
+beyond the generic one in `lean/playbooks/`, the choice of lemmas, the scheduling of outline and
+hole tasks, the submission client) and the sandbox image. So you can read and test every piece above
+and run your own Lean tasks with it (below), but not rerun a prove2me trial from this repository
+alone.
+
 ## What it does
 
 - **One task to its end** (`task.py`): `run_task(project, task, endpoint, caps)` prepares the task, runs
@@ -94,8 +148,9 @@ model's container and is never written to logs or config.
 1. Copy `template/adapter.py` and `template/PROJECT.md` into your project's own folder and fill in the
    steps: what the tasks are, how to set up the tree, the prompt, the check. The endpoint must be a host
    name, not an IP address (the sandbox reaches it through its forwarder, by name).
-2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@harness-v0.1.2#subdirectory=harness"`
-   or put this folder on `PYTHONPATH`.
+2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@main#subdirectory=harness"`
+   or put this folder on `PYTHONPATH`. The last tag, `harness-v0.2.0`, comes before the kernel replay,
+   the jail and the queue worker; see [CHANGELOG.md](CHANGELOG.md).
 3. Run a task:
 
    ```bash
@@ -103,6 +158,25 @@ model's container and is never written to logs or config.
    ```
 
    The evidence lands in `raw/example-1/`; `rounds.json` ends with the task's final verdict.
+
+### Against your own llama-server
+
+No gateway is needed: any OpenAI-compatible endpoint works, a `llama-server` of your own too (the
+command above serves opencode's tool calls as it is; older llama.cpp builds needed `--jinja`). Three
+things differ from a plain `localhost` setup:
+
+- **A host name, not `127.0.0.1` or `localhost`.** The sandbox reaches the endpoint only through its
+  forwarder, by name, so IP addresses and loopback names are refused. The name must resolve inside a
+  Docker container: a LAN DNS name of the GPU machine works; an `/etc/hosts` line on the host does
+  not (containers do not see it).
+- **Reachable from Docker's bridge.** `llama-server --host 127.0.0.1` is not; listen on the LAN
+  address (or `0.0.0.0`), and then set a key: `llama-server --api-key-file ~/.config/llama.key ...`
+  and the same file as `--key-file` here (the forwarder adds it; the model's container never sees it).
+- **`--base-url http://gpu-box.lan:8000/v1 --model qwen3.8-27b`** (plain HTTP is fine; the model
+  name is llama-server's `--alias`).
+
+For Lean, the image needs opencode, python3 and CA certificates only: `LeanToolchain` mounts elan and
+the Mathlib package set from the host (read-only) into the sandbox and into the jail.
 
 The template keeps the project in `local-only` status: it never submits. Set `status: active` and
 record the agreement only when the project's maintainers have said yes to agent contributions.
