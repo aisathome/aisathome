@@ -19,6 +19,12 @@ over TLS with the endpoint's certificate checked (or plain HTTP when the endpoin
   never reuses a connection the forwarder closes); hop-by-hop headers and `Expect` are dropped; the rest
   of the request (its body) and of the response are passed through as they come (streams stay streams).
 
+With `--hold-preempted`, a preemption is a pause: after a response that carries an aisathome gateway's
+preemption (`"reason":"preempted"`: a person's request took the node), the next requests wait before they are
+sent on, 5 s after the first preemption in a row, doubling up to 60 s (`Hold`); a response without one ends the
+pause. The client's retry then meets a node that has had time to free up instead of being preempted again at
+once. Off by default.
+
 The target is resolved again for every connection, so a changed endpoint address is picked up without a
 restart. Only counts go to the log (no addresses of the client's peers, no headers, no data, never the
 key). Standard library only: it runs as `python3 -I` inside the sandbox image, which needs CA certificates
@@ -50,6 +56,52 @@ CA_BUNDLES = ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem", "/etc/p
 TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 VISIBLE = re.compile(r"[\x21-\x7e]+")       # a request target: visible ASCII only
 CTL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")  # control bytes a header value must not hold (TAB may)
+
+
+PREEMPT_MARK = b'"reason":"preempted"'     # in an aisathome gateway's error body or stream event (code 503)
+
+
+class Hold:
+    """The pause after preemptions (`--hold-preempted`): after the n-th preempted response in a row, a request
+    waits until `base_s` x 2^(n-1) seconds (at most `max_s`) have passed since the last preemption."""
+
+    def __init__(self, base_s: float = 5, max_s: float = 60, clock=time.monotonic, sleep=asyncio.sleep):
+        self.base_s, self.max_s, self.clock, self.sleep = base_s, max_s, clock, sleep
+        self.n, self.last = 0, 0.0
+        self.counters = {"held": 0, "held_s": 0.0, "preempted": 0}
+
+    def delay(self) -> float:
+        if not self.n:
+            return 0.0
+        return max(0.0, min(self.max_s, self.base_s * 2 ** (self.n - 1)) - (self.clock() - self.last))
+
+    async def wait(self):
+        d = self.delay()
+        if d > 0:
+            self.counters["held"] += 1
+            self.counters["held_s"] += d
+            await self.sleep(d)
+
+    def preempted(self):
+        self.n += 1
+        self.last = self.clock()
+        self.counters["preempted"] += 1
+
+    def ok(self):
+        self.n = 0
+
+
+class Watch:
+    """Whether a byte stream holds `mark`, also split across chunks."""
+
+    def __init__(self, mark: bytes):
+        self.mark, self.tail, self.seen = mark, b"", False
+
+    def feed(self, data: bytes):
+        if not self.seen:
+            buf = self.tail + data
+            self.seen = self.mark in buf
+            self.tail = buf[-(len(self.mark) - 1):]
 
 
 class Refused(Exception):
@@ -129,8 +181,8 @@ def response_head(head: bytes) -> bytes:
     return b"\r\n".join([lines[0], *keep, b"Connection: close"]) + b"\r\n\r\n"
 
 
-async def respond(ur: asyncio.StreamReader, cw: asyncio.StreamWriter, stats: dict):
-    """The response: its head rewritten (response_head), then the rest as it comes."""
+async def respond(ur: asyncio.StreamReader, cw: asyncio.StreamWriter, stats: dict, watch: Watch | None = None):
+    """The response: its head rewritten (response_head), then the rest as it comes (`watch` sees it all)."""
     try:
         head = await asyncio.wait_for(ur.readuntil(b"\r\n\r\n"), IDLE_TIMEOUT_S)
         head = response_head(head)
@@ -140,8 +192,10 @@ async def respond(ur: asyncio.StreamReader, cw: asyncio.StreamWriter, stats: dic
         cw.close()
         return
     stats["down"] += len(head)
+    if watch:
+        watch.feed(head)
     cw.write(head)
-    await pipe(ur, cw, stats, "down")
+    await pipe(ur, cw, stats, "down", watch)
 
 
 def tls_context(cafile: str | None = None) -> ssl.SSLContext:
@@ -159,13 +213,15 @@ def tls_context(cafile: str | None = None) -> ssl.SSLContext:
     return ctx
 
 
-async def pipe(r: asyncio.StreamReader, w: asyncio.StreamWriter, stats: dict, key: str):
+async def pipe(r: asyncio.StreamReader, w: asyncio.StreamWriter, stats: dict, key: str, watch: Watch | None = None):
     try:
         while True:
             data = await asyncio.wait_for(r.read(65536), IDLE_TIMEOUT_S)
             if not data:
                 break
             stats[key] += len(data)
+            if watch:
+                watch.feed(data)
             w.write(data)
             await w.drain()
     except (asyncio.TimeoutError, ConnectionError, OSError, ssl.SSLError):
@@ -190,8 +246,9 @@ class Forwarder:
     """One endpoint: `scheme`://`host`:`port`, its base path `prefix`, the key it adds (or None)."""
 
     def __init__(self, host: str, port: int, scheme: str = "https", prefix: str = "/", key: str | None = None,
-                 cafile: str | None = None):
+                 cafile: str | None = None, hold: Hold | None = None):
         self.host, self.port, self.prefix, self.key = host, port, prefix, key
+        self.hold = hold
         self.ssl = tls_context(cafile) if scheme == "https" else None
         default = 443 if scheme == "https" else 80
         self.host_header = host if port == default else f"{host}:{port}"
@@ -221,6 +278,8 @@ class Forwarder:
             except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, OSError):
                 cw.close()
                 return
+            if self.hold:
+                await self.hold.wait()
             try:
                 # a fresh lookup per connection: the endpoint's address may change
                 ur, uw = await asyncio.wait_for(asyncio.open_connection(
@@ -233,17 +292,24 @@ class Forwarder:
                 return
             self.counters["ok"] += 1
             uw.write(out)
-            await asyncio.gather(pipe(cr, uw, stats, "up"), respond(ur, cw, stats))
+            watch = Watch(PREEMPT_MARK) if self.hold else None
+            await asyncio.gather(pipe(cr, uw, stats, "up"), respond(ur, cw, stats, watch))
+            if watch and watch.seen:
+                self.hold.preempted()
+            elif watch and stats["down"]:
+                self.hold.ok()
             c = self.counters
+            h = (f", preempted {self.hold.counters['preempted']}, held {self.hold.counters['held']} "
+                 f"({self.hold.counters['held_s']:.0f} s)") if self.hold else ""
             print(f"conn done: {stats['up'] + len(out)} B up, {stats['down']} B down, {time.monotonic() - t0:.0f} s "
-                  f"(ok {c['ok']}, failed {c['failed']}, refused {c['refused']})", flush=True)
+                  f"(ok {c['ok']}, failed {c['failed']}, refused {c['refused']}{h})", flush=True)
 
 
 async def main_async(listen: str, target: str, scheme: str = "https", prefix: str = "/",
-                     key_file: str | None = None, cafile: str | None = None):
+                     key_file: str | None = None, cafile: str | None = None, hold_preempted: bool = False):
     lh, lp = listen.rsplit(":", 1)
     th, tp = target.rsplit(":", 1)
-    fw = Forwarder(th, int(tp), scheme, prefix, read_key(key_file), cafile)
+    fw = Forwarder(th, int(tp), scheme, prefix, read_key(key_file), cafile, Hold() if hold_preempted else None)
     srv = await asyncio.start_server(fw.handle, lh, int(lp), family=socket.AF_INET, reuse_address=True,
                                      limit=HEAD_LIMIT)
     print(f"egress forwarder: {listen} -> {scheme}://{target}{prefix} "
@@ -260,9 +326,11 @@ def main():
     ap.add_argument("--path-prefix", default="/", help="the endpoint's base path; only its model calls pass (MODEL_API)")
     ap.add_argument("--key-file", help="the API key, sent as `Authorization: Bearer <key>`")
     ap.add_argument("--cafile", help="CA certificates for the target (default: the image's)")
+    ap.add_argument("--hold-preempted", action="store_true",
+                    help="after a preempted response, hold the next requests (5 s doubling to 60 s)")
     a = ap.parse_args()
     try:
-        asyncio.run(main_async(a.listen, a.target, a.scheme, a.path_prefix, a.key_file, a.cafile))
+        asyncio.run(main_async(a.listen, a.target, a.scheme, a.path_prefix, a.key_file, a.cafile, a.hold_preempted))
     except KeyboardInterrupt:
         sys.exit(0)
 

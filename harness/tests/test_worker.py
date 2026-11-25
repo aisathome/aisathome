@@ -353,6 +353,18 @@ class Lifecycle(Base):
         self.assertNotIn("checkpoint t1", " ".join(self.events()))   # nothing of this host's goes up
         self.assertEqual(w.held(), [])
 
+    def test_a_paused_task_is_checkpointed_and_given_back_not_a_crash(self):
+        """A task that waited for the endpoint as long as it may (preempted): checkpoint, give back, run again."""
+        self.q.add("t1", self.spec(mode="pause", progress=str(self.root / "progress")))
+        w = self.worker(hold_s=0, checkpoints=True)
+        w.run_forever(once=True)
+        t = self.q.tasks["t1"]
+        self.assertEqual((t["state"], t["interruptions"]), ("done", 1))      # resumed from its progress
+        self.assertTrue(any("paused: waited 120 min" in l for l in w.logs), w.logs)
+        self.assertIn("checkpoint t1", " ".join(self.events()))
+        self.assertFalse((w.state / "paused").exists())
+        self.assertEqual(w.crashes, 0)
+
     def test_a_refused_spec_is_failed_at_once(self):
         self.q.add("t1", {"v": 99})
 
@@ -554,6 +566,11 @@ class ChildMain(unittest.TestCase):
             raise W.GiveBack("unreadable")
         self.assertEqual(W.child_main(self.args, run=gb), W.GIVE_BACK)
         self.assertEqual(self.err(), {"error": "unreadable", "give_back": True})
+
+        def pause(s):
+            raise W.Pause("waited")
+        self.assertEqual(W.child_main(self.args, run=pause), W.GIVE_BACK)
+        self.assertEqual(self.err(), {"error": "waited", "give_back": True, "pause": True})
 
     def test_the_tasks_lock(self):
         class Lock:

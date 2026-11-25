@@ -17,6 +17,8 @@ The loop (one task at a time; run several workers, on one host or several: the g
     when it is queued again, else stops the child: "lease lost");
   - the child exits 0 with OUT written: `complete` with OUT's result; with ERR {"give_back": true} and exit
     GIVE_BACK (the task cannot start on this host: its checkpoint unreadable): given back, counted as a crash;
+    with ERR {"give_back": true, "pause": true} (`Pause`: it waited for the endpoint as long as it may): its
+    checkpoint taken and given back, as after a stop, not a crash;
     otherwise a crash: `fail` with ERR's error (type and message only), the worker goes on with the next task;
     `max_crashes` in a row pause it (<state>/paused, with the reason; remove it to go on);
   - a stop (SIGTERM/SIGINT, or a watcher's notice such as a spot interruption): no new work; the child gets
@@ -80,6 +82,11 @@ class Refuse(Exception):
 class GiveBack(Exception):
     """In the child: the task cannot start here for a reason of the host, not the task's (its checkpoint
     unreadable): the worker gives it back instead of failing it."""
+
+
+class Pause(GiveBack):
+    """In the child: the task waited for the endpoint as long as it may (preemptions, loop.Timing's
+    preempt_wait_cap_s): the worker takes its checkpoint and gives it back, as after a stop. Not a crash."""
 
 
 class Worker:
@@ -407,6 +414,12 @@ class Worker:
             self.report_done(rec, json.loads(out.read_text()))
             return
         e = json.loads(err.read_text()) if err.exists() else {}
+        if rc == GIVE_BACK and e.get("give_back") and e.get("pause"):
+            self.log(f"[{tid}] paused: {safe_text(e.get('error'), 300)}; checkpoint and give back")
+            self.give_back(rec)
+            self.crashes = 0
+            self.stopping.wait(self.poll_s)
+            return
         if rc == GIVE_BACK and e.get("give_back"):
             self.log(f"[{tid}] cannot start here: {safe_text(e.get('error'), 300)}; giving it back")
             self.give_back(rec, save=False)
@@ -583,7 +596,8 @@ def _child(cmd: str, spec: dict, argv: list[str], run, cleanup, checkpoint) -> i
         tmp.replace(argv[2])
         return 0
     except GiveBack as e:
-        Path(argv[3]).write_text(json.dumps({"error": str(e)[:2000], "give_back": True}) + "\n")
+        Path(argv[3]).write_text(json.dumps({"error": str(e)[:2000], "give_back": True,
+                                             **({"pause": True} if isinstance(e, Pause) else {})}) + "\n")
         return GIVE_BACK
     except (Exception, SystemExit) as e:          # noqa: BLE001  (a crash of this task, whatever it is)
         if cmd in ("cleanup-task", "checkpoint-task"):

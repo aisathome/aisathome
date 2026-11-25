@@ -15,7 +15,8 @@ kills that process). Actions:
               "tokens": {"input": 100, "output": 10}}}
         one model step: step_start, its tool calls (an `edit` is written to the working directory,
         or to --cwd, first), its text, step_finish. `ms` is the step's length in event time.
-    {"error": {...}}       an error event with this payload
+    {"error": {...}, "after_ms": 0}    an error event with this payload; the event clock then moves on
+    {"start": {}}          a step_start with no step_finish (opencode exits inside that step)
     {"wait": 30}           sleep (a test stops the process here)
 
 Event times start at the real clock and advance by each step's `ms`, so the time between a step's
@@ -64,6 +65,10 @@ def main(argv: list[str]) -> int:
             time.sleep(act["wait"])
         elif "error" in act:
             emit("error", error=act["error"])
+            clock[0] += int(act.get("after_ms", 0))
+        elif "start" in act:                   # a step that starts and never finishes (opencode exits in it)
+            msg_no[0] += 1
+            emit("step_start", {"type": "step-start", "messageID": f"msg_{n}_{msg_no[0]}"})
         elif "step" in act:
             st = act["step"]
             msg_no[0] += 1

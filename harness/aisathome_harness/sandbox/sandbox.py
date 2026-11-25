@@ -212,13 +212,15 @@ def _forwarder(name: str) -> dict | None:
             "networks": {k: (v or {}).get("IPAddress") for k, v in (json.loads(nets) or {}).items()}}
 
 
-def forwarder_for(base_url: str, key_file: str | None = None) -> str:
-    """The forwarder's name for an endpoint URL and key file."""
+def forwarder_for(base_url: str, key_file: str | None = None, hold_preempted: bool = False) -> str:
+    """The forwarder's name for an endpoint URL and key file (and its hold after preemptions: a forwarder
+    of its own, so sessions without it are not paused)."""
     scheme, host, port, path = endpoint_of(base_url)
-    return forwarder_name(host, port, f"{scheme}|{path}|{key_fingerprint(key_file)}")
+    return forwarder_name(host, port, f"{scheme}|{path}|{key_fingerprint(key_file)}" + ("|hold" if hold_preempted else ""))
 
 
-def ensure_egress(base_url: str, image: str, network: str, key_file: str | None = None) -> list[str]:
+def ensure_egress(base_url: str, image: str, network: str, key_file: str | None = None,
+                  hold_preempted: bool = False) -> list[str]:
     """Start (or reuse) the forwarder for the endpoint and its key, attach it to the session's `network`
     and return the sandbox's --add-host args. `image` runs the forwarder (any image with python3 and CA
     certificates). The key file is mounted into the forwarder only, which runs as the calling user so it
@@ -228,7 +230,7 @@ def ensure_egress(base_url: str, image: str, network: str, key_file: str | None 
     target, url = f"{host}:{port}", f"{scheme}://{host}:{port}{path}"
     fp = key_fingerprint(key_file)
     _ensure_network(EGRESS_NET, EGRESS_BRIDGE, internal=False)
-    name = forwarder_for(base_url, key_file)
+    name = forwarder_for(base_url, key_file, hold_preempted)
     key = ["-v", f"{key_file}:{KEY_IN_FORWARDER}:ro"] if key_file else []
     user = f"{os.getuid()}:{os.getgid()}" if key_file else "65534:65534"
     with _egress_lock():
@@ -245,7 +247,8 @@ def ensure_egress(base_url: str, image: str, network: str, key_file: str | None 
                     "-v", f"{FORWARDER}:/opt/egress_forward.py:ro", *key, "--entrypoint", "python3", image,
                     "-I", "/opt/egress_forward.py", "--listen", f"0.0.0.0:{FORWARD_PORT}", "--target", target,
                     "--scheme", scheme, "--path-prefix", path,
-                    *(["--key-file", KEY_IN_FORWARDER] if key_file else []))
+                    *(["--key-file", KEY_IN_FORWARDER] if key_file else []),
+                    *(["--hold-preempted"] if hold_preempted else []))
             f = _forwarder(name)
         if f is not None and network not in f["networks"]:
             _docker("network", "connect", network, name)

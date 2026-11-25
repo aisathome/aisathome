@@ -103,7 +103,8 @@ def norm_events(path: Path) -> list:
     return out
 
 
-def play(name: str, prompts: dict, scenario: tuple | None = None, session_cls=loop.Session) -> dict:
+def play(name: str, prompts: dict, scenario: tuple | None = None, session_cls=loop.Session,
+         timing: dict | None = None) -> dict:
     """Run one scenario (SCENARIOS[name], or `scenario` in its shape) through run_session in a scratch
     directory, with sessions of `session_cls`; return the normalised records."""
     fields, wall_min, steps, kinds, invocations = scenario or SCENARIOS[name]
@@ -134,7 +135,7 @@ def play(name: str, prompts: dict, scenario: tuple | None = None, session_cls=lo
                 prompt=lambda s, m: f"PROMPT {s} steps {m} min",
                 prompts=loop.Prompts(resume=prompts["RESUME_PROMPT"], first_edit=prompts["FIRST_EDIT_NUDGE"],
                                      loop=prompts["LOOP_NUDGE"]),
-                timing=loop.Timing(poll_s=0.05, first_edit_poll_s=0.05, checkpoint_s=0.2),
+                timing=loop.Timing(poll_s=0.05, first_edit_poll_s=0.05, checkpoint_s=0.2, **(timing or {})),
                 provider=loop.Provider(id="test", name="Test endpoint", key_path="/run/test/key"),
                 stop=stop, export=lambda sid: "{}", **fields)
         runs_meta = []

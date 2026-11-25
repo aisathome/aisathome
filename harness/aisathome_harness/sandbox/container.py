@@ -67,6 +67,7 @@ class Recipe:
     slot_commands: dict[str, str] = field(default_factory=dict)       # name -> real path inside the container
     knowledge: Path | None = None
     forwarder_image: str | None = None                 # runs the egress forwarder (python3, CA certificates); default: image
+    hold_preempted: bool = False                       # the forwarder pauses requests after a preemption (egress_forward.Hold)
 
     def merged(self, **parts) -> "Recipe":
         """A copy with lists and dicts extended (e.g. by a toolchain's parts)."""
@@ -186,7 +187,8 @@ class Sandbox:
         self.before()
         sandbox.ensure_session_network(self.key)
         hosts = sandbox.sinkhole(self.recipe.sinkhole) + sandbox.ensure_egress(
-            self.base_url, self.recipe.forwarder_image or self.recipe.image, self.network, self._key_file())
+            self.base_url, self.recipe.forwarder_image or self.recipe.image, self.network, self._key_file(),
+            hold_preempted=self.recipe.hold_preempted)
         return sandbox.run_args(
             self.name, self.recipe.image, self.tree, loop.opencode_args(self.model, session_id, self.provider) + [message],
             network=self.network, user=self.recipe.user, cpu=["--cpus", str(self.host.cpus), "--cpu-shares", "128"],

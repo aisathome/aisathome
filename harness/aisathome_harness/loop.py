@@ -103,6 +103,15 @@ class Timing:
     loop_grace: int = 2
     gateway_backoff_s: float = 120   # times the resume count, before resuming after an endpoint error
     wake_wait_s: float = 30          # before resuming after a suspend: the network comes back
+    # A preemption is a pause, not a failure (off when 0): a segment that opencode ended after the endpoint
+    # preempted its step (PREEMPTED) is resumed after `preempt_backoff_s`, doubling up to
+    # `preempt_backoff_max_s`, without counting against `max_resumes`, until the round has waited
+    # `preempt_wait_cap_s` in all (the gaps after preemptions inside segments, and these backoffs); then the
+    # session ends with `preempt_wait_exhausted` in run.json, for the project to give the task back. The waits
+    # do not count against the awake ceiling (the model's own time never counted them).
+    preempt_wait_cap_s: float = 0
+    preempt_backoff_s: float = 15
+    preempt_backoff_max_s: float = 60
 
 
 @dataclass
@@ -529,13 +538,52 @@ def recovered_after_error(events_tail: str) -> bool:
     return bool(errs) and any('"type":"step_start"' in l for l in lines[errs[-1] + 1:])
 
 
-def gateway_interrupted(seg: dict, tail: str) -> bool:
+def gateway_interrupted(seg: dict, tail: str, preempt_pause: bool = False) -> bool:
     """Whether a segment that ended (exit code, stall) on an endpoint error should be resumed.
-    Not when opencode itself went on after the error (it retried, e.g. after a preemption)."""
-    return bool(not seg["suspend_interrupted"] and not seg["timed_out"]
-                and (seg["exit"] != 0 or seg.get("stalled_after_error"))
+    Not when opencode itself went on after the error (it retried, e.g. after a preemption). With
+    `preempt_pause`: also when opencode retried after a preemption and then exited inside a step (it ran out
+    of retries while the endpoint kept preempting it): `ended_in_preempted_step`."""
+    if seg["suspend_interrupted"] or seg["timed_out"]:
+        return False
+    if preempt_pause and seg["exit"] != 0 and ended_in_preempted_step(tail):
+        return True
+    return bool((seg["exit"] != 0 or seg.get("stalled_after_error"))
                 and (seg.get("stalled_after_error") or not recovered_after_error(tail))
                 and GATEWAY_ERROR.search(tail))
+
+
+def ended_in_preempted_step(tail: str) -> bool:
+    """The segment's last error was a preemption and no step finished after it."""
+    lines = [ln for ln in tail.splitlines() if ln.strip()]
+    errs = [i for i, ln in enumerate(lines) if '"type":"error"' in ln]
+    if not errs or PREEMPTED not in lines[errs[-1]]:
+        return False
+    return not any('"type":"step_finish"' in ln for ln in lines[errs[-1] + 1:])
+
+
+EVENT_TS = re.compile(rb'^\{"type":"(step_start|step_finish|error)","timestamp":(\d+)', re.M)
+
+
+def preempt_stats(data: bytes, end_s: float | None = None) -> dict:
+    """A segment's preemptions (its events, `data`): {"preempted": n, "preempt_wait_s": s}, the wait being
+    the time from each preemption to the next step's start (its first streamed chunk), or to `end_s` (epoch
+    seconds) when none followed: what the session waited for the endpoint after it was preempted."""
+    n, wait, since = 0, 0.0, None
+    for ln in data.splitlines():
+        m = EVENT_TS.match(ln)
+        if not m:
+            continue
+        kind, ts = m.group(1), int(m.group(2)) / 1000.0
+        if kind == b"error" and PREEMPTED.encode() in ln:
+            n += 1
+            if since is None:
+                since = ts
+        elif kind == b"step_start" and since is not None:
+            wait += max(0.0, ts - since)
+            since = None
+    if since is not None and end_s is not None:
+        wait += max(0.0, end_s - since)
+    return {"preempted": n, "preempt_wait_s": round(wait, 1)}
 
 
 def checkpoint_diff(raw: Path, git: TreeGit) -> int:
@@ -697,8 +745,12 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
         tail = fh.read().decode(errors="replace")[-5000:]   # this segment's events only
     if not seg["suspend_interrupted"] and "Session interrupted: inactivity" in tail:
         seg["suspend_interrupted"] = True
-    if gateway_interrupted(seg, tail):
+    if gateway_interrupted(seg, tail, preempt_pause=timing.preempt_wait_cap_s > 0):
         seg["gateway_interrupted"] = True
+    if timing.preempt_wait_cap_s > 0:
+        with open(raw / "events.jsonl", "rb") as fh:
+            fh.seek(start_size)
+            seg.update(preempt_stats(fh.read(), end))
     return seg
 
 
@@ -1036,6 +1088,7 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
           f"{T.awake_ceiling * wall_min} min awake) / {steps} steps"
           + (f" (resuming session {sid})" if resume else ""))
     resumes = interruptions(segments) if resume else 0
+    pre_n, pre_slept, pre_exhausted = 0, 0.0, False     # preemption pauses in this run (Timing.preempt_wait_cap_s)
     round_no = (fu_round or 0) + 1
     fired = bool((nudged or {}).get("fired"))
     nudge_at = s.first_edit_step if fu_round is None and (not fired or s.first_edit_again) else None
@@ -1066,7 +1119,8 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         safefs.write_text(home, CONFIG, json.dumps(
             opencode_config(inner_url, inner_key, model, left_steps, s.model_options, ctx, s.provider, s.headers),
             indent=1))
-        active_used = sum(s_.get("active_s", 0) for s_ in segments[budget["segment"] if budget else 0:])
+        active_used = sum(s_.get("active_s", 0) - s_.get("preempt_wait_s", 0)    # a preemption's wait: a pause
+                          for s_ in segments[budget["segment"] if budget else 0:])
         model_left = wall_min * 60 - model_used_s(events, budget["events_offset"] if budget else ev_start, segments)
         left = T.awake_ceiling * wall_min * 60 - active_used
         if left <= 0 or model_left <= 0:
@@ -1141,6 +1195,22 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
             s.say(f"the follow-up stopped on the step limit with {left_now} steps left: told to go on")
             message = s.prompts.step_continue.format(left=left_now)
             continue
+        if (T.preempt_wait_cap_s > 0 and seg.get("gateway_interrupted") and seg.get("preempted")
+                and not seg["timed_out"] and sid):
+            # a preemption is a pause: wait and go on, bounded by the wait cap, not by max_resumes
+            pre_n += 1
+            backoff = min(T.preempt_backoff_max_s, T.preempt_backoff_s * 2 ** (pre_n - 1))
+            waited = sum(s_.get("preempt_wait_s", 0) for s_ in segments) + pre_slept
+            if waited + backoff > T.preempt_wait_cap_s:
+                pre_exhausted = True
+                s.say(f"preempted again after {waited / 60:.0f} min of waiting: the wait cap is spent; ending "
+                      "the session for the task to be given back")
+                break
+            s.say(f"preempted ({seg['preempted']} in the segment): resuming the session in {backoff:.0f}s")
+            time.sleep(backoff)
+            pre_slept += backoff
+            message = s.prompts.resume_after(True)
+            continue
         if ((seg["suspend_interrupted"] or seg.get("gateway_interrupted")) and not seg["timed_out"]
                 and sid and resumes < T.max_resumes):
             resumes += 1
@@ -1188,6 +1258,9 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                 **({"model_diff_failed": True} if not final_diff else {}),
                 **({"step_notice": notice} if notice else {}),
                 **({"retry_from": budget} if budget else {}),
+                **({"preempted": sum(s_.get("preempted", 0) for s_ in segments),
+                    "preempt_wait_s": round(sum(s_.get("preempt_wait_s", 0) for s_ in segments) + pre_slept, 1),
+                    "preempt_wait_exhausted": pre_exhausted} if T.preempt_wait_cap_s > 0 else {}),
                 "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     run_meta.update(event_stats(events))
     # tool calls made in this run (since this call started); and for a follow-up round, in the whole round
