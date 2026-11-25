@@ -57,16 +57,18 @@ func (c pfCase) run(t *testing.T) pfOut {
 	}
 	var o pfOut
 	var stdout, stderr bytes.Buffer
-	// At a "terminal", what is read from stdin shows on the screen (stderr here), as with echo on; readSecret
-	// reads the same input without echo, prompting first.
+	// At a "terminal", what is read from stdin shows on the screen (stderr here), as with echo on; hidden
+	// reads the same input without echo.
 	in := io.Reader(strings.NewReader(c.stdin))
 	stdin := in
 	if c.tty {
 		stdin = io.TeeReader(in, &stderr)
 	}
 	e := preflightEnv{stdin: stdin, interactive: c.tty,
-		readSecret: func(prompt func()) (string, error) { prompt(); return readLine(in) },
-		hostname:   func() (string, error) { return "box.local", nil },
+		hidden: func(body func(read func() (string, error)) error) error {
+			return body(func() (string, error) { return readLine(in) })
+		},
+		hostname: func() (string, error) { return "box.local", nil },
 		tokenState: func(tok, gw string) string {
 			o.askedGateway = append(o.askedGateway, gw)
 			if c.state == "" {

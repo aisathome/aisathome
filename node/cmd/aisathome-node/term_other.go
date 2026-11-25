@@ -8,8 +8,7 @@ import "os"
 // stdinIsTerminal: config preflight is for the Linux installer; elsewhere stdin counts as piped.
 func stdinIsTerminal() bool { return false }
 
-// readSecretLine prompts and reads a line from stdin (echoed: config preflight is for the Linux installer).
-func readSecretLine(prompt func()) (string, error) {
-	prompt()
-	return readLine(os.Stdin)
+// withoutEcho runs body with plain reads from stdin (echoed: config preflight is for the Linux installer).
+func withoutEcho(body func(read func() (string, error)) error) error {
+	return body(func() (string, error) { return readLine(os.Stdin) })
 }
