@@ -130,6 +130,7 @@ type opsData struct {
 	ModelCheck  *opsModelCheck // nil: the model check is off
 	Checks      []opsCheck     // answer checks and signals per node since the start (verify.go)
 	CheckMode   string
+	Funnel      *opsFunnel // from a visit to a node connecting, per day (funnel.go)
 }
 
 // opsModelCheck is the model check card (modelcheck.go).
@@ -388,6 +389,7 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 	}
 	g.opsTasks(&d, project, now)
 	d.ModelCheck = g.opsModelCheck(connected, now)
+	d.Funnel = g.opsFunnel(now)
 	return d
 }
 
@@ -552,7 +554,8 @@ var opsTmpl = newPage("ops", template.FuncMap{
 		}
 		return "offline"
 	},
-	"sub": func(a, b int) int { return a - b },
+	"sub":       func(a, b int) int { return a - b },
+	"nodepages": func() string { return strings.Join(funnelNodePages, ", ") },
 	"badge": func(state string) string {
 		switch state {
 		case "running", "leased":
@@ -627,6 +630,13 @@ var opsTmpl = newPage("ops", template.FuncMap{
 <td data-label="Busy" class="num">{{.Load}}</td><td data-label="Science" class="num">{{.Science}}</td><td data-label="Connected">{{.Since}} UTC</td>
 <td data-label="Contract ends">{{if .Contract}}{{.Contract}} UTC{{else}}<span class="mut">–</span>{{end}}</td></tr>{{end}}</table></div>
 {{else}}<p class="mut">No node is online.</p>{{end}}</div>
+{{with .Funnel}}<div class="card" id="funnel"><h2>Funnel</h2>
+<p class="small" id="funnel-summary">{{.Summary}}</p>
+<div class="table-wrap"><table><tr><th>Day (UTC)</th><th class="num">Visitors</th><th class="num">Node pages</th><th class="num">Install starts</th><th class="num">curl/wget</th><th class="num">No account</th><th class="num">To an account</th><th class="num">By link</th><th class="num">No account linked</th><th class="num">First connect</th></tr>
+{{range .Rows}}{{template "funnel-row" .}}{{end}}{{with .Total}}{{template "funnel-row" .}}{{end}}</table></div>
+<p class="mut small">Totals only. Visitors, node page views ({{nodepages}}) and install starts (distinct clients fetching <code>/node.sh</code>; curl/wget: their fetches of all fetches) come from the site statistics; a visitor on two days counts twice. {{.SiteNote}}
+No account: nodes registered without an account; to an account: nodes added to an account (account page or link), by link: of those, by an approved link; no account linked: nodes without an account linked to one; first connect: distinct nodes connected for the first time{{with .Since}} (gateway counts since {{.}}; – before){{end}}. "own": the admin accounts' nodes, the project's own; nodes without an account cannot be told apart, and nodes on the config's tokens are not counted.
+Windows and Linux bundle downloads: on <a href="{{.Releases}}">GitHub's release page</a>.</p></div>{{end}}
 {{with .ModelCheck}}<div class="card" id="model-check"><div class="card-head"><h2>Model check</h2><span class="badge {{if eq .Mode "withholding"}}held{{else}}paused{{end}}" data-mode>{{.Mode}}</span></div>
 <p class="mut small">Secret probe prompts compared with the reference's logprobs; observing since {{.Since}}. A node fails with two failed checks, or too many confident flips, among its last checks. Limits: {{.Limits}}. <code>aisathome-gateway accounts model-check [node]</code> lists the checks.</p>
 {{if .Rows}}<div class="table-wrap"><table><tr><th>Node</th><th>Result</th><th>Checks</th><th class="num">Largest KL</th><th class="num">Flips</th><th>Last check</th><th class="num">No answer</th></tr>
@@ -644,4 +654,10 @@ var opsTmpl = newPage("ops", template.FuncMap{
 {{if not .Status}}<p class="mut">No status from the runner yet: it posts one every minute (research tools/status_report.py).</p>{{end}}
 {{if gt (len .ProjectList) 1}}<p class="small">Projects: {{range .ProjectList}}<a href="/account/ops?project={{.}}">{{.}}</a> {{end}}</p>{{end}}
 </div>{{end}}
-{{template "bottom" .}}`)
+{{template "bottom" .}}
+{{define "funnel-row"}}<tr data-funnel="{{.Day}}"><td data-label="Day">{{if eq .Day "total"}}<strong>total</strong>{{else}}{{.Day}}{{end}}</td><td data-label="Visitors" class="num">{{.Visitors}}</td><td data-label="Node pages" class="num">{{.NodeViews}}</td>
+<td data-label="Install starts" class="num" data-installs>{{.Installs}}</td><td data-label="curl/wget" class="num">{{.Fetches}}</td>
+{{if .HasGateway}}<td data-label="No account" class="num" data-anon>{{.Anon}}</td><td data-label="To an account" class="num" data-account>{{.AccountNodes}}{{if .OwnNodes}} <span class="mut small">({{.OwnNodes}} own)</span>{{end}}</td>
+<td data-label="By link" class="num" data-links>{{.Links}}{{if .OwnLinks}} <span class="mut small">({{.OwnLinks}} own)</span>{{end}}</td><td data-label="No account linked" class="num" data-anon-linked>{{.AnonLinked}}</td>
+<td data-label="First connect" class="num" data-first>{{.FirstConnect}}{{if .OwnFirst}} <span class="mut small">({{.OwnFirst}} own)</span>{{end}}</td>
+{{else}}<td data-label="No account" class="num mut">–</td><td data-label="To an account" class="num mut">–</td><td data-label="By link" class="num mut">–</td><td data-label="No account linked" class="num mut">–</td><td data-label="First connect" class="num mut">–</td>{{end}}</tr>{{end}}`)

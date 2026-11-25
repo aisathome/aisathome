@@ -83,6 +83,9 @@ type AccountNode struct {
 	Confirmed *time.Time `json:"confirmed,omitempty"`
 	// LastSeen is when a node without an account (anon.go) was last connected, for its retention.
 	LastSeen *time.Time `json:"last_seen,omitempty"`
+	// Connected: the node has connected at least once (funnel.go), so a reconnect is not a first
+	// connection. A flag, not a time.
+	Connected bool `json:"connected,omitempty"`
 }
 
 // unconfirmed reports whether n came by a link (a code someone may have sent the account's owner) and
@@ -258,6 +261,19 @@ func (s *AccountStore) addNodeVia(id, name string, now time.Time, valid func(seq
 			how = ViaNodeLinked
 		}
 		recorded = terms && a.acceptOnNodeCreate(t, how)
+		// The funnel's counts (funnel.go). A link that expires during its approval revokes the node
+		// again (approveLink): rare, and it stays counted.
+		d, own := f.funnelDay(t), s.isOwn(id)
+		d.AccountNodes++
+		if own {
+			d.OwnNodes++
+		}
+		if via == ViaNodeLink {
+			d.Links++
+			if own {
+				d.OwnLinks++
+			}
+		}
 		return nil
 	})
 	if err != nil {

@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +105,8 @@ func TestAnonNodeServesScienceOnly(t *testing.T) {
 			a, _ := anonRig(t, rulesOff, nil)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+			// The rig's clock for nodes without an account started before the funnel's counters did.
+			a.store.Update(func(f *gateway.AccountsFile) error { f.Funnel.Since = time.Now().Add(-time.Hour); return nil })
 			reg := anonClient(a, "")
 			if _, err := reg.Register(ctx, false); err == nil || !strings.Contains(err.Error(), "18 or older") {
 				t.Fatalf("register without accepting the terms: %v", err)
@@ -124,6 +128,21 @@ func TestAnonNodeServesScienceOnly(t *testing.T) {
 			t.Cleanup(srv.Close)
 			a.startTokenNode(ctx, r.Token, srv, 1, 32768)
 			a.waitNodes(t, 1)
+			// Its first connection is counted, once, for the ops page's funnel (gateway/funnel.go): just
+			// after the node is registered, so wait for the write.
+			firsts := func() int {
+				a.store.Refresh()
+				if f := a.store.Snapshot().Funnel; f != nil && f.Days[time.Now().UTC().Format(time.DateOnly)] != nil {
+					return f.Days[time.Now().UTC().Format(time.DateOnly)].FirstConnect
+				}
+				return 0
+			}
+			for end := time.Now().Add(5 * time.Second); firsts() == 0 && time.Now().Before(end); {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n := firsts(); n != 1 {
+				t.Fatalf("first connections counted: %d", n)
+			}
 
 			// Admitted after its checks, never before: a science request before then gets no node.
 			if s, _ := c.Self(ctx); s.State == protocol.SelfAdmitted && s.ChecksPassed < 3 {
@@ -325,7 +344,10 @@ func TestAnonRegisterLimits(t *testing.T) {
 // account a new node of its own (linked, so not its own until confirmed), and the identity without an
 // account is gone once the node picked up its token. Another token, or none valid, is refused.
 func TestAnonLinkToAccount(t *testing.T) {
-	a, _ := anonRig(t, false, nil)
+	stats := filepath.Join(t.TempDir(), "stats.json")
+	today := time.Now().UTC().Format(time.DateOnly)
+	os.WriteFile(stats, []byte(`{"host":"site.test","updated":"2026-11-25T10:00:00Z","days":{"`+today+`":{"visitors":7,"pages":{"/node/":3},"installs":2,"install_fetches":{"curl":2}}}}`), 0o644)
+	a, _ := anonRig(t, false, func(c *gateway.Config) { c.SiteStatsFile = stats })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r, err := anonClient(a, "").Register(ctx, true)
@@ -385,6 +407,25 @@ func TestAnonLinkToAccount(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("the new token: HTTP %d", resp.StatusCode)
+	}
+
+	// The ops page's funnel card counts it: registered without an account, a link approval, linked (the
+	// operator's node above is the other node added to an account); and
+	// the site's visitors and install starts from the statistics file. Numbers only.
+	admin, _ := a.signIn(t, 1)
+	_, ops := a.get(t, "/account/ops", admin)
+	i := strings.Index(ops, `data-funnel="`+today+`"`)
+	if i < 0 {
+		t.Fatalf("no funnel row for today: %s", ops)
+	}
+	row := ops[i : i+strings.Index(ops[i:], "</tr>")]
+	for _, want := range []string{`data-anon>1<`, `data-account>2<`, `data-links>1<`, `data-anon-linked>1<`, `data-first>0<`, `data-installs>2<`, `>7<`, `>3<`} {
+		if !strings.Contains(row, want) {
+			t.Errorf("today's funnel row lacks %s: %s", want, row)
+		}
+	}
+	if strings.Contains(row, r.NodeID) || strings.Contains(row, p.NodeID) {
+		t.Errorf("the funnel row names a node: %s", row)
 	}
 }
 

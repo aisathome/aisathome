@@ -509,7 +509,7 @@ func (g *Gateway) handleLinkPoll(w http.ResponseWriter, r *http.Request) {
 	case LinkApproved:
 		g.log.Info("linked node picked up its token", "node", nodeID)
 		if claim != "" { // a node without an account, now the account's: its anonymous identity goes (anon.go)
-			if err := g.accounts.removeAnon(claim); err != nil {
+			if err := g.accounts.linkAnon(claim, nodeID, time.Now()); err != nil {
 				g.log.Error("linked node without an account: its anonymous identity was not deleted; the retention sweep deletes it", "node", nodeID, "err", err)
 			} else {
 				g.log.Info("node without an account linked to an account; its anonymous identity is deleted", "node", nodeID)

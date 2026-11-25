@@ -26,6 +26,10 @@ type Config struct {
 	// StateDir keeps state that must survive a restart (daily token budgets), so a restart
 	// does not hand every key a fresh day. Empty = memory only.
 	StateDir string `json:"state_dir"`
+	// SiteStatsFile is the site statistics file tools/sitestats writes on the same host (daily
+	// aggregates only), read for the funnel card on /account/ops; never written. Empty = the card
+	// shows the gateway's own counts only.
+	SiteStatsFile string `json:"site_stats_file,omitempty"`
 	// Accounts enables GitHub and/or Google sign-in, self-service API keys and the waitlist
 	// (see accounts.go).
 	Accounts *AccountsConfig `json:"accounts,omitempty"`

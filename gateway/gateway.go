@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,6 +44,7 @@ type Gateway struct {
 	tasks    *taskStore       // projects' task queues (tasks.go)
 	sci      *scienceDB       // campaigns and external results (science_db.go, campaigns.go)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
+	sitestat siteStatsCache   // the site statistics file, for the funnel card (funnel.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
 	bodies   atomic.Int64     // bytes reserved for request bodies, across all requests
 	bodyMu   sync.Mutex
@@ -211,6 +213,8 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		if g.accounts, err = OpenAccountStore(g.acfg.File); err != nil {
 			return err
 		}
+		admins := slices.Clone(g.acfg.Admins)
+		g.accounts.SetOwn(func(id string) bool { return slices.Contains(admins, id) })
 		g.gkeys = newJWKSCache(g.acfg.GoogleCertsURL, g.getJSON)
 		if g.acfg.Email != nil {
 			g.email = newEmailSignIn(*g.acfg.Email, g.acfg.PublicURL, log)
