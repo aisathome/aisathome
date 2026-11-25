@@ -420,10 +420,39 @@ func utmSource(uri, own string) string {
 	}
 	q, _ := url.ParseQuery(uri[i+1:])
 	v := q.Get("utm_source")
-	if v == "" || strings.ContainsAny(v, "/:@?#\\ ") {
+	if v == "" || strings.ContainsAny(v, "/:@?#\\ ") || !plainDomain(v) {
 		return ""
 	}
 	return referrerDomain("https://"+v+"/", own)
+}
+
+// plainDomain: v reads as a site's domain name, not a tracking token dressed as one: at most 253
+// characters, labels of 1-63 letters, digits and hyphens, and no label that is a long run of hex
+// digits (an id or a hash), so only a domain such as chatgpt.com is ever kept.
+func plainDomain(v string) bool {
+	if len(v) > 253 {
+		return false
+	}
+	for _, l := range strings.Split(strings.TrimSuffix(v, "."), ".") {
+		if l == "" || len(l) > 63 {
+			return false
+		}
+		hex := len(l) >= 16
+		for _, c := range l {
+			switch {
+			case c >= '0' && c <= '9':
+			case c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+			case c >= 'g' && c <= 'z', c >= 'G' && c <= 'Z', c == '-':
+				hex = false
+			default:
+				return false
+			}
+		}
+		if hex {
+			return false
+		}
+	}
+	return true
 }
 
 func stripPort(h string) string {

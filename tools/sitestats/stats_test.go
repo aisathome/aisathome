@@ -254,7 +254,9 @@ func TestUTMSourceCountsAsTheReferrerWhenThereIsNone(t *testing.T) {
 	a.Add(line(req{ip: "203.0.113.2", ua: firefox, uri: "/node/?utm_source=www.Perplexity.ai&utm_medium=x"}))
 	a.Add(line(req{ip: "203.0.113.3", ua: firefox, uri: "/node/?utm_source=chatgpt.com", ref: "https://www.reddit.com/r/x/"})) // the Referer wins
 	a.Add(line(req{ip: "203.0.113.4", ua: firefox, uri: "/node/?utm_source=chatgpt.com", ref: "https://aisathome.org/"}))      // ours: a click on our own page
-	for _, v := range []string{"newsletter", "aisathome.org", "192.0.2.1", "evil.example/x", "a@b.example", "chatgpt.com%2Fx"} {
+	for _, v := range []string{"newsletter", "aisathome.org", "192.0.2.1", "evil.example/x", "a@b.example", "chatgpt.com%2Fx",
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.example", // a token as a label: never kept
+		"5f2b9c41d0e8a7b3.example", strings.Repeat("a", 64) + ".example", "x_y.example"} {
 		a.Add(line(req{ip: "203.0.113.9", ua: firefox, uri: "/?utm_source=" + v}))
 	}
 	d := a.Stats.Days["2026-10-19"]
