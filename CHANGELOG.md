@@ -7,6 +7,208 @@ and **(site)** are live on aisathome.org once deployed.
 
 ## [Unreleased]
 
+## [v0.7.0] — 2026-11-25
+
+The Linux installer asks one plain question, "Link this node to your account? [Y/n]", turns MTP
+speculative decoding on by default on 24 GB cards (about 1.7-1.9x output speed), shows how far its
+downloads have come, and leaves its node.json and token checks to the node agent (`aisathome-node
+config preflight`). A Linux node can be stopped or uninstalled from its local page and keeps an
+uninstaller at `/usr/local/sbin/aisathome-node-uninstall`, and llama-server runs as its own user,
+`aisathome-llama`. On the gateway, the tool-call guard stops an answer whose chunks it cannot read,
+what a node can make the gateway hold in memory is bounded, and the tokens of nodes without an
+account are redacted from requests like other credentials. The home page shows the network's proofs
+first and running a node right after.
+
+### Added
+
+- **Stop and uninstall a Linux node from its local page, and an uninstaller that stays.** The
+  installer now keeps a copy of the uninstaller at `/usr/local/sbin/aisathome-node-uninstall`
+  (`sudo aisathome-node-uninstall`; it removes itself last), so removing the node no longer needs
+  the bundle's folder, which the one-line install unpacks into `/tmp`. The end of the install,
+  `aisathome-node status` and the local page say so. The local page (behind its password) gets
+  **Stop and free the GPU**, which stops the agent and llama-server and says how to start them
+  again (`sudo systemctl start aisathome-llama aisathome-node`: the page goes away with the
+  agent), and **Uninstall**, with a confirm step and a box to remove the model too. Both go
+  through a root-owned systemd path unit, as the engine restart does; without it the page shows
+  the commands. (node)
+- **A funnel card on the operations page.** `/account/ops` shows, for the last 7 UTC days and today,
+  totals from a visit to a connected node: visitors, node page views and install starts from the site
+  statistics (`site_stats_file`), and the gateway's own daily counts of nodes registered without an
+  account, added to an account, linked, and connected for the first time, with the admins' own nodes
+  apart. Numbers only, no node or account. (gateway)
+- **The site statistics tell AI assistants fetching for a person from crawlers.** ChatGPT-User,
+  Claude-User and Perplexity-User (and OAI-SearchBot, Claude-SearchBot) are named apart from the
+  generic OpenAI, Anthropic and Perplexity entries, and the report has an ai-user column. Bot
+  requests for `/llms.txt`, `/robots.txt` and the sitemaps are counted per file, and a page view
+  without a Referer counts the domain in its `utm_source` tag (for example `chatgpt.com`) as the
+  referrer. (site)
+- **The site statistics count fetches of the node install script.** `aisathome-sitestats` counts
+  fetches of `/node.sh` whatever the program (curl and wget are no longer bots there), by client
+  name, with a per-day estimate of distinct clients made the way the visitor estimate is; the
+  privacy page says so. (site)
+
+### Changed
+
+- **MTP speculative decoding is on by default on 24 GB cards.** On the big tier the Linux
+  installer now runs `--speculation mtp` unless told otherwise (about 1.7-1.9x output speed on our
+  24 GB nodes; the model check passes with it); it downloads the 1.4 GB draft model with the model,
+  and runs without it, saying why, when the card lacks the free memory or the engine is too old.
+  `--speculation off` (or `none`) turns it off and is remembered on updates; an earlier
+  `--speculation mtp` or `dflash2` stays. A node that never chose gets the default on its next
+  update. Nodes updated from an older installer get MTP on the big tier even if `off` was stored
+  before; to keep it off, pass `--speculation none` (remembered). 16 GB cards and the Windows node
+  stay off. (node)
+- **The Linux installer asks "Link this node to your account? [Y/n]".** y (or Enter) ends the
+  install by linking the node in the browser, as before; n runs it without an account (science
+  only), as `--anonymous` does, with the terms shown at the question. An installed node with a
+  token for the same gateway keeps it without a question. Pasting a node token is no longer part
+  of the question: `--token-stdin` reads one (hidden at a terminal, or piped); a script that pipes
+  a token without a flag works as before. (node)
+- **Downloads show their progress, also in a log.** The Linux installer shows how far the model
+  and the draft model have come: at a terminal one line updated in place with the speed, piped or
+  logged a plain line at each further 10% (it used to show nothing without a terminal). The
+  one-line install (`node.sh`) shows curl's bar for the bundle at a terminal, and plain lines
+  otherwise. (node)
+- **The Linux installer leaves node.json and token decisions to the node agent.** The checks it
+  used to repeat in shell (a canonical node.json, the gateway address rule, a token kept or sent
+  only to the gateway that issued it, the moved-aside token, `--anonymous` over a token) are now
+  `aisathome-node config preflight`, the agent's own code, which the installer runs before it
+  changes anything. A `--node-bin` or `--node-release` older than the installer is refused with a
+  message, before anything is installed. (node)
+- **The home page shows what the network does before it asks you to join.** "Our GPUs prove
+  theorems" comes right after the hero, with a chart of the proofs prove2me accepted over time
+  (one point per proof, hollow for a lemma closed by reusing a proof, the start of each trial
+  marked) and its numbers in a table; then the live strip and "Run a node". The chart is drawn
+  at build time and again in the browser at its real width and with the gateway's newer
+  records. (site)
+- **The home page puts running a node first.** Right after the hero and the live numbers, a "Run
+  a node" block has the one-line start without an account
+  (`curl -fsSL https://aisathome.org/node.sh | sh`, science only), what it does, a link to the
+  script's source, the Windows download, the GPU a node needs and the node's own page on your
+  computer, with a picture of that page; the dev log follows it. The command, version, sizes and driver minimums come from
+  one file (`site/src/data/node-release.ts`), shared with `/node/`. The prove2me line reads
+  "proved 12 of the 42 open lemmas it tried" instead of "12 of 42 open leaves tried". (site)
+- **Home page links say where they go, and the footer is tidier.** "prove2me trials: Qwen's Lean
+  proofs", "All science projects", "Every Tau Ceti pull request", "All dev log posts"; the hero
+  links the mission page ("Why we do this"); the node block's first step links the latest
+  release. The footer's Docs opens the docs index (`/docs/`) and the footer no longer links the
+  subreddit, on the site and on the account pages. (site, gateway)
+- **`/node/` has every requirement and a "Stop, remove, link later" section.** Driver minimums,
+  the 18+ and terms requirement, the node's own page, pause, stop, link and uninstall on Linux
+  and Windows, with a checked download of the bundle to uninstall when the one-line start's
+  temporary folder is gone. (docs)
+- **Clearer titles and facts for search and AI answers.** Descriptive page titles on `/node/`,
+  `/use/api/`, `/use/chat/`, `/about/` and the science pages; "aisathome" as the alternate name
+  in the home page's structured data and in `llms.txt`; Tau Ceti's stop date in `llms.txt` is 7
+  November 2026, as on the pages. (site)
+
+### Fixed
+
+- **The prove2me page shows every hole of an outline as Waiting, Working or Solved.** A hole
+  without a task of its own used to read "closed before the hole tasks, or left in place", a
+  guess, and holes after the last hole task did not show. Tasks now carry the outline's holes in a
+  public label (`hole_states`), so every hole from 1 to n shows in one of three states: Waiting
+  (held back, not started, failed, or not known), Working (its own task is queued or running, with
+  the try and its steps) or Solved (by any route). Why a hole waits and how it was solved are in its
+  tooltip only. (site)
+
+### Security
+
+- **llama-server runs as its own user, and the installer never follows a link in the models
+  folder.** On Linux the engine now runs as `aisathome-llama`, not as the agent's `aisathome`
+  user: it can read the model but cannot write the agent's state, through which the agent asks
+  root to restart, stop or uninstall the node. The models folder belongs to the engine's user; the
+  installer downloads, checks and moves files there as that user, and as root only sets owners
+  without following links, so a link planted there can no longer make it change a system file.
+  An update moves the folder and its files to the new user. (node)
+- **The installer's "Link this node to your account? [Y/n]" answer is no longer shown as it is
+  typed.** The older installer asked for a node token at this point, so a token pasted there out of
+  habit would have stood in full on the screen and in terminal logs. The answer is now read without
+  echo: echo is off before the question is printed and stays off through every retry. Anything
+  that is not y or n is dropped unseen, and an answer that looks like a token is told that it was
+  neither stored nor shown and that `--token-stdin` gives a node a token. (node)
+- **The tool-call guard reads every streamed chunk, or stops the answer.** A chunk the gateway
+  could not decode (for example one with a number too large for a float64, which other JSON
+  decoders accept) used to go to the client unchecked, tool calls included. Every chunk is now
+  decoded once, numbers as written; one that does not decode, names a key twice, or carries tool
+  calls in another shape or place than a client reads breaks a stream rule (`malformed-chunk`)
+  and never goes out as it came. The guard reads the node's own bytes, before the gateway
+  re-encodes a chunk. The legacy `function_call` field is held and checked like `tool_calls`, and
+  a non-streaming answer now carries it too (it was dropped); a number beside a command in
+  tool-call arguments no longer hides it. Non-streaming answers go through the same checks. A
+  node frame that does not decode fails the request it came during (it was skipped, so a later
+  `done` could end the answer as complete with a piece missing); the node stays. (gateway)
+- **A node can no longer make the gateway hold large amounts of memory.** Frames from a node are
+  limited by type before anything is queued: 68 KiB for a chunk (the read limit), 16 KiB for an
+  error (its text cut to 2 KiB), 32 KiB for the hello and 4 KiB for anything else; a larger frame
+  closes the connection. What waits in request queues is budgeted per request (1 MiB), per node
+  (4 MiB) and for the gateway (64 MiB). A full budget waits while it drains, so a fast engine's
+  burst to a client that keeps up goes through; only when it does not drain for half a second (or
+  drains too slowly for 5 s) is the request given up on, and its stream ends with an error event
+  that says which budget it was. A streamed answer may total at most 1 KiB per allowed chunk (8 KiB
+  with logprobs) plus 1 MiB, and never more than 128 MiB. A node announces at most 8 slots per
+  model (the reference node announces 1). (gateway)
+- **Anonymous node tokens are redacted from requests.** The redaction of credentials in requests
+  covered account node tokens (`nt-n-…`) but not the tokens of nodes without an account
+  (`nt-a-…`); it now covers every credential form the gateway issues, also inside JSON object keys
+  such as the property names of a tool's schema, and in `tool_choice`, which reaches the node with
+  the tools. (gateway)
+
+### Known issues
+
+- **The installer labels the draft model's download "model:".** On a 24 GB card the lines for the
+  1.4 GB draft model read `model: downloading 1.4 GB from …/mtp-Qwen3.8-27B-Q4_0.gguf` and `model:
+  checking sha256`; the file name shows which file it is. Cosmetic only. (node)
+- **`aisathome-node modelcheck` notes that the engine serves `model.gguf`.** The installer saves
+  the pinned model under that name, so the check always says "the reference is for
+  Qwen3.8-27B-UD-IQ4_XS.gguf, this engine serves model.gguf: expect a failure unless it is the same
+  file under another name". It is the same file (the installer checked its SHA-256); the PASS or
+  FAIL line is what counts. (node)
+- **RTX 50 cards were not tested on a GPU for this release.** It was tested on an RTX 3090 and an
+  RTX 4090. The engine (llama.cpp b12342, with the RTX 50 build) is the same as in v0.6.0. (node)
+- **The Windows installer is still not code-signed.** SmartScreen, Defender or the browser may
+  warn when you download or start it. Check its SHA-256 against `SHA256SUMS`, then choose
+  **More info → Run anyway**. (node)
+- **The standard tier's (16 GB) model-check reference was recorded on llama.cpp b12323**, not
+  b12342, which the node runs; the big tier's is on b12342. (node)
+
+### Updating a node
+
+**Linux:** the installer keeps the gateway, the token (for a node set up with v0.6.0 or later) and
+the model file. On the update:
+
+- **MTP turns on on 24 GB cards, also where an older installer stored `off`.** Installers before
+  v0.7.0 wrote `off` for every node that did not choose, so that `off` counts as no choice. The
+  update downloads the 1.4 GB draft model and runs MTP when the card has 21,000 MiB free (otherwise
+  it runs plain and says why). To keep it off, pass `--speculation none` (or `off`): it is
+  remembered on later updates. 16 GB cards stay off.
+- **llama-server moves to its own user, `aisathome-llama`.** The update creates the user and gives
+  it the models folder (`/var/lib/aisathome-node/models`) and its files. The service names stay
+  `aisathome-node` and `aisathome-llama`.
+- **The uninstaller stays.** The update installs `/usr/local/sbin/aisathome-node-uninstall`
+  (`sudo aisathome-node-uninstall`, `--purge` to remove the model too), so you no longer need the
+  bundle's folder to remove the node, and the local page gets **Stop and free the GPU** and
+  **Uninstall**.
+- **A node installed before v0.6.0 is still linked again** (its token has no record of the
+  gateway that issued it): answer y at "Link this node to your account? [Y/n]".
+
+```
+u=https://github.com/aisathome/aisathome/releases/download/v0.7.0
+curl -fLO $u/aisathome-node-bundle-linux-amd64.tar.xz && curl -fLO $u/SHA256SUMS \
+  && grep ' aisathome-node-bundle-linux-amd64.tar.xz$' SHA256SUMS | sha256sum -c - \
+  && tar -xJf aisathome-node-bundle-linux-amd64.tar.xz \
+  && cd aisathome-node-bundle-linux-amd64 && sudo ./install.sh
+```
+
+A script that gives the installer a token passes `--token-stdin` (a piped token without a flag
+still works). A new node without an account: `curl -fsSL https://aisathome.org/node.sh | sh`.
+
+**Windows:** this release changes little there: MTP stays off, and the local page's new buttons
+are Linux only. To update, download `AIsAtHome-node-setup-v0.7.0.exe` (or
+`AIsAtHome-node-setup.exe`, the same file) and `SHA256SUMS` from the release, check the hash
+(`Get-FileHash AIsAtHome-node-setup-v0.7.0.exe` in PowerShell), and run it over the installed node:
+it keeps the config, password and state.
+
 ## [v0.6.0] — 2026-11-24
 
 Link a node to your account without pasting a token: the node shows a link and a code, and you
@@ -954,7 +1156,8 @@ https://aisathome.org/node/
 
 **Full changelog:** https://github.com/aisathome/aisathome/commits/v0.1.0
 
-[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.6.0...main
+[Unreleased]: https://github.com/aisathome/aisathome/compare/v0.7.0...main
+[v0.7.0]: https://github.com/aisathome/aisathome/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/aisathome/aisathome/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/aisathome/aisathome/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/aisathome/aisathome/compare/v0.3.0...v0.4.0
