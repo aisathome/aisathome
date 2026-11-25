@@ -543,6 +543,56 @@ func TestEngineFailure(t *testing.T) {
 	if res.Reason != ReasonEngine || res.Code != 1 {
 		t.Fatalf("result %+v, want engine, 1", res)
 	}
+	if _, err := os.Stat(r.o.Checkpoint + ".served"); err == nil {
+		t.Error("a task that served nothing recorded that it served")
+	}
+}
+
+// An engine that keeps failing after the pilot served an answer: exit 0, so that BOINC validates
+// the result and the served work earns its credit; the close reason still says engine, and the
+// task's folder records that it served.
+func TestEngineFailureAfterServing(t *testing.T) {
+	r := newRig(t)
+	ch := r.run(context.Background())
+	connected(t, r.gw)
+	r.gw.request(t, "one")
+	r.gw.until(t, "the answer to end", func() bool { return r.gw.done["one"] == protocol.TypeDone })
+	time.Sleep(200 * time.Millisecond) // the agent counts the answer after its last chunk
+	for i := 0; i < engineFailures; i++ {
+		r.eng.onExit(errors.New("exit status 1"), time.Millisecond)
+	}
+	res := wait(t, ch, 10*time.Second)
+	if res.Reason != ReasonEngine || res.Code != 0 {
+		t.Fatalf("result %+v, want engine, 0", res)
+	}
+	if got := r.gw.closeReason(t); got != "pilot: engine" {
+		t.Errorf("close reason %q", got)
+	}
+	if s := r.summary(); s.Reason != ReasonEngine || s.Requests != 1 {
+		t.Errorf("summary %+v", s)
+	}
+	if _, err := os.Stat(r.o.Checkpoint + ".served"); err != nil {
+		t.Errorf("no record that the task served: %v", err)
+	}
+}
+
+// A restarted task whose earlier run served: an engine failure now (at start, or after starting)
+// still exits 0. One that never served exits 1 (TestEngineFailure) and leaves no record.
+func TestEngineFailureAfterAnEarlierRunServed(t *testing.T) {
+	r := newRig(t)
+	if err := os.WriteFile(r.o.Checkpoint+".served", []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.eng.failRuns = engineFailures
+	if res := wait(t, r.run(context.Background()), 10*time.Second); res.Reason != ReasonEngine || res.Code != 0 {
+		t.Fatalf("after starting: result %+v, want engine, 0", res)
+	}
+	r = newRig(t)
+	os.WriteFile(r.o.Checkpoint+".served", []byte("x\n"), 0o644)
+	r.o.Gateway = "http://not-a-websocket.example" // the pilot cannot start
+	if res := wait(t, r.run(context.Background()), 10*time.Second); res.Reason != ReasonEngine || res.Code != 0 {
+		t.Fatalf("at start: result %+v, want engine, 0", res)
+	}
 }
 
 // The checkpoint rule: past a slice boundary and idle long enough; never while busy.
