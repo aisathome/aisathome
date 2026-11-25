@@ -7,7 +7,10 @@
 //   - after IdleExit (30 min) with no request routed to it: leaves, exits 0;
 //   - on SIGTERM (BOINC quits or preempts the task; the wrapper kills it 10 s later): it pauses,
 //     gives requests in flight a moment, leaves and is gone within StopBudget;
-//   - when the engine keeps failing: leaves, exits 1 (BOINC reports an error).
+//   - when the engine keeps failing: leaves, exits 1 (BOINC reports an error), unless it has
+//     served an answer, in this run or an earlier run of the same task: then it exits 0, so that
+//     BOINC validates the result and the work served earns its credit (the close reason and the
+//     summary still say "engine").
 //
 // The connection closes with the reason ("pilot: idle", "pilot: time", "pilot: sigterm",
 // "pilot: engine"). The pilot never opens BOINC's init_data.xml, which holds the volunteer's
@@ -159,7 +162,7 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	fail := func(err error) Result {
 		log.Error("pilot cannot start", "err", err)
 		writeSummary(o.Summary, Summary{Agent: node.AgentVersion(), Reason: ReasonEngine, Error: err.Error()}, log)
-		return Result{Reason: ReasonEngine, Code: 1}
+		return Result{Reason: ReasonEngine, Code: engineExitCode(servedBefore(o))}
 	}
 	if !strings.HasPrefix(o.Gateway, "wss://") && !strings.HasPrefix(o.Gateway, "ws://") {
 		return fail(fmt.Errorf("--gateway must be a ws:// or wss:// URL"))
@@ -326,12 +329,52 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	if reason == ReasonTime || reason == ReasonIdle {
 		writeFraction(o.FractionDone, 1)
 	}
+	served := sum.Requests > 0
+	if served {
+		markServed(o, log)
+	}
 	code := 0
 	if reason == ReasonEngine {
-		code = 1
+		code = engineExitCode(served || servedBefore(o))
 	}
-	log.Info("pilot ended", "reason", reason, "requests", sum.Requests, "served_s", sum.ServedSeconds)
+	log.Info("pilot ended", "reason", reason, "requests", sum.Requests, "served_s", sum.ServedSeconds, "code", code)
 	return Result{Reason: reason, Code: code}
+}
+
+// servedMarker is a file in the task's folder, next to the checkpoint, that says an earlier run of
+// this task served an answer: a task that BOINC restarted (after a suspend, say) runs the pilot
+// again in the same folder, and the gateway's record, not the pilot's summary, adds up its runs.
+func servedMarker(o Options) string {
+	if o.Checkpoint == "" {
+		return ""
+	}
+	return o.Checkpoint + ".served"
+}
+
+func markServed(o Options, log *slog.Logger) {
+	if p := servedMarker(o); p != "" {
+		if err := touch(p); err != nil {
+			log.Warn("cannot record that this task served", "err", err)
+		}
+	}
+}
+
+func servedBefore(o Options) bool {
+	p := servedMarker(o)
+	if p == "" {
+		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// engineExitCode: an engine failure is an error for BOINC (exit 1) unless the task served an
+// answer: then exit 0, so that BOINC validates the result and the served work earns its credit.
+func engineExitCode(served bool) int {
+	if served {
+		return 0
+	}
+	return 1
 }
 
 // watch applies the time, idle and checkpoint rules to the agent's status, one tick at a time.
