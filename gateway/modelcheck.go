@@ -948,7 +948,7 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 	}
 	raw, _ := json.Marshal(body)
 	reqID := newID()
-	p := newPendingReq()
+	p := g.newPending(n)
 	sr := g.addScience(n) // a person's request that waits for this node stops the probe (preempt.go)
 	// Its operator's page lists it as any request in flight: a chat, or science on a pilot that
 	// serves only science.
@@ -976,6 +976,7 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 	stopping := false
 	defer func() {
 		close(p.done)
+		p.finish()
 		if stopping {
 			g.awaitStopped(n, reqID, p, free)
 			return
@@ -1024,6 +1025,7 @@ func (g *Gateway) mcSend(n *nodeConn, model string, rq modelcheck.Request, res *
 		case <-n.closed:
 			return nil, false, "node left"
 		case m := <-p.ch:
+			p.took(m)
 			stall.Reset(time.Duration(g.cfg.IdleTimeoutSec) * time.Second)
 			switch m.Type {
 			case protocol.TypeError:

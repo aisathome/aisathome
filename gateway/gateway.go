@@ -44,6 +44,7 @@ type Gateway struct {
 	sci      *scienceDB       // campaigns and external results (science_db.go, campaigns.go)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
+	qbytes   atomic.Int64     // bytes of node messages queued for their requests, across all nodes (pendingReq)
 	bodies   atomic.Int64     // bytes reserved for request bodies, across all requests
 	bodyMu   sync.Mutex
 	bodyBy   map[string]int64 // bytes reserved for request bodies, per user; guarded by bodyMu

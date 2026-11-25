@@ -5,8 +5,10 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const fakeKey = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
@@ -462,5 +464,50 @@ func TestForNodeKeepsOnlyTemplateSwitches(t *testing.T) {
 	}
 	if len(kw) != 6 {
 		t.Fatalf("forNode changed the request itself: %v", kw)
+	}
+}
+
+// Every credential format the gateway issues is redacted, also glued to a word where its form
+// has an id (node tokens, pilot credentials), in text and in JSON keys.
+func TestIssuedCredentialsRedacted(t *testing.T) {
+	apiKey, _ := newAPIKey()
+	keysFile := &KeysFile{}
+	fileKey, _ := keysFile.Add(KeyInfo{User: "u"}, time.Now())
+	accountNode, _ := newNodeToken("n-0a1b2c3d")
+	anonNode, _ := newNodeToken(anonNodePrefix + "0a1b2c3d")
+	store, err := OpenAccountStore(filepath.Join(t.TempDir(), "accounts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, _, err := store.RegisterAnon(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pilot, _ := newPilotCredential()
+	for name, c := range map[string]struct {
+		tok   string
+		glued bool
+	}{
+		"API key": {apiKey, false}, "keys file key": {fileKey, false},
+		"account node token": {accountNode, true}, "anonymous node token": {anonNode, true},
+		"registered anonymous node token": {registered, true}, "pilot credential": {pilot, true},
+	} {
+		secret := c.tok[len(c.tok)-30:]
+		contexts := []string{"my token is " + c.tok + " ok", "TOKEN=" + c.tok, `{"token":"` + c.tok + `"}`, "https://x.example/?t=" + c.tok + "&a=1"}
+		if c.glued {
+			contexts = append(contexts, "token"+c.tok)
+		}
+		for _, text := range contexts {
+			if out := newRedactor().redactText(text); strings.Contains(out, secret) {
+				t.Errorf("%s not redacted in %q: %s", name, text, out)
+			}
+		}
+		r := newRedactor()
+		body := map[string]any{"tools": []any{map[string]any{"type": "function", "function": map[string]any{"name": "f",
+			"parameters": map[string]any{"type": "object", "properties": map[string]any{c.tok: map[string]any{"type": "string"}}}}}}}
+		r.redactBody(body)
+		if b, _ := json.Marshal(body); strings.Contains(string(b), secret) {
+			t.Errorf("%s not redacted in a JSON key: %s", name, b)
+		}
 	}
 }
