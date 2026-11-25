@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -254,19 +255,34 @@ func printTop(w io.Writer, m map[string]int, top int) {
 func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 	keys := lastDays(days, now)
 	fmt.Fprintf(w, "Site statistics for %s, last %d UTC days (updated %s UTC)\n\n", s.Host, len(keys), s.Updated.UTC().Format("2006-01-02 15:04"))
-	fmt.Fprintf(w, "%-10s  %6s  %8s  %5s  %5s  %5s  %5s  %8s\n", "day", "views", "visitors", "feed", "404", "bots", "tests", "installs")
+	fmt.Fprintf(w, "%-10s  %6s  %8s  %5s  %5s  %5s  %7s  %5s  %8s\n", "day", "views", "visitors", "feed", "404", "bots", "ai-user", "tests", "installs")
 	var sum Day
 	pages, refs, bots, installs := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	pageRefs, referred := map[string]map[string]int{}, map[string]int{}
+	files, fileSum := map[string]map[string]int{}, map[string]int{}
+	aiUsers := 0
 	for _, key := range keys {
 		d := s.Days[key]
 		if d == nil {
 			d = &Day{}
 		}
-		nb := 0
+		nb, ai := 0, 0
 		for k, v := range d.Bots {
 			nb += v
 			bots[k] += v
+			if slices.Contains(aiUserAgents, k) {
+				ai += v
+			}
+		}
+		aiUsers += ai
+		for p, m := range d.BotFiles {
+			if files[p] == nil {
+				files[p] = map[string]int{}
+			}
+			for k, v := range m {
+				files[p][k] += v
+				fileSum[p] += v
+			}
 		}
 		for k, v := range d.Pages {
 			pages[k] += v
@@ -286,7 +302,7 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 				referred[p] += v
 			}
 		}
-		fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d  %8d\n", key, d.PageViews, d.Visitors, d.Feed, d.NotFound, nb, d.Tests, d.Installs)
+		fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %7d  %5d  %8d\n", key, d.PageViews, d.Visitors, d.Feed, d.NotFound, nb, ai, d.Tests, d.Installs)
 		sum.PageViews += d.PageViews
 		sum.Visitors += d.Visitors
 		sum.Feed += d.Feed
@@ -298,8 +314,9 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 	for _, v := range bots {
 		nbots += v
 	}
-	fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d  %8d\n", "total", sum.PageViews, sum.Visitors, sum.Feed, sum.NotFound, nbots, sum.Tests, sum.Installs)
+	fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %7d  %5d  %8d\n", "total", sum.PageViews, sum.Visitors, sum.Feed, sum.NotFound, nbots, aiUsers, sum.Tests, sum.Installs)
 	fmt.Fprintln(w, "(visitors: per day; the total adds the days, a person visiting on two days counts twice)")
+	fmt.Fprintf(w, "(ai-user: of the bots, AI assistants fetching a page for a person just then: %s)\n", strings.Join(aiUserAgents, ", "))
 	fmt.Fprintln(w, "(installs: different clients that fetched the node install script /node.sh per day, whatever the user agent; not in bots)")
 	for _, t := range []struct {
 		title string
@@ -308,6 +325,15 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 		{"Node install script fetches by client (all fetches; browser: someone reading it)", installs}} {
 		fmt.Fprintf(w, "\n%s\n", t.title)
 		printTop(w, t.m, top)
+	}
+	fmt.Fprintf(w, "\nBot fetches of %s\n", strings.Join(botFiles, ", "))
+	if len(fileSum) == 0 {
+		fmt.Fprintln(w, "  (none)")
+	}
+	for _, p := range botFiles {
+		if n := fileSum[p]; n > 0 {
+			fmt.Fprintf(w, "  %6d  %s  %s\n", n, p, inline(files[p], 5))
+		}
 	}
 	fmt.Fprintf(w, "\nReferring domains by page (views with a referring domain; -page PATH for one page)\n")
 	if len(referred) == 0 {

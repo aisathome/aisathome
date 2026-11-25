@@ -16,7 +16,9 @@
 //   - pages: the same per path, with the query string removed (only paths of pages that exist:
 //     a 404 is never stored by path);
 //   - referrers: the referring site's domain only (for example "reddit.com"), never the full
-//     address, its path or query; our own domains are not counted;
+//     address, its path or query; our own domains are not counted. A request without a Referer
+//     whose address has a utm_source tag naming a domain (ChatGPT's links carry
+//     "?utm_source=chatgpt.com") counts that domain instead; any other value is dropped;
 //   - page_referrers: the same referring domains per page (for example: 3 views of
 //     "/science/tauceti/" came from "reddit.com"), counted only with the page views above, so
 //     never for a 404, a bot or our tests. While the UTC day runs, up to 100 domains per page
@@ -28,7 +30,11 @@
 //   - not_found: answers 404, as one number;
 //   - bots: requests from known bots and scripts (the list in stats.go, an empty user
 //     agent, or one that does not start with "Mozilla/"), by a fixed bot name from that list
-//     ("other" for the rest); they never count as page views or visitors;
+//     ("other" for the rest); they never count as page views or visitors. AI assistants that
+//     fetch a page for a person just then (ChatGPT-User, Claude-User, Perplexity-User) have
+//     names of their own, apart from the same companies' crawlers;
+//   - bot_files: the same bot requests for /llms.txt, /robots.txt and the sitemaps
+//     (/sitemap-index.xml, /sitemap-0.xml), per file and bot name;
 //   - tests: requests from the project's own automated tests (user agent containing
 //     "aisathome-test" or "aisathome-smoke"), only counted, nothing else;
 //   - installs: an estimate of how many different clients fetched the node install script

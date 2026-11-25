@@ -137,9 +137,11 @@ pages are not counted.
 - The log lines, which contain your IP address and your browser's name (user agent), are kept only in the server's
   memory, never on disk or in backups. About once a minute they are counted and deleted.
 - What we keep, per day: views per page (without anything after a `?`), the domain of the site that linked here (for
-  example `reddit.com`, never the full address), also per page, how many 404s, how many requests came from known bots
-  and from our own tests, an estimate of unique visitors, and how often the node install script (`/node.sh`) was
-  fetched, by which kind of program (for example `curl`), with an estimate of how many different computers fetched it.
+  example `reddit.com`, or `chatgpt.com` named in a link's `utm_source` tag; never the full address), also per page, how
+  many 404s, how many requests came from known bots (by bot name, and which bots read `/llms.txt`, `/robots.txt` and the
+  sitemaps) and from our own tests, an estimate of unique visitors, and how often the node install script (`/node.sh`)
+  was fetched, by which kind of program (for example `curl`), with an estimate of how many different computers fetched
+  it.
 - For those estimates the server makes a hash of your IP address and browser name together with a random value that
   exists only in memory and is replaced at the end of each day (UTC). Only the day's count is kept, so visits on
   different days cannot be linked, not even by us.
