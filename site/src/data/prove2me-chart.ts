@@ -129,3 +129,35 @@ export function acceptedRowsHTML(s: AcceptedSeries): string {
 			`<td>${a.kind === 'reuse' ? 'reuse' : 'proof'}</td><td class="num">${n}</td></tr>`)
 		.join('');
 }
+
+/** In the browser: draws the chart in a figure of components/AcceptedChart.astro again at its real width (the build's
+ * copy is scaled) and on every resize; `update` redraws it and its table from a newer view (the gateway's records). */
+export function mountAcceptedChart(fig: HTMLElement | null): { update: (v: ScienceView) => void } {
+	const box = fig?.querySelector<HTMLElement>('[data-p2m-chart-svg]');
+	const rows = fig?.querySelector<HTMLElement>('[data-p2m-chart-rows]');
+	let series: AcceptedSeries | null = null;
+	try {
+		series = JSON.parse(fig?.querySelector('[data-p2m-chart-series]')?.textContent || 'null');
+	} catch {
+		series = null;
+	}
+	const draw = () => {
+		if (box && series && box.clientWidth > 0) box.innerHTML = acceptedChartSVG(series, box.clientWidth);
+	};
+	draw();
+	let frame = 0;
+	window.addEventListener('resize', () => {
+		cancelAnimationFrame(frame);
+		frame = requestAnimationFrame(draw);
+	});
+	return {
+		update(v) {
+			const s = acceptedSeries(v);
+			if (!fig || !s || !box || !rows) return;
+			series = s;
+			draw();
+			rows.innerHTML = acceptedRowsHTML(s); // every value escaped
+			fig.dataset.source = 'live';
+		},
+	};
+}
