@@ -137,3 +137,14 @@ def test_home_page_phone_width_no_sideways_scroll(open_page):
     page = open_page(path="/", ua=LINUX_UA, width=360)
     expect(page.locator("[data-home-node]")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_home_page_shows_the_node_page_picture_for_its_theme(open_page):
+    """One picture of the node's own page per theme: the light one in a light browser, and it loads."""
+    page = open_page(path="/")
+    light, dark = page.locator(".node-shot-light"), page.locator(".node-shot-dark")
+    light.scroll_into_view_if_needed()
+    expect(light).to_be_visible()
+    expect(dark).to_be_hidden()
+    assert "example data" in light.get_attribute("alt")
+    page.wait_for_function("document.querySelector('.node-shot-light').naturalWidth > 0")

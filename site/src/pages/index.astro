@@ -37,6 +37,8 @@ const icons: Record<string, string> = {
 	'Open source': 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16',
 };
 const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
+const nodeShotAlt =
+	'The node’s own page, with example data: Serving, connected to aisathome.org; without an account, admitted for science work, with the command to link it; one slot in use; model qwen3.8-27b.';
 ---
 
 <StarlightPage
@@ -146,6 +148,9 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 						the installer prints it): its status and what it served, <b>Pause</b> and <b>Restart</b> behind a local password,
 						and how to link it to an account. <a href={`${links.node}#stop-remove-link-later`}>Stop, remove or link a node</a>
 					</p>
+					<!-- The real local page with made-up data (e2e/browser/node_page_image.py); one image per theme. -->
+					<img class="node-shot node-shot-light" src="/images/home/node-page-light.webp" width="640" height="448" loading="lazy" decoding="async" alt={nodeShotAlt} />
+					<img class="node-shot node-shot-dark" src="/images/home/node-page-dark.webp" width="640" height="448" loading="lazy" decoding="async" alt={nodeShotAlt} />
 				</div>
 			</div>
 
@@ -516,6 +521,16 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 	.node-facts h3 { margin-bottom: 0.75rem; font-size: 1.35rem; }
 	.node-facts strong, .node-facts b { color: var(--sl-color-white); }
 	.node-facts a { white-space: nowrap; }
+	.node-shot {
+		display: block;
+		width: 100%;
+		max-width: 26rem;
+		height: auto;
+		margin-top: 1rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.5rem;
+	}
+	:global([data-theme='light']) .node-shot-dark, :global([data-theme='dark']) .node-shot-light { display: none; }
 	.node .guar { margin-top: 2.25rem; padding-top: 1.75rem; border-top: 1px solid var(--sl-color-hairline-light); }
 	.node .guar h3 { font-size: 1.35rem; }
 	@media (max-width: 50rem) {
