@@ -23,7 +23,7 @@ export const hero = {
 	pill: 'Non-commercial · Open source · Early experiment',
 	title: 'Open-weight AI on volunteers’ GPUs',
 	lead:
-		'Free chat and an OpenAI-compatible API on an open-weight model, answered by volunteers’ GPUs at home instead of a big company’s data centre. So that AI does not have to go through a handful of big companies.',
+		'Volunteer computing for open-weight LLMs, in the spirit of BOINC: people run an open model on their own GPUs at home, and you can use it for free, in a chat or through an OpenAI-compatible API. So that AI does not have to go through a handful of big companies.',
 	privacyTitle: 'Hardened, not confidential',
 	privacyText: 'The volunteer whose GPU answers you can technically read the conversation.',
 	privacyLink: 'How your data is handled',
@@ -32,7 +32,7 @@ export const hero = {
 // The node block: what the one command does, in three steps (site/public/node.sh).
 export const nodeBlock = {
 	kicker: 'Give your GPU',
-	title: 'Run a node with one command',
+	title: 'Run a node',
 	intro:
 		'No account needed to start. A node without an account does science only: it works on prove2me proofs, never on people’s chats. Link it to an account later and it serves chats too and earns credit (recognition, not money).',
 	does: [

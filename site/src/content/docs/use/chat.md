@@ -1,5 +1,8 @@
 ---
 title: Chat
+head:
+  - tag: title
+    content: "Free Qwen3.8 27B chat on volunteers’ GPUs - AIs@home"
 description: "Chat with Qwen3.8 27B on volunteers' GPUs at chat.aisathome.org: sign in with GitHub or Google; chats are temporary unless you save them."
 ---
 

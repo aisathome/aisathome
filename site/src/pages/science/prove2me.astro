@@ -109,6 +109,8 @@ const leafCols = [
 <StarlightPage
 	frontmatter={{
 		title: 'Science: prove2me',
+		// The browser tab and search result: what the page shows, in the words people search for.
+		head: [{ tag: 'title', content: `${p2m.model} proving Lean 4 theorems on prove2me - AIs@home` }],
 		description: `Leaves of prove2me, research theorems stated in Lean 4, that ${p2m.model}, an open model on the AIs@home network, tried to prove, and the proofs we submitted. Every run counts.`,
 	}}
 	headings={[

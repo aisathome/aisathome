@@ -11,7 +11,10 @@ export const tagline = 'Open-weight AI on volunteers’ GPUs';
 export const description = 'Open-weight AI on volunteers’ GPUs. Non-commercial and open source.';
 // The home page's own description (search results show it under the title): what you can do there.
 export const homeDescription =
-	'Free chat and an OpenAI-compatible API on an open-weight model, served by volunteers’ home GPUs. Run a node with one command. Non-commercial, open source.';
+	'Volunteer computing for open-weight LLMs, BOINC-style: Qwen3.8 27B on volunteers’ NVIDIA GPUs. Free chat and OpenAI-compatible API. Non-commercial, open source.';
+// How the name is written where "@" cannot go (the domain, the GitHub organisation): for search engines
+// and AI answers, in the JSON-LD and llms.txt.
+export const alternateName = 'aisathome';
 // The home page's <title> (others are "<page> | AIs@home", Starlight's own).
 export const homeTitle = `AIs@home: open-weight AI on volunteers’ GPUs`;
 
@@ -28,6 +31,7 @@ export function homeJsonLd(base = origin) {
 				'@type': 'Organization',
 				'@id': org,
 				name: 'AIs@home',
+				alternateName: alternateName,
 				url: `${base}/`,
 				logo: { '@type': 'ImageObject', url: `${base}/logo-512.png`, width: 512, height: 512 },
 				description,
@@ -37,6 +41,7 @@ export function homeJsonLd(base = origin) {
 				'@type': 'WebSite',
 				'@id': `${base}/#website`,
 				name: 'AIs@home',
+				alternateName: alternateName,
 				url: `${base}/`,
 				description,
 				inLanguage: 'en',
@@ -89,9 +94,10 @@ export function llmsTxt(base = origin) {
 	const link = (title: string, path: string, about: string) => `- [${title}](${path.startsWith('http') ? path : base + path}): ${about}`;
 	return `# AIs@home
 
-> AIs@home runs open-weight AI models on GPUs that volunteers contribute, in the spirit of BOINC, so that AI does not
-> have to go through a handful of big companies. It is a non-commercial, open-source (Apache-2.0) experiment run by one
-> volunteer maintainer: no company, no investors, no token, no ads.
+> AIs@home (written aisathome in web addresses: aisathome.org) runs open-weight AI models on GPUs that volunteers
+> contribute, in the spirit of BOINC, so that AI does not have to go through a handful of big companies. It is a
+> non-commercial, open-source (Apache-2.0) experiment run by one volunteer maintainer: no company, no investors, no
+> token, no ads.
 
 Mission: open-weight models made it possible for anyone to run good AI; AIs@home tries to serve them from volunteers' GPUs
 to people who do not have expensive GPUs themselves.
@@ -126,7 +132,7 @@ ${link('Credit', '/node/credit/', 'how GPU time is counted in BOINC’s unit, an
 
 ${link('Science', '/science/', 'what the open model on the network does for science: work a machine checks, every result counted')}
 ${link('prove2me', '/science/prove2me/', 'research theorems stated in Lean 4 that the model tries to prove; every run counts')}
-${link('Tau Ceti', '/science/tauceti/', 'pull requests the model opened on a library of formal mathematics (finished 2026-11-15)')}
+${link('Tau Ceti', '/science/tauceti/', 'pull requests the model opened on a library of formal mathematics (stopped on 7 November 2026 at the maintainers’ request)')}
 
 ## Project
 
