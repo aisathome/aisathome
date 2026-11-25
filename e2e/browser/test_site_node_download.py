@@ -148,3 +148,18 @@ def test_home_page_shows_the_node_page_picture_for_its_theme(open_page):
     expect(dark).to_be_hidden()
     assert "example data" in light.get_attribute("alt")
     page.wait_for_function("document.querySelector('.node-shot-light').naturalWidth > 0")
+
+
+def test_home_page_links_say_where_they_go(open_page):
+    """Link texts name their destination; the hero links the mission page; the node block's first step links the
+    latest release; the footer's Docs opens the docs index and the footer has no subreddit link."""
+    page = open_page(path="/")
+    expect(page.locator(".hero a[data-home-why]")).to_have_attribute("href", "/about/")
+    for name, href in [("prove2me trials: Qwen’s Lean proofs", "/science/prove2me/"), ("All science projects", "/science/"),
+                       ("Every Tau Ceti pull request", "/science/tauceti/"), ("All dev log posts", "/devlog/")]:
+        expect(page.get_by_role("link", name=name)).to_have_attribute("href", href)
+    expect(page.locator("[data-home-node]").get_by_role("link", name="the latest release")).to_have_attribute(
+        "href", RELEASES + "latest")
+    footer = page.locator(".site-footer")
+    expect(footer.get_by_role("link", name="Docs")).to_have_attribute("href", "/docs/")
+    expect(footer.locator('a[href*="reddit.com"]')).to_have_count(0)

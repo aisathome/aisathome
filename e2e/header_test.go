@@ -211,8 +211,8 @@ func TestHeaderNavMatchesSite(t *testing.T) {
 		if !strings.Contains(page, `<a class="head-src" href="https://github.com/aisathome/aisathome">`) {
 			t.Fatalf("%s: no source code link in the header", p.path)
 		}
-		if !strings.Contains(page, `<li><a href="https://www.reddit.com/r/aisathome/">r/aisathome</a></li>`) {
-			t.Fatalf("%s: no r/aisathome link in the footer (as the site's footer)", p.path)
+		if !strings.Contains(page, `<li><a href="/docs/">Docs</a></li>`) || strings.Contains(page, "reddit.com") {
+			t.Fatalf("%s: the footer is not the site's (Docs to /docs/, no subreddit link)", p.path)
 		}
 	}
 }
