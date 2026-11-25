@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -55,8 +56,16 @@ func (c pfCase) run(t *testing.T) pfOut {
 		os.WriteFile(filepath.Join(dir, "token.env"), []byte(c.tokenEnv), 0o600)
 	}
 	var o pfOut
-	e := preflightEnv{stdin: strings.NewReader(c.stdin), interactive: c.tty,
-		readSecret: func() (string, error) { return readLine(strings.NewReader(c.stdin)) },
+	var stdout, stderr bytes.Buffer
+	// At a "terminal", what is read from stdin shows on the screen (stderr here), as with echo on; readSecret
+	// reads the same input without echo, prompting first.
+	in := io.Reader(strings.NewReader(c.stdin))
+	stdin := in
+	if c.tty {
+		stdin = io.TeeReader(in, &stderr)
+	}
+	e := preflightEnv{stdin: stdin, interactive: c.tty,
+		readSecret: func(prompt func()) (string, error) { prompt(); return readLine(in) },
 		hostname:   func() (string, error) { return "box.local", nil },
 		tokenState: func(tok, gw string) string {
 			o.askedGateway = append(o.askedGateway, gw)
@@ -65,7 +74,6 @@ func (c pfCase) run(t *testing.T) pfOut {
 			}
 			return c.state
 		}}
-	var stdout, stderr bytes.Buffer
 	args := append([]string{"-conf-dir", dir, "-out", out, "-json", "-model", "m", "-ctx", "196608"}, c.args...)
 	o.code = e.main(args, &stdout, &stderr)
 	o.stderr = stderr.String()
@@ -234,10 +242,15 @@ func TestPreflightToken(t *testing.T) {
 		{"Enter links", pfCase{nodeJSON: nj, tty: true, stdin: "\n"}, 0, "link", false, "", "Link this node to your account? [Y/n]", "input hidden"},
 		{"y links", pfCase{nodeJSON: nj, tty: true, stdin: "Y\n"}, 0, "link", false, "", "linking", ""},
 		{"n runs without an account", pfCase{nodeJSON: nj, tty: true, stdin: " no\n"}, 0, "anonymous", false, "", "You must be 18 or older", ""},
-		{"asked again", pfCase{nodeJSON: nj, tty: true, stdin: "maybe\nyes\n"}, 0, "link", false, "", "Answer y or n.", ""},
+		{"asked again", pfCase{nodeJSON: nj, tty: true, stdin: "maybe\nyes\n"}, 0, "link", false, "", "Answer y or n.", "looks like a node token"},
 		{"no answer", pfCase{nodeJSON: nj, tty: true, stdin: "maybe\n"}, 2, "", false, "", "--link or --anonymous", ""},
 		{"never an answer", pfCase{nodeJSON: nj, tty: true, stdin: "a\nb\nc\ny\n"}, 2, "", false, "", "no answer", ""},
 		{"a token is not an answer", pfCase{nodeJSON: nj, tty: true, stdin: pfAnon + "\n"}, 2, "", false, "", "Answer y or n.", ""},
+		// A token pasted at the question (as the older installer asked for one there) is read without echo,
+		// never kept, and the question comes again.
+		{"a pasted token is not shown", pfCase{nodeJSON: nj, tty: true, stdin: pfAnon + "\nn\n"}, 0, "anonymous", false, "", "It was not stored, and it was not shown", ""},
+		{"a pasted token, then Enter", pfCase{nodeJSON: nj, tty: true, stdin: " " + pfNew + "\r\n\n"}, 0, "link", false, "", "--token-stdin", ""},
+		{"a sentence is not shown", pfCase{nodeJSON: nj, tty: true, stdin: "what is this?\ny\n"}, 0, "link", false, "", "Answer y or n.", "what is this"},
 		{"Enter, another gateway's", pfCase{nodeJSON: nj, tokenEnv: other, tty: true, stdin: "\n"}, 0, "link", true, "", "moved aside", ""},
 		{"n, another gateway's", pfCase{nodeJSON: nj, tokenEnv: other, tty: true, stdin: "n\n"}, 0, "anonymous", true, "", "moved aside", ""},
 		// --token-stdin: pasted (not echoed) at a terminal, or piped.
@@ -259,7 +272,7 @@ func TestPreflightToken(t *testing.T) {
 			if tc.notInMsg != "" && strings.Contains(o.stderr, tc.notInMsg) {
 				t.Errorf("message has %q: %s", tc.notInMsg, o.stderr)
 			}
-			if strings.Contains(o.stderr, pfTok) || strings.Contains(o.stderr, "SSSS") {
+			if strings.Contains(o.stderr, pfTok) || strings.Contains(o.stderr, "SSSS") || strings.Contains(o.stderr, "QQQQ") || strings.Contains(o.stderr, "NNNN") {
 				t.Errorf("a token was printed: %s", o.stderr)
 			}
 			if tc.code != 0 {
