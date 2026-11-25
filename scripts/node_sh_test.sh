@@ -34,7 +34,7 @@ run() {
 run y
 [[ $code -eq 0 ]] || fail "yes: exit $code: $out"
 [[ "$calls" == $'install.sh --dry-run --anonymous\ninstall.sh --anonymous' ]] || fail "yes: calls were: $calls"
-for want in "does science work only, never people's chats, and earns no credit" "You must be 18 or older" "https://aisathome.org/about/terms/" "Install? [y/N]" ": OK"; do
+for want in "does science work only, never people's chats, and earns no credit" "You must be 18 or older" "https://aisathome.org/about/terms/" "Install? [y/N]" ": OK" "MB downloaded"; do
   [[ "$out" == *"$want"* ]] || fail "yes: the output lacks '$want'"
 done
 
@@ -43,6 +43,14 @@ for no in n "" maybe; do
   [[ $code -eq 0 && "$calls" == "install.sh --dry-run --anonymous" ]] || fail "answer '$no': installed anyway ($calls)"
   [[ "$out" == *"Nothing was installed"* ]] || fail "answer '$no': no message"
 done
+
+# Piped (no terminal), the download shows plain lines, not curl's bar.
+[[ "$out" != *"#"* && "$out" != *$'\r'* ]] || fail "yes: a progress bar in piped output"
+# A download that fails says so (and nothing is installed).
+mv "$rel/aisathome-node-bundle-linux-amd64.tar.xz" "$tmp/bundle.keep"
+run y
+[[ $code -ne 0 && -z "$calls" && "$out" == *"download failed"* ]] || fail "a failed download: exit $code: $out"
+mv "$tmp/bundle.keep" "$rel/aisathome-node-bundle-linux-amd64.tar.xz"
 
 # A bundle that does not match SHA256SUMS is never unpacked or run.
 cp "$rel/SHA256SUMS" "$tmp/sums.ok"

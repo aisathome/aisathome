@@ -22,6 +22,22 @@ tty="${AISATHOME_TTY:-/dev/tty}" # where the answer comes from: the terminal, ne
 
 die() { echo "node.sh: $1" >&2; exit 1; }
 
+# fetch <url> <file>: a large download with progress: curl's bar at a terminal; piped or logged, a plain
+# line every 15 seconds with how much has arrived, then the total.
+fetch() {
+  if [ -t 2 ]; then curl -fL# -o "$2" "$1"; return; fi
+  curl -fsSL -o "$2" "$1" &
+  pid=$! n=0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1; n=$((n + 1))
+    if [ $((n % 15)) -eq 0 ] && [ -f "$2" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "  $(($(wc -c <"$2") / 1000000)) MB so far" >&2
+    fi
+  done
+  wait "$pid" || return
+  echo "  $(($(wc -c <"$2") / 1000000)) MB downloaded" >&2
+}
+
 # All in a function, called on the last line: a download cut short runs nothing.
 main() {
   [ "$(uname -s)" = Linux ] || die "this is for Linux; on Windows see https://aisathome.org/node/windows/"
@@ -32,7 +48,7 @@ main() {
   dir="$(mktemp -d "${TMPDIR:-/tmp}/aisathome-node.XXXXXX")"
   cd "$dir"
   echo "Downloading the node bundle (about 0.5 GB) into $dir"
-  curl -fL# -o "$bundle.tar.xz" "$base/$bundle.tar.xz" || die "download failed: $base/$bundle.tar.xz"
+  fetch "$base/$bundle.tar.xz" "$bundle.tar.xz" || die "download failed: $base/$bundle.tar.xz"
   curl -fsSL -o SHA256SUMS "$base/SHA256SUMS" || die "download failed: $base/SHA256SUMS"
   grep " $bundle.tar.xz\$" SHA256SUMS | sha256sum -c - || die "the bundle does not match SHA256SUMS: nothing was installed"
   tar -xJf "$bundle.tar.xz"
