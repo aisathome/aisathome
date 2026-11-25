@@ -11,7 +11,8 @@
 //     and team run it; once BOINC has the result (or gave up on it), it reports the outcome, which
 //     ends the pilot;
 //   - credit: once the gateway's credit for a finished pilot is final (it holds it for a day), it
-//     writes it into a file the project's validator reads (BOINC grants it as the result's credit);
+//     writes it into a file and runs the project's validator on that work unit, which reads it
+//     (BOINC grants it as the result's credit);
 //   - people's requests: "Run on BOINC" makes a BOINC user with create_account.php and answers
 //     its id and weak (attach-only) key from am_get_info.php; a claim looks the user up by the
 //     account key the person gave (am_get_info.php).
@@ -52,6 +53,9 @@ const (
 	// this many pages per pass (100,000 results).
 	creditPage  = 500
 	creditPages = 200
+	// validateRetry: the validator runs on the same work unit at most this often (its result still
+	// waits on the next pass only if the run failed).
+	validateRetry = 10 * time.Minute
 	// cleanupEvery: how often finished credit files are removed.
 	cleanupEvery = time.Hour
 	// creditFileKeep: a credit file whose work unit the bridge can no longer find is removed after
@@ -78,18 +82,19 @@ type Bridge struct {
 	// Now is the bridge's clock (tests set it).
 	Now func() time.Time
 
-	lastDemand  time.Time
-	lastCleanup time.Time
-	creditNext  map[string]time.Time // pilot → when to ask for its credit again
-	reqNext     map[string]time.Time // request → when to try it again
-	st          counters
+	lastDemand   time.Time
+	lastCleanup  time.Time
+	creditNext   map[string]time.Time // pilot → when to ask for its credit again
+	validateNext map[string]time.Time // pilot → when to run the validator on it again
+	reqNext      map[string]time.Time // request → when to try it again
+	st           counters
 }
 
 // counters since the last status line.
 type counters struct {
-	created, cancelled, bound, reported, answered, credited, errors int
-	wanted                                                          int
-	open                                                            map[string]int
+	created, cancelled, bound, reported, answered, credited, validated, errors int
+	wanted                                                                     int
+	open                                                                       map[string]int
 }
 
 // New returns a bridge. key is the connector key. The config is checked (and its defaults
@@ -102,7 +107,7 @@ func New(cfg Config, key string, store Store, tools Tools, rpc RPC, log *slog.Lo
 		return nil, errors.New("no connector key")
 	}
 	return &Bridge{cfg: cfg, gw: NewGateway(cfg.Gateway, cfg.Connector, key), store: store, tools: tools, rpc: rpc,
-		log: log, key: []byte(key), Now: time.Now, creditNext: map[string]time.Time{}, reqNext: map[string]time.Time{}}, nil
+		log: log, key: []byte(key), Now: time.Now, creditNext: map[string]time.Time{}, validateNext: map[string]time.Time{}, reqNext: map[string]time.Time{}}, nil
 }
 
 // Run steps every poll interval until ctx ends.
@@ -151,7 +156,7 @@ func (b *Bridge) part(ctx context.Context, name string, f func(context.Context) 
 func (b *Bridge) logStatus() {
 	b.log.Info("bridge status", "open", b.st.open, "wanted", b.st.wanted, "created", b.st.created,
 		"cancelled", b.st.cancelled, "bound", b.st.bound, "reported", b.st.reported, "answered", b.st.answered,
-		"credit_files", b.st.credited, "errors", b.st.errors)
+		"credit_files", b.st.credited, "validated", b.st.validated, "errors", b.st.errors)
 	open := b.st.open
 	b.st = counters{open: open}
 }
@@ -329,36 +334,41 @@ func (b *Bridge) createPilot(ctx context.Context) error {
 	return nil
 }
 
-// Credit writes the final credit of every finished pilot whose result waits for the validator.
-// Until the gateway's credit is final, the validator finds no file and BOINC tries again later.
+// Credit writes the final credit of every finished pilot whose result waits for validation, and
+// with a validator configured runs it on that work unit right away (and again later, while the
+// result still waits). Until the gateway's credit is final, nothing happens to the work unit.
 func (b *Bridge) Credit(ctx context.Context) error {
 	// Every page, not only the first: a backlog of results still in the gateway's hold must not keep
 	// later ones, whose credit may be final, out of the pass.
-	var names []string
+	var rows []Awaiting
 	var after int64
 	for page := 0; page < creditPages; page++ {
-		rows, err := b.store.AwaitingCredit(ctx, after, creditPage)
+		got, err := b.store.AwaitingCredit(ctx, after, creditPage)
 		if err != nil {
 			return err
 		}
-		for _, r := range rows {
-			names = append(names, r.Name)
-			after = r.ResultID
+		rows = append(rows, got...)
+		if len(got) > 0 {
+			after = got[len(got)-1].ResultID
 		}
-		if len(rows) < creditPage {
+		if len(got) < creditPage {
 			break
 		}
 	}
 	now := b.Now()
-	waiting := make(map[string]bool, len(names))
+	waiting := make(map[string]bool, len(rows))
 	var errs []error
-	for _, name := range names {
+	for _, row := range rows {
+		name := row.Name
 		if !pilotIDRe.MatchString(name) {
 			continue
 		}
 		waiting[name] = true
 		path := filepath.Join(b.cfg.CreditDir, name)
 		if _, err := os.Stat(path); err == nil {
+			// Written on an earlier pass, and the result still waits: the validator has not run on it
+			// yet (the bridge stopped in between) or failed.
+			errs = append(errs, b.validate(ctx, row, now))
 			continue
 		}
 		if t, ok := b.creditNext[name]; ok && now.Before(t) {
@@ -401,13 +411,36 @@ func (b *Bridge) Credit(ctx context.Context) error {
 		delete(b.creditNext, name)
 		b.st.credited++
 		b.log.Info("pilot credit written", "pilot", name, "credit", v)
+		errs = append(errs, b.validate(ctx, row, now))
 	}
 	for name := range b.creditNext {
 		if !waiting[name] {
 			delete(b.creditNext, name)
 		}
 	}
+	for name := range b.validateNext {
+		if !waiting[name] {
+			delete(b.validateNext, name)
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// validate runs the validator on a work unit whose credit file is written, at most every
+// validateRetry for the same one.
+func (b *Bridge) validate(ctx context.Context, row Awaiting, now time.Time) error {
+	if b.cfg.Validator == "" {
+		return nil
+	}
+	if t, ok := b.validateNext[row.Name]; ok && now.Before(t) {
+		return nil
+	}
+	b.validateNext[row.Name] = now.Add(validateRetry)
+	if err := b.tools.Validate(ctx, row.WorkunitID); err != nil {
+		return fmt.Errorf("validate %s: %w", row.Name, err)
+	}
+	b.st.validated++
+	return nil
 }
 
 // writeCredit writes a credit file whole (a temporary file renamed), so the validator never reads
@@ -470,8 +503,8 @@ func (b *Bridge) Cleanup(ctx context.Context) error {
 	for _, n := range names {
 		path := filepath.Join(b.cfg.CreditDir, n)
 		j, ok := jobs[n]
-		// Done: validated (valid, invalid, too late), or over without success. Not while inconclusive:
-		// the validator reads the file again.
+		// Done: validated (valid, invalid, too late), or over without success. Not while it waits
+		// (also inconclusive): the validator reads the file then.
 		done := ok && j.HasResult && j.ServerState == ServerStateOver && !j.awaitingValidation()
 		if !ok {
 			if info, err := os.Stat(path); err == nil && now.Sub(info.ModTime()) > creditFileKeep {

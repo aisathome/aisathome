@@ -38,6 +38,8 @@ func TestLoadConfig(t *testing.T) {
 		{`"batch": 1`, `"batch": 1, "unknown": true`},
 		{`"batch": 1`, `"batch": 1, "wu_template": "../x"`},
 		{`"batch": 1`, `"batch": 1, "deadline_hours": 50`},
+		{`"batch": 1`, `"batch": 1, "validator": "bin/pilot_validator"`},
+		{`"batch": 1`, `"batch": 1, "validator": "/usr/bin/x", "max_granted_credit": 5`},
 	} {
 		if !strings.Contains(good, bad.from) {
 			t.Fatalf("test: %q not in the config", bad.from)

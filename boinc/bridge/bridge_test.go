@@ -525,7 +525,58 @@ func TestCreditForInconclusiveResultsBeyondTheFirstPage(t *testing.T) {
 	if got, _ := readCredit(t, r, last); got != "42\n" {
 		t.Fatalf("credit of the inconclusive result past the first page: %q", got)
 	}
+	if len(r.boinc.validated) != 0 {
+		t.Errorf("validator run without one configured: %v", r.boinc.validated)
+	}
 	if r.boinc.creditCalls != 2 {
 		t.Errorf("%d pages read, want 2", r.boinc.creditCalls)
+	}
+}
+
+// With a validator configured, the bridge runs it on the work unit right after writing its credit
+// file; a failed run is tried again on a later pass (not sooner than validateRetry); a validated
+// result is left alone.
+func TestCreditRunsTheValidator(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Validator, c.MaxGrantedCredit = "bin/pilot_validator", 150000 })
+	ids := r.created(t, 2)
+	for _, id := range ids {
+		r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, User: 1, Host: 2})
+	}
+	v := 7.5
+	r.gw.credits[ids[1]] = Credit{Final: true, Credit: &v} // ids[0]: still in the hold
+	finalAt := r.clk.now().Add(time.Hour)
+	r.gw.credits[ids[0]] = Credit{FinalAt: &finalAt}
+	if err := r.b.Credit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := r.boinc.wuIDs[ids[1]]
+	if len(r.boinc.validated) != 1 || r.boinc.validated[0] != want || r.boinc.jobs[ids[1]].ValidateState != ValidateStateValid {
+		t.Fatalf("validated %v (want only work unit %d), state %d", r.boinc.validated, want, r.boinc.jobs[ids[1]].ValidateState)
+	}
+	r.clk.add(time.Minute)
+	r.b.Credit(ctx)
+	if len(r.boinc.validated) != 1 {
+		t.Fatalf("ran again: %v", r.boinc.validated)
+	}
+
+	// A failed run (the bridge's file is there, the result still waits): tried again, not at once.
+	r.clk.add(time.Hour)
+	r.gw.credits[ids[0]] = Credit{Final: true, FinalAt: &finalAt, Credit: &v}
+	r.boinc.validateErr = errors.New("validator: exit status 1")
+	if err := r.b.Credit(ctx); err == nil {
+		t.Fatal("no error for a failed validator run")
+	}
+	r.boinc.validateErr = nil
+	r.clk.add(time.Minute)
+	r.b.Credit(ctx)
+	if n := len(r.boinc.validated); n != 2 {
+		t.Fatalf("%d runs: retried before validateRetry", n)
+	}
+	r.clk.add(validateRetry)
+	if err := r.b.Credit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(r.boinc.validated); n != 3 || r.boinc.jobs[ids[0]].ValidateState != ValidateStateValid {
+		t.Errorf("%d runs, state %d: the retry did not validate it", n, r.boinc.jobs[ids[0]].ValidateState)
 	}
 }

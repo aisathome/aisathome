@@ -120,7 +120,7 @@ func TestMySQLStore(t *testing.T) {
 	}
 	got, err := s.AwaitingCredit(ctx, 0, 10)
 	if err != nil || len(got) != 2 || got[0].Name != "p-000000000004" || got[1].Name != "p-000000000009" ||
-		got[0].ResultID >= got[1].ResultID {
+		got[0].ResultID >= got[1].ResultID || got[0].WorkunitID != 4 || got[1].WorkunitID != 9 {
 		t.Fatalf("awaiting credit: %v %v", got, err)
 	}
 	// Paging: after the first one's result id, only the second; one per page.

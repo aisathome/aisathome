@@ -33,6 +33,8 @@ type boincSim struct {
 	staged map[string][]byte
 	works  map[string]string   // work unit → credential file
 	users  map[string]*simUser // by account key
+	ids    map[string]int64    // work unit ids
+	valid  []int64             // work units the validator ran on
 	emails map[string]*simUser // by address
 	nextID int64
 }
@@ -44,7 +46,7 @@ type simUser struct {
 
 func newBoincSim() *boincSim {
 	return &boincSim{jobs: map[string]bridge.Job{}, staged: map[string][]byte{}, works: map[string]string{},
-		users: map[string]*simUser{}, emails: map[string]*simUser{}, nextID: 500}
+		users: map[string]*simUser{}, emails: map[string]*simUser{}, nextID: 500, ids: map[string]int64{}}
 }
 
 func (s *boincSim) Jobs(_ context.Context, names []string) (map[string]bridge.Job, error) {
@@ -69,7 +71,7 @@ func (s *boincSim) AwaitingCredit(_ context.Context, after int64, _ int) ([]brid
 	for n, j := range s.jobs {
 		if j.ServerState == bridge.ServerStateOver && j.Outcome == bridge.OutcomeSuccess &&
 			(j.ValidateState == bridge.ValidateStateInit || j.ValidateState == bridge.ValidateStateInconclusive) {
-			out = append(out, bridge.Awaiting{ResultID: int64(len(out) + 1), Name: n})
+			out = append(out, bridge.Awaiting{ResultID: s.ids[n], WorkunitID: s.ids[n], Name: n})
 		}
 	}
 	return out, nil
@@ -93,7 +95,24 @@ func (s *boincSim) CreateWork(_ context.Context, name, cred string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.works[name] = cred
+	s.ids[name] = int64(len(s.ids) + 1)
 	s.jobs[name] = bridge.Job{HasResult: true, ServerState: bridge.ServerStateUnsent}
+	return nil
+}
+
+// Validate marks the work unit valid (the pilot validator, which the bridge runs once the credit
+// file is there).
+func (s *boincSim) Validate(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.valid = append(s.valid, id)
+	for n, i := range s.ids {
+		if i == id {
+			j := s.jobs[n]
+			j.ValidateState = bridge.ValidateStateValid
+			s.jobs[n] = j
+		}
+	}
 	return nil
 }
 
@@ -179,7 +198,7 @@ func TestBridgeEndToEnd(t *testing.T) {
 	cfg := bridge.Config{Gateway: a.gw.URL, Connector: "boinc", KeyFile: "unused", Batch: 1,
 		PilotGateway: "ws" + strings.TrimPrefix(a.gw.URL, "http") + "/v1/node/connect", ProjectDir: t.TempDir(),
 		Model:     bridge.RemoteFile{URL: "https://models.test/m.gguf", NBytes: 1, MD5: strings.Repeat("0", 32)},
-		CreditDir: creditDir, WebURL: "http://boinc.test/proj/"}
+		CreditDir: creditDir, WebURL: "http://boinc.test/proj/", Validator: "bin/pilot_validator", MaxGrantedCredit: 150000}
 	b, err := bridge.New(cfg, connectorKey, sim, sim, sim, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -304,5 +323,8 @@ func TestBridgeEndToEnd(t *testing.T) {
 	p := a.pilotRecord(t, id)
 	if want := p["credit"].(float64); got != want || want <= 0 {
 		t.Fatalf("credit file %v, record %v", got, want)
+	}
+	if len(sim.valid) != 1 || sim.valid[0] != sim.ids[id] {
+		t.Errorf("validator runs %v, want once on work unit %d", sim.valid, sim.ids[id])
 	}
 }
