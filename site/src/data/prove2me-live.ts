@@ -40,6 +40,8 @@ export interface QueueTask {
 	model_min?: number;
 	/** What closed the task's hole before it ran (GET /v1/tasks `closed_by`: a task id or reuse:<by>). */
 	closed_by?: string;
+	/** Its outline's holes, one word each (the label `hole_states`: prove2me-outlines.ts parseHoleStates). */
+	hole_states?: string;
 }
 
 export interface QueueView {
@@ -94,6 +96,8 @@ export interface TaskRow {
 	closed_by?: string | null;
 	/** Whether the task ever started (a node took it); absent: not known (the build's data), read from its steps. */
 	started?: boolean;
+	/** Its outline's holes, one word each, when the task list has them (prove2me-outlines.ts parseHoleStates). */
+	hole_states?: string;
 }
 
 /** A leaf's tasks summed and per outline. */
@@ -149,6 +153,7 @@ export function fromQueue(t: QueueTask, known?: StaticTask): TaskRow {
 		steps: t.steps ?? s?.steps ?? null, minutes: t.model_min ?? s?.minutes ?? null,
 		total: null, computed: null, cached: null, output: null,
 		closed_by: t.closed_by ?? null, started: !!t.since || t.state === 'leased',
+		...(t.hole_states ? { hole_states: t.hole_states } : {}),
 	};
 	const p = t.prompt_tokens ?? 0, o = t.completion_tokens ?? 0;
 	if (t.cached_tokens !== undefined) Object.assign(row, { total: p + t.cached_tokens + o, computed: p + o, cached: t.cached_tokens, output: o });

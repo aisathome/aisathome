@@ -8,7 +8,8 @@
 //    and what closed one without a task or a verdict reached outside one) and its submissions (from /2 with the theorem
 //    a reuse imports);
 //  - the gateway's generic task list, GET /v1/tasks?project=prove2me (gateway tasks_public.go), every page of it:
-//    every task's state, outcome, try, relations, labels (trial, leaf id, alias, outline, hole) and counts, and for a
+//    every task's state, outcome, try, relations, labels (trial, leaf id, alias, outline, hole, and from 2026-11-25 the
+//    outline's holes in one word each: hole_states) and counts, and for a
 //    running task the gateway's own live counters when it has them (`live`: requests, prompt_tokens with the cache
 //    reads in them, cached_tokens, completion_tokens, model_s; gateway tasks_live.go).
 //
@@ -268,6 +269,7 @@ export function asQueueTask(t: PublicTask, doc: CurrentDoc): QueueTask {
 		attempt: und(t.try),
 		outcome: und(t.outcome),
 		closed_by: und(t.closed_by),
+		hole_states: lab.hole_states,
 		...counts(t),
 	};
 }
