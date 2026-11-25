@@ -8,4 +8,6 @@ section: Changed
   and runs without it, saying why, when the card lacks the free memory or the engine is too old.
   `--speculation off` (or `none`) turns it off and is remembered on updates; an earlier
   `--speculation mtp` or `dflash2` stays. A node that never chose gets the default on its next
-  update. 16 GB cards and the Windows node stay off. (node)
+  update. Nodes updated from an older installer get MTP on the big tier even if `off` was stored
+  before; to keep it off, pass `--speculation none` (remembered). 16 GB cards and the Windows node
+  stay off. (node)
