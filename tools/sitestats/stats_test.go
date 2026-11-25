@@ -162,6 +162,47 @@ func TestBotsAndOwnTestsAreCountedSeparately(t *testing.T) {
 	}
 }
 
+func TestInstallScriptFetchesAreCountedWhateverTheClient(t *testing.T) {
+	a := newAgg()
+	curl := "curl/8.5.0"
+	a.Add(line(req{ip: "203.0.113.5", ua: curl, uri: "/node.sh"}))
+	a.Add(line(req{ip: "203.0.113.5", ua: curl, uri: "/node.sh"}))                     // the same client again: one install
+	a.Add(line(req{ip: "203.0.113.5", ua: firefox, uri: "/node.sh?x=1"}))              // reading it first: another client
+	a.Add(line(req{ip: "203.0.113.6", ua: "Wget/1.21.4", uri: "/node.sh"}))            // another address
+	a.Add(line(req{ip: "203.0.113.7", ua: "", uri: "/node.sh"}))                       // no user agent
+	a.Add(line(req{ip: "203.0.113.8", ua: googlebot, uri: "/node.sh"}))                // counted, under its name
+	a.Add(line(req{ip: "203.0.113.9", ua: curl, uri: "/node.sh", how: "HEAD"}))        // not a fetch of the script
+	a.Add(line(req{ip: "203.0.113.9", ua: curl, uri: "/node.sh", status: 304}))        // nor this
+	a.Add(line(req{ip: "203.0.113.9", ua: curl + " aisathome-test", uri: "/node.sh"})) // our tests
+	a.Add(line(req{ip: "203.0.113.9", ua: curl, uri: "/node.sh", host: "api.aisathome.org"}))
+	a.Add(line(req{ip: "203.0.113.5", ua: firefox, uri: "/node/"})) // the same person as a visitor too
+	d := a.Stats.Days["2026-10-19"]
+	if d.Installs != 5 {
+		t.Errorf("installs %d, want 5", d.Installs)
+	}
+	want := map[string]int{"curl": 2, "browser": 1, "Wget": 1, "no user agent": 1, "Googlebot": 1}
+	if fmt.Sprint(d.InstallFetches) != fmt.Sprint(want) {
+		t.Errorf("install fetches %v, want %v", d.InstallFetches, want)
+	}
+	if d.Tests != 1 || d.Visitors != 1 || d.PageViews != 1 || d.Pages["/node.sh"] != 0 {
+		t.Errorf("tests %d, visitors %d, views %d, pages %v", d.Tests, d.Visitors, d.PageViews, d.Pages)
+	}
+	if fmt.Sprint(d.Bots) != fmt.Sprint(map[string]int{"curl": 2}) { // the HEAD and the 304
+		t.Errorf("bots %v", d.Bots)
+	}
+	// The next day the same client counts again; yesterday's hashes are gone.
+	a.Add(line(req{at: day1.Add(24 * time.Hour), ip: "203.0.113.5", ua: curl, uri: "/node.sh"}))
+	if d2 := a.Stats.Days["2026-10-20"]; d2.Installs != 1 || len(a.seen) != 1 {
+		t.Errorf("day 2: installs %d, %d hashes kept", d2.Installs, len(a.seen))
+	}
+	out, _ := json.Marshal(a.Stats)
+	for _, bad := range []string{"203.0.113", "curl/8", "Wget/1"} {
+		if strings.Contains(string(out), bad) {
+			t.Errorf("the output contains %q: %s", bad, out)
+		}
+	}
+}
+
 func TestReferrerIsReducedToItsDomain(t *testing.T) {
 	for ref, want := range map[string]string{
 		"https://www.reddit.com/r/gridcoin/comments/abc/title/?share_id=x": "reddit.com",
@@ -466,13 +507,14 @@ func TestReport(t *testing.T) {
 	s := &Stats{Host: host, Updated: day1, Days: map[string]*Day{
 		"2026-10-18": {PageViews: 3, Visitors: 2, Pages: map[string]int{"/": 2, "/devlog/": 1}, Bots: map[string]int{"Googlebot": 4}},
 		"2026-10-19": {PageViews: 5, Visitors: 4, Pages: map[string]int{"/": 5}, Referrers: map[string]int{"reddit.com": 2}, Tests: 7,
-			PageReferrers: map[string]map[string]int{"/": {"reddit.com": 2}}},
+			PageReferrers: map[string]map[string]int{"/": {"reddit.com": 2}}, Installs: 3, InstallFetches: map[string]int{"curl": 4, "browser": 1}},
 	}}
 	var b bytes.Buffer
 	Report(&b, s, 2, 10, day1)
 	got := b.String()
 	for _, want := range []string{"2026-10-18       3         2", "2026-10-19       5         4", "total            8         6",
-		"       7  /", "       2  reddit.com", "       4  Googlebot", "Referring domains by page", "       2  /  reddit.com 2"} {
+		"       7  /", "       2  reddit.com", "       4  Googlebot", "Referring domains by page", "       2  /  reddit.com 2",
+		"    7         3\n", "Node install script fetches", "       4  curl", "       1  browser"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
 		}

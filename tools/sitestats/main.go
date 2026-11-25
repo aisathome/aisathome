@@ -254,9 +254,9 @@ func printTop(w io.Writer, m map[string]int, top int) {
 func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 	keys := lastDays(days, now)
 	fmt.Fprintf(w, "Site statistics for %s, last %d UTC days (updated %s UTC)\n\n", s.Host, len(keys), s.Updated.UTC().Format("2006-01-02 15:04"))
-	fmt.Fprintf(w, "%-10s  %6s  %8s  %5s  %5s  %5s  %5s\n", "day", "views", "visitors", "feed", "404", "bots", "tests")
+	fmt.Fprintf(w, "%-10s  %6s  %8s  %5s  %5s  %5s  %5s  %8s\n", "day", "views", "visitors", "feed", "404", "bots", "tests", "installs")
 	var sum Day
-	pages, refs, bots := map[string]int{}, map[string]int{}, map[string]int{}
+	pages, refs, bots, installs := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	pageRefs, referred := map[string]map[string]int{}, map[string]int{}
 	for _, key := range keys {
 		d := s.Days[key]
@@ -271,6 +271,9 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 		for k, v := range d.Pages {
 			pages[k] += v
 		}
+		for k, v := range d.InstallFetches {
+			installs[k] += v
+		}
 		for k, v := range d.Referrers {
 			refs[k] += v
 		}
@@ -283,23 +286,26 @@ func Report(w io.Writer, s *Stats, days, top int, now time.Time) {
 				referred[p] += v
 			}
 		}
-		fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d\n", key, d.PageViews, d.Visitors, d.Feed, d.NotFound, nb, d.Tests)
+		fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d  %8d\n", key, d.PageViews, d.Visitors, d.Feed, d.NotFound, nb, d.Tests, d.Installs)
 		sum.PageViews += d.PageViews
 		sum.Visitors += d.Visitors
 		sum.Feed += d.Feed
 		sum.NotFound += d.NotFound
 		sum.Tests += d.Tests
+		sum.Installs += d.Installs
 	}
 	nbots := 0
 	for _, v := range bots {
 		nbots += v
 	}
-	fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d\n", "total", sum.PageViews, sum.Visitors, sum.Feed, sum.NotFound, nbots, sum.Tests)
+	fmt.Fprintf(w, "%-10s  %6d  %8d  %5d  %5d  %5d  %5d  %8d\n", "total", sum.PageViews, sum.Visitors, sum.Feed, sum.NotFound, nbots, sum.Tests, sum.Installs)
 	fmt.Fprintln(w, "(visitors: per day; the total adds the days, a person visiting on two days counts twice)")
+	fmt.Fprintln(w, "(installs: different clients that fetched the node install script /node.sh per day, whatever the user agent; not in bots)")
 	for _, t := range []struct {
 		title string
 		m     map[string]int
-	}{{"Pages", pages}, {"Referring domains", refs}, {"Bots", bots}} {
+	}{{"Pages", pages}, {"Referring domains", refs}, {"Bots", bots},
+		{"Node install script fetches by client (all fetches; browser: someone reading it)", installs}} {
 		fmt.Fprintf(w, "\n%s\n", t.title)
 		printTop(w, t.m, top)
 	}

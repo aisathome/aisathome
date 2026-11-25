@@ -3,7 +3,7 @@ title: Privacy
 description: Who handles your data on AIs@home and its BOINC project, and what a volunteer's GPU can see.
 ---
 
-*Last changed: 2026-11-24.*
+*Last changed: 2026-11-25.*
 
 AIs@home is an experiment: open-weight AI running on volunteers' GPUs instead of a big company's data centre. This page
 covers the chat (chat.aisathome.org), the API, the website, running a node, and our BOINC project
@@ -138,8 +138,9 @@ pages are not counted.
   memory, never on disk or in backups. About once a minute they are counted and deleted.
 - What we keep, per day: views per page (without anything after a `?`), the domain of the site that linked here (for
   example `reddit.com`, never the full address), also per page, how many 404s, how many requests came from known bots
-  and from our own tests, and an estimate of unique visitors.
-- For that estimate the server makes a hash of your IP address and browser name together with a random value that
+  and from our own tests, an estimate of unique visitors, and how often the node install script (`/node.sh`) was
+  fetched, by which kind of program (for example `curl`), with an estimate of how many different computers fetched it.
+- For those estimates the server makes a hash of your IP address and browser name together with a random value that
   exists only in memory and is replaced at the end of each day (UTC). Only the day's count is kept, so visits on
   different days cannot be linked, not even by us.
 - The code that does the counting is public:
