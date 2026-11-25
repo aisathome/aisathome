@@ -461,6 +461,7 @@ installed_value() { python3 -c 'import json,sys
 try: v=json.load(open(sys.argv[1])).get(sys.argv[2], "")
 except Exception: v=""
 print(v if isinstance(v, str) else "")' "$1" "$2"; }
+dl_pid=""
 eval "$(sed -n '/^set_aside_before_link() {/,/^}/p;/^stop_node() {/,/^}/p;/^restore_unlinked() {/,/^}/p;/^on_exit() { .*; }$/p' "$installer")"
 declare -F set_aside_before_link stop_node restore_unlinked on_exit >/dev/null || fail "set_aside_before_link, stop_node, restore_unlinked or on_exit not found"
 oldtok="nt-n-0123abcd.$(printf 'O%.0s' {1..43})"
@@ -862,6 +863,12 @@ if command -v script >/dev/null; then
   ok "slow download at a terminal"; has "slow download at a terminal" $'\rtest-model.gguf: 0.0 of 0.0 GB ('
   has "slow download at a terminal" "(100%)"; has "slow download at a terminal" " MB/s"
 fi
+# The installer stopped during a download (TERM; Ctrl+C the same): the download stops with it.
+mkdir -p "$tmp/dl9"
+(env -i PATH="$PATH" FAKE_CURL_SLOW=1 "${m[@]}" bash "$installer" --download-only "$tmp/dl9" --speculation off >/dev/null 2>&1 & echo $! > "$tmp/dl9.pid"; wait) &
+sleep 1.6; kill -TERM "$(cat "$tmp/dl9.pid")"; sleep 4
+[[ "$(stat -c %s "$tmp/dl9/test-model.gguf.part" 2>/dev/null || echo 0)" -lt 300000 && ! -e "$tmp/dl9/test-model.gguf" ]] ||
+  { out="$(ls -l "$tmp/dl9")"; fail "a stopped install's download went on"; }
 # A complete file is checked, not downloaded again (the URL now points nowhere).
 run MODEL_URL="file://$tmp/gone/test-model.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000 -- --download-only "$tmp/dl1" --speculation off
 ok "existing model"; has "existing model" "checking the existing"; lacks "existing model" "downloading"
