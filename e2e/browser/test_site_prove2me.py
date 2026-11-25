@@ -726,8 +726,9 @@ def test_home_and_science_overview_read_the_records(pages, site, records):
     line = page.locator("[data-home-prove2me][data-source=live]")
     expect(line.locator("[data-home-p2m-accepted]")).to_have_text("8")
     expect(line.locator("[data-home-p2m-text]")).to_have_text(
-        "proofs by Qwen3.8 27B accepted on prove2me so far (6 of 26 open leaves tried; 2 more closed by reusing a proof "
-        "already there), where theorems from research papers are stated in Lean 4 and every proof is checked by machine. Trial 8 is running.")
+        "proofs by Qwen3.8 27B accepted on prove2me so far: it proved 6 of the 26 open lemmas it tried and closed 2 more by "
+        "reusing a proof already there. prove2me states theorems from research papers in Lean 4 and checks every proof by machine. "
+        "Trial 8 is running.")
     page = _records_page(pages, records, path="/science/", site=site)
     card = page.locator("[data-project=prove2me][data-source=live]")
     expect(card.locator("[data-number=accepted] dd")).to_have_text("8")

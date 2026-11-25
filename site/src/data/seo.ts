@@ -9,6 +9,9 @@ export const origin = `https://${domain}`;
 export const githubOrg = 'https://github.com/aisathome';
 export const tagline = 'Open-weight AI on volunteers’ GPUs';
 export const description = 'Open-weight AI on volunteers’ GPUs. Non-commercial and open source.';
+// The home page's own description (search results show it under the title): what you can do there.
+export const homeDescription =
+	'Free chat and an OpenAI-compatible API on an open-weight model, served by volunteers’ home GPUs. Run a node with one command. Non-commercial, open source.';
 // The home page's <title> (others are "<page> | AIs@home", Starlight's own).
 export const homeTitle = `AIs@home: open-weight AI on volunteers’ GPUs`;
 
@@ -114,7 +117,7 @@ ${link('API and opencode', '/use/api/', `an OpenAI-compatible API at ${api}/v1 w
 
 ## Run a node
 
-${link('Run a node', '/node/', 'what a node needs and does, the Windows download and the one-command Linux install')}
+${link('Run a node', '/node/', 'what a node needs and does, the Windows download and the one-command Linux install; a node can start without an account (science only)')}
 ${link('Install on Windows', '/node/windows/', 'one installer for Windows 10 or 11, step by step')}
 ${link('Install on Linux', '/node/install/', 'the systemd install, step by step')}
 ${link('Credit', '/node/credit/', 'how GPU time is counted in BOINC’s unit, and what credit is not')}
