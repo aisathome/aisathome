@@ -65,6 +65,11 @@ jobs:
         run: go test -race -count=1 $(go list ./... | grep -v -E '/e2e(/|$)')
       - name: install.sh tests
         run: ./node/packaging/linux/install_test.sh
+      - name: install.sh to aisathome-node handoff (the real installer in a user, mount and network namespace)
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; the test needs one.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          AISATHOME_HANDOFF_REQUIRED=1 ./node/packaging/linux/handoff_test.sh
       - name: node.sh tests (the one-line install without an account)
         run: ./scripts/node_sh_test.sh
       - name: prebuilt bundle packaging (fake llama-server)
