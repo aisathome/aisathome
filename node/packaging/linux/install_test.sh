@@ -296,7 +296,7 @@ dropin="$(sed -n '/^local UI: /,/^aisathome-llama.service:$/p' <<<"$out")"
 llama="$(sed -n '/^aisathome-llama.service:$/,$p' <<<"$out")"
 device_rules "UI drop-in" "$dropin" "DeviceAllow=char-nvidia-frontend rw" "DeviceAllow=char-nvidia rw"
 device_rules "llama unit" "$llama" "DeviceAllow=char-nvidia-frontend rw" "DeviceAllow=char-nvidia rw" \
-  "DeviceAllow=char-nvidia-uvm rw" "DeviceAllow=char-nvidia-caps r" "ProtectClock=yes" "User=aisathome" \
+  "DeviceAllow=char-nvidia-uvm rw" "DeviceAllow=char-nvidia-caps r" "ProtectClock=yes" "User=aisathome-llama" "Group=aisathome-llama" \
   "After=nvidia-resume.service" "Environment=GGML_NO_BACKTRACE=1"
 grep -q '^ExecStart=/opt/aisathome-node/bin/llama-server -m /var/lib/aisathome-node/models/model.gguf ' <<<"$llama" ||
   fail "llama unit: no ExecStart"
@@ -838,7 +838,7 @@ ok "the permanent uninstaller"; has "the permanent uninstaller" "kept /var/lib/a
 [[ -z "$(cd "$u/root" && find etc opt usr -name '*aisathome*')" ]] || fail "the permanent uninstaller left: $(cd "$u/root" && find etc opt usr -name '*aisathome*')"
 fake_install
 uninstall --purge
-ok "uninstall --purge"; has "uninstall --purge" "userdel aisathome"
+ok "uninstall --purge"; has "uninstall --purge" "userdel aisathome"; has "uninstall --purge" "userdel aisathome-llama"
 [[ ! -e "$u/root/var/lib/aisathome-node" ]] || fail "uninstall --purge: kept /var/lib/aisathome-node"
 [[ -z "$(cd "$u/root" && find etc opt usr -name '*aisathome*')" ]] || fail "uninstall --purge: left files behind"
 

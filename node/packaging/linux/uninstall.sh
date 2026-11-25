@@ -26,9 +26,10 @@ rm -rf "$r/opt/aisathome-node" "$r/etc/aisathome-node"
 if [[ "${1:-}" == "--purge" ]]; then
   rm -rf "$r/var/lib/aisathome-node"
   userdel aisathome 2>/dev/null || true
+  userdel aisathome-llama 2>/dev/null || true
   echo "removed everything, including the model"
 else
-  echo "removed services, binaries and config; kept /var/lib/aisathome-node (model) and the aisathome user. Use --purge to remove them."
+  echo "removed services, binaries and config; kept /var/lib/aisathome-node (model) and the aisathome and aisathome-llama users. Use --purge to remove them."
 fi
 # Last: the permanent copy of this script (bash keeps it open, so removing it does not stop it).
 rm -f "$r/usr/local/sbin/aisathome-node-uninstall"

@@ -1,7 +1,8 @@
 # AIs@home node on Linux (systemd)
 
-Runs `llama-server` and `aisathome-node` as the unprivileged system user `aisathome`,
-sandboxed by systemd: no access to `/home`, a read-only system, no new privileges.
+Runs `llama-server` and `aisathome-node` as unprivileged system users (`aisathome` for the
+agent, `aisathome-llama` for the engine), sandboxed by systemd: no access to `/home`, a read-only
+system, no new privileges.
 `llama-server` listens on 127.0.0.1 only, and the node only connects outward to the
 gateway, so no inbound ports or router changes are needed.
 
