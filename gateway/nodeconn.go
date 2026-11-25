@@ -366,9 +366,7 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		"protocol", n.proto, "anonymous", n.anon)
 	g.noteAnonSeen(n)
 	if account != "" && pl == nil { // an account's node or one without an account (pilots and config tokens are not counted)
-		if err := g.accounts.firstConnect(keyHash(token), time.Now()); err != nil {
-			g.log.Warn("node's first connection not recorded", "node", n.id, "err", err)
-		}
+		g.noteFirstConnect(n)
 	}
 	if flaps > 0 {
 		g.log.Warn("node connections keep replacing each other: two clients may be running with the same node token and id",

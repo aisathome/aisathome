@@ -239,3 +239,28 @@ func TestSiteStatsCache(t *testing.T) {
 		t.Fatal("a broken file read without error")
 	}
 }
+
+// A node connection's goroutine can outlive the gateway's Close (the HTTP server does not wait for
+// hijacked connections): once Close has returned, it writes nothing more to the accounts file (CI,
+// 2026-11-25: a first connection written during a test's cleanup broke the removal of its directory).
+func TestNoAccountsWriteAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "accounts.json")
+	g, err := New(Config{Accounts: &AccountsConfig{File: file, PublicURL: "https://site.test",
+		SessionSecret: strings.Repeat("s", 32), GitHubClientID: "id", GitHubClientSecret: "secret"}}, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.accounts.SignIn("gh:2", time.Now())
+	g.accounts.SetStatus("gh:2", StatusActive)
+	tok, id, _, _ := g.accounts.addNodeVia("gh:2", "", time.Now(), nil, false, "")
+	anonTok, anonID, _ := g.accounts.RegisterAnon(time.Now())
+	anonAcct, _, _ := g.accounts.nodeToken(anonTok)
+	g.Close()
+	before, _ := os.ReadFile(file)
+	g.noteFirstConnect(&nodeConn{id: id, token: tok, account: "gh:2"})
+	g.noteAnonSeen(&nodeConn{id: anonID, token: anonTok, account: anonAcct, anon: true})
+	if after, _ := os.ReadFile(file); string(after) != string(before) {
+		t.Fatal("the accounts file was written after Close")
+	}
+}
