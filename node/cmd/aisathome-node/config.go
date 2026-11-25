@@ -41,7 +41,7 @@ func loadConfig(path string, getenv func(string) string, layout node.Layout) (no
 	}
 	// Local UI and state, set by the Linux installer's systemd drop-in (local-ui.conf).
 	for env, field := range map[string]*string{"AISATHOME_STATE_FILE": &cfg.StateFile,
-		"AISATHOME_RESTART_TRIGGER": &cfg.RestartTrigger, "AISATHOME_PRESET": &cfg.Preset} {
+		"AISATHOME_RESTART_TRIGGER": &cfg.RestartTrigger, "AISATHOME_CONTROL_TRIGGER": &cfg.ControlTrigger, "AISATHOME_PRESET": &cfg.Preset} {
 		if v := getenv(env); v != "" {
 			*field = v
 		}

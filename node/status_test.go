@@ -239,6 +239,43 @@ func TestRestartEngine(t *testing.T) {
 	}
 }
 
+// A node action (stop, uninstall) goes through the control trigger as its one word; an unknown action, no
+// trigger, or an agent that runs its engine (Windows) refuses.
+func TestControlNode(t *testing.T) {
+	a := New(testConfig("ws://x", "http://x", ""), quietLog())
+	if err := a.ControlNode(NodeStop); err != ErrNoNodeControl || a.Status().CanControl {
+		t.Fatalf("without trigger: %v", err)
+	}
+	trigger := filepath.Join(t.TempDir(), "node-control")
+	cfg := testConfig("ws://x", "http://x", "")
+	cfg.ControlTrigger = trigger
+	a = New(cfg, quietLog())
+	if !a.Status().CanControl {
+		t.Fatal("CanControl false with a trigger")
+	}
+	for _, act := range []string{NodeStop, NodeUninstall, NodeUninstallPurge} {
+		if err := a.ControlNode(act); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(trigger); string(b) != act+"\n" {
+			t.Fatalf("%s: trigger holds %q", act, b)
+		}
+	}
+	os.Remove(trigger)
+	for _, bad := range []string{"", "restart", "stop\nuninstall", "uninstall --purge"} {
+		if err := a.ControlNode(bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	if _, err := os.Stat(trigger); err == nil {
+		t.Fatal("an unknown action wrote the trigger")
+	}
+	cfg.EngineControl = &fakeControl{}
+	if err := New(cfg, quietLog()).ControlNode(NodeStop); err != ErrNoNodeControl {
+		t.Fatalf("an agent that runs its engine: %v", err)
+	}
+}
+
 // fakeControl records what the agent asks of the engine process it runs.
 type fakeControl struct {
 	mu    sync.Mutex

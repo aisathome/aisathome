@@ -283,6 +283,7 @@ ok "UI default"; has "UI default" "local UI: 7381"; has "UI default" "Environmen
 has "UI default" "Environment=AISATHOME_UI_PASSWORD_FILE=/etc/aisathome-node/ui-password"
 has "UI default" "Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json"
 has "UI default" "Environment=AISATHOME_RESTART_TRIGGER=/var/lib/aisathome-node/restart-engine"
+has "UI default" "Environment=AISATHOME_CONTROL_TRIGGER=/var/lib/aisathome-node/node-control"
 has "UI default" 'Environment="AISATHOME_PRESET=big: 1 x 196608 tokens, KV q4_0"'
 # GPU access in the rendered units: major 195 is "nvidia-frontend" in /proc/devices up to driver
 # 535 and "nvidia" from 545 on; with only the old name, driver 575 ran on the CPU (2026-10-18).
@@ -302,7 +303,7 @@ grep -q '^ExecStart=/opt/aisathome-node/bin/llama-server -m /var/lib/aisathome-n
 run UI_PORT=8123 FAKE_MEM="$(card 16303 15841)" -- --dry-run
 ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=standard: 1 x 81920 tokens, KV q4_0"
 run UI_PORT=off -- --dry-run
-ok "UI off"; has "UI off" "AISATHOME_UI_PORT=off"
+ok "UI off"; has "UI off" "AISATHOME_UI_PORT=off"; lacks "UI off" "AISATHOME_CONTROL_TRIGGER"
 for bad in UI_PORT=80 UI_PORT=8000 UI_PORT=70000 UI_PORT=abc "UI_PORT=7381;x" UI_PORT=07381; do
   run "$bad" -- --dry-run
   usage_err "$bad"
@@ -809,12 +810,14 @@ fake_install() {
   local sd="$u/root/etc/systemd/system"
   mkdir -p "$sd/aisathome-node.service.d" "$sd/aisathome-llama.service.d" "$sd/other.service.d" \
     "$u/root/opt/aisathome-node/bin" "$u/root/etc/aisathome-node" "$u/root/var/lib/aisathome-node/models" \
-    "$u/root/usr/local/bin" "$u/root/usr/local/libexec"
+    "$u/root/usr/local/bin" "$u/root/usr/local/libexec" "$u/root/usr/local/sbin"
   for f in aisathome-node.service aisathome-llama.service aisathome-gpu-init.service aisathome-node-sleep.service \
            aisathome-node-watchdog.service aisathome-node-watchdog.timer aisathome-node-restart.path \
-           aisathome-node-restart.service aisathome-node.service.d/local-ui.conf \
+           aisathome-node-restart.service aisathome-node-control.path aisathome-node-control.service aisathome-node.service.d/local-ui.conf \
            aisathome-llama.service.d/override.conf other.service.d/keep.conf; do : > "$sd/$f"; done
   : > "$u/root/usr/local/bin/aisathome-node"; : > "$u/root/var/lib/aisathome-node/models/model.gguf"
+  : > "$u/root/usr/local/libexec/aisathome-node-control"
+  install -m 0755 "$here/uninstall.sh" "$u/root/usr/local/sbin/aisathome-node-uninstall"
 }
 fake_install
 uninstall
@@ -824,6 +827,14 @@ left="$(cd "$u/root" && find etc opt usr -name '*aisathome*')"
 [[ -z "$left" ]] || fail "uninstall: left behind: $left"
 [[ -e "$u/root/etc/systemd/system/other.service.d/keep.conf" ]] || fail "uninstall: removed another unit's drop-in"
 [[ -e "$u/root/var/lib/aisathome-node/models/model.gguf" ]] || fail "uninstall: removed the model without --purge"
+# The permanent copy (what `sudo aisathome-node-uninstall` and the local UI run) does the same and removes
+# itself last.
+fake_install
+: > "$u/log"
+out="$(env -i PATH="$u/bin:$PATH" AISATHOME_UNINSTALL_ROOT="$u/root" bash "$u/root/usr/local/sbin/aisathome-node-uninstall" 2>&1)"; code=$?
+ok "the permanent uninstaller"; has "the permanent uninstaller" "kept /var/lib/aisathome-node"
+[[ ! -e "$u/root/usr/local/sbin/aisathome-node-uninstall" ]] || fail "the permanent uninstaller did not remove itself"
+[[ -z "$(cd "$u/root" && find etc opt usr -name '*aisathome*')" ]] || fail "the permanent uninstaller left: $(cd "$u/root" && find etc opt usr -name '*aisathome*')"
 fake_install
 uninstall --purge
 ok "uninstall --purge"; has "uninstall --purge" "userdel aisathome"

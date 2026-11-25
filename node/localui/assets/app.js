@@ -157,6 +157,13 @@
 		$('engine-toggle').textContent = stopped ? 'Start engine' : 'Stop engine';
 		$('engine-toggle').dataset.action = stopped ? 'start-engine' : 'stop-engine';
 		$('help-linux').hidden = eng;
+		// Linux: stop the node and uninstall it through the installer's root control unit when the agent
+		// can ask for it (can_control); otherwise the buttons answer with the command to run.
+		const nodeCtl = !eng && !!c.stop_command;
+		$('node-ctl').hidden = !nodeCtl;
+		if (!nodeCtl) $('uninstall-confirm').hidden = true;
+		if (c.start_command) { $('start-cmd-text').textContent = c.start_command; $('start-cmd-help').textContent = c.start_command; }
+		if (c.uninstall_command) $('uninstall-cmd-help').textContent = c.uninstall_command;
 		$('help-engine').hidden = !eng;
 		$('setup-link').hidden = !s.setup;
 	}
@@ -183,7 +190,8 @@
 		$('anon-link-cmd').textContent = s.setup ? 'the setup page: Link to my account' : 'sudo aisathome-node link';
 	}
 
-	function showCommand(cmd) {
+	function showCommand(cmd, label) {
+		$('restart-cmd-label').textContent = label || 'Restart the engine yourself:';
 		$('restart-cmd-text').textContent = cmd;
 		$('restart-cmd').hidden = false;
 	}
@@ -279,6 +287,37 @@
 		b.disabled = false;
 		message('control-msg', r.ok ? r.data.message : (r.data.error || `Failed (HTTP ${r.status})`), !r.ok);
 		refresh();
+	});
+
+	// A node action (stop, uninstall): the node and this page go away when it works.
+	async function nodeAction(path, body) {
+		const r = await api(path, body);
+		if (r.data.command) showCommand(r.data.command, 'Run this yourself:');
+		message('control-msg', r.ok ? r.data.message : (r.data.error || `Failed (HTTP ${r.status})`), !r.ok);
+		if (r.ok && path === '/api/stop-node') $('start-cmd').hidden = false;
+		return r.ok;
+	}
+
+	$('stop-node').addEventListener('click', async (ev) => {
+		if (!window.confirm(last && last.slots_in_use > 0
+			? `${last.slots_in_use} request(s) are in flight and will fail. Stop the node and free the GPU? This page goes away until you start it again.`
+			: 'Stop the node and free the GPU? This page goes away until you start it again.')) return;
+		const b = ev.currentTarget;
+		b.disabled = true;
+		await nodeAction('/api/stop-node', {});
+		b.disabled = false;
+	});
+
+	$('uninstall').addEventListener('click', () => {
+		$('uninstall-purge').checked = false;
+		$('uninstall-confirm').hidden = false;
+	});
+	$('uninstall-cancel').addEventListener('click', () => { $('uninstall-confirm').hidden = true; });
+	$('uninstall-go').addEventListener('click', async (ev) => {
+		const b = ev.currentTarget;
+		b.disabled = true;
+		if (await nodeAction('/api/uninstall', { confirm: 'uninstall', purge: $('uninstall-purge').checked })) $('uninstall-confirm').hidden = true;
+		b.disabled = false;
 	});
 
 	$('logout').addEventListener('click', async () => {

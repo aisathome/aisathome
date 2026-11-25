@@ -8,6 +8,15 @@ import "os"
 // restarting the service restarts both.
 const RestartCommand = "Restart-Service " + ServiceName
 
+// StopCommand, StartCommand and UninstallCommand: on Windows the setup page's Stop engine and
+// Windows' own Apps settings do these; the local UI shows no commands for them.
+const (
+	StopCommand      = ""
+	StartCommand     = ""
+	UninstallerPath  = ""
+	UninstallCommand = ""
+)
+
 // StatusCommand shows whether the agent's service runs, for when the agent does not answer.
 const StatusCommand = "Get-Service " + ServiceName
 

@@ -70,11 +70,22 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 		stdout.Write(b)
 	} else {
 		PrintStatus(stdout, st, *port, time.Now())
+		printRemove(stdout, node.UninstallerPath)
 	}
 	if !st.Connected {
 		return ExitNotConnected
 	}
 	return ExitConnected
+}
+
+// printRemove says how to remove the node, when the installer put its uninstaller at path.
+func printRemove(w io.Writer, path string) {
+	if path == "" {
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		fmt.Fprintf(w, "  %-10s %s (keeps the model; --purge removes it too)\n", "remove", node.UninstallCommand)
+	}
 }
 
 // PrintStatus writes a human-readable status.

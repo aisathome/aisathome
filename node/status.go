@@ -47,6 +47,17 @@ var ErrRestartUnavailable = errors.New("this agent cannot restart the engine; ru
 // start it (Linux: systemd runs it).
 var ErrNoEngineControl = errors.New("this agent does not run the engine itself")
 
+// ErrNoNodeControl means the agent has no way to stop or uninstall the node itself (no
+// Config.ControlTrigger: not installed by the Linux installer, or the local UI is off).
+var ErrNoNodeControl = errors.New("this agent cannot stop or uninstall the node itself")
+
+// Node actions the local UI may ask of the Linux installer's root control unit (ControlNode).
+const (
+	NodeStop           = "stop"            // stop the agent and llama-server: the GPU is free
+	NodeUninstall      = "uninstall"       // the permanent uninstaller; the model stays
+	NodeUninstallPurge = "uninstall-purge" // the same, and the model and state go too
+)
+
 // ErrRestartTooSoon limits engine restarts from the UI to one a minute.
 var ErrRestartTooSoon = errors.New("an engine restart was requested less than a minute ago")
 
@@ -58,7 +69,7 @@ const (
 // Event is one entry in the agent's recent history: what happened, never request content.
 type Event struct {
 	Time  time.Time `json:"time"`
-	Kind  string    `json:"kind"` // started, connected, disconnected, refused, rejected, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested, watchdog, engine_stopped, engine_started, engine_exited
+	Kind  string    `json:"kind"` // started, connected, disconnected, refused, rejected, engine_unhealthy, engine_healthy, paused, resumed, request_failed, restart_requested, watchdog, engine_stopped, engine_started, engine_exited, node_stop_requested, node_uninstall_requested, node_uninstall_purge_requested
 	Text  string    `json:"text,omitempty"`
 	Count int       `json:"count,omitempty"` // repeats folded into this entry (e.g. failed reconnects)
 }
@@ -108,6 +119,8 @@ type Status struct {
 	Total      Counters             `json:"total"`
 	Events     []Event              `json:"events"` // newest first
 	CanRestart bool                 `json:"can_restart"`
+	// CanControl: the agent can ask for the node to be stopped or uninstalled (ControlNode).
+	CanControl bool `json:"can_control"`
 	// EngineProcess is the engine process when the agent runs it itself (Config.EngineControl);
 	// then the UI can also stop and start it.
 	EngineProcess *engine.Status `json:"engine_process,omitempty"`
@@ -383,6 +396,24 @@ func (a *Agent) StopEngine() error {
 	return nil
 }
 
+// ControlNode asks for a node action (NodeStop, NodeUninstall, NodeUninstallPurge) by writing its
+// name to Config.ControlTrigger, which a root-owned systemd path unit of the Linux installer watches
+// and acts on (the agent itself has no privileges). Stopping or uninstalling ends this agent too.
+func (a *Agent) ControlNode(action string) error {
+	switch action {
+	case NodeStop, NodeUninstall, NodeUninstallPurge:
+	default:
+		return fmt.Errorf("unknown node action %q", action)
+	}
+	if a.cfg.ControlTrigger == "" || a.cfg.EngineControl != nil {
+		return ErrNoNodeControl
+	}
+	a.event("node_"+strings.ReplaceAll(action, "-", "_")+"_requested", "from the local UI")
+	a.save()
+	a.log.Warn("node action requested from the local UI", "action", action)
+	return os.WriteFile(a.cfg.ControlTrigger, []byte(action+"\n"), 0o600)
+}
+
 // StartEngine starts the engine the agent runs again, after StopEngine (or at once when it is
 // waiting to restart after a crash).
 func (a *Agent) StartEngine() error {
@@ -429,6 +460,7 @@ func (a *Agent) Status() Status {
 		Today:      a.ps.Today,
 		Total:      a.ps.Total,
 		CanRestart: a.cfg.RestartTrigger != "" || a.cfg.EngineControl != nil,
+		CanControl: a.cfg.ControlTrigger != "" && a.cfg.EngineControl == nil,
 	}
 	if ctl := a.cfg.EngineControl; ctl != nil {
 		st := ctl.Status()

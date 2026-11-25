@@ -51,6 +51,9 @@ type Agent interface {
 	RestartEngine() error
 	StopEngine() error  // node.ErrNoEngineControl when the agent does not run the engine
 	StartEngine() error // the same
+	// ControlNode asks for node.NodeStop, NodeUninstall or NodeUninstallPurge (the Linux installer's
+	// root control unit); node.ErrNoNodeControl when the agent cannot.
+	ControlNode(action string) error
 }
 
 // Setup is the first-run setup (package setupflow) on a node whose agent runs its engine
@@ -191,6 +194,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/restart-engine", s.control(s.restart))
 	mux.HandleFunc("POST /api/stop-engine", s.control(s.engineCtl(true)))
 	mux.HandleFunc("POST /api/start-engine", s.control(s.engineCtl(false)))
+	mux.HandleFunc("POST /api/stop-node", s.control(s.stopNode))
+	mux.HandleFunc("POST /api/uninstall", s.control(s.uninstall))
 	if s.opt.Setup != nil {
 		mux.HandleFunc("GET /setup", func(w http.ResponseWriter, r *http.Request) {
 			r2 := r.Clone(r.Context())
@@ -290,6 +295,13 @@ type Controls struct {
 	// EngineControl: the agent runs the engine itself (Windows), so the page offers Stop
 	// engine and Start engine, and a restart does not restart the agent.
 	EngineControl bool `json:"engine_control"`
+	// The node's service by hand (Linux): stop it and free the GPU, start it again, uninstall it. The
+	// page offers Stop and Uninstall as buttons when the agent can ask for them (Status.CanControl),
+	// and shows these commands otherwise. Start is always a command: the page goes away with the
+	// agent when the node stops.
+	StopCommand      string `json:"stop_command,omitempty"`
+	StartCommand     string `json:"start_command,omitempty"`
+	UninstallCommand string `json:"uninstall_command,omitempty"`
 }
 
 // inSetup reports whether "/" should be the setup page.
@@ -305,6 +317,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	st := s.cur().Status()
 	c := Controls{RestartCommand: node.RestartCommand, StatusCommand: node.StatusCommand,
 		PasswordHint: node.PasswordHint(s.opt.PasswordFile), EngineControl: st.EngineProcess != nil}
+	if st.EngineProcess == nil {
+		c.StopCommand, c.StartCommand, c.UninstallCommand = node.StopCommand, node.StartCommand, node.UninstallCommand
+	}
 	if _, err := s.auth.password(); err != nil {
 		c.Note = "Controls are off: " + err.Error()
 	} else {
@@ -398,6 +413,53 @@ func (s *Server) restart(w http.ResponseWriter, _ *http.Request) {
 		s.log.Error("local UI: engine restart failed", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not request the restart: " + err.Error(),
 			"command": node.RestartCommand})
+	}
+}
+
+// stopNode stops the node's services (the agent and llama-server), which frees the GPU. The page goes
+// away with the agent, so the answer says how to start it again.
+func (s *Server) stopNode(w http.ResponseWriter, _ *http.Request) {
+	s.nodeAction(w, node.NodeStop, node.StopCommand,
+		"Stopping the node and llama-server: the GPU is free in a few seconds. This page goes away with the node. Start it again with: "+node.StartCommand)
+}
+
+// uninstall runs the permanent uninstaller after the page's confirm step: {"confirm": "uninstall"},
+// and "purge": true to remove the model too.
+func (s *Server) uninstall(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Confirm string `json:"confirm"`
+		Purge   bool   `json:"purge"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil || body.Confirm != "uninstall" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `confirm the uninstall: send {"confirm": "uninstall"}`})
+		return
+	}
+	action, cmd, msg := node.NodeUninstall, node.UninstallCommand,
+		"Uninstalling: the node stops and its services, programs and settings are removed; the model stays. This page goes away with it."
+	if body.Purge {
+		action, msg = node.NodeUninstallPurge,
+			"Uninstalling: the node stops and everything it installed is removed, the model too. This page goes away with it."
+		if cmd != "" {
+			cmd += " --purge"
+		}
+	}
+	s.nodeAction(w, action, cmd, msg)
+}
+
+// nodeAction asks the agent for a node action; without a way to do it, the answer gives the command.
+func (s *Server) nodeAction(w http.ResponseWriter, action, cmd, msg string) {
+	switch err := s.cur().ControlNode(action); {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": msg})
+	case errors.Is(err, node.ErrNoNodeControl):
+		resp := map[string]any{"error": "The agent cannot do this on this machine."}
+		if cmd != "" {
+			resp["error"], resp["command"] = "The agent cannot do this on this machine. Run this yourself:", cmd
+		}
+		writeJSON(w, http.StatusConflict, resp)
+	default:
+		s.log.Error("local UI: node action failed", "action", action, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "could not request it: " + err.Error(), "command": cmd})
 	}
 }
 

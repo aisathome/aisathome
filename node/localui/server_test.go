@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,9 @@ type fakeAgent struct {
 	connected bool
 	restarts  int
 	canRestar bool
+	// ControlNode: allowed, and what it was asked
+	canControl bool
+	actions    []string
 }
 
 func (f *fakeAgent) Status() node.Status {
@@ -64,7 +68,16 @@ func (f *fakeAgent) RestartEngine() error {
 }
 func (f *fakeAgent) StopEngine() error  { return node.ErrNoEngineControl }
 func (f *fakeAgent) StartEngine() error { return node.ErrNoEngineControl }
-func (f *fakeAgent) isPaused() bool     { f.mu.Lock(); defer f.mu.Unlock(); return f.paused }
+func (f *fakeAgent) ControlNode(action string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.canControl {
+		return node.ErrNoNodeControl
+	}
+	f.actions = append(f.actions, action)
+	return nil
+}
+func (f *fakeAgent) isPaused() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.paused }
 
 // fakeSMIEnv makes this test binary act as nvidia-smi (TestMain), so the stand-in runs on
 // Windows too, where a shell script cannot.
@@ -236,6 +249,7 @@ func TestRejectsForeignHost(t *testing.T) {
 // browser would not send cross-site anyway: SameSite=Strict).
 func TestRejectsCrossSiteRequests(t *testing.T) {
 	e := newEnv(t)
+	e.agent.canControl = true
 	cookie := e.login(t)
 	cases := map[string]map[string]string{
 		"foreign Origin":            {"Origin": "http://evil.example"},
@@ -247,8 +261,8 @@ func TestRejectsCrossSiteRequests(t *testing.T) {
 		"no Content-Type":           {"Content-Type": ""},
 	}
 	for name, hdr := range cases {
-		for _, path := range []string{"/api/pause", "/api/login", "/api/restart-engine"} {
-			resp := e.req(t, "POST", path, `{"password":"`+testPassword+`"}`, hdr, cookie)
+		for _, path := range []string{"/api/pause", "/api/login", "/api/restart-engine", "/api/stop-node", "/api/uninstall"} {
+			resp := e.req(t, "POST", path, `{"password":"`+testPassword+`","confirm":"uninstall"}`, hdr, cookie)
 			if resp.StatusCode != http.StatusForbidden {
 				t.Fatalf("%s to %s: %d, want 403", name, path, resp.StatusCode)
 			}
@@ -257,7 +271,7 @@ func TestRejectsCrossSiteRequests(t *testing.T) {
 			}
 		}
 	}
-	if e.agent.isPaused() || e.agent.restarts != 0 {
+	if e.agent.isPaused() || e.agent.restarts != 0 || len(e.agent.actions) != 0 {
 		t.Fatal("a cross-site request changed the node")
 	}
 	// A command-line client (no Origin, no Sec-Fetch-Site) with a session works.
@@ -269,10 +283,14 @@ func TestRejectsCrossSiteRequests(t *testing.T) {
 // Controls need a session cookie issued for the password; forged and stale cookies fail.
 func TestControlsNeedSession(t *testing.T) {
 	e := newEnv(t)
-	for _, path := range []string{"/api/pause", "/api/resume", "/api/restart-engine"} {
-		if resp := e.req(t, "POST", path, "{}", nil); resp.StatusCode != http.StatusUnauthorized {
+	e.agent.canControl = true
+	for _, path := range []string{"/api/pause", "/api/resume", "/api/restart-engine", "/api/stop-node", "/api/uninstall"} {
+		if resp := e.req(t, "POST", path, `{"confirm":"uninstall"}`, nil); resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("%s without session: %d", path, resp.StatusCode)
 		}
+	}
+	if len(e.agent.actions) != 0 {
+		t.Fatalf("a node action without a session: %v", e.agent.actions)
 	}
 	exp := time.Now().Add(time.Hour).Unix()
 	forged := []*http.Cookie{
@@ -441,6 +459,93 @@ func TestRestartEngine(t *testing.T) {
 	e.agent.mu.Unlock()
 	if resp := e.req(t, "POST", "/api/restart-engine", "{}", nil, cookie); resp.StatusCode != http.StatusAccepted || e.agent.restarts != 1 {
 		t.Fatalf("restart: %d", resp.StatusCode)
+	}
+}
+
+// Stop and uninstall (Linux): the agent asks its root control unit; the uninstall needs its confirm step;
+// without a way to do it, the answer carries the command to run by hand.
+func TestNodeActions(t *testing.T) {
+	e := newEnv(t)
+	cookie := e.login(t)
+	resp := e.req(t, "POST", "/api/stop-node", "{}", nil, cookie)
+	if b := body(resp); resp.StatusCode != http.StatusConflict || (node.StopCommand != "" && !strings.Contains(b, node.StopCommand)) {
+		t.Fatalf("stop without control: %d %s", resp.StatusCode, b)
+	}
+	resp = e.req(t, "POST", "/api/uninstall", `{"confirm":"uninstall","purge":true}`, nil, cookie)
+	if b := body(resp); resp.StatusCode != http.StatusConflict || (node.UninstallCommand != "" && !strings.Contains(b, node.UninstallCommand+" --purge")) {
+		t.Fatalf("uninstall without control: %d %s", resp.StatusCode, b)
+	}
+	e.agent.mu.Lock()
+	e.agent.canControl = true
+	e.agent.mu.Unlock()
+	resp = e.req(t, "POST", "/api/stop-node", "{}", nil, cookie)
+	if b := body(resp); resp.StatusCode != http.StatusAccepted || !strings.Contains(b, "goes away") || !strings.Contains(b, node.StartCommand) {
+		t.Fatalf("stop: %d %s", resp.StatusCode, b)
+	}
+	// The confirm step is not optional: no body, another word, or not JSON.
+	for _, bad := range []string{"{}", `{"confirm":"yes"}`, `{"confirm":"Uninstall"}`, `{"purge":true}`, `uninstall`} {
+		if resp := e.req(t, "POST", "/api/uninstall", bad, nil, cookie); resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("uninstall with %s: %d", bad, resp.StatusCode)
+		}
+	}
+	for _, c := range []struct{ body, want string }{
+		{`{"confirm":"uninstall"}`, node.NodeUninstall},
+		{`{"confirm":"uninstall","purge":false}`, node.NodeUninstall},
+		{`{"confirm":"uninstall","purge":true}`, node.NodeUninstallPurge},
+	} {
+		if resp := e.req(t, "POST", "/api/uninstall", c.body, nil, cookie); resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("uninstall %s: %d", c.body, resp.StatusCode)
+		}
+		if got := e.agent.actions[len(e.agent.actions)-1]; got != c.want {
+			t.Fatalf("uninstall %s asked for %q, want %q", c.body, got, c.want)
+		}
+	}
+	if want := []string{node.NodeStop, node.NodeUninstall, node.NodeUninstall, node.NodeUninstallPurge}; !slices.Equal(e.agent.actions, want) {
+		t.Fatalf("actions %v, want %v", e.agent.actions, want)
+	}
+	// The status tells the page which commands to show (no agent-run engine here).
+	var st StatusResponse
+	json.Unmarshal([]byte(body(e.req(t, "GET", "/api/status?gpu=0", "", nil, cookie))), &st)
+	if st.Controls.StopCommand != node.StopCommand || st.Controls.StartCommand != node.StartCommand || st.Controls.UninstallCommand != node.UninstallCommand {
+		t.Fatalf("controls: %+v", st.Controls)
+	}
+}
+
+// The page has the controls for stop, start (as a command) and uninstall with its confirm step.
+func TestPageNodeControls(t *testing.T) {
+	html, err := assets.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js, err := assets.ReadFile("assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`id="stop-node"`, `id="uninstall"`, `id="uninstall-confirm"`, `id="uninstall-purge"`, `id="uninstall-go"`, `id="start-cmd"`} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	for _, want := range []string{"/api/stop-node", "/api/uninstall", "confirm: 'uninstall'", "purge: "} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("app.js lacks %s", want)
+		}
+	}
+}
+
+// `aisathome-node status` says how to remove the node when the installer put its uninstaller in place.
+func TestStatusRemoveLine(t *testing.T) {
+	var out bytes.Buffer
+	printRemove(&out, filepath.Join(t.TempDir(), "none"))
+	printRemove(&out, "")
+	if out.Len() != 0 {
+		t.Fatalf("no uninstaller: %q", out.String())
+	}
+	f := filepath.Join(t.TempDir(), "aisathome-node-uninstall")
+	os.WriteFile(f, []byte("#!/bin/sh\n"), 0o755)
+	printRemove(&out, f)
+	if !strings.Contains(out.String(), "remove") || !strings.Contains(out.String(), "--purge") {
+		t.Fatalf("with an uninstaller: %q", out.String())
 	}
 }
 

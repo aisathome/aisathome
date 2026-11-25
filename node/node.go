@@ -86,8 +86,11 @@ type Config struct {
 	// events across restarts ("" = memory only). RestartTrigger is a file that a root-owned
 	// systemd path unit watches to restart the engine ("" = the agent cannot restart it).
 	// Preset is a label for the engine settings, shown in the UI.
+	// ControlTrigger is a file that a root-owned systemd path unit watches to stop or uninstall the
+	// node (Agent.ControlNode; "" = the agent cannot).
 	StateFile      string `json:"state_file,omitempty"`
 	RestartTrigger string `json:"restart_trigger,omitempty"`
+	ControlTrigger string `json:"control_trigger,omitempty"`
 	Preset         string `json:"preset,omitempty"`
 
 	// Engine, when set, makes the agent run llama-server itself, as its child (the Windows

@@ -65,6 +65,15 @@ Then edit that section by hand: a short lead paragraph, the order of the entries
 it as the release commit and use that text as the release's notes. A maintainer reviews the text
 before the draft is published; then publish it.
 
+**The one-line install against the draft, before publishing:** on one of the GPU machines above,
+fetch the draft's bundle (`gh release download <tag> -p 'aisathome-node-bundle-linux-amd64.tar.xz'
+-p SHA256SUMS -D /tmp/draft`; a draft's files are not public yet) and run the one-liner on it:
+`AISATHOME_RELEASE_BASE=file:///tmp/draft sh site/public/node.sh`, answering y. It must check the
+bundle, pass the dry run and install a node without an account. Reboot (the one-liner unpacks
+into `/tmp`), check that `sudo aisathome-node-uninstall` still works, and remove the node with it.
+An `install.sh` change that breaks the one-liner (a flag, a question, the bundle's layout) shows
+here, before anyone runs it.
+
 **After publishing:** set the version and the installer's size in bytes in
 `site/src/data/node-release.ts` (the download block on `/node/` shows them) and deploy the site.
 The first time a release carries `AIsAtHome-node-setup.exe`, also set `versionFreeInstaller: true`
