@@ -727,7 +727,7 @@ repeats the rule.
 ## Connectors and pilots
 
 A **connector** is an outside system that brings machines in bounded serving sessions, **pilots**.
-The BOINC project's bridge is the first: a BOINC work unit is one pilot, a run of
+The BOINC project's bridge (`aisathome-bridge`, `boinc/README.md`) is the first: a BOINC work unit is one pilot, a run of
 `aisathome-node pilot` that serves for up to 4 hours. The gateway is the source of truth: it mints
 the pilot, decides what it may serve, meters it and decides its credit; the connector only creates
 work items with the pilot's name, says who runs each, and reports when it is done. Nothing in the
