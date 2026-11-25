@@ -60,7 +60,8 @@ export function taskResult(r: TaskTableRow, rows: TaskTableRow[], refuted?: Refu
 	}
 	switch (r.outcome) {
 		case 'proved':
-			return { text: ['hole', 'rest'].includes(r.kind) ? 'Proved' : 'Proved: our full check passed', show: 'proved' };
+			// a hole's task proves its hole; any other task that ends `proved` passed our full check of the leaf
+			return { text: r.kind === 'hole' ? 'Proved' : 'Proved: our full check passed', show: 'proved' };
 		case 'outline': {
 			const n = Number(r.labels.holes);
 			return { text: n > 0 ? `Written, ${n} hole${n === 1 ? '' : 's'}` : 'Outline written', show: 'not_proved' };

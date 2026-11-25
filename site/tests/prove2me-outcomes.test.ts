@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	cancelReason, closedByText, inplaceStanding, isStaleCancel, kindOf, provesLeaf, resultLabel, staleCancelReason, taskRef, tryWord, type Attempt,
+	attemptOf, cancelReason, closedByText, inplaceStanding, isStaleCancel, kindOf, provesLeaf, resultLabel, staleCancelReason, taskRef, tryWord, type Attempt,
 } from '../src/data/prove2me-outcomes';
 import { leafDetail, detailProved, type Outline, type TaskRow } from '../src/data/prove2me-live';
 import { leafPlan, outlineView } from '../src/data/prove2me-outlines';
@@ -115,11 +115,11 @@ test('a real closed_by keeps its own words: the index, the ledger, the pre-pass,
 	assert.equal(leafPlan(leafDetail(rows), [], 'Foo.proved').summary, 'Closed by reuse: imports Foo.proved');
 });
 
-test('an assembly that passed proves the leaf, one that failed does not; a hole proved alone never does', () => {
+test('an assembly or an in-place task that passed proves the leaf, an assembly that failed does not; a hole proved alone never does', () => {
 	for (const [kind, state, outcome, want] of [
 		['assembly', 'done', 'proved', true], ['asm', 'finished', 'proved', true], ['outline', 'done', 'proved', true], ['skeleton', 'finished', 'proved', true],
 		['run', 'done', 'proved', true], ['assembly', 'done', 'assembly_failed', false], ['assembly', 'running', null, false], ['hole', 'done', 'proved', false],
-		['rest', 'done', 'proved', false], ['outline', 'done', 'outline', false],
+		['rest', 'done', 'proved', true], ['rest', 'done', 'rest_done', false], ['outline', 'done', 'outline', false],
 	] as const)
 		assert.equal(provesLeaf({ kind, state, outcome }), want, `${kind} ${state} ${outcome}`);
 	const base = [row('t7-p2m-bbbbbb-s1', 'skeleton', 'finished', 'outline'), row('t7-p2m-bbbbbb-s1-h01', 'hole', 'finished', 'proved')];
@@ -135,7 +135,7 @@ test('an assembly that passed proves the leaf, one that failed does not; a hole 
 test('the holes in place count when the assembly passes, wait for it before, and are not proved when it fails', () => {
 	for (const [asm, want] of [[{ state: 'done', outcome: 'proved' }, 'proved'], [{ state: 'queued', outcome: null }, 'waiting'], [{ state: 'done', outcome: 'compile_error' }, 'not_proved'], [undefined, 'waiting']] as const)
 		assert.equal(inplaceStanding({ state: 'done', outcome: 'rest_done' }, asm)?.state, want);
-	assert.equal(inplaceStanding({ state: 'finished', outcome: 'proved' }, { state: 'finished', outcome: 'proved' })?.state, 'proved', 'an older worker said proved');
+	assert.equal(inplaceStanding({ state: 'finished', outcome: 'proved' }, undefined)?.state, 'proved', 'its own file passed our full check');
 	assert.equal(inplaceStanding({ state: 'running', outcome: null }, { state: 'done', outcome: 'proved' }), undefined);
 	assert.equal(inplaceStanding(undefined, { state: 'done', outcome: 'proved' }), undefined);
 	// trial 6's N03 outline 2: holes 1, 3, 4 as lemmas, hole 2 in place, the in-place task rest_done
@@ -163,6 +163,35 @@ test('the holes in place count when the assembly passes, wait for it before, and
 	assert.deepEqual(restOf(passed), { text: 'Filled in, checked by the assembly', show: 'proved' });
 	assert.deepEqual(restOf(failed), { text: 'Filled in, checked by the assembly', show: 'not_proved' });
 	assert.equal(resultLabel('finished', 'rest_done'), 'Filled in, checked by the assembly');
+});
+
+// Trial 11's p2m-a5e581 (N32) as the gateway listed it on 2026-11-25: an outline of two holes, both in place, and its
+// in-place task's own file passed our full check, so it ended `proved`, the leaf was done with no assembly, and
+// prove2me accepted the proof (the trial runner's outline check returns the full check's verdict; a proved in-place
+// task ends the leaf).
+test('an in-place task whose own file passed our full check proves the leaf, with no assembly (trial 11’s p2m-a5e581)', () => {
+	const S5 = 't11-p2m-a5e581-s1';
+	const o: Outline = { gen: 1, holes: 2, lemmas: 0, inplace: 2, prepass: { tried: 0, closed: 0, seconds: 0, by: {} }, prepass_holes: [] };
+	const rows = [row(S5, 'skeleton', 'finished', 'outline'), row(`${S5}-rest`, 'rest', 'finished', 'proved')];
+	assert.equal(provesLeaf(attemptOf(rows[1])), true);
+	const d = leafDetail(rows, [o]);
+	assert.equal(detailProved(d), true);
+	assert.equal(d.gens[0].proved, 2, 'both holes in place count');
+	const p = leafPlan(d);
+	assert.equal(p.summary, 'Proved: outline 1, its holes filled in place');
+	assert.deepEqual([p.outlines[0].state, p.outlines[0].text], ['proved', 'proved (its holes filled in place)']);
+	assert.deepEqual(p.outlines[0].holes.map((h) => [h.label, h.state, h.title]), [['Hole 1', 'solved', 'in place, with the outline'], ['Hole 2', 'solved', 'in place, with the outline']], 'no assembly row: none ran');
+	const t = rows.map(trow);
+	assert.deepEqual(taskResult(t[1], t), { text: 'Proved: our full check passed', show: 'proved' });
+	assert.equal(resultLabel('finished', 'proved'), 'Proved');
+	// a task its outline still had open is cancelled for the proved leaf
+	const late = row(`${S5}-h01`, 'hole', 'cancelled', null, { closed_by: `${S5}-rest` });
+	assert.equal(staleCancelReason(attemptOf(late), [...rows, late].map(attemptOf)), 'leaf proved');
+	// `rest_done` still waits for the assembly and proves nothing alone
+	const filled = [rows[0], row(`${S5}-rest`, 'rest', 'finished', 'rest_done')];
+	assert.equal(detailProved(leafDetail(filled, [o])), false);
+	assert.equal(leafDetail(filled, [o]).gens[0].proved, 0);
+	assert.equal(leafPlan(leafDetail(filled, [o])).outlines[0].holes[0].text, 'Working (the assembly checks it)');
 });
 
 test('a hole disproved refutes its outline; the outline’s other tasks are cancelled for it', () => {

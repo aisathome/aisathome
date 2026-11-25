@@ -308,3 +308,28 @@ test('a curated reuse: N18 (trial 9) imports a theorem another prover had proved
 	const t9 = v.trials.find((t) => t.label === '9')!;
 	assert.deepEqual([t9.open.proved, t9.open.runs], [1, 5]);
 });
+
+test('a leaf whose in-place task’s own file passed our full check is proved, with no assembly (trial 11’s p2m-a5e581)', () => {
+	const r = records();
+	const t8 = r.campaigns.find((c) => c.id === 't8')!;
+	const item = { id: 'p2m-a5e581', title: 'Alice’s marginal is uniform', url: 'https://prove2.me/theorems/a5e5811e-f6e9-43fa-a118-efc1aa39a5d4', role: 'open', labels: { alias: 'N32', group: 'open', theorem: 'RelativisticZK205.ThreeCol.pr_no_signalling' } };
+	const task = (id: string, role: string, outcome: string, more: Partial<PublicTask> = {}) => ({
+		...(r.tasks.tasks.find((x) => x.labels.trial === 't8' && x.role === 'hole' && x.started_at) as PublicTask),
+		id, role, state: 'done', outcome, try: 1, parent: role === 'rest' ? 't8-p2m-a5e581-s1' : null, closed_by: null, started_at: '2026-11-17T20:48:54Z',
+		labels: { alias: 'N32', group: 'open', leaf: 'p2m-a5e581', outline: '1', scaffold: 'v9', trial: 't8' }, ...more,
+	}) as PublicTask;
+	const live: Records = {
+		...r,
+		campaigns: r.campaigns.map((c) => (c.id === 't8' ? { ...c, items: [...c.items, item] } as Campaign : c)),
+		tasks: { ...r.tasks, tasks: [...r.tasks.tasks, task('t8-p2m-a5e581-s1', 'outline', 'outline'), task('t8-p2m-a5e581-s1-rest', 'rest', 'proved')] },
+	};
+	const before = scienceView(h, r), v = scienceView(h, live);
+	assert.deepEqual([v.kpis.openProved, v.kpis.openTried, v.kpis.proved], [before.kpis.openProved + 1, before.kpis.openTried + 1, before.kpis.proved + 1]);
+	assert.ok(v.kpis.openProvedLeaves.some((l) => l.leaf === 'p2m-a5e581'));
+	assert.deepEqual(row(v, '8').open, { proved: row(before, '8').open.proved + 1, runs: row(before, '8').open.runs + 1 });
+	const leaf = trialDetails([], live, h).find((d) => d.sum.label === '8')!.leaves.find((l) => l.id === 'p2m-a5e581')!;
+	assert.deepEqual([leaf.proved, leaf.summary], [true, 'Proved: outline 1, its holes filled in place']);
+	// an in-place task that only filled the holes in (`rest_done`) proves nothing until its assembly passes
+	const filled: Records = { ...live, tasks: { ...live.tasks, tasks: live.tasks.tasks.map((x) => (x.id === 't8-p2m-a5e581-s1-rest' ? { ...x, outcome: 'rest_done' } : x)) } };
+	assert.equal(scienceView(h, filled).kpis.openProved, before.kpis.openProved);
+});
