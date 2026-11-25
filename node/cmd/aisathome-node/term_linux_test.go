@@ -34,28 +34,50 @@ func openPTY(t *testing.T) (master, tty *os.File) {
 	return m, s
 }
 
-// A token pasted right after the question never shows on the terminal: echo is off before the question
-// is printed, the line is read whole, and echo is back afterwards.
-func TestReadSecretFromNoEcho(t *testing.T) {
+// Tokens pasted right after the question, and right after its "Answer y or n.", never show on the terminal:
+// echo is off before the first line is printed and stays off through every try (each line is printed while
+// it is off), and it is back afterwards.
+func TestAskLinkNoEcho(t *testing.T) {
 	master, tty := openPTY(t)
-	tok := "nt-a-0000000d." + strings.Repeat("Q", 43)
-	var msg bytes.Buffer
-	line, err := readSecretFrom(tty, &msg, func() {
+	tok1 := "nt-a-0000000d." + strings.Repeat("Q", 43)
+	tok2 := "nt-n-0000000e." + strings.Repeat("N", 43)
+	echoing := func() bool {
 		tm, err := unix.IoctlGetTermios(int(tty.Fd()), unix.TCGETS)
-		if err != nil || tm.Lflag&unix.ECHO != 0 {
-			t.Errorf("the question is printed while the terminal echoes (%v)", err)
+		return err != nil || tm.Lflag&unix.ECHO != 0
+	}
+	var msg bytes.Buffer
+	questions, retries := 0, 0
+	say := func(f string, a ...any) {
+		line := fmt.Sprintf(f, a...)
+		if echoing() {
+			t.Errorf("printed while the terminal echoes: %q", line)
 		}
-		msg.WriteString("Link this node to your account? [Y/n]\n")
-		master.Write([]byte(tok + "\n")) // pasted at once
-	})
-	if err != nil || line != tok {
-		t.Fatalf("read %q, %v", line, err)
+		msg.WriteString(line + "\n")
+		switch {
+		case strings.Contains(line, "[Y/n]"):
+			if questions++; questions == 1 {
+				master.Write([]byte(tok1 + "\n")) // pasted at once
+			}
+		case line == "Answer y or n.":
+			if retries++; retries == 1 {
+				master.Write([]byte(tok2 + "\n")) // pasted right after the retry line
+			} else {
+				master.Write([]byte("n\n"))
+			}
+		}
 	}
-	if tm, err := unix.IoctlGetTermios(int(tty.Fd()), unix.TCGETS); err != nil || tm.Lflag&unix.ECHO == 0 {
-		t.Errorf("echo is not back after the read (%v)", err)
+	e := preflightEnv{hidden: func(body func(read func() (string, error)) error) error {
+		return withoutEchoOn(tty, &msg, body)
+	}}
+	var r preflightResult
+	if err := e.askLink(&r, say); err != nil || r.Account != "anonymous" || questions != 3 || retries != 2 {
+		t.Fatalf("askLink: %v, account %q after %d questions, %d retries: %s", err, r.Account, questions, retries, msg.String())
 	}
-	if !strings.HasSuffix(msg.String(), "[Y/n]\n\n") {
-		t.Errorf("no newline after the unechoed Enter: %q", msg.String())
+	if !echoing() {
+		t.Error("echo is not back after the question")
+	}
+	if strings.Count(msg.String(), "It was not stored, and it was not shown") != 2 {
+		t.Errorf("not told twice that the token was dropped: %s", msg.String())
 	}
 	// Everything the terminal showed before this marker is what it echoed.
 	tty.Write([]byte("END\n"))
@@ -68,7 +90,7 @@ func TestReadSecretFromNoEcho(t *testing.T) {
 		}
 		screen = append(screen, buf[:n]...)
 	}
-	if bytes.Contains(screen, []byte("QQQQ")) || bytes.Contains(screen, []byte("nt-a")) {
-		t.Errorf("the token was echoed: %q", screen)
+	if bytes.Contains(screen, []byte("QQQQ")) || bytes.Contains(screen, []byte("NNNN")) || bytes.Contains(screen, []byte("nt-")) {
+		t.Errorf("a token was echoed: %q", screen)
 	}
 }

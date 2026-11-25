@@ -17,32 +17,35 @@ func stdinIsTerminal() bool {
 	return err == nil
 }
 
-// readSecretLine reads a line from the terminal on stdin without echoing it (a pasted token, or an answer
-// that may be one). prompt runs once echo is off, so nothing typed or pasted right after the question shows.
-// Echo comes back afterwards, also when the read is interrupted (Ctrl+C: exit 130).
-func readSecretLine(prompt func()) (string, error) {
-	return readSecretFrom(os.Stdin, os.Stderr, prompt)
+// withoutEcho runs body with the terminal on stdin not echoing (a pasted token, or an answer that may be
+// one); read reads one line. Echo is off before body prints anything and stays off between its reads, so
+// nothing typed or pasted after any of its lines shows. Echo comes back once body returns, also when the
+// read is interrupted (Ctrl+C: exit 130).
+func withoutEcho(body func(read func() (string, error)) error) error {
+	return withoutEchoOn(os.Stdin, os.Stderr, body)
 }
 
-// readSecretFrom is readSecretLine for the terminal tty (stdin), with the closing newline on msg. Not a
-// terminal: prompt, and a plain read.
-func readSecretFrom(tty *os.File, msg io.Writer, prompt func()) (string, error) {
+// withoutEchoOn is withoutEcho for the terminal tty, with the newline for each unechoed Enter on msg. Not
+// a terminal: body with plain reads.
+func withoutEchoOn(tty *os.File, msg io.Writer, body func(read func() (string, error)) error) error {
 	fd := int(tty.Fd())
 	old, err := unix.IoctlGetTermios(fd, unix.TCGETS)
 	if err != nil {
-		prompt()
-		return readLine(tty)
+		return body(func() (string, error) { return readLine(tty) })
 	}
 	quiet := *old
 	quiet.Lflag &^= unix.ECHO
 	quiet.Lflag |= unix.ICANON | unix.ISIG
 	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &quiet); err != nil {
-		return "", err
+		return err
 	}
 	restore := func() { unix.IoctlSetTermios(fd, unix.TCSETS, old) }
+	defer restore()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sig)
 	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		select {
 		case <-sig:
@@ -52,11 +55,9 @@ func readSecretFrom(tty *os.File, msg io.Writer, prompt func()) (string, error) 
 		case <-done:
 		}
 	}()
-	prompt()
-	line, err := readLine(tty)
-	close(done)
-	signal.Stop(sig)
-	restore()
-	fmt.Fprintln(msg) // the Enter the person typed was not echoed
-	return line, err
+	return body(func() (string, error) {
+		line, err := readLine(tty)
+		fmt.Fprintln(msg) // the Enter the person typed was not echoed
+		return line, err
+	})
 }
