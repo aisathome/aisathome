@@ -48,6 +48,7 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage, logp
 		args          strings.Builder
 	}
 	var calls []*call // by stream index; arguments arrive in pieces
+	var legacy *call  // a legacy function_call, in pieces too
 	for _, c := range chunks {
 		var ch struct {
 			Choices []struct {
@@ -63,6 +64,10 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage, logp
 							Arguments string `json:"arguments"`
 						} `json:"function"`
 					} `json:"tool_calls"`
+					FunctionCall *struct { // the legacy single call
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function_call"`
 				} `json:"delta"`
 				FinishReason *string         `json:"finish_reason"`
 				Logprobs     json.RawMessage `json:"logprobs"`
@@ -96,6 +101,15 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage, logp
 				}
 				k.args.WriteString(tc.Function.Arguments)
 			}
+			if fc := choice.Delta.FunctionCall; fc != nil {
+				if legacy == nil {
+					legacy = &call{}
+				}
+				if fc.Name != "" {
+					legacy.name = fc.Name
+				}
+				legacy.args.WriteString(fc.Arguments)
+			}
 			if choice.FinishReason != nil {
 				finish = *choice.FinishReason
 			}
@@ -112,9 +126,12 @@ func assemble(id, model string, chunks []json.RawMessage, u protocol.Usage, logp
 				"function": map[string]any{"name": k.name, "arguments": k.args.String()}})
 		}
 		msg["tool_calls"] = tcs
-		if content.Len() == 0 {
-			msg["content"] = nil // as OpenAI returns it for pure tool calls
-		}
+	}
+	if legacy != nil { // in the shape it came in (guard.go checks it as a call)
+		msg["function_call"] = map[string]any{"name": legacy.name, "arguments": legacy.args.String()}
+	}
+	if (len(calls) > 0 || legacy != nil) && content.Len() == 0 {
+		msg["content"] = nil // as OpenAI returns it for pure tool calls
 	}
 	choice := map[string]any{"index": 0, "message": msg, "finish_reason": finish}
 	if logprobs {

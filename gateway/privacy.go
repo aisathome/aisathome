@@ -245,7 +245,7 @@ func (r *redactor) restoreField(seen bool, tail, s string) string {
 }
 
 // bodyTextFields are the request fields whose strings a node sees.
-var bodyTextFields = []string{"messages", "tools", "stop", "response_format", "grammar", "json_schema", "chat_template_kwargs",
+var bodyTextFields = []string{"messages", "tools", "tool_choice", "stop", "response_format", "grammar", "json_schema", "chat_template_kwargs",
 	"reasoning_budget_message"}
 
 // redactBody replaces secrets in every string a node will see: all message fields

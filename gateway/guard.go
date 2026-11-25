@@ -1255,7 +1255,7 @@ func checkAssembled(ans map[string]any, req string, known, installers knownAddrs
 		cm, _ := ch.(map[string]any)
 		msg, _ := cm["message"].(map[string]any)
 		calls, _ := msg["tool_calls"].([]any)
-		if fc, ok := msg["function_call"].(map[string]any); ok { // assemble writes none; checked all the same
+		if fc, ok := msg["function_call"].(map[string]any); ok { // a legacy call (assemble)
 			calls = append(calls[:len(calls):len(calls)], map[string]any{"function": fc})
 		}
 		for _, c := range calls {

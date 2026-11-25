@@ -537,20 +537,40 @@ func TestOversizedChunkDropsNode(t *testing.T) {
 	r.waitNodes(t, 0)
 }
 
-func TestMalformedFrameDoesNotDropNode(t *testing.T) {
+// A frame that does not decode may have been a piece of the answer: the request it came during
+// fails (no answer with a gap ends as complete), but the node stays and serves the next one.
+func TestMalformedFrameFailsRequestNotNode(t *testing.T) {
 	r := newRigCfg(t, nil)
+	// Which bad frame the node sends with each answer (-1: none): an empty frame, garbage, and an
+	// envelope that does not decode but names the request.
+	var kind atomic.Int32
+	bad := func(id string) [][]byte {
+		return [][]byte{nil, []byte("{not json"), []byte(`{"type":"chunk","req_id":"` + id + `","active":"x"}`)}
+	}
 	rawNodeWith(t, r, "messy", "node-token", func(write func(protocol.Msg), raw func([]byte), m protocol.Msg) {
-		raw(nil)                 // empty frame
-		raw([]byte("{not json")) // garbage
+		if k := kind.Load(); k >= 0 {
+			write(chunkMsg(m.ReqID, "before "))
+			raw(bad(m.ReqID)[k])
+		}
 		write(chunkMsg(m.ReqID, "ok"))
 		write(protocol.Msg{Type: protocol.TypeDone, ReqID: m.ReqID, Usage: &protocol.Usage{PromptTokens: 3, CompletionTokens: 1}})
 	})
 	r.waitNodes(t, 1)
+	for k := range bad("") {
+		kind.Store(int32(k))
+		resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == 200 && (!strings.Contains(string(b), `"error"`) || strings.Contains(string(b), "[DONE]")) {
+			t.Fatalf("bad frame %d: an answer with an undecodable frame in it ended as complete: %s", k, b)
+		}
+	}
+	kind.Store(-1)
 	resp := r.do(t, "POST", "/v1/chat/completions", "user-key", chatBody)
-	io.Copy(io.Discard, resp.Body)
+	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 || r.g.NodeCount() != 1 {
-		t.Fatalf("status %d, nodes %d: a bad frame must be skipped, not drop the node", resp.StatusCode, r.g.NodeCount())
+	if resp.StatusCode != 200 || r.g.NodeCount() != 1 || !strings.Contains(string(b), "[DONE]") {
+		t.Fatalf("status %d, nodes %d: the node must stay and serve the next request: %s", resp.StatusCode, r.g.NodeCount(), b)
 	}
 }
 
