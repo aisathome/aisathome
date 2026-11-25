@@ -107,6 +107,16 @@ class Pause(unittest.TestCase):
         self.assertTrue(loop.gateway_interrupted(seg, tail + '{"type":"step_start","timestamp":1}\n', preempt_pause=True))
         self.assertFalse(loop.gateway_interrupted(seg, tail + '{"type":"step_start","timestamp":1}\n'))
 
+    def test_another_error_ends_a_preemption_s_wait(self):
+        """opencode's retry after a preemption fails with a 502 before any step starts: from there it is the
+        endpoint's ordinary trouble (resumed under max_resumes), not a preemption's wait."""
+        ev = (b'{"type":"step_start","timestamp":1000}\n'
+              b'{"type":"error","timestamp":2000,"error":{"message":"preempted for a person"}}\n'
+              b'{"type":"error","timestamp":10000,"error":{"type":"provider.internal","status":502,'
+              b'"message":"Bad Gateway"}}\n')
+        self.assertEqual(loop.preempt_stats(ev, 51.0), {"preempted": 1, "preempt_wait_s": 8.0})
+        self.assertFalse(loop.ended_in_preempted_step(ev.decode()))
+
     def test_both_gateway_formats_are_preemptions_to_the_loop(self):
         """The gateway's message is in its pre-stream 503 body and in its stream event alike: the loop and the
         step metrics recognise either as opencode writes it."""
@@ -222,7 +232,7 @@ class Rig:
                 kw["on_tick"](spec["waited"] + 2)          # the segment's first checkpoint
                 raise KeyboardInterrupt("the worker stopped")
             out = {"exit": 0 if spec.get("done") else 1, "timed_out": False, "suspend_interrupted": False,
-                   "active_s": spec.get("waited", 0) + 2, "wall_s": spec.get("waited", 0) + 2, "suspended_s": 0,
+                   "active_s": spec.get("active_s", spec.get("waited", 0) + 2), "wall_s": spec.get("waited", 0) + 2, "suspended_s": 0,
                    "model_s": 1, "open_step_s": 0}
             if not spec.get("done"):
                 out["gateway_interrupted"] = True
@@ -277,6 +287,21 @@ class RoundTime(unittest.TestCase):
                            {"done": True}], resume=True)
             self.assertEqual(rig.slept[3:], [loop.Timing.gateway_backoff_s])   # the 502 resumed (1 of 3)
             self.assertEqual((run["resumed"], run["exit"]), (2, 0))    # the stop and the 502
+
+    def test_a_resume_that_finds_the_round_s_budget_spent_ends_on_it_not_on_the_old_pause(self):
+        """The round spent its wait cap and, in the same segments, its awake budget (3 x 60 min): the resume
+        after the give-back runs no segment, and its run.json says the budget ended the round, not a pause
+        again (which would have the task given back and resumed for ever)."""
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), self.T)
+            run = rig.run([{"waited": 40}, {"waited": 40, "exhausted": True, "active_s": 11000}])
+            self.assertTrue(run["preempt_wait_exhausted"])
+            self.assertEqual(run["timed_out"], False)
+            run = rig.run([], resume=True)
+            self.assertEqual(len(rig.kw), 2)                       # no segment ran
+            self.assertEqual((run["preempt_wait_exhausted"], run["timed_out"], run["cap"]),
+                             (False, True, "awake ceiling"))
+            self.assertTrue(run["segments"][-1]["preempt_wait_exhausted"])     # the history is kept
 
     def test_a_segment_stopped_on_the_wait_cap_ends_the_session(self):
         with tempfile.TemporaryDirectory() as d:

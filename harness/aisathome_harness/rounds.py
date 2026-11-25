@@ -185,9 +185,13 @@ def run_rounds(r: Rounds) -> dict:
             continue
         n = evidence.round_of(rm)
         ident = evidence.run_identity(st, rm, raw)
-        if rm.get("preempt_wait_exhausted"):
-            # a pause, not the round's end: given back once, resumed after that (never checked or retried)
-            if st.get("paused") != ident:
+        paused = st.get("paused") or {}
+        stuck = paused != ident and {**paused, "run_finished_at": None} == {**ident, "run_finished_at": None}
+        if rm.get("preempt_wait_exhausted") and not stuck:
+            # a pause, not the round's end: given back once, resumed after that (never checked or retried).
+            # A resume after a pause that added no event made no progress: it is checked as it stands, never
+            # paused again (loop.run_session does not republish an earlier pause; this holds without it too)
+            if paused != ident:
                 st["paused"] = ident
                 evidence.save_rounds(raw, st)
                 say(f"round {n} waited for the endpoint as long as it may: pausing the task")

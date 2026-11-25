@@ -572,9 +572,9 @@ EVENT_TS = re.compile(rb'^\{"type":"(step_start|step_finish|error)","timestamp":
 
 def preempt_stats(data: bytes, end_s: float | None = None, until_s: float | None = None) -> dict:
     """A segment's preemptions (its events, `data`): {"preempted": n, "preempt_wait_s": s}, the wait being
-    the time from each preemption to the next step's start (its first streamed chunk), or to `end_s` (epoch
-    seconds) when none followed: what the session waited for the endpoint after it was preempted. With
-    `until_s`: as it stood at that time (later events left out, an open wait counted up to it)."""
+    the time from each preemption to the next step's start (its first streamed chunk) or the next other
+    error event, or to `end_s` (epoch seconds) when none followed: what the session waited for the endpoint
+    after it was preempted. With `until_s`: as it stood at that time (later events left out, an open wait counted up to it)."""
     n, wait, since = 0, 0.0, None
     if until_s is not None:
         end_s = until_s
@@ -589,7 +589,9 @@ def preempt_stats(data: bytes, end_s: float | None = None, until_s: float | None
             n += 1
             if since is None:
                 since = ts
-        elif kind == b"step_start" and since is not None:
+        elif since is not None and kind != b"step_finish":
+            # the next step's start ends the wait, and so does another error (a 502 on the retry): the
+            # time after that is the endpoint's ordinary trouble, not a preemption's
             wait += max(0.0, ts - since)
             since = None
     if since is not None and end_s is not None:
@@ -1146,6 +1148,8 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
           f"{T.awake_ceiling * wall_min} min awake) / {steps} steps"
           + (f" (resuming session {sid})" if resume else ""))
     resumes = interruptions(segments) if resume else 0
+    ran_from = len(segments)   # the segments before this call: their marks are history, not this run's end
+    spent = None               # the cap this call found spent before any further segment ("time", "awake ceiling")
     round_no = (fu_round or 0) + 1
     fired = bool((nudged or {}).get("fired"))
     nudge_at = s.first_edit_step if fu_round is None and (not fired or s.first_edit_again) else None
@@ -1182,6 +1186,7 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         model_left = wall_min * 60 - model_used_s(events, budget["events_offset"] if budget else ev_start, segments)
         left = T.awake_ceiling * wall_min * 60 - active_used
         if left <= 0 or model_left <= 0:
+            spent = "time" if model_left <= 0 else "awake ceiling"
             break
         ck = {"sid": sid, "t": 0.0}
         # where this segment's events begin and when it started: run.json keeps both, so the per-step
@@ -1311,10 +1316,10 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                 "active_s": round(active), "wall_s": round(sum(s_.get("wall_s", 0) for s_ in segments)),
                 "suspended_s": round(sum(s_.get("suspended_s", 0) for s_ in segments)),
                 "resumed": interruptions(segments), "segments": segments,
-                "timed_out": any(s_.get("timed_out") for s_ in segments),
+                "timed_out": any(s_.get("timed_out") for s_ in segments) or spent is not None,
                 # which cap ended it: "time" (the model's own time reached wall_cap_min) or
                 # "awake ceiling" (awake_ceiling x wall_cap_min awake); the step cap shows in `steps`
-                "cap": next((s_.get("cap", "time") for s_ in segments if s_.get("timed_out")), None),
+                "cap": next((s_.get("cap", "time") for s_ in segments if s_.get("timed_out")), spent),
                 "model_s": round(model_used_s(events, ev_start, segments)),
                 "events_start": ev_start, "awake_ceiling_min": T.awake_ceiling * wall_min,
                 "exit": segments[-1].get("exit") if segments else None, "session": sid,
@@ -1326,7 +1331,10 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                 **({"preempted": sum(s_.get("preempted", 0) for s_ in segments),
                     "preempt_wait_s": round(sum(s_.get("preempt_wait_s", 0) + s_.get("preempt_pause_s", 0)
                                                 for s_ in segments), 1),
-                    "preempt_wait_exhausted": bool(segments and segments[-1].get("preempt_wait_exhausted"))}
+                    # only a segment of this call spends the wait: a resume that ran none (its round's step,
+                    # time or awake budget spent) ends as that budget says, and is checked
+                    "preempt_wait_exhausted": bool(len(segments) > ran_from
+                                                   and segments[-1].get("preempt_wait_exhausted"))}
                    if T.preempt_wait_cap_s > 0 else {}),
                 "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     run_meta.update(event_stats(events))
