@@ -23,7 +23,7 @@ export const hero = {
 	pill: 'Non-commercial · Open source · Early experiment',
 	title: 'Open-weight AI on volunteers’ GPUs',
 	lead:
-		'Volunteer computing for open-weight LLMs, in the spirit of BOINC: people run an open model on their own GPUs at home, and you can use it for free, in a chat or through an OpenAI-compatible API. So that AI does not have to go through a handful of big companies.',
+		'People run an open-weight LLM on their own GPUs at home, like BOINC volunteer computing. You use it for free, in a chat or through an OpenAI-compatible API, so AI doesn’t have to go through a handful of big companies.',
 	privacyTitle: 'Hardened, not confidential',
 	privacyText: 'The volunteer whose GPU answers you can technically read the conversation.',
 	privacyLink: 'How your data is handled',
