@@ -23,8 +23,11 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"regexp"
 	"strings"
@@ -42,7 +45,8 @@ const (
 	ruleTextURL      = "unknown-address-in-text" // flagged only
 	// Streams no honest engine sends, built to make the guard and the client see different
 	// calls: tool-call pieces after the calls were completed and released, or keys the guard
-	// reads exactly while a client's decoder may match them in another case.
+	// reads exactly while a client's decoder may match them in another case, or a chunk the guard
+	// cannot decode or that carries calls in another shape than a client reads (whyBadChunk).
 	ruleAfterFinish = "tool-call-after-finish"
 	ruleOddKey      = "malformed-chunk"
 )
@@ -444,6 +448,7 @@ const (
 	whyTextURL     = "a web address in the answer's text that is not in the request"
 	whyAfterFinish = "tool-call pieces after the calls were complete"
 	whyOddKey      = "a stream key in an unusual case"
+	whyBadChunk    = "a stream chunk that is not one plain JSON object of the stream's shape"
 )
 
 // streamHit is the hit of a stream rule (guard.violation) in chunk, the node's chunk that broke it.
@@ -643,8 +648,12 @@ func argValues(args string) (vals map[string][]string, ok bool) {
 		if err != nil || d.Decode(&raw) != nil {
 			return nil, false
 		}
+		// Numbers as written: a number beyond a float64's range (1e400) is valid JSON, and it
+		// must not make the strings beside it in the same value invisible.
 		var v any
-		if key, isKey := k.(string); isKey && json.Unmarshal(raw, &v) == nil {
+		vd := json.NewDecoder(bytes.NewReader(raw))
+		vd.UseNumber()
+		if key, isKey := k.(string); isKey && vd.Decode(&v) == nil {
 			vals[key] = append(vals[key], stringsIn(v)...)
 		}
 	}
@@ -711,9 +720,10 @@ type guard struct {
 	// Stream rules (violation) still stop the answer.
 	flagOnly bool
 	calls    []*heldCall
-	flag     guardHit // a flag-only rule a checked tool call broke (ruleUnknownURL)
-	held     int      // bytes of arguments held
-	early    [][]byte // chunks before any content (the role): held, so that an answer made only of
+	legacy   *heldCall // a legacy "function_call" (one call, no index), held as tool calls are
+	flag     guardHit  // a flag-only rule a checked tool call broke (ruleUnknownURL)
+	held     int       // bytes of arguments held
+	early    [][]byte  // chunks before any content (the role): held, so that an answer made only of
 	// a flagged tool call has sent nothing yet (the client gets a clean 502)
 	begun  bool   // content went out: nothing more is held early
 	finish []byte // the chunk with finish_reason, held until the calls are released
@@ -724,6 +734,8 @@ type guard struct {
 	released  bool
 	violation string // a stream rule broken (ruleAfterFinish, ruleOddKey): stop the answer
 	violating []byte // the chunk that broke it, for the evidence
+	// violationWhy: the reason of a malformed chunk (whyOddKey, whyBadChunk); "" for the rule's own.
+	violationWhy string
 }
 
 type heldCall struct {
@@ -738,7 +750,13 @@ func newGuard(req string, known knownAddrs) *guard { return &guard{req: req, kno
 func flagOnlyNode(n *nodeConn) bool { return n.account != "" && !n.anon && n.pilot == "" }
 
 // violationHit is the hit of the stream rule broken.
-func (gd *guard) violationHit() guardHit { return streamHit(gd.violation, gd.violating) }
+func (gd *guard) violationHit() guardHit {
+	h := streamHit(gd.violation, gd.violating)
+	if gd.violationWhy != "" {
+		h.why = gd.violationWhy
+	}
+	return h
+}
 
 // filter takes one streamed chunk and returns what may go to the client now. Tool-call
 // deltas are taken out and held; a chunk with finish_reason is held while tool calls are
@@ -783,13 +801,20 @@ func emptyChunk(raw []byte) bool {
 	return true
 }
 
+// filter1 is filter without the early chunks. Every chunk is decoded once, strictly
+// (decodeChunk); one that does not decode, or whose tool-call pieces have another shape than a
+// client reads, is a stream rule broken (ruleOddKey): it never goes out as it came, so the guard
+// and the client cannot read different calls from it. A chunk the guard changed (it took tool
+// calls out) goes out as the gateway writes it; any other as the node wrote it, which decodes to
+// the same in every conforming decoder (no key twice, no key in another case, one object).
 func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
-	var c map[string]any
-	if json.Unmarshal(raw, &c) != nil {
-		return raw, false
+	c, err := decodeChunk(raw)
+	if err != nil || callKeyElsewhere(c) {
+		gd.violate(whyBadChunk, raw)
+		return nil, false
 	}
 	if oddKey(c) {
-		gd.violation, gd.violating = ruleOddKey, raw
+		gd.violate(whyOddKey, raw)
 		return nil, false
 	}
 	if gd.meta == nil {
@@ -800,24 +825,48 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 			}
 		}
 	}
-	choices, _ := c["choices"].([]any)
+	var choices []any
+	switch x := c["choices"].(type) {
+	case nil:
+	case []any:
+		choices = x
+	default:
+		gd.violate(whyBadChunk, raw)
+		return nil, false
+	}
 	changed, finished, empty := false, false, true
 	for _, ch := range choices {
-		cm, _ := ch.(map[string]any)
-		if cm == nil {
-			continue
+		cm, ok := ch.(map[string]any)
+		if !ok {
+			gd.violate(whyBadChunk, raw)
+			return nil, false
 		}
-		delta, _ := cm["delta"].(map[string]any)
+		var delta map[string]any
+		switch x := cm["delta"].(type) {
+		case nil:
+		case map[string]any:
+			delta = x
+		default:
+			gd.violate(whyBadChunk, raw)
+			return nil, false
+		}
 		if t, ok := delta["content"].(string); ok && gd.text.Len() < maxGuardText {
 			gd.text.WriteString(t)
 		}
-		if tcs, ok := delta["tool_calls"].([]any); ok {
-			if gd.released && len(tcs) > 0 {
+		for _, key := range []string{"tool_calls", "function_call"} {
+			v, has := delta[key]
+			if !has {
+				continue
+			}
+			if gd.released && pieces(v) > 0 {
 				gd.violation, gd.violating = ruleAfterFinish, raw
 				return nil, false
 			}
-			gd.hold(tcs)
-			delete(delta, "tool_calls")
+			if gd.holdCalls(key, v) != nil {
+				gd.violate(whyBadChunk, raw)
+				return nil, false
+			}
+			delete(delta, key)
 			changed = true
 		}
 		if f, _ := cm["finish_reason"].(string); f != "" {
@@ -832,7 +881,7 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 	if gd.held > maxHeldArgs {
 		return nil, true
 	}
-	if finished && len(gd.calls) > 0 {
+	if finished && gd.holding() {
 		gd.finish, _ = json.Marshal(c)
 		return nil, false
 	}
@@ -846,39 +895,238 @@ func (gd *guard) filter1(raw []byte) (out []byte, tooLarge bool) {
 	return out, false
 }
 
-func (gd *guard) hold(tcs []any) {
-	for _, t := range tcs {
-		tc, _ := t.(map[string]any)
-		if tc == nil {
+// violate records a malformed chunk (ruleOddKey) with why, the reason for the hold record.
+func (gd *guard) violate(why string, raw []byte) {
+	gd.violation, gd.violationWhy, gd.violating = ruleOddKey, why, raw
+}
+
+// holding reports tool calls held back, not yet released.
+func (gd *guard) holding() bool { return len(gd.calls) > 0 || gd.legacy != nil }
+
+// errChunk is a streamed chunk the guard cannot read as a client would (decodeChunk, holdCalls).
+var errChunk = errors.New("malformed chunk")
+
+// maxChunkDepth bounds the nesting of a streamed chunk (an honest one nests about six deep).
+const maxChunkDepth = 32
+
+// decodeChunk decodes a streamed chunk: exactly one JSON object, numbers as written (a number
+// beyond a float64's range, such as 1e400, is valid JSON that other decoders take), and no key
+// twice in one object (decoders differ in which one they keep). Anything else is errChunk.
+func decodeChunk(raw []byte) (map[string]any, error) {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	v, err := decodeValue(d, 0)
+	if err != nil {
+		return nil, errChunk
+	}
+	if _, err := d.Token(); err != io.EOF { // something after the object
+		return nil, errChunk
+	}
+	c, ok := v.(map[string]any)
+	if !ok {
+		return nil, errChunk
+	}
+	return c, nil
+}
+
+func decodeValue(d *json.Decoder, depth int) (any, error) {
+	if depth > maxChunkDepth {
+		return nil, errChunk
+	}
+	t, err := d.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch t {
+	case json.Delim('{'):
+		m := map[string]any{}
+		for d.More() {
+			kt, err := d.Token()
+			if err != nil {
+				return nil, err
+			}
+			k, _ := kt.(string)
+			if _, dup := m[k]; dup {
+				return nil, errChunk
+			}
+			if m[k], err = decodeValue(d, depth+1); err != nil {
+				return nil, err
+			}
+		}
+		_, err = d.Token() // '}'
+		return m, err
+	case json.Delim('['):
+		a := []any{}
+		for d.More() {
+			v, err := decodeValue(d, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			a = append(a, v)
+		}
+		_, err = d.Token() // ']'
+		return a, err
+	case json.Delim('}'), json.Delim(']'):
+		return nil, errChunk
+	}
+	return t, nil // a string, json.Number, bool or nil
+}
+
+// callKeys are the keys under which an answer carries tool calls: "tool_calls", and the legacy
+// "function_call" (one call), which OpenAI's clients still read.
+var callKeys = map[string]bool{"tool_calls": true, "function_call": true}
+
+// callKeyElsewhere reports a call key (callKeys) anywhere in a chunk but directly in a choice's
+// delta, where the guard holds them: in a "message", say, which a lenient client may read from a
+// stream too. No engine streams them anywhere else.
+func callKeyElsewhere(c map[string]any) bool {
+	for k, v := range c {
+		chs, isList := v.([]any)
+		if k != "choices" || !isList {
+			if callKeys[k] || hasCallKey(v) {
+				return true
+			}
 			continue
+		}
+		for _, ch := range chs {
+			cm, _ := ch.(map[string]any)
+			for ck, cv := range cm {
+				if d, ok := cv.(map[string]any); ck == "delta" && ok {
+					for dk, dv := range d {
+						if !callKeys[dk] && hasCallKey(dv) {
+							return true
+						}
+					}
+					continue
+				}
+				if callKeys[ck] || hasCallKey(cv) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// hasCallKey reports a call key (callKeys) anywhere in v.
+func hasCallKey(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			if callKeys[k] || hasCallKey(e) {
+				return true
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if hasCallKey(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pieces counts the tool-call pieces in a delta's call key: the list's entries, or 1 for a
+// legacy function_call.
+func pieces(v any) int {
+	switch x := v.(type) {
+	case []any:
+		return len(x)
+	case map[string]any:
+		return 1
+	}
+	return 0
+}
+
+// holdCalls holds the pieces of a delta's "tool_calls" (a list, each piece naming its call by
+// index) or "function_call" (the legacy single call, which has no index). errChunk: a piece of
+// another shape than the one a client reads (an index that is not a whole number from 0 to 255,
+// a name or arguments that are not a string): the pieces held so far no longer show the call.
+func (gd *guard) holdCalls(key string, v any) error {
+	if v == nil {
+		return nil
+	}
+	if key == "function_call" {
+		fn, ok := v.(map[string]any)
+		if !ok {
+			return errChunk
+		}
+		if gd.legacy == nil {
+			gd.legacy = &heldCall{}
+		}
+		return gd.holdFunction(gd.legacy, fn)
+	}
+	tcs, ok := v.([]any)
+	if !ok {
+		return errChunk
+	}
+	for _, t := range tcs {
+		tc, ok := t.(map[string]any)
+		if !ok {
+			return errChunk
 		}
 		i := 0
-		if f, ok := tc["index"].(float64); ok {
-			i = int(f)
+		if x := tc["index"]; x != nil {
+			num, _ := x.(json.Number)
+			n, err := num.Int64()
+			if err != nil || n < 0 || n > 255 {
+				return errChunk
+			}
+			i = int(n)
 		}
-		if i < 0 || i > 255 {
-			continue
+		id, okID := optString(tc, "id")
+		typ, okType := optString(tc, "type")
+		if !okID || !okType {
+			return errChunk
 		}
 		for len(gd.calls) <= i {
 			gd.calls = append(gd.calls, &heldCall{typ: "function"})
 		}
 		k := gd.calls[i]
-		if s, _ := tc["id"].(string); s != "" {
-			k.id = s
+		if id != "" {
+			k.id = id
 		}
-		if s, _ := tc["type"].(string); s != "" {
-			k.typ = s
+		if typ != "" {
+			k.typ = typ
 		}
-		if fn, _ := tc["function"].(map[string]any); fn != nil {
-			if s, _ := fn["name"].(string); s != "" {
-				k.name = s
+		switch fn := tc["function"].(type) {
+		case nil:
+		case map[string]any:
+			if err := gd.holdFunction(k, fn); err != nil {
+				return err
 			}
-			if s, _ := fn["arguments"].(string); s != "" {
-				k.args.WriteString(s)
-				gd.held += len(s)
-			}
+		default:
+			return errChunk
 		}
 	}
+	return nil
+}
+
+// holdFunction adds a piece's function name and arguments to the call k.
+func (gd *guard) holdFunction(k *heldCall, fn map[string]any) error {
+	name, okName := optString(fn, "name")
+	args, okArgs := optString(fn, "arguments")
+	if !okName || !okArgs {
+		return errChunk
+	}
+	if name != "" {
+		k.name = name
+	}
+	k.args.WriteString(args)
+	gd.held += len(args)
+	return nil
+}
+
+// optString is m[k] if it is a string or absent (""); ok is false for any other value.
+func optString(m map[string]any, k string) (s string, ok bool) {
+	switch v := m[k].(type) {
+	case nil:
+		return "", true
+	case string:
+		return v, true
+	}
+	return "", false
 }
 
 // check returns what the held tool calls break that blocks; hit.rule is "" if nothing. A rule
@@ -886,7 +1134,11 @@ func (gd *guard) hold(tcs []any) {
 // With flagOnly nothing blocks: the first blocking hit is kept for flagged instead.
 func (gd *guard) check() guardHit {
 	var official guardHit
-	for _, k := range gd.calls {
+	calls := gd.calls
+	if gd.legacy != nil {
+		calls = append(calls[:len(calls):len(calls)], gd.legacy)
+	}
+	for _, k := range calls {
 		h := checkCall(k.name, k.args.String(), gd.req, gd.known, gd.installers)
 		if !gd.stops(h) {
 			continue
@@ -940,25 +1192,33 @@ func (gd *guard) release() [][]byte {
 			tcs = append(tcs, map[string]any{"index": i, "id": k.id, "type": k.typ,
 				"function": map[string]any{"name": k.name, "arguments": k.args.String()}})
 		}
-		c := map[string]any{}
-		for k, v := range gd.meta {
-			c[k] = v
-		}
-		c["choices"] = []any{map[string]any{"index": 0, "delta": map[string]any{"tool_calls": tcs}, "finish_reason": nil}}
-		b, _ := json.Marshal(c)
-		out = append(out, b)
+		out = append(out, gd.chunkOf(map[string]any{"tool_calls": tcs}))
+	}
+	if k := gd.legacy; k != nil { // in the shape it came in: a client that reads it reads this one
+		out = append(out, gd.chunkOf(map[string]any{"function_call": map[string]any{"name": k.name, "arguments": k.args.String()}}))
 	}
 	if gd.finish != nil {
 		out = append(out, gd.finish)
 	}
-	gd.released = gd.released || len(gd.calls) > 0
-	gd.calls, gd.finish, gd.held = nil, nil, 0
+	gd.released = gd.released || gd.holding()
+	gd.calls, gd.legacy, gd.finish, gd.held = nil, nil, nil, 0
 	return out
+}
+
+// chunkOf is a chunk of the answer (its id, object, created and model) with one choice and delta.
+func (gd *guard) chunkOf(delta map[string]any) []byte {
+	c := map[string]any{}
+	for k, v := range gd.meta {
+		c[k] = v
+	}
+	c["choices"] = []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}
+	b, _ := json.Marshal(c)
+	return b
 }
 
 // streamKeys are the chunk keys the guard and the answer assembly read. encoding/json matches
 // struct fields case-insensitively, and clients may too, while the guard reads exact keys.
-var streamKeys = []string{"choices", "delta", "message", "tool_calls", "function", "arguments", "name",
+var streamKeys = []string{"choices", "delta", "message", "tool_calls", "function_call", "function", "arguments", "name",
 	"index", "id", "type", "content", "reasoning_content", "finish_reason", "role", "usage"}
 
 // oddKey reports a key anywhere in v that differs from a stream key only in case.
@@ -995,8 +1255,12 @@ func checkAssembled(ans map[string]any, req string, known, installers knownAddrs
 		cm, _ := ch.(map[string]any)
 		msg, _ := cm["message"].(map[string]any)
 		calls, _ := msg["tool_calls"].([]any)
+		if fc, ok := msg["function_call"].(map[string]any); ok { // assemble writes none; checked all the same
+			calls = append(calls[:len(calls):len(calls)], map[string]any{"function": fc})
+		}
 		for _, c := range calls {
-			fn, _ := c.(map[string]any)["function"].(map[string]any)
+			cm, _ := c.(map[string]any)
+			fn, _ := cm["function"].(map[string]any)
 			name, _ := fn["name"].(string)
 			args, _ := fn["arguments"].(string)
 			h := checkCall(name, args, req, known, installers)

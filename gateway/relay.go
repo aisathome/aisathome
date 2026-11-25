@@ -65,6 +65,7 @@ type relay struct {
 	mt        *meter // the gateway's own token counts, for credit
 	maxTokens int
 	maxChunks int
+	maxBytes  int // what the node may send in all (chunk data), streaming or not (maxCollected bounds a non-streaming answer further)
 	t0        time.Time
 	firstText time.Time      // the first chunk with generated text (pressure_node.go)
 	timings   *engineTimings // the engine's own timings, when its chunks carry them
@@ -108,11 +109,12 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 	// A node may not send more than it was asked for: bounds memory (non-streaming answers are
 	// collected) and work. About one token per chunk, with room for role and usage chunks.
 	rl.maxChunks = 2*rl.maxTokens + 256
+	rl.maxBytes = streamBudget(rl.maxChunks, nb["logprobs"] == true)
 	if req.red.restoring() {
 		rl.rest = newRestorer(req.red)
 	}
 
-	p := newPendingReq()
+	p := g.newPending(n)
 	n.mu.Lock()
 	n.pending[reqID] = p
 	if n.work == nil {
@@ -155,6 +157,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		// operator (the usage log has only metered attempts). No user, no request content.
 		g.log.Info("chat request", "req", reqID, "node", n.id, "ok", err == nil)
 		close(p.done)
+		p.finish() // what its queue still holds no longer counts
 		if rl.stopping {
 			g.awaitStopped(n, reqID, p, rl.free)
 			return
@@ -196,6 +199,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 			for err == nil {
 				select {
 				case m := <-p.ch:
+					p.took(m)
 					var done bool
 					if done, err = rl.onMsg(m); done {
 						return true, nil
@@ -208,6 +212,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 				err = errors.New("node disconnected")
 			}
 		case m := <-p.ch:
+			p.took(m)
 			stall.Reset(time.Duration(g.cfg.IdleTimeoutSec) * time.Second)
 			var done bool
 			if done, err = rl.onMsg(m); done {
@@ -489,7 +494,7 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		g.log.Warn("gateway answer buffers full", "node", rl.n.id)
 		return rl.fail("failed", "", errGatewayBusy) // not the node's fault: retried, not reported
 	}
-	if rl.chunks > rl.maxChunks || (!rl.req.clientStream && rl.collectedBytes > maxCollected) || overToken {
+	if rl.chunks > rl.maxChunks || rl.collectedBytes > rl.maxBytes || (!rl.req.clientStream && rl.collectedBytes > maxCollected) || overToken {
 		g.log.Warn("node sent more output than requested", "node", rl.n.id, "chunks", rl.chunks)
 		return rl.fail("failed", "the node sent more output than requested", errTooMuchOutput)
 	}
@@ -638,6 +643,29 @@ func (rl *relay) deliverEnd(released [][]byte, ans map[string]any) error {
 		}
 	}
 	return rl.writeSSE([]byte("[DONE]")) // also answers an empty stream properly
+}
+
+// A node's answer may hold at most streamPerChunk bytes per chunk it may send (maxChunks), 8 times
+// that with logprobs, plus streamBase, and never more than maxStreamed: a streamed answer is not
+// held whole, but without a bound a node could keep a client's connection and the gateway's relay
+// busy with as much as max_tokens allows at the largest chunk size. An honest chunk is a few hundred
+// bytes, a few KiB with 20 top logprobs.
+const (
+	streamPerChunk = 1 << 10
+	streamBase     = 1 << 20
+	maxStreamed    = 128 << 20
+)
+
+// streamBudget is the byte budget of an answer of at most maxChunks chunks.
+func streamBudget(maxChunks int, logprobs bool) int {
+	per := streamPerChunk
+	if logprobs {
+		per *= 8
+	}
+	if maxChunks <= 0 || maxChunks >= (maxStreamed-streamBase)/per {
+		return maxStreamed
+	}
+	return streamBase + maxChunks*per
 }
 
 // maxBufferedTotal bounds all non-streaming answers held at once, and maxBufferedPerToken

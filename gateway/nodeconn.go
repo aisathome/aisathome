@@ -7,11 +7,13 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aisathome/aisathome/protocol"
@@ -58,6 +60,7 @@ type nodeConn struct {
 	wmu         sync.Mutex // serialises writes
 	mu          sync.Mutex
 	pending     map[string]*pendingReq
+	queued      atomic.Int64        // bytes of its messages queued for its requests (pendingReq.take)
 	inflight    int                 // slots reserved by pick, freed once the node is finished with the request (relay.free); guarded by mu
 	projects    map[string]int      // of inflight, the science projects' requests (share cap); guarded by mu
 	work        map[string]nodeWork // the requests in flight, by id, for the operator's page (nodework.go); guarded by mu
@@ -89,6 +92,11 @@ type nodeConn struct {
 // request handler closes done when it stops listening, so delivery never blocks forever.
 // ended is closed when the node ends the request itself (done or error), also after the
 // handler stopped listening: after a cancel that is the node saying its engine has stopped.
+//
+// What its queue holds is counted against three budgets (take): the request's own, its node's
+// and the gateway's (maxQueuedPerReq, maxQueuedPerNode, maxQueuedTotal). A message that would
+// exceed one is not queued, and the request is given up on as one whose client is too slow:
+// its queue fills only while its relay does not take what the node sends.
 type pendingReq struct {
 	ch       chan protocol.Msg
 	done     chan struct{}
@@ -96,6 +104,11 @@ type pendingReq struct {
 	slowOnce sync.Once
 	ended    chan struct{}
 	endOnce  sync.Once
+
+	nodeQ, totalQ *atomic.Int64 // its node's and the gateway's queued bytes; nil: not counted (tests)
+	qmu           sync.Mutex
+	queued        int64 // bytes of its messages in ch; guarded by qmu
+	finished      bool  // its relay is gone: nothing more is counted; guarded by qmu
 }
 
 func newPendingReq() *pendingReq {
@@ -103,7 +116,80 @@ func newPendingReq() *pendingReq {
 		ended: make(chan struct{})}
 }
 
+// newPending is newPendingReq for a request on n, its queue counted against n's and the gateway's
+// budgets.
+func (g *Gateway) newPending(n *nodeConn) *pendingReq {
+	p := newPendingReq()
+	p.nodeQ, p.totalQ = &n.queued, &g.qbytes
+	return p
+}
+
 func (p *pendingReq) end() { p.endOnce.Do(func() { close(p.ended) }) }
+
+// Budgets for node messages waiting in request queues. An honest node's chunk is a few hundred
+// bytes (a few KiB with logprobs): a queue of 64 such is far below maxQueuedPerReq. Without them a
+// node could make each of its requests hold 64 frames of the largest size.
+const (
+	maxQueuedPerReq  = 1 << 20
+	maxQueuedPerNode = 4 << 20
+	maxQueuedTotal   = 64 << 20
+)
+
+// queuedSize is what a queued message counts: its variable parts and the envelope.
+func queuedSize(m protocol.Msg) int64 { return int64(len(m.Data) + len(m.Error) + len(m.Body) + 256) }
+
+// take counts size bytes against the budgets before a message is queued. queue is false if the
+// message must not be queued: the request ended, or a budget would be exceeded (over names it).
+func (p *pendingReq) take(size int64) (queue bool, over string) {
+	p.qmu.Lock()
+	defer p.qmu.Unlock()
+	switch {
+	case p.finished:
+		return false, ""
+	case p.queued+size > maxQueuedPerReq:
+		return false, "request"
+	case p.nodeQ != nil && p.nodeQ.Load()+size > maxQueuedPerNode:
+		return false, "node"
+	case p.totalQ != nil && p.totalQ.Load()+size > maxQueuedTotal:
+		return false, "gateway"
+	}
+	p.count(size)
+	return true, ""
+}
+
+// count adds n bytes (negative: frees them) to the request's queue and the budgets. Caller holds qmu.
+func (p *pendingReq) count(n int64) {
+	p.queued += n
+	if p.nodeQ != nil {
+		p.nodeQ.Add(n)
+	}
+	if p.totalQ != nil {
+		p.totalQ.Add(n)
+	}
+}
+
+// give frees size bytes: a message was taken off the queue, or could not be queued after all.
+func (p *pendingReq) give(size int64) {
+	p.qmu.Lock()
+	defer p.qmu.Unlock()
+	if !p.finished {
+		p.count(-size)
+	}
+}
+
+// took frees what m, taken off ch by the request's relay, counted.
+func (p *pendingReq) took(m protocol.Msg) { p.give(queuedSize(m)) }
+
+// finish frees what the queue still holds, once the relay stopped listening (after done is
+// closed): nothing is counted for the request after this.
+func (p *pendingReq) finish() {
+	p.qmu.Lock()
+	defer p.qmu.Unlock()
+	if !p.finished {
+		p.finished = true
+		p.count(-p.queued)
+	}
+}
 
 // deliver never blocks the node's shared reader: if this request's client is not keeping up,
 // the request is dropped rather than stalling the node's other requests and heartbeats.
@@ -113,14 +199,32 @@ func (p *pendingReq) end() { p.endOnce.Do(func() { close(p.ended) }) }
 // really stopped reading still holds the node for at most this long.
 const deliverGrace = 500 * time.Millisecond
 
-func (p *pendingReq) deliver(m protocol.Msg) {
+// deliver queues m for the request; over names the budget (take) that kept it out, "" if none.
+func (p *pendingReq) deliver(m protocol.Msg) (over string) {
+	select {
+	case <-p.done:
+		return ""
+	case <-p.slow: // already given up on: drop at once, never hold the node again
+		return ""
+	default:
+	}
+	size := queuedSize(m)
+	queue, over := p.take(size)
+	if !queue {
+		if over != "" {
+			p.slowOnce.Do(func() { close(p.slow) })
+		}
+		return over
+	}
 	select {
 	case p.ch <- m:
-		return
+		return ""
 	case <-p.done:
-		return
-	case <-p.slow: // already given up on: drop at once, never hold the node again
-		return
+		p.give(size)
+		return ""
+	case <-p.slow:
+		p.give(size)
+		return ""
 	default:
 	}
 	t := time.NewTimer(deliverGrace)
@@ -128,9 +232,12 @@ func (p *pendingReq) deliver(m protocol.Msg) {
 	select {
 	case p.ch <- m:
 	case <-p.done:
+		p.give(size)
 	case <-t.C:
+		p.give(size)
 		p.slowOnce.Do(func() { close(p.slow) })
 	}
+	return ""
 }
 
 func (n *nodeConn) send(ctx context.Context, m protocol.Msg) error {
@@ -177,12 +284,12 @@ func (g *Gateway) handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	c.SetReadLimit(4 << 20)
+	c.SetReadLimit(maxFrame)
 	ctx := r.Context()
 
 	var hello protocol.Msg
 	hctx, hcancel := context.WithTimeout(ctx, 10*time.Second) // a silent connection must not linger
-	err = readMsg(hctx, c, &hello)
+	err = readMsg(hctx, c, &hello, maxHelloFrame)
 	hcancel()
 	if err != nil || hello.Type != protocol.TypeHello {
 		c.Close(websocket.StatusPolicyViolation, "expected hello")
@@ -484,6 +591,12 @@ func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) error {
 			c.Close(websocket.StatusPolicyViolation, "chunk too large")
 			return nil
 		}
+		if len(b) > frameLimit(m.Type) {
+			g.log.Warn("node sent a frame too large for its type", "node", n.id, "type", cleanType(m.Type), "bytes", len(b))
+			c.Close(websocket.StatusPolicyViolation, "frame too large")
+			return nil
+		}
+		m = queuedMsg(m)
 		n.mu.Lock()
 		n.lastSeen = time.Now()
 		resumed := false
@@ -501,7 +614,10 @@ func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) error {
 			p.end()
 		}
 		if p != nil && (m.Type == protocol.TypeChunk || m.Type == protocol.TypeDone || m.Type == protocol.TypeError) {
-			p.deliver(m) // outside the lock: a slow client must not block other requests
+			// outside the lock: a slow client must not block other requests
+			if over := p.deliver(m); over != "" {
+				g.log.Warn("request queue budget exceeded; giving up on the request", "node", n.id, "req", m.ReqID, "budget", over)
+			}
 		}
 	}
 }
@@ -512,6 +628,63 @@ const maxCtx = 4 << 20
 // maxChunkBytes bounds one streamed chunk (a token or a few, plus JSON framing). Larger
 // frames are a malicious or broken node; they would let one request pin gigabytes.
 const maxChunkBytes = 64 << 10
+
+// Frame limits, by type, checked before anything is queued: a frame is a chunk's data and a small
+// envelope, or a few fields. maxFrame is the connection's read limit (no frame of any type is
+// larger: the connection is closed); a frame larger than its type's limit closes it too. An error
+// frame may be larger than the other control frames (older nodes passed an engine's error text
+// on), but only its first maxErrorText bytes are kept.
+const (
+	maxChunkFrame   = maxChunkBytes + 4<<10
+	maxFrame        = maxChunkFrame
+	maxHelloFrame   = 32 << 10 // 16 models of 8 roles fit in well under 10 KiB
+	maxErrorFrame   = 16 << 10
+	maxControlFrame = 4 << 10 // heartbeat, done (about 100 bytes) and any other type
+	maxErrorText    = 2 << 10
+)
+
+// frameLimit is the largest frame of type typ a node may send.
+func frameLimit(typ string) int {
+	switch typ {
+	case protocol.TypeChunk:
+		return maxChunkFrame
+	case protocol.TypeError:
+		return maxErrorFrame
+	}
+	return maxControlFrame
+}
+
+// queuedMsg is m with only what a request's relay reads of its type: a queued message holds no
+// more than its frame's useful part.
+func queuedMsg(m protocol.Msg) protocol.Msg {
+	q := protocol.Msg{Type: m.Type, ReqID: m.ReqID, Active: m.Active, Paused: m.Paused}
+	switch m.Type {
+	case protocol.TypeChunk:
+		q.Data = m.Data
+	case protocol.TypeDone:
+		q.Usage = m.Usage
+	case protocol.TypeError:
+		q.Error = m.Error
+		if len(q.Error) > maxErrorText {
+			q.Error = q.Error[:maxErrorText]
+		}
+	}
+	return q
+}
+
+// cleanType is a frame's type for the log: one of the protocol's, or "other".
+func cleanType(t string) string {
+	switch t {
+	case protocol.TypeHello, protocol.TypeHeartbeat, protocol.TypeChunk, protocol.TypeDone, protocol.TypeError:
+		return t
+	}
+	return "other"
+}
+
+// maxSlots bounds the slots a node may announce for a model. The reference node runs its engine
+// with one (node/setup EngineSlots), and an engine serves one or two requests per GPU at speed;
+// each slot is a request whose answer the gateway relays and buffers.
+const maxSlots = 8
 
 // connectionsLocked counts connected nodes using token. Caller holds g.mu.
 func (g *Gateway) connectionsLocked(token string) int {
@@ -533,7 +706,7 @@ func validHello(h protocol.Msg) string {
 		return "a node announces 1-16 models"
 	}
 	for _, m := range h.Models {
-		if m.Name == "" || len(m.Name) > 128 || len(m.Roles) > 8 || m.Slots < 1 || m.Slots > 64 || m.Ctx < 0 || m.Ctx > maxCtx {
+		if m.Name == "" || len(m.Name) > 128 || len(m.Roles) > 8 || m.Slots < 1 || m.Slots > maxSlots || m.Ctx < 0 || m.Ctx > maxCtx {
 			return "invalid model announcement"
 		}
 		for _, r := range m.Roles {
@@ -552,13 +725,19 @@ func cancelOnNode(n *nodeConn, reqID string) {
 	_ = n.send(ctx, protocol.Msg{Type: protocol.TypeCancel, ReqID: reqID})
 }
 
-func readMsg(ctx context.Context, c *websocket.Conn, m *protocol.Msg) error {
+// readMsg reads one frame of at most max bytes.
+func readMsg(ctx context.Context, c *websocket.Conn, m *protocol.Msg, max int) error {
 	_, b, err := c.Read(ctx)
 	if err != nil {
 		return err
 	}
+	if len(b) > max {
+		return errFrameTooLarge
+	}
 	return json.Unmarshal(b, m)
 }
+
+var errFrameTooLarge = errors.New("frame too large")
 
 // unsupportedReason is the close reason for a node whose protocol version the gateway does
 // not accept: what the volunteer should do, in at most 123 bytes.

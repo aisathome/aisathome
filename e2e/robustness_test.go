@@ -228,6 +228,14 @@ func TestGatewayGivesUpMidAnswer(t *testing.T) {
 					write(chunkMsg(id, "x"))
 				}
 			}},
+		// Few chunks, but each near the frame limit: more bytes than max_tokens 1 allows.
+		{"too many bytes", `{"model":"deep","stream":true,"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`,
+			"the node sent more output than requested", func(write func(protocol.Msg), id string) {
+				for i := 0; i < 40; i++ { // paced: a burst of such chunks would fill the request's queue budget first
+					write(chunkMsg(id, strings.Repeat("x", 40<<10)))
+					time.Sleep(25 * time.Millisecond)
+				}
+			}},
 		{"stalled", chatBody, "the node stopped responding", func(write func(protocol.Msg), id string) {
 			write(chunkMsg(id, "half an answer")) // and then nothing
 		}},

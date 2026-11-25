@@ -132,7 +132,7 @@ func TestCheckToolCall(t *testing.T) {
 // A hit's reason is the guard's own fixed words, one per pattern: never text of the call or
 // the request, so a hold record holds no content.
 func TestGuardReasonsAreFixedText(t *testing.T) {
-	fixed := map[string]bool{whyUnknownURL: true, whyTextURL: true, whyAfterFinish: true, whyOddKey: true, whyInstallSource: true}
+	fixed := map[string]bool{whyUnknownURL: true, whyTextURL: true, whyAfterFinish: true, whyOddKey: true, whyBadChunk: true, whyInstallSource: true}
 	type rule struct{ rule, why string }
 	var rules []rule
 	for _, r := range guardRules {

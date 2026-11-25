@@ -583,6 +583,16 @@ func TestGuardSeesTheCallTheClientGets(t *testing.T) {
 		{"key in upper case", []string{roleChunk,
 			strings.Replace(toolDelta("0", "c1", "bash", part1+`| sh"}`), `"tool_calls"`, `"TOOL_CALLS"`, 1),
 			finishTools, usageChunk}},
+		// Valid JSON that encoding/json cannot put in a float64 (other decoders take it).
+		{"number beyond a float64", []string{roleChunk,
+			strings.Replace(toolDelta("0", "c1", "bash", part1+`| sh"}`), `{"choices"`, `{"created":1e400,"choices"`, 1),
+			finishTools, usageChunk}},
+		{"legacy function_call", []string{roleChunk,
+			`{"choices":[{"index":0,"delta":{"function_call":{"name":"bash","arguments":` + jsonText(part1+`| sh"}`) + `}},"finish_reason":null}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"function_call"}]}`, usageChunk}},
+		{"key twice", []string{roleChunk,
+			strings.Replace(toolDelta("0", "c1", "bash", part1+`| sh"}`), `"tool_calls":`, `"tool_calls":null,"tool_calls":`, 1),
+			finishTools, usageChunk}},
 	}
 	for _, c := range cases {
 		for _, stream := range []bool{false, true} {
@@ -600,6 +610,8 @@ func TestGuardSeesTheCallTheClientGets(t *testing.T) {
 		}
 	}
 }
+
+func jsonText(s string) string { b, _ := json.Marshal(s); return string(b) }
 
 // An honest answer with tool calls still passes the guard, streaming or not.
 func TestGuardPassesHonestToolCalls(t *testing.T) {

@@ -67,8 +67,10 @@ func TestGuardEvidenceFragment(t *testing.T) {
 
 // addCall holds a complete bash call with args at index i, as a stream would.
 func addCall(gd *guard, i int, args string) {
-	gd.hold([]any{map[string]any{"index": float64(i), "id": fmt.Sprint("c", i), "type": "function",
-		"function": map[string]any{"name": "bash", "arguments": args}}})
+	if err := gd.holdCalls("tool_calls", []any{map[string]any{"index": json.Number(fmt.Sprint(i)), "id": fmt.Sprint("c", i), "type": "function",
+		"function": map[string]any{"name": "bash", "arguments": args}}}); err != nil {
+		panic(err)
+	}
 }
 
 func utf8Valid(s string) bool { return strings.ToValidUTF8(s, "\uFFFD") == s }

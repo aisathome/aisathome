@@ -96,9 +96,14 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{35}\b`),                                            // Google API key
 	regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}\b`),                                               // Hugging Face
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`), // JWT
-	regexp.MustCompile(`\b(?:ak|nt)-[A-Za-z0-9_\-]{40,}`),                                       // AIs@home API keys and node tokens
-	regexp.MustCompile(`\bnt-n-[0-9a-f]{8}\.[A-Za-z0-9_\-]{40,}`),                               // AIs@home account node tokens
-	regexp.MustCompile(`pc-[0-9a-f]{12}\.[A-Za-z0-9_\-]{40,}`),                                  // AIs@home pilot credentials, also glued to a word
+	// The credentials the gateway issues, each tested in TestIssuedCredentialsRedacted: API keys
+	// "ak-<secret>" (newAPIKey, KeysFile.Add); node tokens "nt-<node id>.<secret>" (newNodeToken) of
+	// an account's node ("n-<8 hex>") and of a node without an account ("a-<8 hex>", RegisterAnon);
+	// and pilot credentials "pc-<12 hex>.<secret>" (newPilotCredential). Those with an id are
+	// matched also glued to a word.
+	regexp.MustCompile(`\b(?:ak|nt)-[A-Za-z0-9_\-]{40,}`),
+	regexp.MustCompile(`nt-[an]-[0-9a-f]{8}\.[A-Za-z0-9_\-]{40,}`),
+	regexp.MustCompile(`pc-[0-9a-f]{12}\.[A-Za-z0-9_\-]{40,}`),
 	// Developer tokens that agents meet in .env files, CI configs and shell history. Each has a
 	// fixed marker and a long random part, so ordinary code does not match.
 	regexp.MustCompile(`\bgl(?:pat|dt|rt|ptt|soat)-[A-Za-z0-9_\-]{20,}` + // GitLab
@@ -263,8 +268,21 @@ func (r *redactor) redactValue(v any) any {
 			x[i] = r.redactValue(x[i])
 		}
 	case map[string]any:
+		// Keys too: a tool's JSON schema names its properties with keys, and a client can put
+		// anything there (an example credential as a property name, say).
+		var renamed map[string]string
 		for k := range x {
 			x[k] = r.redactValue(x[k])
+			if rk := r.redactText(k); rk != k {
+				if renamed == nil {
+					renamed = map[string]string{}
+				}
+				renamed[k] = rk
+			}
+		}
+		for k, rk := range renamed {
+			x[rk] = x[k]
+			delete(x, k)
 		}
 	}
 	return v

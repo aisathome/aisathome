@@ -103,6 +103,13 @@ pool for nodes without an account is full, closed, or the gateway has no model c
   has requests open, at most 90 s; with an engine without `/slots` it ends the request as
   soon as its HTTP request to the engine has ended. Nodes released before this rule (v0.1.0)
   send the `error` at once; they stay compatible.
+- **Limits:** a node announces 1 to 8 `slots` per model. A frame may be at most 68 KiB (a
+  `chunk`'s `data` at most 64 KiB), an `error` 16 KiB (only the first 2 KiB of its text are
+  kept), the `hello` 32 KiB, and any other frame 4 KiB; a larger frame closes the connection. A
+  request whose messages wait unread at the gateway beyond its budget (the client does not keep
+  up) is cancelled, and so is one whose answer exceeds the bytes its `max_tokens` allows. In an
+  answer the gateway checks (from any node but the requester's own), a chunk it cannot read as one
+  plain JSON object of the stream's shape (for example one that names a key twice) ends the answer.
 - **Pause:** a node whose last heartbeat said `paused: true` gets no new requests until a
   heartbeat says otherwise. A paused node answers any request that still reaches it (sent
   before the heartbeat arrived, or by a gateway that predates `paused`) with an `error`

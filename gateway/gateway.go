@@ -46,6 +46,7 @@ type Gateway struct {
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
 	sitestat siteStatsCache   // the site statistics file, for the funnel card (funnel.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
+	qbytes   atomic.Int64     // bytes of node messages queued for their requests, across all nodes (pendingReq)
 	bodies   atomic.Int64     // bytes reserved for request bodies, across all requests
 	bodyMu   sync.Mutex
 	bodyBy   map[string]int64 // bytes reserved for request bodies, per user; guarded by bodyMu
