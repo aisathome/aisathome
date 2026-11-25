@@ -381,9 +381,11 @@ func (g *Gateway) noteAnonSeen(n *nodeConn) {
 	if !n.anon {
 		return
 	}
-	if err := g.accounts.anonSeen(n.account, n.id, g.anonNow()); err != nil {
-		g.log.Warn("node without an account: last connection not recorded", "node", n.id, "err", err)
-	}
+	g.whileOpen(func() {
+		if err := g.accounts.anonSeen(n.account, n.id, g.anonNow()); err != nil {
+			g.log.Warn("node without an account: last connection not recorded", "node", n.id, "err", err)
+		}
+	})
 }
 
 // anonSeenAll writes the last-seen time of the connected nodes without an account, so that one connected

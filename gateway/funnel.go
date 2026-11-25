@@ -131,6 +131,25 @@ func (s *AccountStore) firstConnect(tokenHash string, now time.Time) error {
 	})
 }
 
+// whileOpen runs fn unless the gateway is closed, and keeps Close waiting until fn returns: for the
+// writes a node connection makes to the accounts file, whose goroutine can outlive Close.
+func (g *Gateway) whileOpen(fn func()) {
+	g.closeMu.RLock()
+	defer g.closeMu.RUnlock()
+	if !g.closed {
+		fn()
+	}
+}
+
+// noteFirstConnect records a connected account node's (or node without an account's) first connection.
+func (g *Gateway) noteFirstConnect(n *nodeConn) {
+	g.whileOpen(func() {
+		if err := g.accounts.firstConnect(keyHash(n.token), time.Now()); err != nil {
+			g.log.Warn("node's first connection not recorded", "node", n.id, "err", err)
+		}
+	})
+}
+
 // linkAnon deletes the identity of the node without an account claim, now linked to an account as
 // its node nodeID, and counts the link. The new node keeps the old one's Connected: the same machine
 // connecting under its new id is not a first connection.

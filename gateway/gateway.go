@@ -87,6 +87,11 @@ type Gateway struct {
 	stop          chan struct{}   // closed by Close: ends background work
 	stopOnce      sync.Once
 	bg            sync.WaitGroup
+	// closeMu: a node connection's writes to the accounts file (its first connection, a last-seen time)
+	// hold it for reading; Close takes it once, so it waits for those in flight and none starts after
+	// it (a connection's goroutine outlives the HTTP server's Close).
+	closeMu sync.RWMutex
+	closed  bool // guarded by closeMu
 
 	// connCfgs: the config's connectors (connector.go); replaced on reload.
 	connCfgs atomic.Pointer[connectorTable]
@@ -379,6 +384,9 @@ func (g *Gateway) every(d time.Duration, f func()) {
 // has stopped taking requests.
 func (g *Gateway) Close() error {
 	g.stopOnce.Do(func() { close(g.stop) })
+	g.closeMu.Lock()
+	g.closed = true
+	g.closeMu.Unlock()
 	g.bg.Wait()
 	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.glog.save(time.Now()), g.mc.save(), g.closeFiles())
 }
