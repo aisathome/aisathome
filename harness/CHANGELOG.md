@@ -10,14 +10,15 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 ### Added
 
 - A preemption can be a pause instead of a failure (off by default). `Timing.preempt_wait_cap_s`: a segment that
-  opencode ended inside a step after the endpoint preempted it (an aisathome gateway's `reason: preempted`, a
-  person's request took the node) is resumed after a backoff (15 s doubling to 60 s), without counting against
-  `max_resumes`, until the round has waited the cap in all; then the session ends with `preempt_wait_exhausted` in
-  run.json. Waits after preemptions do not count against the awake ceiling; run.json and each segment record
-  `preempted` and `preempt_wait_s`. `Recipe.hold_preempted` (`egress_forward.py --hold-preempted`): after a
-  preempted response the forwarder holds the next requests (5 s doubling to 60 s) so a retry is not preempted again
-  at once; such a forwarder is one of its own. `worker.Pause`: a child that waited as long as it may is
-  checkpointed and given back, as after a stop, not counted as a crash.
+  opencode ended inside a step after the endpoint preempted it (an aisathome gateway's preemption, before or during
+  the stream: a person's request took the node) is resumed after a backoff (15 s doubling to 60 s), without counting
+  against `max_resumes`, until the round has waited the cap in all; then the session ends with
+  `preempt_wait_exhausted` in run.json. Waits after preemptions do not count against the awake ceiling, nor against
+  a running segment's own awake timer; run.json and each segment record `preempted` and `preempt_wait_s`.
+  `Recipe.hold_preempted` (`egress_forward.py --hold-preempted`): after a preempted response (the gateway's 503 with
+  `"code":"preempted"` or its stream's `"reason":"preempted"` event) the forwarder holds the next requests (5 s
+  doubling to 60 s) so a retry is not preempted again at once; such a forwarder is one of its own. `worker.Pause`: a
+  child that waited as long as it may is checkpointed and given back, as after a stop, not counted as a crash.
 
 ### Fixed
 
