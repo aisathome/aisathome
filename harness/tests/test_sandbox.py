@@ -202,6 +202,17 @@ class Networks(unittest.TestCase):
         k1.write_text("rotated-secret-key\n")
         self.assertNotEqual(sandbox.forwarder_for("https://gw.example/v1", str(k1)), old)
 
+    def test_a_forwarder_that_holds_after_preemptions_is_one_of_its_own(self):
+        n = sandbox.ensure_session_network("p/H")
+        sandbox.ensure_egress("https://gw.example/v1", "img", n)
+        sandbox.ensure_egress("https://gw.example/v1", "img", n, hold_preempted=True)
+        plain = self.d.containers[sandbox.forwarder_for("https://gw.example/v1")]["argv"]
+        held = self.d.containers[sandbox.forwarder_for("https://gw.example/v1", hold_preempted=True)]["argv"]
+        self.assertNotIn("--hold-preempted", plain)
+        self.assertIn("--hold-preempted", held)
+        self.assertNotEqual(sandbox.forwarder_for("https://gw.example/v1"),
+                            sandbox.forwarder_for("https://gw.example/v1", hold_preempted=True))
+
     def test_model_url_is_plain_http_to_the_forwarder(self):
         self.assertEqual(sandbox.model_url("https://api.example.org/v1"), "http://api.example.org/v1")
         self.assertEqual(sandbox.model_url("https://api.example.org:8443/x/v1/"), "http://api.example.org/x/v1")

@@ -23,6 +23,12 @@ def run(spec: dict) -> dict:
         raise RuntimeError("boom in the task")
     if mode == "give_back":
         raise W.GiveBack("its checkpoint is unreadable here")
+    if mode == "pause":
+        if spec.get("progress") and Path(spec["progress"]).exists():
+            return {"outcome": "ok", "resumed": True, "worker": spec.get("worker")}
+        if spec.get("progress"):
+            Path(spec["progress"]).write_text("started\n")
+        raise W.Pause("waited 120 min for the endpoint (preempted)")
     busy = Path(spec["busy"]).read_text().strip() if spec.get("busy") and Path(spec["busy"]).exists() else None
     prog = Path(spec["progress"]) if spec.get("progress") else None
     if prog and prog.exists():
