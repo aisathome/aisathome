@@ -77,6 +77,20 @@ is the current one; before it, Tau Ceti (finished, at its maintainers' request).
 is in [`harness/`](harness/README.md); every project and its results:
 [aisathome.org/science](https://aisathome.org/science/).
 
+## Run the agent harness
+
+The harness runs any OpenAI-compatible endpoint as an agent in a sandbox and checks what it wrote; a
+Lean example runs end to end on a CPU with a small model in Docker, no GPU and no account:
+
+```bash
+git clone --depth 1 --branch harness-v0.3.0 https://github.com/aisathome/aisathome
+python3.12 -m venv .venv && . .venv/bin/activate && pip install ./aisathome/harness
+cp -r aisathome/harness/examples/lean lean-example && cd lean-example
+```
+
+then Lean (elan), the sandbox image, an endpoint and one command:
+[harness/README.md, "Run one task"](harness/README.md#run-one-task).
+
 ## Repository
 
 | Path | What |
