@@ -196,7 +196,8 @@ tier_model() {
 # them in one step of the big one, so the node writes faster; the output distribution is the
 # model's own. MTP by default (spec_default); on only for the big tier, with free memory for the
 # draft model, and on a llama.cpp build new enough for the mode, else the node runs without it
-# (pick_spec says why). The Windows node keeps it off unless node.json's engine asks for it. The Windows node has the same table in Go (node/setup/speculation.go); drift_test.go
+# (pick_spec says why). The Windows node keeps it off unless node.json's engine asks for it, and
+# has the same table in Go (node/setup/speculation.go); drift_test.go
 # runs these spec_* functions and fails until both agree. Change both together.
 #   mtp      Qwen3.8's multi-token-prediction head (Unsloth's sidecar, the model's revision), 2
 #            drafted tokens a step; decode x1.8 on long agent steps, +2.5 GB (RTX 3090, 2026-11-12).
@@ -562,10 +563,12 @@ check_model_file() {
 # ---- end of tier -----------------------------------------------------------------------------
 
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
-work="" token_aside=0 node_was_on=0 park_token=0
+work="" token_aside=0 node_was_on=0 park_token=0 dl_pid=""
 # on_exit: removes the work folder, and puts an installed token back if the install stopped before
 # its link step (token_aside=1: set_aside_before_link, restore_unlinked).
-on_exit() { [[ -z "$work" ]] || rm -rf "$work"; [[ $token_aside = 0 ]] || restore_unlinked "$conf"; }
+# A download running in the background (fetch_model) ends with the installer (Ctrl+C included: a
+# background job ignores SIGINT).
+on_exit() { [[ -z "$dl_pid" ]] || kill "$dl_pid" 2>/dev/null; [[ -z "$work" ]] || rm -rf "$work"; [[ $token_aside = 0 ]] || restore_unlinked "$conf"; }
 trap on_exit EXIT
 workdir() { [[ -n "$work" ]] || work="$(mktemp -d)"; }
 
@@ -852,9 +855,10 @@ fetch_model() {
       rc=0
       curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 --retry-delay 5 \
         --connect-timeout 30 --speed-limit 10000 --speed-time 60 -C - -o "$part" "$model_url" &
-      pid=$!
+      pid=$! dl_pid=$!
       download_progress "$part" "$model_size" "${dest##*/}" "$pid"
       wait "$pid" || rc=$?
+      dl_pid=""
       download_progress_end "$part" "$model_size" "${dest##*/}" "$rc"
       [[ $rc -ne 0 ]] || break
       case $rc in
