@@ -14,6 +14,11 @@ scored. A follow-up that made no tool call never ran: a tooling problem, not a v
 it runs again once like an infrastructure round (trial 4's C12 lost its last round to one), and a second
 one ends the task not scored (`unscored: "no_tool_calls"` in `final`).
 
+A session that waited for the endpoint as long as it may after preemptions (`preempt_wait_exhausted` in
+run.json, loop.Timing.preempt_wait_cap_s) has not finished its round: it is neither checked nor retried.
+The engine notes the pause in rounds.json and calls `Rounds.pause` (by default it raises worker.Pause, for
+the worker to give the task back); the next call resumes the session.
+
 `run_rounds` is idempotent: its state is <raw>/rounds.json (evidence.py), and the same call continues
 after a stop at any point. Standard library only.
 """
@@ -122,6 +127,8 @@ class Rounds:
     followup(msg)    a fix round: continue the session with this message
     check(rm, n)     the verdict on round n as a record: {"outcome", "unscored", ...} (run.json is `rm`)
     feedback(rec, n, total) -> str | None    the next round's message; None: not fixable, stop
+    pause(rm)        the session waited for the endpoint as long as it may (`preempt_wait_exhausted`):
+                     give the task back (default: raise worker.Pause); if it returns, the session resumes
     """
     raw: Path
     fix_rounds: int
@@ -138,7 +145,14 @@ class Rounds:
     probe: Callable[[], bool] | None = None          # is the endpoint up?
     room: Callable[[], None] | None = None           # wait for room (a queue's courtesy) before a fix round
     wait: Callable[[Callable[[], bool]], bool] = wait_for_gateway
+    pause: Callable[[dict], None] | None = None
     label: str = ""
+
+
+def give_back(rm: dict):
+    """Rounds.pause's default: the worker gives the task back and keeps its checkpoint (worker.Pause)."""
+    from .worker import Pause
+    raise Pause(f"waited {rm.get('preempt_wait_s', 0) / 60:.0f} min for the endpoint after preemptions")
 
 
 def run_rounds(r: Rounds) -> dict:
@@ -171,6 +185,16 @@ def run_rounds(r: Rounds) -> dict:
             continue
         n = evidence.round_of(rm)
         ident = evidence.run_identity(st, rm, raw)
+        if rm.get("preempt_wait_exhausted"):
+            # a pause, not the round's end: given back once, resumed after that (never checked or retried)
+            if st.get("paused") != ident:
+                st["paused"] = ident
+                evidence.save_rounds(raw, st)
+                say(f"round {n} waited for the endpoint as long as it may: pausing the task")
+                (r.pause or give_back)(rm)
+            say(f"round {n} was paused for the endpoint; resuming it")
+            r.resume()
+            continue
         rec = next((x for x in st["rounds"] if x["round"] == n and all(x.get(k) == v for k, v in ident.items())), None)
         if rec is None:
             rec = {**r.check(rm, n), **ident}
