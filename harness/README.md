@@ -59,9 +59,9 @@ makes this affordable on one GPU.
 
 **What is not in this repository yet:** the prove2me adapter itself (its prompts and playbooks
 beyond the generic one in `lean/playbooks/`, the choice of lemmas, the scheduling of outline and
-hole tasks, the submission client) and the sandbox image. So you can read and test every piece above
-and run your own Lean tasks with it (below), but not rerun a prove2me trial from this repository
-alone.
+hole tasks, the submission client) and its sandbox image with Mathlib. So you can read and test every
+piece above and run your own Lean tasks with it (below, with a worked example), but not rerun a prove2me
+trial from this repository alone.
 
 ## What it does
 
@@ -139,44 +139,96 @@ the cloud's instance metadata service; the sandbox's own network has no route ou
 
 ## Run one task
 
-You need Python 3.12, Docker, an image with opencode, python3, CA certificates and your project's
-toolchain, and an endpoint: its base URL (e.g. `https://api.example.org/v1`), a model name, and a file
-holding the API key. The key file is mounted only into the egress forwarder's container, which runs as
-your user (so a key file only you can read works) and adds the key to each request; it never enters the
-model's container and is never written to logs or config.
+You need Linux, Python 3.12, Docker (your user in the `docker` group), a sandbox image with opencode v2,
+python3 and CA certificates, and an OpenAI-compatible endpoint: its base URL, a model name and, if it
+wants one, a file holding the API key. The key file is mounted only into the egress forwarder's
+container, which runs as your user (so a key file only you can read works) and adds the key to each
+request; it never enters the model's container and is never written to logs or config.
 
-1. Copy `template/adapter.py` and `template/PROJECT.md` into your project's own folder and fill in the
-   steps: what the tasks are, how to set up the tree, the prompt, the check. The endpoint must be a host
-   name, not an IP address (the sandbox reaches it through its forwarder, by name).
-2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@main#subdirectory=harness"`
-   or put this folder on `PYTHONPATH`. The last tag, `harness-v0.2.0`, comes before the kernel replay,
-   the jail and the queue worker; see [CHANGELOG.md](CHANGELOG.md).
-3. Run a task:
+### The Lean example, step by step
+
+[`examples/lean/`](examples/lean/) is the template filled in for one Lean exercise (`a + b = b + a` on
+`Nat`, Lean's core only, no Mathlib): the model works on it in the sandbox, and the check builds its file
+in a jail and checks the theorem's type and axioms. These steps were run as written on a Linux desktop,
+CPU only: with the 0.5B model below every step runs and the model proves nothing (expected at that size);
+a scripted endpoint that makes the one edit gets `proved`.
+
+1. **The harness and the example**, at a release tag:
 
    ```bash
-   python3 adapter.py run example-1 --base-url https://api.example.org/v1 --key-file ~/.config/endpoint.key --model MODEL
+   git clone --depth 1 --branch harness-v0.3.0 https://github.com/aisathome/aisathome
+   python3.12 -m venv .venv && . .venv/bin/activate
+   pip install ./aisathome/harness
+   cp -r aisathome/harness/examples/lean lean-example && cd lean-example
    ```
 
-   The evidence lands in `raw/example-1/`; `rounds.json` ends with the task's final verdict.
+2. **Lean**: elan, and the toolchain the exercise names, installed now. The sandbox and the jail mount
+   elan read-only and have no network, so elan can neither download a toolchain there nor write its
+   settings file (hence a default toolchain, which writes it):
 
-### Against your own llama-server
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+     | sh -s -- -y --no-modify-path --default-toolchain leanprover/lean4:v4.33.1
+   ~/.elan/bin/elan toolchain install leanprover/lean4:v4.33.1
+   ```
 
-No gateway is needed: any OpenAI-compatible endpoint works, a `llama-server` of your own too (the
-command above serves opencode's tool calls as it is; older llama.cpp builds needed `--jinja`). Three
-things differ from a plain `localhost` setup:
+3. **The sandbox image** (opencode v2.4.1, checked against its release's SHA256SUMS):
 
-- **A host name, not `127.0.0.1` or `localhost`.** The sandbox reaches the endpoint only through its
-  forwarder, by name, so IP addresses and loopback names are refused. The name must resolve inside a
-  Docker container: a LAN DNS name of the GPU machine works; an `/etc/hosts` line on the host does
-  not (containers do not see it).
-- **Reachable from Docker's bridge.** `llama-server --host 127.0.0.1` is not; listen on the LAN
-  address (or `0.0.0.0`), and then set a key: `llama-server --api-key-file ~/.config/llama.key ...`
-  and the same file as `--key-file` here (the forwarder adds it; the model's container never sees it).
-- **`--base-url http://gpu-box.lan:8000/v1 --model qwen3.8-27b`** (plain HTTP is fine; the model
-  name is llama-server's `--alias`).
+   ```bash
+   docker build -t harness-lean-example .
+   ```
 
-For Lean, the image needs opencode, python3 and CA certificates only: `LeanToolchain` mounts elan and
-the Mathlib package set from the host (read-only) into the sandbox and into the jail.
+4. **An endpoint.** Here a small model in llama.cpp's server image, on the Docker network the harness
+   uses for its egress forwarders, under the host name `tiny-llm` (the network is created the way the
+   harness creates it, so it can go first):
+
+   ```bash
+   docker network create -o com.docker.network.bridge.name=hsb-egress0 --label harness.network=1 harness-egress-out
+   mkdir -p models && curl -fL -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+     https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+   docker run -d --name tiny-llm --network harness-egress-out --network-alias tiny-llm \
+     -v "$PWD/models:/models:ro" ghcr.io/ggml-org/llama.cpp:server-b12723 \
+     -m /models/qwen2.5-0.5b-instruct-q4_k_m.gguf --alias tiny --host 0.0.0.0 --port 8080 -c 32768 --jinja
+   ```
+
+   For real work, the same with your model on a GPU: the `server-cuda-b12723` image, `--gpus all`, and
+   the flags of the command at the top of this page.
+
+5. **Run the task:**
+
+   ```bash
+   LEAN_EXAMPLE_ELAN=~/.elan python3 adapter.py run hello --base-url http://tiny-llm:8080/v1 --model tiny
+   ```
+
+   It prints each round and ends with the verdict (`proved`, `compile_error`, `refused`,
+   `check_failed` or `no_solution`). The evidence lands in `raw/hello/` (`rounds.json` ends with the
+   final verdict; `events.jsonl` is everything opencode did); the working files in `work/hello/`. A
+   finished task does not run again: `python3 adapter.py clean hello` removes both (overlayfs leaves
+   root-owned folders in `work/` that a plain `rm -rf` cannot remove).
+
+**How the sandbox reaches the endpoint.** Only through its forwarder, by host name, so a base URL with
+an IP address or `localhost` is refused. The forwarder resolves the name through Docker's DNS on
+`harness-egress-out`: another container on that network with a `--network-alias` (as above), or a name
+in DNS, as the network's own runners reach `https://api.aisathome.org/v1`. A `llama-server` started on
+the host with `--host 127.0.0.1` cannot be reached; run it in a container as above. Plain HTTP is fine.
+If anyone else can reach the endpoint, give it a key (`llama-server --api-key-file key.txt`, mounted
+into its container) and pass the same file with `--key-file`.
+
+**opencode.** The harness runs `opencode run --standalone --auto --format json`, which needs opencode
+v2; the v1.x releases lack `--standalone`. v2.4 also offers tools the harness does not turn off
+(`execute`, which runs JavaScript, `question`, `subagent`, image and video generation); a small model
+may call `execute` with a shell command instead of `shell`.
+
+### Your own project
+
+1. Copy `template/adapter.py` and `template/PROJECT.md` (or `examples/lean/`) into your project's own
+   folder and fill in the steps: what the tasks are, how to set up the tree, the prompt, the check.
+   A Lean project needs a `lake-manifest.json` in the tree and in the check's workspace (Lake cannot
+   write one in a jail) and `import Lean` in its check file (for `lean.axioms.check_command`).
+2. Make the package importable: `pip install "aisathome-harness @ git+https://github.com/aisathome/aisathome@harness-v0.3.0#subdirectory=harness"`
+   or put this folder on `PYTHONPATH`.
+3. Run a task as in step 5, with your endpoint: `--base-url https://api.example.org/v1 --key-file
+   ~/.config/endpoint.key --model MODEL`.
 
 The template keeps the project in `local-only` status: it never submits. Set `status: active` and
 record the agreement only when the project's maintainers have said yes to agent contributions.

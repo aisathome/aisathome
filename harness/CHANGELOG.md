@@ -7,8 +7,18 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
+The first tag since 0.2.0. It holds the entries below, the queue worker (the next section) and the fixes
+listed as 0.2.1 and 0.2.2, which were never tagged on their own.
+
 ### Added
 
+- **A Lean example that runs end to end** (`examples/lean/`): the template filled in for one exercise in
+  Lean's core, with a sandbox image (`Dockerfile`: opencode v2.4.1, checked against its release's
+  SHA256SUMS), a check that builds the model's file in a jail and checks the theorem's type and axioms, and
+  a `clean` command. The README's "Run one task" walks through it with a small model in llama.cpp's server
+  image, CPU only, and says how the sandbox reaches an endpoint of your own.
 - A preemption can be a pause instead of a failure (off by default). `Timing.preempt_wait_cap_s`: a segment that
   opencode ended inside a step the endpoint preempted (an aisathome gateway's preemption, before or during the
   stream: a person's request took the node; not a later error after opencode recovered from one) is resumed after a
@@ -72,7 +82,7 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   run in the sandbox could use a gateway project key for the project's task, campaign and result API under
   the same `/v1`. A request target with a query string is now refused too.
 
-## [0.3.0] - unreleased
+## 0.3.0: the queue worker (not tagged on its own)
 
 The execution side of a stateless queue worker, taken out of prove2me's worker (which now uses it, with the
 same behaviour).
@@ -123,7 +133,7 @@ same behaviour).
 
 - `Worker.run_forever` installs its signal handlers only on the main thread (it can run in a thread in tests).
 
-## [0.2.2] - unreleased
+## [0.2.2] - not tagged (part of 0.3.0)
 
 ### Fixed
 
@@ -138,7 +148,7 @@ same behaviour).
   (`∀ (p : ∀ (h : Nat), h = h), …`, `(p : (h : Nat) → h = h)`) still binds. Best effort: a local bound anywhere
   in the declaration shadows the name in all of it.
 
-## [0.2.1] - unreleased
+## [0.2.1] - not tagged (part of 0.3.0)
 
 Three fixes in `lean.holes`, found on prove2me's trial-5 outlines and in a review.
 
