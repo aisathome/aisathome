@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+# The installer-to-agent handoff, end to end: the real install.sh installs the real aisathome-node
+# (built from this repository) against stand-in gateways, and the tests check what it leaves in
+# /etc/aisathome-node, what the node service was told to do and in which order, which gateway got
+# which token, and that the agent itself accepts what was written. Scenarios: a fresh install that
+# links, a same-gateway upgrade, a gateway change, a token without its issuer record, an interrupted
+# link, the moved-aside token given again, --anonymous over a token, a dry run, and the node binary
+# override.
+#
+# It runs in a sandbox that cannot touch this machine's node: a user namespace (root inside, this
+# user outside), a private mount namespace (/etc is a copy made of links with its own empty
+# aisathome-node and systemd/system folders; /opt, /var/lib, /usr/local and /run are empty tmpfs)
+# and a network namespace with only its own loopback (the stand-in llama-server on 127.0.0.1:8000
+# is not this machine's). systemctl, nvidia-smi and the account commands are stand-ins first on PATH.
+#
+#   ./node/packaging/linux/handoff_test.sh
+#
+# Needs Go (to build aisathome-node), unshare (util-linux), ip (iproute2) and python3. Without
+# unprivileged user namespaces it skips, unless AISATHOME_HANDOFF_REQUIRED=1 (CI).
+#
+# SPDX-License-Identifier: Apache-2.0
+set -uo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+repo="$(cd "$here/../../.." && pwd)"
+
+if [[ "${AISATHOME_HANDOFF_NS:-}" != 1 ]]; then
+  skip() {
+    if [[ "${AISATHOME_HANDOFF_REQUIRED:-}" = 1 ]]; then echo "handoff_test: $1" >&2; exit 1; fi
+    echo "handoff_test: skipped: $1"; exit 0
+  }
+  command -v unshare >/dev/null || skip "no unshare"
+  command -v ip >/dev/null || skip "no ip (iproute2)"
+  command -v go >/dev/null || skip "no go"
+  unshare -rmn true 2>/dev/null || skip "no unprivileged user namespaces (unshare -rmn)"
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  mkdir -p "$tmp/bin"
+  (cd "$repo" && CGO_ENABLED=0 go build -o "$tmp/bin/aisathome-node" ./node/cmd/aisathome-node) || { echo "handoff_test: go build failed" >&2; exit 1; }
+  AISATHOME_HANDOFF_NS=1 HANDOFF_TMP="$tmp" unshare -rmn --propagation private bash "$0"
+  exit $?
+fi
+
+# ---- Inside the sandbox ------------------------------------------------------------------------
+tmp="$HANDOFF_TMP"
+exec </dev/null # no test reads this terminal by accident: input is given per call
+die() { echo "handoff_test: $1" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "not root inside the user namespace"
+ip link set lo up || die "cannot bring up the sandbox's loopback"
+[[ -z "$(ip route show default 2>/dev/null)" ]] || die "the sandbox has a default route"
+
+# /etc: links to this machine's entries (through a read-only view of the real /etc at $tmp/host-etc),
+# except aisathome-node (absent: a fresh machine) and systemd (its own, with an empty system/ for the
+# units). Then the folders the installer writes.
+sandbox_etc() {
+  local h="$tmp/host-etc" e="$tmp/etc" f
+  mkdir -p "$h"; mount --bind /etc "$h" && mount -o remount,bind,ro "$h" || die "cannot mount a view of /etc"
+  rm -rf "$e"; mkdir -p "$e/systemd/system"
+  for f in "$h"/* "$h"/.[!.]*; do
+    [[ -e "$f" || -L "$f" ]] || continue
+    case "${f##*/}" in aisathome-node|systemd) continue ;; esac
+    ln -s "$f" "$e/${f##*/}"
+  done
+  for f in "$h"/systemd/*; do [[ "${f##*/}" = system ]] || ln -s "$f" "$e/systemd/${f##*/}"; done
+  touch "$e/.handoff-sandbox"
+}
+sandbox_etc
+mount --bind "$tmp/etc" /etc || die "cannot mount the sandbox's /etc"
+for d in /opt /var/lib /usr/local /run; do mount -t tmpfs tmpfs "$d" || die "cannot mount a tmpfs on $d"; done
+[[ -e /etc/.handoff-sandbox && ! -e /etc/aisathome-node && -z "$(ls -A /etc/systemd/system)" && ! -e /run/dbus ]] ||
+  die "the sandbox's folders are not in place"
+
+# ---- Stand-ins -----------------------------------------------------------------------------------
+st="$tmp/state"; mkdir -p "$st" "$tmp/stubs"
+# systemctl: the node's and llama's ActiveState in $st/<unit>.state. stop/start/restart of the node are
+# logged with where the token and the gateway are at that moment. A start of the node honours the unit's
+# ConditionFileNotEmpty=token.env.
+cat > "$tmp/stubs/systemctl" <<'SH'
+#!/usr/bin/env bash
+st="$HANDOFF_STATE"
+gw() { python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("gateway_url",""))
+except Exception: print("")' /etc/aisathome-node/node.json; }
+where() { echo "token.env:$([[ -s /etc/aisathome-node/token.env ]] && echo here || echo none) gw:$(gw)"; }
+args=(); for a in "$@"; do [[ $a == --* ]] || args+=("$a"); done
+set -- "${args[@]}"
+case "$1" in
+  show)
+    unit="${*: -1}"
+    case "$*" in
+      *MainPID*) echo 0 ;;
+      *ActiveState*) cat "$st/$unit.state" 2>/dev/null || echo inactive ;;
+      *LoadState*) [[ -e /etc/systemd/system/$unit.service ]] && echo loaded || echo not-found ;;
+    esac ;;
+  stop|start|restart)
+    verb="$1"; shift
+    for u in "$@"; do
+      u="${u%.service}"
+      case "$u" in aisathome-node|aisathome-llama) ;; *) continue ;; esac
+      [[ $u = aisathome-node ]] && echo "$verb $u $(where)" >> "$st/systemctl.log"
+      if [[ $verb = stop ]]; then echo inactive > "$st/$u.state"
+      elif [[ $u = aisathome-node && ! -s /etc/aisathome-node/token.env ]]; then echo inactive > "$st/$u.state"
+      else echo active > "$st/$u.state"; fi
+    done ;;
+  is-enabled|is-active) exit 1 ;;
+  status) echo "status $2: $(cat "$st/$2.state" 2>/dev/null)" ;;
+  *) ;;
+esac
+exit 0
+SH
+cat > "$tmp/stubs/nvidia-smi" <<'SH'
+#!/bin/sh
+case "$*" in
+  *memory.total*) echo "0, GPU-fake-0, NVIDIA GeForce RTX 3090, 24576, 24126" ;;
+  *query-compute-apps*) ;;
+  *) echo "0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6" ;;
+esac
+SH
+printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/journalctl"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/useradd"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/chown"
+# install -o/-g: the aisathome user does not exist in the sandbox; everything else is the real install.
+cat > "$tmp/stubs/install" <<'SH'
+#!/usr/bin/env bash
+a=(); while [[ $# -gt 0 ]]; do case "$1" in -o|-g) shift 2 ;; *) a+=("$1"); shift ;; esac; done
+exec /usr/bin/install "${a[@]}"
+SH
+chmod +x "$tmp/stubs/"*
+export PATH="$tmp/stubs:$PATH" HANDOFF_STATE="$st"
+
+# A llama.cpp build whose llama-server says it is build 1 (so no speculation), and the model.
+mkdir -p "$tmp/llama/bin"
+printf '#!/bin/sh\necho "version: 1 (0000000)" >&2\n' > "$tmp/llama/bin/llama-server"; chmod +x "$tmp/llama/bin/llama-server"
+head -c 200000 /dev/urandom > "$tmp/model.gguf"
+model_env=(MODEL_URL="file://$tmp/model.gguf" MODEL_SHA256="$(sha256sum "$tmp/model.gguf" | cut -d' ' -f1)" MODEL_SIZE=200000)
+
+# The stand-in llama-server on 127.0.0.1:8000: /health, and the speed test (tokens/s from $st/tps).
+cat > "$tmp/llama.py" <<'PY'
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def reply(self, obj):
+        b = json.dumps(obj).encode(); self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+    def do_GET(self): self.reply({"status": "ok"})
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/tokenize": return self.reply({"tokens": list(range(len(body["content"].split())))})
+        tps = float(open(os.path.join(sys.argv[1], "tps")).read())
+        self.reply({"timings": {"prompt_n": len(body["prompt"]), "prompt_ms": 1000.0, "predicted_per_second": tps}})
+HTTPServer(("127.0.0.1", 8000), H).serve_forever()
+PY
+echo 30 > "$st/tps"
+python3 "$tmp/llama.py" "$st" & llama_pid=$!
+
+# Stand-in gateways: link (approved or denied, from $st/<name>.link), register, and /v1/node/self. Each
+# issues tokens of its own (nt-n-<tag>0001.<43 x tag letter>) and logs every request with its token.
+cat > "$tmp/gateway.py" <<'PY'
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+name, port, st = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+tag = {"a": "a", "b": "b"}[name]
+issued = {"nt-n-0000" + tag + "001." + tag.upper() * 43: ("n-0000" + tag + "001", False),
+          "nt-a-0000" + tag + "0a1." + tag.upper() * 43: ("a-0000" + tag + "0a1", True)}
+def mode(what):
+    try: return open(os.path.join(st, name + "." + what)).read().strip()
+    except OSError: return ""
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def reply(self, code, obj):
+        b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+    def log(self):
+        tok = self.headers.get("Authorization", "").removeprefix("Bearer ")
+        open(os.path.join(st, name + ".log"), "a").write(f"{self.command} {self.path} {tok or '-'}\n")
+        return tok
+    def do_GET(self):
+        tok = self.log()
+        if self.path != "/v1/node/self": return self.reply(404, {})
+        if tok not in issued or mode("revoked") == tok: return self.reply(401, {"error": {"message": "unknown node token"}})
+        nid, anon = issued[tok]
+        self.reply(200, {"node_id": nid, "anonymous": anon, "state": "held" if anon and mode("held") else "admitted"})
+    def do_POST(self):
+        self.log()
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        base = f"http://127.0.0.1:{port}/link"
+        if self.path == "/v1/node/link":
+            return self.reply(200, {"device_code": "dev", "user_code": "ABCD-EFGH", "verification_uri": base,
+                                    "verification_uri_complete": base + "?code=ABCD-EFGH", "expires_in": 60, "interval": 1})
+        if self.path == "/v1/node/link/poll":
+            if mode("link") == "deny": return self.reply(200, {"status": "denied"})
+            return self.reply(200, {"status": "approved", "token": "nt-n-0000" + tag + "001." + tag.upper() * 43, "node_id": "n-0000" + tag + "001"})
+        if self.path == "/v1/node/register":
+            return self.reply(200, {"token": "nt-a-0000" + tag + "0a1." + tag.upper() * 43, "node_id": "a-0000" + tag + "0a1"})
+        self.reply(404, {})
+HTTPServer(("127.0.0.1", port), H).serve_forever()
+PY
+python3 "$tmp/gateway.py" a 18081 "$st" & gwa_pid=$!
+python3 "$tmp/gateway.py" b 18082 "$st" & gwb_pid=$!
+trap 'kill $llama_pid $gwa_pid $gwb_pid 2>/dev/null' EXIT
+gwa=ws://127.0.0.1:18081/v1/node/connect gwb=ws://127.0.0.1:18082/v1/node/connect
+toka="nt-n-0000a001.$(printf 'A%.0s' {1..43})" tokb="nt-n-0000b001.$(printf 'B%.0s' {1..43})"
+anona="nt-a-0000a0a1.$(printf 'A%.0s' {1..43})" anonb="nt-a-0000b0a1.$(printf 'B%.0s' {1..43})"
+for _ in $(seq 50); do
+  curl -fs -o /dev/null http://127.0.0.1:8000/health && curl -s -o /dev/null http://127.0.0.1:18081/ && curl -s -o /dev/null http://127.0.0.1:18082/ && break
+  sleep 0.1
+done
+
+# ---- Helpers -------------------------------------------------------------------------------------
+fails=0 out="" code=0
+fail() { echo "FAIL: $1"; echo "$out" | sed 's/^/    /' | tail -n 40; fails=$((fails + 1)); }
+has() { [[ "$out" == *"$2"* ]] || fail "$1: missing '$2'"; }
+lacks() { [[ "$out" != *"$2"* ]] || fail "$1: unexpected '$2'"; }
+want_code() { [[ $code -eq $2 ]] || fail "$1: exit $code, want $2"; }
+conf=/etc/aisathome-node
+node_bin="$tmp/bin/aisathome-node"
+
+# fresh: a machine with nothing installed.
+fresh() {
+  rm -rf "$conf" /opt/aisathome-node /var/lib/aisathome-node /etc/systemd/system/aisathome-* /usr/local/bin/aisathome-node
+  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held
+  echo 30 > "$st/tps"; : > "$st/systemctl.log"
+}
+# seed <gateway> [<token> [<record>|-]]: an earlier install: node.json for gateway (node id box-1),
+# token.env with the token recorded for <record> (default: gateway; "-": no record), units in place and
+# the node running.
+seed() {
+  fresh
+  mkdir -p "$conf" /etc/systemd/system
+  printf '{\n  "node_id": "box-1",\n  "gateway_url": "%s",\n  "upstream": "http://127.0.0.1:8000"\n}\n' "$1" > "$conf/node.json"
+  if [[ -n "${2:-}" ]]; then
+    if [[ "${3:-}" = - ]]; then printf 'AISATHOME_NODE_TOKEN=%s\n' "$2" > "$conf/token.env"
+    else printf 'AISATHOME_NODE_TOKEN=%s\nAISATHOME_TOKEN_GATEWAY=%s\n' "$2" "${3:-$1}" > "$conf/token.env"; fi
+    chmod 600 "$conf/token.env"
+  fi
+  : > /etc/systemd/system/aisathome-node.service
+  echo active > "$st/aisathome-node.state"; echo active > "$st/aisathome-llama.state"
+}
+# inst [VAR=value...] -- <args>: runs the installer (stdin: none unless the caller redirects it).
+inst() {
+  local env=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do env+=("$1"); shift; done
+  shift
+  out="$(env "${env[@]}" "${model_env[@]}" UI_PORT=off bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "${NODE_BIN:-$node_bin}" "$@" 2>&1)"; code=$?
+}
+# tty_inst <input> -- <args>: the same at a terminal (a pty from script(1)), typing <input>.
+tty_inst() {
+  local input="$1"; shift 2
+  local cmd; printf -v cmd '%q ' env "${model_env[@]}" UI_PORT=off bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "$node_bin" "$@"
+  out="$( { sleep 2; printf '%s' "$input"; sleep 2; } | script -qefc "$cmd" /dev/null 2>&1)"; code=$?
+}
+tok_env() { cat "$conf/token.env" 2>/dev/null; }
+json() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$1" "$2" 2>/dev/null; }
+# token_is <name> <token> <gateway>: token.env holds exactly that token, recorded for that gateway, and
+# node.json names that gateway.
+token_is() {
+  [[ "$(tok_env)" = "AISATHOME_NODE_TOKEN=$2"$'\n'"AISATHOME_TOKEN_GATEWAY=$3" ]] || fail "$1: token.env is $(tok_env | sed 's/=nt-\(.\{6\}\).*/=nt-\1…/' | tr '\n' ' ')"
+  [[ "$(json "$conf/node.json" gateway_url)" = "$3" ]] || fail "$1: node.json names $(json "$conf/node.json" gateway_url), want $3"
+  [[ "$(stat -c %a "$conf/token.env" 2>/dev/null)" = 600 ]] || fail "$1: token.env mode $(stat -c %a "$conf/token.env" 2>/dev/null)"
+}
+# never_sent <name> <gateway name> <token>: that gateway never saw the token.
+never_sent() { ! grep -qF -- "$3" "$st/$2.log" 2>/dev/null || fail "$1: gateway $2 got a token it did not issue"; }
+# agent_accepts <name>: the agent starts with the installed files (still running after 2 s, no config
+# error), as its systemd unit runs it.
+agent_accepts() {
+  local log="$tmp/agent.log" rc
+  ( set -a; . "$conf/token.env"; set +a; AISATHOME_UI_PORT=off timeout 2 "$node_bin" -config "$conf/node.json" ) > "$log" 2>&1; rc=$?
+  [[ $rc -eq 124 ]] || { out="$(cat "$log")"; fail "$1: the agent did not start with the installed files (exit $rc)"; }
+}
+# node_json_canonical <name>: lower-case keys, no token in node.json.
+node_json_canonical() {
+  python3 - "$conf/node.json" <<'PY' || fail "$1: node.json is not canonical: $(cat "$conf/node.json")"
+import json, sys
+def walk(v):
+    if isinstance(v, dict):
+        for k, x in v.items():
+            assert k == k.lower(), k
+            walk(x)
+    elif isinstance(v, list):
+        for x in v: walk(x)
+c = json.load(open(sys.argv[1])); walk(c); assert "token" not in c
+PY
+}
+
+# ---- Scenarios -----------------------------------------------------------------------------------
+
+# A fresh install that links: the token from the link, recorded for its gateway; the node starts.
+fresh
+inst -- --link --gateway-url "$gwa" --node-id fresh-1
+want_code "fresh --link" 0; has "fresh --link" "Linked: this is node n-0000a001"
+token_is "fresh --link" "$toka" "$gwa"; node_json_canonical "fresh --link"
+[[ "$(json "$conf/node.json" node_id)" = n-0000a001 ]] || fail "fresh --link: node id $(json "$conf/node.json" node_id)"
+[[ "$(tail -n 1 "$st/systemctl.log")" = "restart aisathome-node token.env:here gw:$gwa" ]] || fail "fresh --link: node not started: $(cat "$st/systemctl.log")"
+agent_accepts "fresh --link"
+
+# A same-gateway upgrade keeps the token and gateway (--keep-token, as scripts update); the node id is the
+# one the token carries.
+seed "$gwa" "$toka"
+inst -- --keep-token
+want_code "upgrade --keep-token" 0; has "upgrade --keep-token" "keeping the installed one"
+token_is "upgrade --keep-token" "$toka" "$gwa"; node_json_canonical "upgrade --keep-token"
+[[ "$(json "$conf/node.json" node_id)" = n-0000a001 ]] || fail "upgrade --keep-token: node id $(json "$conf/node.json" node_id)"
+[[ ! -e "$conf/token.env.unlinked" ]] || fail "upgrade --keep-token: a token was moved aside"
+agent_accepts "upgrade --keep-token"
+# The same at a terminal with Enter.
+seed "$gwa" "$toka"
+tty_inst $'\r' --
+want_code "upgrade, Enter at a terminal" 0; token_is "upgrade, Enter at a terminal" "$toka" "$gwa"
+
+# An installed node.json with two keys equal in any case: refused, as the agent refuses it.
+seed "$gwa" "$toka"
+printf '{"node_id": "box-1", "gateway_url": "%s", "Gateway_URL": "%s"}\n' "$gwa" "$gwb" > "$conf/node.json"
+inst -- --keep-token
+want_code "case-variant keys" 2; has "case-variant keys" "appears more than once"
+[[ ! -s "$st/systemctl.log" && ! -e /opt/aisathome-node ]] || fail "case-variant keys: something was installed"
+
+# A script that pipes a new token for the same gateway: it replaces the installed one.
+seed "$gwa" "$toka"
+inst -- <<<"$anona"
+want_code "piped token" 0; token_is "piped token" "$anona" "$gwa"
+
+# A gateway change with --link: the old token is moved aside and the node stopped before the new
+# node.json; the new gateway never sees the old token; the link's token is recorded for the new gateway.
+seed "$gwa" "$toka"
+inst -- --link --gateway-url "$gwb"
+want_code "gateway change --link" 0
+token_is "gateway change --link" "$tokb" "$gwb"
+[[ "$(tok_env_unlinked=$(cat "$conf/token.env.unlinked" 2>/dev/null); echo "$tok_env_unlinked")" == *"$toka"* ]] || fail "gateway change --link: the old token is not in token.env.unlinked"
+[[ "$(json "$conf/node.json.unlinked" gateway_url)" = "$gwa" ]] || fail "gateway change --link: no copy of the old node.json"
+[[ "$(head -n 1 "$st/systemctl.log")" = "stop aisathome-node token.env:none gw:$gwa" ]] || fail "gateway change --link: not stopped before the new node.json: $(cat "$st/systemctl.log")"
+never_sent "gateway change --link" b "$toka"
+agent_accepts "gateway change --link"
+# --keep-token over a gateway change: refused before anything changes.
+seed "$gwa" "$toka"
+inst -- --keep-token --gateway-url "$gwb"
+want_code "gateway change --keep-token" 2; has "gateway change --keep-token" "never sent there"
+token_is "gateway change --keep-token" "$toka" "$gwa"; [[ ! -s "$st/systemctl.log" ]] || fail "gateway change --keep-token: the node was touched"
+
+# A token without its issuer record (v0.5 and older): never kept, never sent.
+seed "$gwa" "$toka" -
+inst -- --keep-token
+want_code "no record --keep-token" 2; has "no record --keep-token" "unrecorded gateway"
+[[ "$(tok_env)" = "AISATHOME_NODE_TOKEN=$toka" && ! -e "$conf/token.env.unlinked" ]] || fail "no record --keep-token: token.env changed"
+seed "$gwa" "$toka" -
+inst -- --link
+want_code "no record --link" 0; token_is "no record --link" "$toka" "$gwa"
+[[ -s "$conf/token.env.unlinked" ]] || fail "no record --link: the unrecorded token was not moved aside"
+grep -q "^GET /v1/node/self" "$st/a.log" 2>/dev/null && fail "no record --link: the gateway was asked about the unrecorded token"
+
+# An interrupted link (denied) on a gateway change: the old token stays aside, the node stays off.
+seed "$gwa" "$toka"; echo deny > "$st/b.link"
+inst -- --link --gateway-url "$gwb"
+want_code "denied link" 1; has "denied link" "Not linked yet, so the node is off"
+[[ ! -e "$conf/token.env" && -s "$conf/token.env.unlinked" ]] || fail "denied link: the old token came back beside the new gateway"
+[[ "$(json "$conf/node.json" gateway_url)" = "$gwb" ]] || fail "denied link: node.json $(json "$conf/node.json" gateway_url)"
+never_sent "denied link" b "$toka"
+# Stopped before its link step (the speed test fails): the old token and node.json come back, and the
+# node that was on starts again.
+seed "$gwa" "$toka"; echo 1 > "$st/tps"
+inst MIN_DECODE_TPS=20 -- --link --gateway-url "$gwb"
+want_code "stopped before linking" 1; has "stopped before linking" "the installed token and its node.json are back"
+token_is "stopped before linking" "$toka" "$gwa"
+[[ ! -e "$conf/token.env.unlinked" ]] || fail "stopped before linking: token.env.unlinked left"
+[[ "$(tail -n 1 "$st/systemctl.log")" = "start aisathome-node token.env:here gw:$gwa" ]] || fail "stopped before linking: the node did not start again: $(cat "$st/systemctl.log")"
+
+# The moved-aside token given again (an upgrade script piping it over a gateway change): refused.
+seed "$gwa" "$toka"
+inst -- --gateway-url "$gwb" <<<"$toka "
+want_code "moved-aside token piped" 2; has "moved-aside token piped" "never sent there"
+token_is "moved-aside token piped" "$toka" "$gwa"; never_sent "moved-aside token piped" b "$toka"
+
+# --anonymous over a token recorded for this gateway: kept (the gateway still knows it), node updated.
+seed "$gwa" "$toka"
+inst -- --anonymous
+want_code "--anonymous over a token" 0; has "--anonymous over a token" "keeps its token"
+token_is "--anonymous over a token" "$toka" "$gwa"
+grep -q "^POST /v1/node/register" "$st/a.log" 2>/dev/null && fail "--anonymous over a token: registered anyway"
+# ... one the gateway no longer knows: moved aside, and the node registers.
+seed "$gwa" "$toka"; echo "$toka" > "$st/a.revoked"
+inst -- --anonymous
+want_code "--anonymous over a revoked token" 0; has "--anonymous over a revoked token" "no longer knows"
+token_is "--anonymous over a revoked token" "$anona" "$gwa"
+# ... one recorded for another gateway: never asked about or sent there; the node registers.
+seed "$gwb" "$toka" "$gwa"
+inst -- --anonymous
+want_code "--anonymous, another gateway's token" 0; token_is "--anonymous, another gateway's token" "$anonb" "$gwb"
+never_sent "--anonymous, another gateway's token" b "$toka"
+
+# A dry run changes nothing and says what the install would do.
+seed "$gwa" "$toka"; cp -a "$conf" "$tmp/conf.before"
+inst -- --dry-run --anonymous
+want_code "dry run" 0; has "dry run" '"gateway_url": "'"$gwa"'"'; has "dry run" "account: none"
+diff -r "$conf" "$tmp/conf.before" >/dev/null || fail "dry run: /etc/aisathome-node changed"
+[[ ! -s "$st/systemctl.log" && ! -e /opt/aisathome-node ]] || fail "dry run: something was installed"
+rm -rf "$tmp/conf.before"
+
+# The node binary override: the given one is what is installed and what links.
+fresh
+inst -- --link --gateway-url "$gwa"
+want_code "--node-bin" 0
+cmp -s /opt/aisathome-node/bin/aisathome-node "$node_bin" || fail "--node-bin: another binary was installed"
+
+if [[ $fails -gt 0 ]]; then echo "handoff: $fails failure(s)"; exit 1; fi
+echo "handoff: all tests passed"
