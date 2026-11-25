@@ -98,7 +98,7 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 		// The work unit's one result, if the transitioner made it; ordered so that a later result
 		// (there should be none) wins.
 		rows, err := m.db.QueryContext(ctx, `SELECT w.name, w.error_mask, r.id, r.server_state, r.outcome,
-				r.validate_state, r.userid, r.hostid, r.teamid
+				r.validate_state, r.userid, r.hostid, r.teamid, r.opaque
 			FROM workunit w LEFT JOIN result r ON r.workunitid = w.id
 			WHERE w.batch = ? AND w.name IN (?`+strings.Repeat(",?", n-1)+`)
 			ORDER BY w.id, r.id`, args...)
@@ -109,7 +109,8 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 			var name string
 			var j Job
 			var rid, state, outcome, vstate, user, host, team sql.NullInt64
-			if err := rows.Scan(&name, &j.ErrorMask, &rid, &state, &outcome, &vstate, &user, &host, &team); err != nil {
+			var opaque sql.NullFloat64
+			if err := rows.Scan(&name, &j.ErrorMask, &rid, &state, &outcome, &vstate, &user, &host, &team, &opaque); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -117,6 +118,7 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 				j.HasResult = true
 				j.ServerState, j.Outcome, j.ValidateState = int(state.Int64), int(outcome.Int64), int(vstate.Int64)
 				j.User, j.Host, j.Team = user.Int64, host.Int64, team.Int64
+				j.Claimed = opaque.Float64 != 0
 			}
 			out[name] = j
 		}
@@ -136,9 +138,10 @@ func (m *MySQL) AwaitingCredit(ctx context.Context, afterID int64, limit int) ([
 		return nil, err
 	}
 	// result's (appid, server_state) index narrows it to the app's finished results. Inconclusive
-	// too: the pilot validator never leaves a result there (the bridge runs it only once the file
-	// is written), but a pass of any other validator would.
-	rows, err := m.db.QueryContext(ctx, `SELECT r.id, w.id, w.name FROM result r JOIN workunit w ON w.id = r.workunitid
+	// too, so that the bridge can report it: the pilot validator never leaves a result there (the
+	// bridge runs it only once the file is written), but a pass of another validator would, and
+	// BOINC does not ask again for an inconclusive result.
+	rows, err := m.db.QueryContext(ctx, `SELECT r.id, w.id, w.name, r.validate_state, r.opaque FROM result r JOIN workunit w ON w.id = r.workunitid
 		WHERE r.appid = ? AND r.server_state = ? AND r.outcome = ? AND r.validate_state IN (?, ?) AND w.batch = ?
 			AND r.id > ?
 		ORDER BY r.id LIMIT ?`, app, ServerStateOver, OutcomeSuccess, ValidateStateInit, ValidateStateInconclusive,
@@ -150,9 +153,11 @@ func (m *MySQL) AwaitingCredit(ctx context.Context, afterID int64, limit int) ([
 	var out []Awaiting
 	for rows.Next() {
 		var a Awaiting
-		if err := rows.Scan(&a.ResultID, &a.WorkunitID, &a.Name); err != nil {
+		var opaque float64
+		if err := rows.Scan(&a.ResultID, &a.WorkunitID, &a.Name, &a.ValidateState, &opaque); err != nil {
 			return nil, err
 		}
+		a.Claimed = opaque != 0
 		out = append(out, a)
 	}
 	return out, rows.Err()

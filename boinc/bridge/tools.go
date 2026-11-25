@@ -80,16 +80,27 @@ func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string)
 
 // Validate runs the validator on one work unit and ends (boinc/validator: --one_pass_N_WU 1 and
 // the id range keep it to that work unit, and it leaves one without its credit file as it was).
-func (t *ExecTools) Validate(ctx context.Context, workunitID int64) error {
+func (t *ExecTools) Validate(ctx context.Context, workunitID int64) (string, error) {
 	if t.cfg.Validator == "" {
-		return errors.New("no validator configured")
+		return "", errors.New("no validator configured")
 	}
 	id := strconv.FormatInt(workunitID, 10)
-	_, err := t.run(ctx, t.cfg.Validator, "--app", t.cfg.App, "--one_pass", "--one_pass_N_WU", "1",
-		"--min_wu_id", id, "--max_wu_id", id, "--post_assigned_credit",
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(t.cfg.ProjectDir, t.cfg.Validator), "--app", t.cfg.App,
+		"--one_pass", "--one_pass_N_WU", "1", "--min_wu_id", id, "--max_wu_id", id, "--post_assigned_credit",
 		"--max_granted_credit", strconv.FormatFloat(t.cfg.MaxGrantedCredit, 'f', -1, 64),
 		"--credit_dir", t.cfg.CreditDir)
-	return err
+	cmd.Dir = t.cfg.ProjectDir
+	out, err := cmd.CombinedOutput() // BOINC's daemons log to stderr
+	tail := strings.TrimSpace(string(out))
+	if len(tail) > 600 {
+		tail = "..." + tail[len(tail)-600:]
+	}
+	if err != nil {
+		return tail, fmt.Errorf("%s: %w", t.cfg.Validator, err)
+	}
+	return tail, nil
 }
 
 func (t *ExecTools) Cancel(ctx context.Context, name string) error {

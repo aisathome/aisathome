@@ -23,6 +23,13 @@
 // spins. In the one-work-unit mode above an error leaves the work unit as it was and the program
 // ends, so a run without the file (by hand, say) does no harm.
 //
+// At most once: the framework writes the credit (user, team and host totals), the result and the
+// work unit in separate statements, so a run killed in between, run again, would grant again.
+// check_set therefore claims the result first, in one conditional statement (opaque from 0 to 1;
+// the framework later writes the result back with opaque 1). A run that finds it claimed grants
+// nothing and logs it: the bridge sees a claimed result that still waits and leaves it to a
+// person, who checks whether the interrupted run reached the totals.
+//
 // A work unit whose name is not a pilot's (a test work unit made by hand) is valid with no
 // credit. A file that is not one non-negative number is an error too, logged: it is the bridge's
 // to fix, and the result waits rather than losing its credit.
@@ -43,6 +50,20 @@
 #include "validator.h"
 
 static std::string credit_dir;
+
+// claim_in_db claims a result for this run: 0 if it was not claimed before (now it is),
+// ERR_DB_NOT_UNIQUE if an earlier run claimed it, or a database error. The database connection
+// reports matched rows (BOINC connects with CLIENT_FOUND_ROWS).
+static int claim_in_db(DB_ID_TYPE id) {
+    DB_RESULT r;
+    r.id = id;
+    int retval = r.update_field("opaque=1", "opaque=0");
+    if (retval) return retval;
+    return r.affected_rows() == 1 ? 0 : ERR_DB_NOT_UNIQUE;
+}
+
+// claim_result is claim_in_db; the fixture test replaces it.
+int (*claim_result)(DB_ID_TYPE) = claim_in_db;
 
 int validate_handler_init(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
@@ -136,6 +157,20 @@ int check_set(std::vector<RESULT>& results, WORKUNIT&, DB_ID_TYPE& canonicalid, 
     double credit;
     int retval = pilot_credit(results[0], credit);
     if (retval) return retval;
+    retval = claim_result(results[0].id);
+    if (retval == ERR_DB_NOT_UNIQUE) {
+        log_messages.printf(MSG_CRITICAL,
+            "[RESULT#%lu %s] claimed by an earlier run that did not finish: not granting again "
+            "(check whether that run reached the user, team and host totals)\n",
+            results[0].id, results[0].name);
+        return retval;
+    }
+    if (retval) {
+        log_messages.printf(MSG_CRITICAL, "[RESULT#%lu %s] cannot claim it: %s\n", results[0].id,
+            results[0].name, boincerror(retval));
+        return retval;
+    }
+    results[0].opaque = 1; // the framework writes the result back with it
     results[0].claimed_credit = credit;
     results[0].validate_state = VALIDATE_STATE_VALID;
     canonicalid = results[0].id;

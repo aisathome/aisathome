@@ -21,7 +21,7 @@ CREATE TABLE workunit (id integer NOT NULL AUTO_INCREMENT, appid integer NOT NUL
   error_mask integer NOT NULL DEFAULT 0, batch integer NOT NULL DEFAULT 0, PRIMARY KEY (id), UNIQUE KEY (name));
 CREATE TABLE result (id integer NOT NULL AUTO_INCREMENT, workunitid integer NOT NULL, server_state integer NOT NULL,
   outcome integer NOT NULL, validate_state integer NOT NULL, hostid integer NOT NULL, userid integer NOT NULL,
-  teamid integer NOT NULL, appid integer NOT NULL, name varchar(254) NOT NULL, PRIMARY KEY (id),
+  teamid integer NOT NULL, appid integer NOT NULL, name varchar(254) NOT NULL, opaque double NOT NULL DEFAULT 0, PRIMARY KEY (id),
   KEY res_app_state (appid, server_state), KEY res_wuid (workunitid));
 `
 
@@ -86,8 +86,9 @@ func TestMySQLStore(t *testing.T) {
 	res(7, ServerStateOver, OutcomeSuccess, ValidateStateInit, 1, 1, 0)
 	wu(8, "p-000000000008", 1, 0)
 	res(8, ServerStateOver, OutcomeSuccess, ValidateStateValid, 9, 7, 0)
-	wu(9, "p-000000000009", 1, 0) // the validator looked before the credit file existed
+	wu(9, "p-000000000009", 1, 0) // another validator pass left it inconclusive
 	res(9, ServerStateOver, OutcomeSuccess, ValidateStateInconclusive, 9, 7, 0)
+	exec("UPDATE result SET opaque = 1 WHERE workunitid = 4") // claimed by the pilot validator
 
 	s := NewMySQL(db, 1, "pilot")
 	if err := s.Ping(ctx); err != nil {
@@ -107,7 +108,7 @@ func TestMySQLStore(t *testing.T) {
 		"p-000000000001": {},
 		"p-000000000002": {HasResult: true, ServerState: ServerStateUnsent},
 		"p-000000000003": {HasResult: true, ServerState: ServerStateInProgress, Host: 9, User: 7, Team: 3},
-		"p-000000000004": {HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, Host: 9, User: 7},
+		"p-000000000004": {HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, Host: 9, User: 7, Claimed: true},
 		"p-000000000005": {ErrorMask: WUErrorCancelled, HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeDidntNeed},
 	}
 	if len(jobs) != len(want) {
@@ -120,7 +121,8 @@ func TestMySQLStore(t *testing.T) {
 	}
 	got, err := s.AwaitingCredit(ctx, 0, 10)
 	if err != nil || len(got) != 2 || got[0].Name != "p-000000000004" || got[1].Name != "p-000000000009" ||
-		got[0].ResultID >= got[1].ResultID || got[0].WorkunitID != 4 || got[1].WorkunitID != 9 {
+		got[0].ResultID >= got[1].ResultID || got[0].WorkunitID != 4 || got[1].WorkunitID != 9 ||
+		!got[0].Claimed || got[1].Claimed || got[1].ValidateState != ValidateStateInconclusive {
 		t.Fatalf("awaiting credit: %v %v", got, err)
 	}
 	// Paging: after the first one's result id, only the second; one per page.

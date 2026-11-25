@@ -132,7 +132,7 @@ func TestCheckNotListed(t *testing.T) {
 func TestExecToolsValidate(t *testing.T) {
 	cfg := fakeProject(t, "")
 	cfg.Validator, cfg.MaxGrantedCredit = "bin/pilot_validator", 150000
-	if err := NewExecTools(cfg).Validate(ctx, 4321); err != nil {
+	if _, err := NewExecTools(cfg).Validate(ctx, 4321); err != nil {
 		t.Fatal(err)
 	}
 	want := strings.Join([]string{"--app", "pilot", "--one_pass", "--one_pass_N_WU", "1", "--min_wu_id", "4321",
@@ -142,7 +142,7 @@ func TestExecToolsValidate(t *testing.T) {
 		t.Errorf("validator args:\n%s\nwant:\n%s", got, want)
 	}
 	cfg.Validator = ""
-	if err := NewExecTools(cfg).Validate(ctx, 1); err == nil {
+	if _, err := NewExecTools(cfg).Validate(ctx, 1); err == nil {
 		t.Error("ran without a validator")
 	}
 }

@@ -194,7 +194,10 @@ type fakeBOINC struct {
 	creditCalls        int
 	wuIDs              map[string]int64 // work unit ids, in the order they appeared
 	validated          []int64          // Validate's work unit ids
-	validateErr        error
+	validateErr        error            // the run fails before it does anything
+	dieAfterClaim      bool             // the run claims the result, then is killed before granting
+	noGrant            bool             // the run ends with 0 having granted nothing (BOINC's check_set error)
+	validateDelay      time.Duration
 	creditDir          string // where Validate looks for the file, as the validator does
 
 	accounts map[string]*fakeAccount // by account key
@@ -230,26 +233,36 @@ func (f *fakeBOINC) putJob(name string, j Job) {
 	f.jobs[name] = j
 }
 
-// Validate does what the pilot validator does to a work unit: valid once its credit file is there.
-func (f *fakeBOINC) Validate(_ context.Context, id int64) error {
+// Validate does what the pilot validator does to a work unit (by its work unit id): claimed and
+// valid once its credit file is there, nothing for a claimed result.
+func (f *fakeBOINC) Validate(_ context.Context, id int64) (string, error) {
+	time.Sleep(f.validateDelay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.validated = append(f.validated, id)
 	if f.validateErr != nil {
-		return f.validateErr
+		return "", f.validateErr
+	}
+	if f.noGrant {
+		return "[CRITICAL] check_set() error", nil
 	}
 	for n, wid := range f.wuIDs {
 		if wid != id {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(f.creditDir, n)); err != nil {
-			return nil // left as it was
-		}
 		j := f.jobs[n]
+		if _, err := os.Stat(filepath.Join(f.creditDir, n)); err != nil || j.Claimed {
+			return "", nil // left as it was
+		}
+		j.Claimed = true
+		if f.dieAfterClaim {
+			f.jobs[n] = j
+			return "", errors.New("signal: killed")
+		}
 		j.ValidateState = ValidateStateValid
 		f.jobs[n] = j
 	}
-	return nil
+	return "", nil
 }
 
 func (f *fakeBOINC) Jobs(_ context.Context, names []string) (map[string]Job, error) {
@@ -267,7 +280,7 @@ func (f *fakeBOINC) Jobs(_ context.Context, names []string) (map[string]Job, err
 	return out, nil
 }
 
-// AwaitingCredit pages by result id; a work unit's result has the work unit's id here.
+// AwaitingCredit pages by result id.
 func (f *fakeBOINC) AwaitingCredit(_ context.Context, after int64, limit int) ([]Awaiting, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -279,8 +292,10 @@ func (f *fakeBOINC) AwaitingCredit(_ context.Context, after int64, limit int) ([
 	sort.Slice(names, func(i, j int) bool { return f.wuIDs[names[i]] < f.wuIDs[names[j]] })
 	var out []Awaiting
 	for _, n := range names {
-		if id := f.wuIDs[n]; id > after && f.jobs[n].awaitingValidation() && len(out) < limit {
-			out = append(out, Awaiting{ResultID: id, WorkunitID: id, Name: n})
+		// A result's id differs from its work unit's, as in BOINC: the validator takes the work unit's.
+		if j := f.jobs[n]; f.wuIDs[n]+1000 > after && j.awaitingValidation() && len(out) < limit {
+			out = append(out, Awaiting{ResultID: f.wuIDs[n] + 1000, WorkunitID: f.wuIDs[n], Name: n,
+				ValidateState: j.ValidateState, Claimed: j.Claimed})
 		}
 	}
 	return out, nil

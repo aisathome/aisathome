@@ -10,12 +10,17 @@
 # Rebuild it with every server upgrade.
 
 BOINC ?=
+ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
+ifeq ($(BOINC),)
+$(error BOINC=<a BOINC source tree with lib/, db/ and sched/ built and svn_version.h> is needed)
+endif
+endif
 CXX ?= g++
 CXXFLAGS ?= -O2 -g -Wall
 MYSQL_CONFIG ?= mysql_config
 
-INC := -I$(BOINC) -I$(BOINC)/lib -I$(BOINC)/db -I$(BOINC)/sched $(shell $(MYSQL_CONFIG) --include)
-LIBS := $(BOINC)/sched/.libs/libsched.a $(BOINC)/lib/.libs/libboinc_crypt.a $(BOINC)/lib/.libs/libboinc.a \
+INC = -I$(BOINC) -I$(BOINC)/lib -I$(BOINC)/db -I$(BOINC)/sched $(shell $(MYSQL_CONFIG) --include)
+LIBS = $(BOINC)/sched/.libs/libsched.a $(BOINC)/lib/.libs/libboinc_crypt.a $(BOINC)/lib/.libs/libboinc.a \
 	$(shell $(MYSQL_CONFIG) --libs) -lssl -lcrypto -lz -lpthread
 # BOINC's validator framework (VALIDATOR_SOURCES in sched/Makefile.am) without validate_util2.cpp:
 # pilot_validator.cpp supplies check_set and check_pair itself.
@@ -23,10 +28,10 @@ FRAMEWORK := $(BOINC)/sched/credit.cpp $(BOINC)/sched/validator.cpp $(BOINC)/sch
 
 all: pilot_validator
 
-pilot_validator: pilot_validator.cpp | boinc-tree
+pilot_validator: pilot_validator.cpp $(FRAMEWORK) $(BOINC)/sched/.libs/libsched.a | boinc-tree
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ pilot_validator.cpp $(FRAMEWORK) $(LIBS)
 
-check_set_test: check_set_test.cpp pilot_validator.cpp | boinc-tree
+check_set_test: check_set_test.cpp pilot_validator.cpp $(BOINC)/sched/.libs/libsched.a | boinc-tree
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ check_set_test.cpp pilot_validator.cpp $(LIBS)
 
 test: pilot_validator check_set_test

@@ -580,3 +580,87 @@ func TestCreditRunsTheValidator(t *testing.T) {
 		t.Errorf("%d runs, state %d: the retry did not validate it", n, r.boinc.jobs[ids[0]].ValidateState)
 	}
 }
+
+// A validator run killed after its claim (between the framework's writes): reported, and never run
+// again on that result, since running again could grant twice.
+func TestValidatorRunInterruptedAfterItsClaim(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Validator, c.MaxGrantedCredit = "bin/pilot_validator", 150000 })
+	id := r.created(t, 1)[0]
+	r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, User: 1, Host: 2})
+	v := 3.0
+	r.gw.credits[id] = Credit{Final: true, Credit: &v}
+	r.boinc.dieAfterClaim = true
+	err := r.b.Credit(ctx)
+	if err == nil || !strings.Contains(err.Error(), "claimed it but did not finish") {
+		t.Fatalf("error %v", err)
+	}
+	r.boinc.dieAfterClaim = false
+	for i := 0; i < 3; i++ {
+		r.clk.add(validateRetry)
+		err = r.b.Credit(ctx)
+	}
+	if len(r.boinc.validated) != 1 {
+		t.Fatalf("the validator ran %d times on an interrupted result", len(r.boinc.validated))
+	}
+	if err == nil || !strings.Contains(err.Error(), "check by hand") {
+		t.Errorf("later passes: %v", err)
+	}
+}
+
+// The validator ends with 0 having granted nothing (a check_set error): an error with its output,
+// judged by the database, not counted as validated.
+func TestValidatorExitZeroWithoutAGrant(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Validator, c.MaxGrantedCredit = "bin/pilot_validator", 150000 })
+	id := r.created(t, 1)[0]
+	r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, User: 1, Host: 2})
+	v := 3.0
+	r.gw.credits[id] = Credit{Final: true, Credit: &v}
+	r.boinc.noGrant = true
+	err := r.b.Credit(ctx)
+	if err == nil || !strings.Contains(err.Error(), "left it waiting") || !strings.Contains(err.Error(), "check_set() error") {
+		t.Fatalf("error %v", err)
+	}
+	if r.b.st.validated != 0 {
+		t.Error("counted as validated")
+	}
+}
+
+// A result another validator pass left inconclusive gets its file but no validator run (BOINC
+// would not look at it): reported for a person.
+func TestInconclusiveResultIsReportedNotRun(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Validator, c.MaxGrantedCredit = "bin/pilot_validator", 150000 })
+	id := r.created(t, 1)[0]
+	r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, User: 1, Host: 2,
+		ValidateState: ValidateStateInconclusive})
+	v := 3.0
+	r.gw.credits[id] = Credit{Final: true, Credit: &v}
+	err := r.b.Credit(ctx)
+	if err == nil || !strings.Contains(err.Error(), "need_validate") || len(r.boinc.validated) != 0 {
+		t.Fatalf("error %v, runs %v", err, r.boinc.validated)
+	}
+	if got, _ := readCredit(t, r, id); got != "3\n" {
+		t.Errorf("credit file %q", got)
+	}
+}
+
+// Validator runs in one pass start only within the budget; the rest run on the next pass.
+func TestValidateBudget(t *testing.T) {
+	r := newRig(t, func(c *Config) { c.Validator, c.MaxGrantedCredit = "bin/pilot_validator", 150000 })
+	r.b.validateBudget = time.Millisecond
+	r.boinc.validateDelay = 20 * time.Millisecond
+	ids := r.created(t, 3)
+	v := 1.0
+	for _, id := range ids {
+		r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, User: 1, Host: 2})
+		r.gw.credits[id] = Credit{Final: true, Credit: &v}
+	}
+	r.b.Credit(ctx)
+	if n := len(r.boinc.validated); n != 1 {
+		t.Fatalf("%d runs in the first pass, want 1", n)
+	}
+	r.clk.add(time.Minute)
+	r.b.Credit(ctx)
+	if n := len(r.boinc.validated); n != 2 {
+		t.Errorf("%d runs after the second pass, want 2", n)
+	}
+}
