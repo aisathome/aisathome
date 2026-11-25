@@ -175,6 +175,9 @@ const cost = (sk: TaskRow | undefined) => {
 	return `written in ${sk.steps} steps${sk.minutes !== null ? ` · ${sk.minutes.toFixed(1)} min` : ''}`;
 };
 
+/** An outline whose in-place task's own file passed our full check (no assembly follows). */
+const IN_PLACE_PROVED = 'proved (its holes filled in place)';
+
 /** One outline in words: its state and one row per hole (and the in-place holes and the assembly). */
 export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined, doc: HoleInfo[] | undefined, newer: boolean, peers: TaskRow[] = rows): OutlineView {
 	const newest = (role: string) => rows.filter((r) => r.role === role).sort(byTry).at(-1);
@@ -241,7 +244,8 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	});
 	const anyInplace = (inplaceCount ?? 0) > 0 || rest.length > 0 || (inplace?.length ?? 0) > 0;
 	if (anyInplace) {
-		// The in-place task never says "proved": the assembly's full check decides (prove2me-outcomes.ts).
+		// The in-place task's `rest_done` waits for the assembly's full check; its `proved` passed that check itself
+		// (prove2me-outcomes.ts).
 		const byAsm: Draft['fixed'] = inplaceStanding([...rest].sort(byTry).at(-1), asm);
 		// a verdict the data document holds for a hole in place (e.g. false, found outside a task) comes first
 		const fixedFor = (h: number | null) => (h !== null && docBy.has(h) ? docHole(docBy.get(h)!) : null) ?? byAsm;
@@ -266,6 +270,7 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	const cancelled = rows.some((r) => r.role !== 'skeleton' && r.state === 'cancelled');
 	let state: OutlineState, text = '', reason = '';
 	if (asm && provesLeaf(attemptOf(asm))) [state, text] = ['proved', 'proved (assembled)'];
+	else if (rest.some((r) => provesLeaf(attemptOf(r)))) [state, text] = ['proved', IN_PLACE_PROVED];
 	else if (falseHoles.length) [state, reason] = ['refuted', `${holesText(falseHoles)} ${falseHoles.length > 1 ? 'are' : 'is'} false`];
 	else if (live) [state, text] = ['in_progress', newer ? 'in progress (a newer outline was started)' : asm?.state === 'running' ? 'being assembled' : 'in progress'];
 	else if (newer) [state, reason] = ['abandoned', failed.length ? failedText() : cancelled ? 'its tasks were cancelled' : ''];
@@ -371,7 +376,9 @@ export function leafSummary(views: OutlineView[], rows: TaskRow[], reuse?: strin
 	const proved = views.find((v) => v.state === 'proved');
 	if (proved) {
 		if (reuse) return `Closed by reuse: imports ${reuse}`;
-		return proved.text === 'proved (assembled)' ? `Proved: outline ${proved.gen} assembled` : `Proved: outline ${proved.gen}, without holes`;
+		if (proved.text === 'proved (assembled)') return `Proved: outline ${proved.gen} assembled`;
+		if (proved.text === IN_PLACE_PROVED) return `Proved: outline ${proved.gen}, its holes filled in place`;
+		return `Proved: outline ${proved.gen}, without holes`;
 	}
 	const gens = [...new Set(rows.map((r) => r.gen))].sort((a, b) => b - a);
 	for (const [state, word] of [['running', 'Running'], ['queued', 'Queued']] as const) {

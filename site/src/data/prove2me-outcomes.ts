@@ -2,10 +2,13 @@
 // assembly passes" rule lived in three modules). Every view of a task or a leaf (the leaf's outlines in words, its task
 // table, the table of every task, the trials table) asks these functions what a task's outcome means:
 //
-//  - a leaf is proved by an outline without holes, or an assembly, that our full check passed (a run of trials 1 to 4:
-//    the run itself);
-//  - a hole is proved by its own task; the holes left in the outline's file ("in place") share one task that never says
-//    proved: it ends `rest_done` with the file filled in, and the outline's assembly decides;
+//  - a leaf is proved by an outline without holes, an assembly, or an in-place task, that our full check passed (a run
+//    of trials 1 to 4: the run itself);
+//  - a hole is proved by its own task; the holes left in the outline's file ("in place") share one task. It ends
+//    `rest_done` when it filled them in but `sorry` is left in the lemma blocks: the outline's assembly decides. It ends
+//    `proved` only when its file passed our full check (no `sorry` left anywhere, the leaf's statement unchanged): that
+//    proves the leaf, and no assembly follows (the trial runner's outline check returns the full check's verdict, and
+//    a proved in-place task ends the leaf);
 //  - `closed_by` on a task that ended `closed` names what closed its hole before a model ran (the pre-pass, our index
 //    of prove2me's library, the ledger, another task's proof); on a *cancelled* task it names the task that ended the
 //    outline (a hole that failed or was disproved, a proved leaf, a newer outline), so the cancellation says why;
@@ -45,19 +48,26 @@ export const attemptOf = (r: { id: string; role: string; state: string; outcome:
 
 // ---- what a task's outcome means
 
-/** A leaf proved: an outline without holes, an assembly or a whole run that our full check passed. */
+/** A leaf proved: an outline without holes, an assembly, an in-place task or a whole run that our full check passed.
+ * A hole's task proves its hole only. */
 export const provesLeaf = (a: Pick<Attempt, 'kind' | 'state' | 'outcome'>) =>
-	stateOf(a.state) === 'done' && a.outcome === 'proved' && ['outline', 'assembly', 'run'].includes(kindOf(a.kind));
+	stateOf(a.state) === 'done' && a.outcome === 'proved' && ['outline', 'assembly', 'rest', 'run'].includes(kindOf(a.kind));
 
-/** The in-place task ended with the outline's file filled in (`rest_done`; an older worker said `proved`). */
+/** The in-place task ended with the outline's file filled in, for the assembly to check (`rest_done`). */
 export const restFilled = (rest: Pick<Attempt, 'state' | 'outcome'> | undefined) =>
-	!!rest && stateOf(rest.state) === 'done' && (rest.outcome === 'rest_done' || rest.outcome === 'proved');
+	!!rest && stateOf(rest.state) === 'done' && rest.outcome === 'rest_done';
+
+/** The in-place task's own file passed our full check (`proved`): the leaf is proved, with no assembly. */
+export const restProved = (rest: Pick<Attempt, 'state' | 'outcome'> | undefined) =>
+	!!rest && stateOf(rest.state) === 'done' && rest.outcome === 'proved';
 
 export type Standing = { state: 'proved' | 'not_proved' | 'waiting'; text: string };
 
-/** The holes in place, from the newest in-place task and the outline's newest assembly: proved when the assembly passed
- * our full check, not proved when it ended otherwise, waiting for it before; undefined while they are not filled in. */
+/** The holes in place, from the newest in-place task and the outline's newest assembly: proved when the in-place task's
+ * own file passed our full check, or when the assembly did; not proved when the assembly ended otherwise, waiting for it
+ * before; undefined while they are not filled in. */
 export function inplaceStanding(rest: Pick<Attempt, 'state' | 'outcome'> | undefined, asm: Pick<Attempt, 'state' | 'outcome'> | undefined): Standing | undefined {
+	if (restProved(rest)) return { state: 'proved', text: 'proved (our full check passed on the in-place task’s file)' };
 	if (!restFilled(rest)) return undefined;
 	if (asm && stateOf(asm.state) === 'done') {
 		return asm.outcome === 'proved'
@@ -161,7 +171,7 @@ export function staleCancelReason(a: Attempt, peers: Attempt[] = []): string {
 			if (outcome === 'disproved') return `outline refuted: hole ${hole} is false`;
 			return `outline abandoned after hole ${hole} failed`;
 		case 'rest':
-			return 'outline abandoned after the holes in place failed';
+			return outcome === 'proved' ? 'leaf proved' : 'outline abandoned after the holes in place failed';
 		case 'assembly':
 			return outcome === 'proved' ? 'leaf proved' : 'outline abandoned after its assembly failed';
 		case 'outline':
