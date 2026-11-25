@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -32,6 +33,11 @@ type Day struct {
 	Bots      map[string]int `json:"bots,omitempty"`
 	Tests     int            `json:"tests,omitempty"`
 
+	// Fetches of the node install script: unique per day (the visitor estimate's method), and
+	// all fetches by client (a bot name from botNames, or "browser").
+	Installs       int            `json:"installs,omitempty"`
+	InstallFetches map[string]int `json:"install_fetches,omitempty"`
+
 	// Page path (a key of Pages) -> referring domain -> page views.
 	PageReferrers map[string]map[string]int `json:"page_referrers,omitempty"`
 }
@@ -53,6 +59,10 @@ const (
 	other        = "(other)"
 	feedPath     = "/devlog/rss.xml"
 )
+
+// The node install entry points the site serves itself: `curl -fsSL https://aisathome.org/node.sh | sh`.
+// (The Windows installer and the Linux bundle are downloaded from GitHub, not from here.)
+var installPaths = []string{"/node.sh"}
 
 // Referring domains per page: while the UTC day runs, exact counts for up to
 // maxPageReferrersToday domains per page (new ones beyond go under "(other)"), so the day's
@@ -102,6 +112,14 @@ type logLine struct {
 		URI      string              `json:"uri"`
 		Headers  map[string][]string `json:"headers"`
 	} `json:"request"`
+}
+
+// ip is the client's address as Caddy saw it.
+func (l *logLine) ip() string {
+	if l.Request.ClientIP != "" {
+		return l.Request.ClientIP
+	}
+	return l.Request.RemoteIP
 }
 
 func (l *logLine) header(name string) string {
@@ -156,10 +174,16 @@ func (a *Aggregator) Add(raw []byte) {
 	day := time.Unix(int64(l.TS), 0).UTC().Format(time.DateOnly)
 	d := a.day(day)
 	ua := l.header("User-Agent")
-	switch kind, name := classify(ua); kind {
-	case kindTest:
+	kind, name := classify(ua)
+	if kind == kindTest {
 		d.Tests++
 		return
+	}
+	if slices.Contains(installPaths, p) && l.Request.Method == "GET" && l.Status == 200 {
+		a.addInstall(d, day, kind, name, l.ip(), ua)
+		return
+	}
+	switch kind {
 	case kindBot:
 		if d.Bots == nil {
 			d.Bots = map[string]int{}
@@ -188,15 +212,29 @@ func (a *Aggregator) Add(raw []byte) {
 		d.Referrers, _ = bump(d.Referrers, ref, maxReferrers)
 		d.addPageReferrer(page, ref)
 	}
-	ip := l.Request.ClientIP
-	if ip == "" {
-		ip = l.Request.RemoteIP
-	}
 	if a.useDay(day) {
-		h := visitorHash(a.State.Salt, ip, ua)
+		h := visitorHash(a.State.Salt, l.ip(), ua)
 		if !a.seen[h] {
 			a.seen[h] = true
 			d.Visitors++
+		}
+	}
+}
+
+// addInstall counts a fetch of the install script, whatever the client: curl and wget are
+// what the one-liner uses, so they are not bots here. The client goes into the per-client
+// counts (a fixed name, never the user agent), and SHA-256(salt + "install" + IP + user agent)
+// into the day's set, which is deleted with the visitors' hashes at the end of the UTC day.
+func (a *Aggregator) addInstall(d *Day, day string, kind int, name, ip, ua string) {
+	if kind == kindHuman {
+		name = "browser"
+	}
+	d.InstallFetches, _ = bump(d.InstallFetches, name, len(botNames)+3)
+	if a.useDay(day) {
+		h := installHash(a.State.Salt, ip, ua)
+		if !a.seen[h] {
+			a.seen[h] = true
+			d.Installs++
 		}
 	}
 }
@@ -253,6 +291,12 @@ func visitorHash(salt []byte, ip, ua string) string {
 	h.Write([]byte{0})
 	h.Write([]byte(ua))
 	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// installHash is visitorHash with "install" in front of the address (an address never starts
+// with a zero byte), so a person who reads the site and fetches the script is in both counts.
+func installHash(salt []byte, ip, ua string) string {
+	return visitorHash(salt, "\x00install\x00"+ip, ua)
 }
 
 const (

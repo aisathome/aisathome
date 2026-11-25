@@ -30,9 +30,16 @@
 //     agent, or one that does not start with "Mozilla/"), by a fixed bot name from that list
 //     ("other" for the rest); they never count as page views or visitors;
 //   - tests: requests from the project's own automated tests (user agent containing
-//     "aisathome-test" or "aisathome-smoke"), only counted, nothing else.
+//     "aisathome-test" or "aisathome-smoke"), only counted, nothing else;
+//   - installs: an estimate of how many different clients fetched the node install script
+//     (/node.sh, GET answered 200; the one-liner `curl -fsSL https://aisathome.org/node.sh | sh`),
+//     whatever the user agent, since curl and wget are what it is made for; deduplicated per day
+//     as the visitors are (below, with "install" added to the hashed text, so the two sets
+//     never mix). Our own tests are left out as above; they are not bots here;
+//   - install_fetches: every such fetch, by a fixed client name from the bot list ("curl",
+//     "Wget", "Googlebot", ...) or "browser" for anything else.
 //
-// Unique visitors: for each human page view, SHA-256(salt + IP address + user agent), where
+// Unique visitors (and installs): for each human page view, SHA-256(salt + IP address + user agent), where
 // salt is 32 random bytes made for the current UTC day. The hashes of the day are kept in the
 // state file on the tmpfs, only to count how many differ; the count goes into the output. At
 // the end of each UTC day the salt and the hashes are deleted, so visits on different days
