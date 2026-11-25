@@ -7,6 +7,7 @@
 // reference (package modelcheck).
 // `aisathome-node pilot` runs the agent as a BOINC task (package pilot; boinc/ has the job file).
 // `aisathome-node link` links the node to an account without pasting a token (package accountlink).
+// `aisathome-node config preflight` is the Linux installer's check of node.json and the token.
 //
 // SPDX-License-Identifier: Apache-2.0
 package main
@@ -52,15 +53,25 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "register" {
 		os.Exit(runRegister(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "config" {
+		os.Exit(runConfig(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "service" {
 		os.Exit(runServiceCommand(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	layout := node.DefaultLayout()
 	cfgPath := flag.String("config", layout.Config, "config file (JSON)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	showFeatures := flag.Bool("features", false, "print what an installer may ask of this binary, one per line, and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("aisathome-node", node.Version)
+		return
+	}
+	if *showFeatures {
+		for _, f := range Features {
+			fmt.Println(f)
+		}
 		return
 	}
 	asService, err := runningAsService()
