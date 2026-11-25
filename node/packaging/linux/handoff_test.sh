@@ -5,7 +5,7 @@
 # which token, and that the agent itself accepts what was written. Scenarios: a fresh install that
 # links, a same-gateway upgrade, a gateway change, a token without its issuer record, an interrupted
 # link, the moved-aside token given again, --anonymous over a token, a dry run, and the node binary
-# override.
+# override (one older than the installer is refused).
 #
 # It runs in a sandbox that cannot touch this machine's node: a user namespace (root inside, this
 # user outside), a private mount namespace (/etc is a copy made of links with its own empty
@@ -97,6 +97,9 @@ case "$1" in
       u="${u%.service}"
       case "$u" in aisathome-node|aisathome-llama) ;; *) continue ;; esac
       [[ $u = aisathome-node ]] && echo "$verb $u $(where)" >> "$st/systemctl.log"
+      if [[ $u = aisathome-llama && $verb = restart ]]; then
+        flock -n /etc/aisathome-node/node.lock true && echo "llama-restart free" >> "$st/lock.log" || echo "llama-restart held" >> "$st/lock.log"
+      fi
       if [[ $verb = stop ]]; then echo inactive > "$st/$u.state"
       elif [[ $u = aisathome-node && ! -s /etc/aisathome-node/token.env ]]; then echo inactive > "$st/$u.state"
       else echo active > "$st/$u.state"; fi
@@ -397,6 +400,43 @@ fresh
 inst -- --link --gateway-url "$gwa"
 want_code "--node-bin" 0
 cmp -s /opt/aisathome-node/bin/aisathome-node "$node_bin" || fail "--node-bin: another binary was installed"
+
+# The writers' lock (node.lock, which aisathome-node link takes too): held from the installer's decision
+# (config preflight) through its writes and the speed test, and free for the link step.
+cat > "$tmp/locked-node" <<SH
+#!/bin/sh
+lock=/etc/aisathome-node/node.lock
+if [ ! -e \$lock ]; then s=none; elif flock -n \$lock true; then s=free; else s=held; fi
+echo "\$1 \$s" >> "$st/lock.log"
+exec "$node_bin" "\$@"
+SH
+chmod +x "$tmp/locked-node"
+seed "$gwa" "$toka"; rm -f "$st/lock.log"
+NODE_BIN="$tmp/locked-node" inst -- --link --gateway-url "$gwb"
+want_code "the writers' lock" 0
+[[ "$(grep -v '^-features' "$st/lock.log" | paste -sd, -)" = "config held,llama-restart held,link free" ]] || fail "the writers' lock: $(paste -sd, - < "$st/lock.log")"
+
+# A retry after a link that did not finish (node.json, no token.env): it links now.
+seed "$gwa"
+inst -- --link
+want_code "retry an unfinished link" 0; token_is "retry an unfinished link" "$toka" "$gwa"
+
+# A node binary older than the installer (no config preflight): refused before anything changes, and never
+# run with arguments it does not know (an old binary would start the agent on "config ..."). It stands in
+# as Go's flag package does: an unknown flag is exit 2; anything else would run the agent.
+cat > "$tmp/old-node" <<'SH'
+#!/bin/sh
+case "$1" in -version) echo "aisathome-node v0.6.0"; exit 0 ;; -features) echo "flag provided but not defined: -features" >&2; exit 2 ;; esac
+echo "$*" >> "$HANDOFF_STATE/old-node.ran"; exit 0
+SH
+chmod +x "$tmp/old-node"
+seed "$gwa" "$toka"
+NODE_BIN="$tmp/old-node" inst -- --keep-token
+want_code "an older --node-bin" 2; has "an older --node-bin" "has no 'config preflight'"
+[[ ! -e "$st/old-node.ran" ]] || fail "an older --node-bin: it was run with: $(cat "$st/old-node.ran")"
+token_is "an older --node-bin" "$toka" "$gwa"; [[ ! -s "$st/systemctl.log" && ! -e /opt/aisathome-node ]] || fail "an older --node-bin: something was installed"
+NODE_BIN="$tmp/old-node" inst -- --dry-run
+want_code "an older --node-bin, dry run" 2
 
 if [[ $fails -gt 0 ]]; then echo "handoff: $fails failure(s)"; exit 1; fi
 echo "handoff: all tests passed"

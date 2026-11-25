@@ -1,6 +1,6 @@
 // Package nodeconf is the one way the node's config (node.json) and its token file (token.env) are read
-// and written, by the agent, `aisathome-node link`/`register` and the Windows setup page (the Linux
-// installer follows the same rules in shell):
+// and written, by the agent, `aisathome-node link`/`register`, the Windows setup page and the Linux
+// installer (through `aisathome-node config preflight`, which decides for it):
 //
 //   - One canonical form: a node.json with two keys that are equal in any case, at any level, is refused
 //     (Go's decoder matches keys in any case and keeps the last; another reader could keep another), and a
@@ -28,7 +28,7 @@ import (
 // installer takes it too, with flock).
 const LockFile = "node.lock"
 
-// gatewayRe is what a gateway address may look like (as install.sh checks it): a token's record goes into
+// gatewayRe is what a gateway address may look like (config preflight checks it for the Linux installer): a token's record goes into
 // a systemd EnvironmentFile, so nothing else may get there.
 var gatewayRe = regexp.MustCompile(`^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$`)
 

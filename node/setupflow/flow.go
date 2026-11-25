@@ -33,7 +33,8 @@ import (
 // DefaultGatewayURL is where nodes connect unless the volunteer names another gateway.
 const DefaultGatewayURL = "wss://api.aisathome.org/v1/node/connect"
 
-// reGatewayURL is install.sh's check of --gateway-url.
+// reGatewayURL is what a gateway URL may look like (nodeconf.ValidGateway; the Linux installer's config
+// preflight checks the same).
 var reGatewayURL = regexp.MustCompile(`^wss?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$`)
 
 // Runner runs an engine until ctx ends (engine.Supervisor).
@@ -638,7 +639,7 @@ func CheckToken(token string) (nodeID string, err error) {
 	return id, nil
 }
 
-// CheckGateway checks a gateway URL as install.sh does; "" is the default.
+// CheckGateway checks a gateway URL as the Linux installer's config preflight does; "" is the default.
 func CheckGateway(u string) (string, error) {
 	u = strings.TrimSpace(u)
 	if u == "" {

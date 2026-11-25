@@ -220,14 +220,7 @@ func TestInstallShEngineDrift(t *testing.T) {
 	if !strings.Contains(script, `gpu_pin="Environment=CUDA_VISIBLE_DEVICES=$gpu_uuid"`) {
 		t.Error("install.sh no longer pins the card with CUDA_VISIBLE_DEVICES=<uuid> (EngineSettings.CUDADevice)")
 	}
-	// gen_node_config's roles.
-	m := regexp.MustCompile(`"roles": \[([^\]]*)\]`).FindStringSubmatch(shellFunc(t, script, "gen_node_config"))
-	if m == nil {
-		t.Fatal("gen_node_config: cannot find the roles")
-	}
-	if want := `"` + strings.Join(EngineRoles, `", "`) + `"`; m[1] != want {
-		t.Errorf("roles: install.sh %s, Go %s", m[1], want)
-	}
+	// The generated node.json's roles are EngineRoles itself (aisathome-node config preflight writes it).
 }
 
 // Speculation: install.sh's spec_* table must be Drafters, and set_engine with a mode must give

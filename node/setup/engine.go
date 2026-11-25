@@ -44,7 +44,7 @@ func CacheRAMFor(totalMiB int) int {
 	return min(totalMiB/2, CacheRAMMaxMiB)
 }
 
-// EngineRoles are the roles the node's model entry announces (install.sh's gen_node_config).
+// EngineRoles are the roles the node's model entry announces (the Linux installer's node.json, written by config preflight).
 var EngineRoles = []string{"deep", "agent"}
 
 // EngineSettings is one llama-server command: the tier's settings plus where the program and
