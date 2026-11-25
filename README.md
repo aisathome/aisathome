@@ -117,9 +117,11 @@ site fit together, and who can see what.
 
 Every node runs one request at a time with llama.cpp's `llama-server`, and the model file and
 the context follow the card: `UD-Q3_K_XL` with 80k on 16 GB cards (a light desktop may stay on
-them), `UD-IQ4_XS` with 192k on 24 GB and more, both with a `q4_0` KV cache. From v0.7.0, 24 GB
-cards also run MTP speculative decoding (Qwen3.8's own multi-token-prediction head; about
-1.7-1.9x output speed, the same output distribution) unless you turn it off. The installer pins
+them), `UD-IQ4_XS` with 192k on 24 GB and more, both with a `q4_0` KV cache. From v0.7.0, the Linux
+installer also turns on MTP speculative decoding on 24 GB cards (Qwen3.8's own
+multi-token-prediction head; about 1.7-1.9x output speed, the same output distribution) when
+the card's free memory and the engine pass its checks, unless you turn it off; the Windows
+installer leaves it off. The installer pins
 each model file to a Hugging Face commit and its SHA-256, and `aisathome-node modelcheck` checks
 your engine's answers against a published reference. The Linux installer, its options (from an
 unpacked bundle, a node token for scripts, speculation) and removal:
