@@ -45,8 +45,9 @@ type Config struct {
 	// TargetHost, if set, assigns every work unit to this BOINC host (create_work --target_host;
 	// the project needs enable_assignment). For a bridge that feeds one test host.
 	TargetHost int64 `json:"target_host,omitempty"`
-	// DeadlineHours: the deadline a new pilot gets at the gateway (default 168). An unsent work
-	// unit whose pilot has less than MinRunwayHours left is cancelled.
+	// DeadlineHours: the deadline a new pilot gets at the gateway, after which its credential is
+	// refused (default 60). An unsent work unit whose pilot has less than MinRunwayHours left is
+	// cancelled, so with the defaults a credential waits unsent for at most 6 hours.
 	DeadlineHours int `json:"deadline_hours,omitempty"`
 	// MinRunwayHours: at least the work unit's delay_bound plus a pilot's run (default 54: 48 h
 	// and 4 h, plus 2).
@@ -159,7 +160,7 @@ func (c *Config) check() error {
 		bad("target_host: a BOINC host id")
 	}
 	if c.DeadlineHours == 0 {
-		c.DeadlineHours = 168
+		c.DeadlineHours = 60
 	}
 	if c.MinRunwayHours == 0 {
 		c.MinRunwayHours = 54

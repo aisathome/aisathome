@@ -4,6 +4,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,7 +29,8 @@ func TestJobReported(t *testing.T) {
 		{"client error", Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeClientError}, "error", true},
 		{"no reply", Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeNoReply}, "expired", true},
 		{"didn't need", Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeDidntNeed}, "cancelled", true},
-		{"cancelled while running", Job{HasResult: true, ServerState: ServerStateInProgress, ErrorMask: WUErrorCancelled}, "cancelled", true},
+		// A host has it: reported when the client reports or aborts it, not before.
+		{"cancelled while running", Job{HasResult: true, ServerState: ServerStateInProgress, ErrorMask: WUErrorCancelled}, "", false},
 		{"cancelled before the result", Job{ErrorMask: WUErrorCancelled}, "cancelled", true},
 		{"other work-unit error, unsent", Job{ErrorMask: 1}, "error", true},
 		{"other work-unit error while running", Job{HasResult: true, ServerState: ServerStateInProgress, ErrorMask: 8}, "", false},
@@ -64,7 +66,7 @@ func TestDemandCreatesPilotsAndWorkUnits(t *testing.T) {
 			t.Errorf("staged %q, want the pilot's credential", got)
 		}
 		// The deadline the bridge asked for: deadline_hours ahead.
-		if d := r.gw.pilots[id].Deadline.Sub(r.clk.now()); d != 168*time.Hour {
+		if d := r.gw.pilots[id].Deadline.Sub(r.clk.now()); d != 60*time.Hour {
 			t.Errorf("deadline %v ahead", d)
 		}
 	}
@@ -140,7 +142,7 @@ func TestCancelUnsentNewestFirstNeverSent(t *testing.T) {
 func TestCancelUnsentTooCloseToItsDeadline(t *testing.T) {
 	r := newRig(t)
 	ids := r.created(t, 2)
-	r.clk.add(168*time.Hour - 50*time.Hour) // 50 h left, under the 54 h runway
+	r.clk.add(7 * time.Hour) // 53 h left, under the 54 h runway
 	r.boinc.setJob(ids[1], Job{HasResult: true, ServerState: ServerStateInProgress, User: 1, Host: 2})
 	if err := r.b.Demand(ctx); err != nil {
 		t.Fatal(err)
@@ -297,7 +299,7 @@ func TestCleanupRemovesOnlyFinishedCreditFiles(t *testing.T) {
 		writeCredit(r.cfg.CreditDir, id, 1)
 	}
 	r.boinc.setJob(ids[0], Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, ValidateState: ValidateStateValid})
-	r.boinc.setJob(ids[1], Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess}) // waits for the validator
+	r.boinc.setJob(ids[1], Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, ValidateState: ValidateStateInconclusive}) // the validator looks again
 	// ids[2]: not this bridge's (or purged), new; ids[3]: the same, a month old.
 	old := r.clk.now().Add(-31 * 24 * time.Hour)
 	os.Chtimes(filepath.Join(r.cfg.CreditDir, ids[3]), old, old)
@@ -468,5 +470,62 @@ func TestPasswordIsPerRequestAndKey(t *testing.T) {
 	other, _ := New(r.cfg, "another-key", r.boinc, r.boinc, r.boinc, r.b.log)
 	if other.password("r-1") == p1 {
 		t.Error("the password does not depend on the key")
+	}
+}
+
+// BOINC sends the work unit while cancel_jobs runs: the pilot is not ended; Sync binds it.
+func TestCancelRaceKeepsASentPilot(t *testing.T) {
+	r := newRig(t)
+	id := r.created(t, 1)[0]
+	r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateUnsent})
+	r.boinc.sendOnCancel = 21
+	r.gw.demand = Demand{CancelUnsent: 1}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.boinc.cancelled) != 1 || r.gw.reported[id] != "" {
+		t.Fatalf("cancelled %v, reported %v: a pilot BOINC just sent was ended", r.boinc.cancelled, r.gw.reported)
+	}
+	r.boinc.setJob(id, Job{HasResult: true, ServerState: ServerStateInProgress, ErrorMask: WUErrorCancelled, User: 1, Host: 21})
+	if err := r.b.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r.gw.binds[id] != [3]string{"1", "21", ""} || r.gw.reported[id] != "" {
+		t.Errorf("binds %v reported %v", r.gw.binds, r.gw.reported)
+	}
+}
+
+// create_work inserted the work unit, then failed (a timeout): the credential and the pilot stay.
+func TestCreateWorkThatFailedAfterInserting(t *testing.T) {
+	r := newRig(t)
+	r.boinc.createWorkThenFail = true
+	r.gw.demand = Demand{Wanted: 1}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := r.gw.ids()[0]
+	if r.gw.reported[id] != "" || len(r.boinc.staged) != 1 {
+		t.Errorf("reported %v, staged %d: a work unit that exists lost its pilot or credential", r.gw.reported, len(r.boinc.staged))
+	}
+}
+
+// The validator's first look, before the file exists, leaves a lone result inconclusive: its
+// credit is still written. And a backlog of results waiting in the gateway's hold does not keep a
+// later result whose credit is final out of the pass.
+func TestCreditForInconclusiveResultsBeyondTheFirstPage(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < creditPage+50; i++ {
+		r.boinc.setJob(fmt.Sprintf("p-%012x", i), Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess})
+	}
+	last := fmt.Sprintf("p-%012x", creditPage+49)
+	r.boinc.setJob(last, Job{HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, ValidateState: ValidateStateInconclusive})
+	v := 42.0
+	r.gw.credits[last] = Credit{Final: true, Credit: &v} // the others: unknown to the gateway (404)
+	r.b.Credit(ctx)
+	if got, _ := readCredit(t, r, last); got != "42\n" {
+		t.Fatalf("credit of the inconclusive result past the first page: %q", got)
+	}
+	if r.boinc.creditCalls != 2 {
+		t.Errorf("%d pages read, want 2", r.boinc.creditCalls)
 	}
 }

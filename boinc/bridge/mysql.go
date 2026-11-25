@@ -130,26 +130,29 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 	return out, nil
 }
 
-func (m *MySQL) AwaitingCredit(ctx context.Context, limit int) ([]string, error) {
+func (m *MySQL) AwaitingCredit(ctx context.Context, afterID int64, limit int) ([]Awaiting, error) {
 	app, err := m.appIDFor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// result's (appid, server_state) index narrows it to the app's finished results.
-	rows, err := m.db.QueryContext(ctx, `SELECT w.name FROM result r JOIN workunit w ON w.id = r.workunitid
-		WHERE r.appid = ? AND r.server_state = ? AND r.outcome = ? AND r.validate_state = ? AND w.batch = ?
-		ORDER BY r.id LIMIT ?`, app, ServerStateOver, OutcomeSuccess, ValidateStateInit, m.batch, limit)
+	// result's (appid, server_state) index narrows it to the app's finished results. Inconclusive
+	// too: the validator's first look, before the credit file exists, leaves a lone result there.
+	rows, err := m.db.QueryContext(ctx, `SELECT r.id, w.name FROM result r JOIN workunit w ON w.id = r.workunitid
+		WHERE r.appid = ? AND r.server_state = ? AND r.outcome = ? AND r.validate_state IN (?, ?) AND w.batch = ?
+			AND r.id > ?
+		ORDER BY r.id LIMIT ?`, app, ServerStateOver, OutcomeSuccess, ValidateStateInit, ValidateStateInconclusive,
+		m.batch, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []Awaiting
 	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
+		var a Awaiting
+		if err := rows.Scan(&a.ResultID, &a.Name); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		out = append(out, a)
 	}
 	return out, rows.Err()
 }

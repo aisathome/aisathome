@@ -59,13 +59,17 @@ func (s *boincSim) Jobs(_ context.Context, names []string) (map[string]bridge.Jo
 	return out, nil
 }
 
-func (s *boincSim) AwaitingCredit(_ context.Context, _ int) ([]string, error) {
+func (s *boincSim) AwaitingCredit(_ context.Context, after int64, _ int) ([]bridge.Awaiting, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []string
+	if after > 0 {
+		return nil, nil
+	}
+	var out []bridge.Awaiting
 	for n, j := range s.jobs {
-		if j.ServerState == bridge.ServerStateOver && j.Outcome == bridge.OutcomeSuccess && j.ValidateState == bridge.ValidateStateInit {
-			out = append(out, n)
+		if j.ServerState == bridge.ServerStateOver && j.Outcome == bridge.OutcomeSuccess &&
+			(j.ValidateState == bridge.ValidateStateInit || j.ValidateState == bridge.ValidateStateInconclusive) {
+			out = append(out, bridge.Awaiting{ResultID: int64(len(out) + 1), Name: n})
 		}
 	}
 	return out, nil
@@ -267,14 +271,21 @@ func TestBridgeEndToEnd(t *testing.T) {
 		t.Error("Run on BOINC: the account page lacks the new user and its attach command")
 	}
 
-	// The pilot ends (idle), BOINC has the result: reported; the credit is final a day later, and the
-	// file the validator reads holds exactly the record's credit.
-	ag.Leave("pilot: idle", 2*time.Second)
-	waitUntil(t, "the pilot to end", func() bool { return a.pilotRecord(t, id)["state"] == gateway.PilotEnded })
+	// BOINC has the result while the gateway still sees the pilot connected: the bridge's report
+	// ends it and drops its connection. The validator's first look, before the credit file exists,
+	// leaves the result inconclusive; the credit is final a day later, and the file the validator
+	// reads then holds exactly the record's credit.
 	sim.setJob(id, bridge.Job{HasResult: true, ServerState: bridge.ServerStateOver, Outcome: bridge.OutcomeSuccess, User: 5, Host: 11, Team: 3})
 	if err := b.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if p := a.pilotRecord(t, id); p["state"] != gateway.PilotEnded || p["end_reason"] != "reported: success" {
+		t.Fatalf("after BOINC's result: %v", p)
+	}
+	waitUntil(t, "the reported pilot to be dropped", func() bool { return a.g.NodeCount() == 0 })
+	ag.Leave("pilot: idle", 2*time.Second)
+	sim.setJob(id, bridge.Job{HasResult: true, ServerState: bridge.ServerStateOver, Outcome: bridge.OutcomeSuccess, User: 5, Host: 11, Team: 3,
+		ValidateState: bridge.ValidateStateInconclusive})
 	if err := b.Credit(ctx); err != nil {
 		t.Fatal(err)
 	}
