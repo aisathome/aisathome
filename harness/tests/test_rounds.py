@@ -205,6 +205,16 @@ class Engine(unittest.TestCase):
         self.assertEqual([c[0] for c in rig.calls], ["start", "resume"])
         self.assertEqual((st["final"]["outcome"], len(st["rounds"])), ("proved", 1))
 
+    def test_a_resume_after_a_pause_that_made_no_progress_is_checked_not_paused_again(self):
+        """A resumed round that added no event (its budget was spent) and still reads as exhausted is checked
+        as it stands: a pause and reclaim never loop without progress."""
+        rig = Rig(self.raw, ["timed_out"], sessions=[{"steps": 2, "exhausted": True}, {"steps": 0, "exhausted": True}])
+        with self.assertRaises(worker.Pause):
+            rounds.run_rounds(rig.make(fix_rounds=0))
+        st = rounds.run_rounds(rig.make(fix_rounds=0))
+        self.assertEqual([c[0] for c in rig.calls], ["start", "resume"])
+        self.assertEqual((st["final"]["outcome"], len(st["rounds"])), ("timed_out", 1))
+
     def test_a_pause_hook_that_returns_resumes_at_once(self):
         paused = []
         rig = Rig(self.raw, ["proved"], sessions=[{"steps": 2, "exhausted": True}, {"steps": 2, "exhausted": True},

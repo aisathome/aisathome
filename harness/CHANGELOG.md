@@ -18,8 +18,10 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   not a wait) and the backoff after it (`preempt_pause_s`), so a resume after a stop goes on counting the round's
   wait and its pauses are not counted against `max_resumes`. Waits after preemptions do not count against the
   awake ceiling, nor against a running segment's own awake timer; run.json records `preempted` and
-  `preempt_wait_s`. `rounds.run_rounds` neither checks nor retries such a round: it calls `Rounds.pause` (by
-  default raising `worker.Pause`) and resumes the session at its next call, with a fresh wait.
+  `preempt_wait_s`; a wait ends at the next step's start or at another endpoint error. `rounds.run_rounds` neither
+  checks nor retries such a round: it calls `Rounds.pause` (by default raising `worker.Pause`) and resumes the
+  session at its next call, with a fresh wait. A resume that runs no segment never repeats an earlier pause, and one
+  that added no event is checked as it stands, so a pause and reclaim cannot loop without progress.
   `Recipe.hold_preempted` (`egress_forward.py --hold-preempted`): after a preempted response (the gateway's 503 with
   `"code":"preempted"` or its stream's `"reason":"preempted"` event) the forwarder holds the next requests (5 s
   doubling to 60 s) so a retry is not preempted again at once; the hold starts as the preemption passes through,
@@ -28,6 +30,8 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ### Fixed
 
+- A resumed session that finds its round's time or awake budget already spent, and so runs no segment, says so in
+  run.json (`timed_out`, `cap`) instead of reading as not timed out.
 - Build slots are first come, first served: a waiter takes `<state>/slots/turnstile` before it polls for a slot
   (`Host.slot` and `buildslot.sh` alike), so a holder that asks again right after its build no longer takes the slot
   back before a waiting session. With one slot, a pre-pass's back-to-back compiles kept another session's build
