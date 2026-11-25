@@ -2,6 +2,8 @@
 package bridge
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,5 +95,35 @@ func TestExecToolsRefusesOddPaths(t *testing.T) {
 	err := NewExecTools(cfg).CreateWork(ctx, "p-0123456789ab", "f")
 	if err == nil || !strings.Contains(err.Error(), "no such template") {
 		t.Errorf("create_work failure: %v", err)
+	}
+}
+
+func TestCheckNotListed(t *testing.T) {
+	var asked []string
+	listed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path)
+		if listed && strings.HasSuffix(r.URL.Path, "/1f/") {
+			w.Write([]byte("<html><title>Index of /project/download/1f</title><a href=\"pc-p-0123456789ab-ff\">"))
+			return
+		}
+		http.Error(w, "Forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+	cfg := fakeProject(t, "")
+	cfg.WebURL = srv.URL + "/project/"
+	if err := NewExecTools(cfg).CheckNotListed(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(asked, " ") != "/project/download/ /project/download/1f/" {
+		t.Errorf("asked %v", asked)
+	}
+	listed = true
+	if err := NewExecTools(cfg).CheckNotListed(ctx); err == nil || !strings.Contains(err.Error(), "must not be listed") {
+		t.Errorf("a listed fan-out directory: %v", err)
+	}
+	srv.Close()
+	if err := NewExecTools(cfg).CheckNotListed(ctx); err == nil {
+		t.Error("no error when the web server cannot be asked")
 	}
 }

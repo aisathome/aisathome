@@ -24,7 +24,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Gateway != "https://api.example.org" || c.App != "pilot" || c.WUTemplate != "templates/pilot_in" ||
-		c.CreditDir != "/home/boincadm/project/credit" || c.WebURL != "http://apache/project/" || c.DeadlineHours != 168 ||
+		c.CreditDir != "/home/boincadm/project/credit" || c.WebURL != "http://apache/project/" || c.DeadlineHours != 60 ||
 		c.MinRunwayHours != 54 || c.PollSeconds != 10 || c.DemandSeconds != 60 {
 		t.Errorf("defaults: %+v", c)
 	}

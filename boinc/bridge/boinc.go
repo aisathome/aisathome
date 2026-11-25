@@ -24,6 +24,10 @@ const (
 
 	ValidateStateInit  = 0 // VALIDATE_STATE_INIT: not validated yet
 	ValidateStateValid = 1 // VALIDATE_STATE_VALID
+	// VALIDATE_STATE_INCONCLUSIVE: the validator looked and found no canonical result yet. A
+	// transient error in init_result (no credit file yet) leaves a lone result here, and the
+	// validator looks at it again later (sched/validator.cpp, handle_wu).
+	ValidateStateInconclusive = 4
 
 	WUErrorCancelled = 16 // WU_ERROR_CANCELLED
 )
@@ -39,6 +43,12 @@ type Job struct {
 	ValidateState int
 	// User, Host and Team are BOINC's ids, set when the result is sent (0 before; Team 0: none).
 	User, Host, Team int64
+}
+
+// awaitingValidation: the result succeeded and the validator has not decided on it yet.
+func (j Job) awaitingValidation() bool {
+	return j.HasResult && j.ServerState == ServerStateOver && j.Outcome == OutcomeSuccess &&
+		(j.ValidateState == ValidateStateInit || j.ValidateState == ValidateStateInconclusive)
 }
 
 // sent: a host has the work unit (or had it).
@@ -64,10 +74,15 @@ func (j Job) reported() (string, bool) {
 			return "error", true
 		}
 	}
+	if j.HasResult && j.ServerState == ServerStateInProgress {
+		// A host has it, cancelled or not: BOINC tells the client to abort at its next scheduler
+		// request, and the result's end is reported then. Until then the pilot may serve.
+		return "", false
+	}
 	if j.ErrorMask&WUErrorCancelled != 0 {
 		return "cancelled", true
 	}
-	if j.ErrorMask != 0 && !(j.HasResult && j.ServerState == ServerStateInProgress) {
+	if j.ErrorMask != 0 {
 		return "error", true
 	}
 	return "", false
@@ -80,8 +95,15 @@ type Store interface {
 	// unit of the bridge's batch is missing from the map.
 	Jobs(ctx context.Context, names []string) (map[string]Job, error)
 	// AwaitingCredit returns up to limit of the bridge's work units whose result succeeded and
-	// waits for the validator, oldest first.
-	AwaitingCredit(ctx context.Context, limit int) ([]string, error)
+	// waits for the validator (not validated yet, or inconclusive), in result id order, after the
+	// result id afterID: a caller pages through them all.
+	AwaitingCredit(ctx context.Context, afterID int64, limit int) ([]Awaiting, error)
+}
+
+// Awaiting is a result that waits for its credit: its id (for paging) and its work unit's name.
+type Awaiting struct {
+	ResultID int64
+	Name     string
 }
 
 // Tools makes and cancels work units with the project's own programs.

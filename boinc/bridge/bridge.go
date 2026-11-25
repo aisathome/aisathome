@@ -48,8 +48,10 @@ const (
 	orphanAfter = 5 * time.Minute
 	// requestRetry: a request whose BOINC call failed (not a BOINC refusal) is tried again then.
 	requestRetry = 2 * time.Minute
-	// creditBatch: work units awaiting credit looked at per pass.
-	creditBatch = 500
+	// creditPage and creditPages: results awaiting credit are read this many at a time, at most
+	// this many pages per pass (100,000 results).
+	creditPage  = 500
+	creditPages = 200
 	// cleanupEvery: how often finished credit files are removed.
 	cleanupEvery = time.Hour
 	// creditFileKeep: a credit file whose work unit the bridge can no longer find is removed after
@@ -265,6 +267,16 @@ func (b *Bridge) Demand(ctx context.Context) error {
 		}
 		cancelled++
 		b.st.cancelled++
+		// BOINC may have sent it between the look and cancel_jobs, which cancels the work unit
+		// anyway. A host has it then: the pilot is not ended here; Sync binds it, and reports it when
+		// the result is over (the client aborts it at its next scheduler request).
+		if after, err := b.store.Jobs(ctx, []string{p.ID}); err != nil {
+			errs = append(errs, fmt.Errorf("cancel %s: %w", p.ID, err))
+			continue
+		} else if j, ok := after[p.ID]; ok && j.sent() {
+			b.log.Warn("pilot sent while its work unit was cancelled; not ended", "pilot", p.ID)
+			continue
+		}
 		why := "not wanted"
 		if short {
 			why = "too close to its deadline"
@@ -297,6 +309,18 @@ func (b *Bridge) createPilot(ctx context.Context) error {
 		return errors.Join(fmt.Errorf("pilot %s: %w", p.ID, err), b.report(ctx, p.ID, "error", "credential not staged"))
 	}
 	if err := b.tools.CreateWork(ctx, p.ID, file); err != nil {
+		// create_work may have inserted the work unit before it failed (a timeout, say). Only a work
+		// unit that is not there lets go of the credential and the pilot; if the look fails, the
+		// orphan sweep in Sync decides later.
+		jobs, jerr := b.store.Jobs(ctx, []string{p.ID})
+		if jerr != nil {
+			return fmt.Errorf("pilot %s: %w (and the work unit could not be looked up: %v)", p.ID, err, jerr)
+		}
+		if _, made := jobs[p.ID]; made {
+			b.log.Warn("create_work failed but the work unit exists; kept", "pilot", p.ID, "err", err)
+			b.st.created++
+			return nil
+		}
 		uerr := b.tools.Unstage(ctx, file)
 		return errors.Join(fmt.Errorf("pilot %s: %w", p.ID, err), uerr, b.report(ctx, p.ID, "error", "no work unit made"))
 	}
@@ -308,9 +332,22 @@ func (b *Bridge) createPilot(ctx context.Context) error {
 // Credit writes the final credit of every finished pilot whose result waits for the validator.
 // Until the gateway's credit is final, the validator finds no file and BOINC tries again later.
 func (b *Bridge) Credit(ctx context.Context) error {
-	names, err := b.store.AwaitingCredit(ctx, creditBatch)
-	if err != nil {
-		return err
+	// Every page, not only the first: a backlog of results still in the gateway's hold must not keep
+	// later ones, whose credit may be final, out of the pass.
+	var names []string
+	var after int64
+	for page := 0; page < creditPages; page++ {
+		rows, err := b.store.AwaitingCredit(ctx, after, creditPage)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			names = append(names, r.Name)
+			after = r.ResultID
+		}
+		if len(rows) < creditPage {
+			break
+		}
 	}
 	now := b.Now()
 	waiting := make(map[string]bool, len(names))
@@ -433,8 +470,9 @@ func (b *Bridge) Cleanup(ctx context.Context) error {
 	for _, n := range names {
 		path := filepath.Join(b.cfg.CreditDir, n)
 		j, ok := jobs[n]
-		done := ok && j.HasResult && (j.ValidateState != ValidateStateInit ||
-			(j.ServerState == ServerStateOver && j.Outcome != OutcomeSuccess))
+		// Done: validated (valid, invalid, too late), or over without success. Not while inconclusive:
+		// the validator reads the file again.
+		done := ok && j.HasResult && j.ServerState == ServerStateOver && !j.awaitingValidation()
 		if !ok {
 			if info, err := os.Stat(path); err == nil && now.Sub(info.ModTime()) > creditFileKeep {
 				done = true

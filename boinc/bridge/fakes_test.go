@@ -185,6 +185,11 @@ type fakeBOINC struct {
 	createErr error
 	cancelErr error
 	storeErr  error
+	// sendOnCancel: BOINC sends the work unit to this host while cancel_jobs runs.
+	sendOnCancel int64
+	// createWorkThenFail: create_work inserts the work unit, then fails (a timeout).
+	createWorkThenFail bool
+	creditCalls        int
 
 	accounts map[string]*fakeAccount // by account key
 	byEmail  map[string]*fakeAccount
@@ -227,18 +232,21 @@ func (f *fakeBOINC) Jobs(_ context.Context, names []string) (map[string]Job, err
 	return out, nil
 }
 
-func (f *fakeBOINC) AwaitingCredit(_ context.Context, limit int) ([]string, error) {
+// AwaitingCredit pages by a result id: the work unit's place in name order.
+func (f *fakeBOINC) AwaitingCredit(_ context.Context, after int64, limit int) ([]Awaiting, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []string
-	for n, j := range f.jobs {
-		if j.HasResult && j.ServerState == ServerStateOver && j.Outcome == OutcomeSuccess && j.ValidateState == ValidateStateInit {
-			out = append(out, n)
-		}
+	f.creditCalls++
+	var names []string
+	for n := range f.jobs {
+		names = append(names, n)
 	}
-	sort.Strings(out)
-	if len(out) > limit {
-		out = out[:limit]
+	sort.Strings(names)
+	var out []Awaiting
+	for i, n := range names {
+		if id := int64(i + 1); id > after && f.jobs[n].awaitingValidation() && len(out) < limit {
+			out = append(out, Awaiting{ResultID: id, Name: n})
+		}
 	}
 	return out, nil
 }
@@ -263,6 +271,11 @@ func (f *fakeBOINC) Unstage(_ context.Context, name string) error {
 func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createWorkThenFail {
+		f.works[name] = cred
+		f.jobs[name] = Job{}
+		return errors.New("create_work: signal: killed")
+	}
 	if f.createErr != nil {
 		return f.createErr
 	}
@@ -282,6 +295,9 @@ func (f *fakeBOINC) Cancel(_ context.Context, name string) error {
 	}
 	f.cancelled = append(f.cancelled, name)
 	j := f.jobs[name]
+	if f.sendOnCancel != 0 {
+		j = Job{HasResult: true, ServerState: ServerStateInProgress, User: 1, Host: f.sendOnCancel}
+	}
 	j.ErrorMask |= WUErrorCancelled
 	if j.HasResult && j.ServerState == ServerStateUnsent {
 		j.ServerState, j.Outcome = ServerStateOver, OutcomeDidntNeed

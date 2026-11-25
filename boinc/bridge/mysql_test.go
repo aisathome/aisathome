@@ -86,6 +86,8 @@ func TestMySQLStore(t *testing.T) {
 	res(7, ServerStateOver, OutcomeSuccess, ValidateStateInit, 1, 1, 0)
 	wu(8, "p-000000000008", 1, 0)
 	res(8, ServerStateOver, OutcomeSuccess, ValidateStateValid, 9, 7, 0)
+	wu(9, "p-000000000009", 1, 0) // the validator looked before the credit file existed
+	res(9, ServerStateOver, OutcomeSuccess, ValidateStateInconclusive, 9, 7, 0)
 
 	s := NewMySQL(db, 1, "pilot")
 	if err := s.Ping(ctx); err != nil {
@@ -116,9 +118,18 @@ func TestMySQLStore(t *testing.T) {
 			t.Errorf("%s: %+v, want %+v", n, jobs[n], j)
 		}
 	}
-	got, err := s.AwaitingCredit(ctx, 10)
-	if err != nil || !slices.Equal(got, []string{"p-000000000004"}) {
-		t.Errorf("awaiting credit: %v %v", got, err)
+	got, err := s.AwaitingCredit(ctx, 0, 10)
+	if err != nil || len(got) != 2 || got[0].Name != "p-000000000004" || got[1].Name != "p-000000000009" ||
+		got[0].ResultID >= got[1].ResultID {
+		t.Fatalf("awaiting credit: %v %v", got, err)
+	}
+	// Paging: after the first one's result id, only the second; one per page.
+	page, err := s.AwaitingCredit(ctx, got[0].ResultID, 1)
+	if err != nil || len(page) != 1 || page[0] != got[1] {
+		t.Errorf("second page: %v %v", page, err)
+	}
+	if first, _ := s.AwaitingCredit(ctx, 0, 1); !slices.Equal(first, got[:1]) {
+		t.Errorf("first page of one: %v", first)
 	}
 	if err := NewMySQL(db, 1, "nope").Ping(ctx); err == nil {
 		t.Error("no error for a missing app")

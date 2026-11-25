@@ -10,6 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,4 +133,38 @@ func safeFileName(s string) bool {
 		}
 	}
 	return true
+}
+
+// CheckNotListed fails unless the project's web server refuses to list the download directory
+// and one of its fan-out directories. A pilot's credential lies there as an input file that any
+// client may fetch by name, so its unguessable name is what protects it; a listing would give it
+// away. Checked on the project's own web server (web_url), which serves the download directory
+// as BOINC's stock configuration does (<project>/download).
+func (t *ExecTools) CheckNotListed(ctx context.Context) error {
+	p, err := t.downloadPath(ctx, "listing-check") // makes its fan-out directory, writes nothing
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(filepath.Join(t.cfg.ProjectDir, "download"), filepath.Dir(p))
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, u := range []string{t.cfg.WebURL + "download/", t.cfg.WebURL + "download/" + filepath.ToSlash(rel) + "/"} {
+		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("download directory: %w", err)
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode/100 == 2 {
+			return fmt.Errorf("the web server answers %s with HTTP %d: the download directory must not be listed (Options -Indexes)", u, resp.StatusCode)
+		}
+	}
+	return nil
 }

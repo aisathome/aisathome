@@ -88,11 +88,26 @@ key. The gateway is the source of truth; the bridge mirrors it into BOINC:
 
 | Every | What |
 |---|---|
-| 60 s | **Demand**: as many pilots as the gateway wants. For each, it creates the pilot at the gateway, writes the credential into the download directory as a per-work-unit input file with an unguessable name (`bin/dir_hier_path`, mode 0640) and runs `bin/create_work` with the pilot's id as the work unit's name, the model as a remote sticky file and the credential as file 1. Unsent work units the gateway no longer wants (newest first), and those whose pilot has less than `min_runway_hours` left, are cancelled (`bin/cancel_jobs --name`) and reported `cancelled` |
+| 60 s | **Demand**: as many pilots as the gateway wants. For each, it creates the pilot at the gateway, writes the credential into the download directory as a per-work-unit input file with an unguessable name (`bin/dir_hier_path`, mode 0640) and runs `bin/create_work` with the pilot's id as the work unit's name, the model as a remote sticky file and the credential as file 1. Unsent work units the gateway no longer wants (newest first), and those whose pilot has less than `min_runway_hours` left, are cancelled (`bin/cancel_jobs --name`) and reported `cancelled`. If BOINC sent the work unit while it was being cancelled, the pilot is not ended: it is bound and reported when its result is over. If `create_work` fails, the pilot is ended and its credential removed only when the work unit really is not there (a timed-out `create_work` may have made it) |
 | 10 s | **Binds and ends**: when BOINC sends a work unit, it tells the gateway the BOINC user, host and team (`result.userid`, `hostid`, `teamid`); when the result is over, it reports the outcome (success, error, `expired` for no reply by the deadline, `cancelled`). A pilot with no work unit 5 minutes after its creation is reported `error` (the bridge stopped between the two steps) |
-| 60 s | **Credit**: for each successful result that waits for validation, it asks the gateway for the pilot's credit and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole). The validator reads that file into the result's claimed credit and grants it with `--post_assigned_credit`; until the file is there it tells BOINC to try again later. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
+| 60 s | **Credit**: for each successful result that waits for validation, it asks the gateway for the pilot's credit (BOINC's "not validated yet" and "inconclusive": the validator's first look, before the file exists, leaves a lone result inconclusive, and it looks again later; every page of them, oldest first, so a backlog still in the gateway's hold never keeps later ones out) and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole). The validator reads that file into the result's claimed credit and grants it with `--post_assigned_credit`; until the file is there it tells BOINC to try again later. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
 | 10 s | **People's requests**: "Run on BOINC" calls `create_account.php` with the address, the display name and the person's password hash (or, without one, the hash of a password derived from the request with the connector key, so a retry after a crash finds the same user), then `am_get_info.php` for the user id and the weak (attach-only) key. A claim calls `am_get_info.php` with the account key the person gave. BOINC's refusals become the request's failure reason; a failed call (network, database, a wrong invitation code) is tried again 2 minutes later |
 | 60 s | A status line in its log (open pilots by state, created, cancelled, bound, reported, requests answered, credit files, errors) |
+
+**The credential in the download directory.** A work unit's input files are plain downloads from
+the project's download directory, by name, without authentication: that is how BOINC clients fetch
+them. A pilot's credential lies there under a name with 128 random bits, so its name is its only
+protection. The bridge therefore refuses to start (and `-check` fails) unless the project's web
+server answers the download directory and its fan-out directories with something other than a
+listing (Apache: `Options -Indexes`), and keeps the credential short-lived: it works only after the
+bind, for one connection at a time, until the pilot ends or its deadline passes (60 hours), and an
+unsent work unit is cancelled after about 6 hours. What remains: whoever learns the file's name (the
+host it was sent to, the web server's access log, anything between the client and the server) can
+connect with the credential after the bind; if they connect before the pilot does, they hold its one
+connection and receive what the pilot would have (science, and people's chats once chat on pilots
+is on; never personal data), and the pilot's credit goes to the BOINC user it was sent to. A
+credential that the first connection redeems for a per-pilot secret only the real pilot keeps would
+close that; it needs the node agent and the gateway, and is not built yet.
 
 It reads the project's database (SELECT on `workunit`, `result` and `app` only; give it a user with no
 other rights, or it uses `config.xml`'s) and never writes it: BOINC's own tools make and cancel work
@@ -119,13 +134,13 @@ project's own web server, which should keep those pages out of its access log.
 ```
 
 Optional: `app` (`pilot`), `wu_template` and `result_template` (`templates/pilot_in`,
-`templates/pilot_out`), `target_host`, `deadline_hours` (168: the pilot's deadline at the gateway),
+`templates/pilot_out`), `target_host`, `deadline_hours` (60: the pilot's deadline at the gateway, after which its credential is refused),
 `min_runway_hours` (54: the work unit's 48 h delay bound, a 4 h pilot and 2 h), `credit_dir`
 (`project_dir/credit`), `zero_credit`, `poll_seconds` (10), `demand_seconds` (60).
 
 ```sh
 go build -o aisathome-bridge ./boinc/bridge/cmd/aisathome-bridge
-aisathome-bridge -config bridge.json -check   # key, database, tools, credit directory
+aisathome-bridge -config bridge.json -check   # key, database, tools, credit directory, no listing
 aisathome-bridge -config bridge.json
 ```
 

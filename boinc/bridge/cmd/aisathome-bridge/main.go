@@ -60,7 +60,15 @@ func run(cfgPath string, check bool, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("project database: %w", err)
 	}
-	b, err := bridge.New(cfg, key, db, bridge.NewExecTools(cfg), bridge.NewWebRPC(cfg.WebURL, invite), log)
+	tools := bridge.NewExecTools(cfg)
+	b, err := bridge.New(cfg, key, db, tools, bridge.NewWebRPC(cfg.WebURL, invite), log)
+	if err != nil {
+		return err
+	}
+	// Never stage a credential where the download directory is listed.
+	lctx, lcancel := context.WithTimeout(ctx, 30*time.Second)
+	err = tools.CheckNotListed(lctx)
+	lcancel()
 	if err != nil {
 		return err
 	}
