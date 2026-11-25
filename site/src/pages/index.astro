@@ -15,7 +15,8 @@ import { p2m } from '../data/prove2me';
 import { historyOf, scienceView } from '../data/prove2me-records';
 import { buildRecords } from '../data/prove2me-build';
 import { homeLine } from '../data/prove2me-view';
-import { acceptedChartSVG, acceptedRowsHTML, acceptedSeries } from '../data/prove2me-chart';
+import { acceptedSeries } from '../data/prove2me-chart';
+import AcceptedChart from '../components/AcceptedChart.astro';
 import { homeDescription, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
 // The newest dev log posts (design C of three), with the dev log's own publish
@@ -122,35 +123,7 @@ const nodeShotAlt =
 					)}
 					<a class="more" href="/science/" data-home-science-all>All science projects <span aria-hidden="true">→</span></a>
 				</div>
-				{p2mSeries && (
-					<figure class="p2m-chart" data-home-p2m-chart>
-						<figcaption>Proofs accepted by prove2me, counted up</figcaption>
-						<ul class="legend" aria-hidden="true">
-							<li><span class="swatch dot"></span>Proof</li>
-							<li><span class="swatch dot hollow"></span>Closed by reusing a proof</li>
-							<li><span class="swatch dash"></span>A trial starts (its number above)</li>
-						</ul>
-						<div class="p2m-svg" data-home-p2m-svg set:html={acceptedChartSVG(p2mSeries)} />
-							<details class="p2m-table">
-							<summary>The numbers</summary>
-							<div class="p2m-table-wrap">
-								<table>
-									<thead>
-										<tr>
-											<th scope="col">Accepted (UTC)</th>
-											<th scope="col" class="num">Trial</th>
-											<th scope="col">Lemma</th>
-											<th scope="col">How</th>
-											<th scope="col" class="num">Total</th>
-										</tr>
-									</thead>
-									<tbody data-home-p2m-rows set:html={acceptedRowsHTML(p2mSeries)} />
-								</table>
-							</div>
-						</details>
-						<script is:inline type="application/json" data-home-p2m-series set:html={JSON.stringify(p2mSeries).replace(/</g, '\\u003c')} />
-					</figure>
-				)}
+				{p2mSeries && <AcceptedChart series={p2mSeries} data-home-p2m-chart />}
 			</div>
 		</section>
 
@@ -287,25 +260,10 @@ const nodeShotAlt =
 	// build's line stays.
 	import { liveSummary, type History } from '../data/prove2me-records';
 	import { homeLine } from '../data/prove2me-view';
-	import { acceptedChartSVG, acceptedRowsHTML, acceptedSeries, type AcceptedSeries } from '../data/prove2me-chart';
+	import { mountAcceptedChart } from '../data/prove2me-chart';
 
-	// The chart: drawn again at its real width (the build's copy is scaled), on load, on resize and with live records.
-	const chart = document.querySelector<HTMLElement>('[data-home-p2m-svg]');
-	let series: AcceptedSeries | null = null;
-	try {
-		series = JSON.parse(document.querySelector('[data-home-p2m-series]')?.textContent || 'null');
-	} catch {
-		series = null;
-	}
-	const draw = () => {
-		if (chart && series && chart.clientWidth > 0) chart.innerHTML = acceptedChartSVG(series, chart.clientWidth);
-	};
-	draw();
-	let resized = 0;
-	window.addEventListener('resize', () => {
-		cancelAnimationFrame(resized);
-		resized = requestAnimationFrame(draw);
-	});
+	// The chart: drawn again at its real width (the build's copy is scaled), on resize and with live records.
+	const chart = mountAcceptedChart(document.querySelector<HTMLElement>('[data-home-p2m-chart]'));
 
 	const box = document.querySelector<HTMLElement>('[data-home-prove2me]');
 	const load = async () => {
@@ -318,14 +276,7 @@ const nodeShotAlt =
 			box.querySelector<HTMLElement>('[data-home-p2m-accepted]')!.textContent = String(v.kpis.accepted);
 			box.querySelector<HTMLElement>('[data-home-p2m-text]')!.textContent = homeLine(v, known.model);
 			box.dataset.source = 'live';
-			const s = acceptedSeries(v);
-			const rows = document.querySelector<HTMLElement>('[data-home-p2m-rows]');
-			if (s && chart && rows) {
-				series = s;
-				draw();
-				rows.innerHTML = acceptedRowsHTML(s);
-				chart.closest<HTMLElement>('[data-home-p2m-chart]')!.dataset.source = 'live';
-			}
+			chart.update(v);
 		} catch {
 			// keep the build's line
 		}
@@ -623,37 +574,7 @@ const nodeShotAlt =
 	/* The prove2me chart beside the words (below them on a phone), in the network page's chart style. */
 	.sci-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.5rem 2.5rem; align-items: start; }
 	@media (max-width: 56rem) { .sci-body { grid-template-columns: minmax(0, 1fr); } }
-	.p2m-chart {
-		--c-line: #199e70;
-		margin: 0;
-		min-width: 0;
-	}
-	:global(:root[data-theme='light']) .p2m-chart { --c-line: #1baf7a; }
-	.p2m-chart figcaption { margin-bottom: 0.4rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
-	.p2m-chart .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--sl-color-gray-2); }
-	.p2m-chart .legend li { display: flex; align-items: center; gap: 0.4rem; }
-	.swatch.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--c-line); }
-	.swatch.dot.hollow { background: transparent; border: 2px solid var(--c-line); }
-	.swatch.dash { width: 0; height: 0.9rem; border-left: 1px dashed var(--sl-color-gray-3); }
-	.p2m-svg { width: 100%; }
-	.p2m-svg :global(svg) { display: block; width: 100%; height: auto; overflow: visible; }
-	.p2m-svg :global(.grid) { stroke: var(--sl-color-gray-5); stroke-width: 1; }
-	.p2m-svg :global(.base) { stroke: var(--sl-color-gray-4); stroke-width: 1; }
-	.p2m-svg :global(.tick) { fill: var(--sl-color-gray-3); font-size: 11px; font-variant-numeric: tabular-nums; }
-	.p2m-svg :global(.end-n) { fill: var(--sl-color-white); font-weight: 700; font-size: 13px; }
-	.p2m-svg :global(.trial) { stroke: var(--sl-color-gray-4); stroke-width: 1; stroke-dasharray: 3 3; }
-	.p2m-svg :global(.step) { fill: none; stroke: var(--c-line); stroke-width: 2.5; stroke-linejoin: round; }
-	.p2m-svg :global(.pt) { fill: var(--c-line); stroke: var(--b-surface); stroke-width: 1.5; }
-	.p2m-svg :global(.pt.reuse) { fill: var(--b-surface); stroke: var(--c-line); stroke-width: 2; }
-	.p2m-table { margin-top: 0.5rem; }
-	.p2m-table summary { cursor: pointer; font-size: 0.9rem; color: var(--sl-color-gray-2); }
-	.p2m-table-wrap { max-height: 18rem; overflow: auto; }
-	.p2m-table table { width: 100%; margin-top: 0.5rem; border-collapse: collapse; font-size: 0.85rem; }
-	.p2m-table :global(:is(th, td)) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: top; }
-	.p2m-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
-	.p2m-table :global(.num) { text-align: right; font-variant-numeric: tabular-nums; }
-	.p2m-table :global(td:first-child) { white-space: nowrap; }
-	.p2m-table :global(.lemma a) { color: var(--sl-color-accent-high); }
+	.sci :global(.p2m-chart) { --chart-bg: var(--b-surface); }
 	.sci-past strong { color: var(--sl-color-white); }
 </style>
 

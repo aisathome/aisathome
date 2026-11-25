@@ -769,6 +769,33 @@ def test_home_chart_of_accepted_proofs(pages, site, records):
     expect(still.locator("[data-home-p2m-chart] svg[role=img] circle").first).to_be_attached()
 
 
+def test_prove2me_page_chart_of_accepted_proofs(pages, site, records):
+    """/science/prove2me/ has the home page's chart of accepted proofs right under its headline numbers (before the
+    submissions): with the gateway's records (8 accepted on 2026-11-18) it redraws to 8 points and 8 table rows, the
+    same count as the headline number; it fits a phone; without JavaScript the build's chart is there."""
+    page = _records_page(pages, records, site=site)
+    expect(page.locator("[data-p2m-kpis][data-source=live]")).to_be_attached()
+    fig = page.locator("figure[data-p2m-chart]")
+    expect(fig).to_have_count(1)
+    expect(fig).to_have_attribute("data-source", "live")
+    svg = fig.locator("svg[role=img]")
+    assert svg.get_attribute("aria-label").startswith("8 proofs accepted by prove2me from ")
+    expect(svg.locator("circle")).to_have_count(8)
+    expect(svg.locator("text.end-n")).to_have_text("8")
+    fig.locator("summary").click()
+    expect(fig.locator("tbody tr")).to_have_count(8)
+    order = page.evaluate("""() => [...document.querySelectorAll('[data-p2m-kpis], figure[data-p2m-chart], [data-p2m-submissions]')]
+        .map((e) => e.matches('[data-p2m-kpis]') ? 'kpis' : e.matches('figure') ? 'chart' : 'submissions')""")
+    assert order == ["kpis", "chart", "submissions"], order
+    page.set_viewport_size({"width": 360, "height": 800})
+    page.wait_for_timeout(200)
+    box = svg.bounding_box()
+    assert box["x"] >= 0 and box["x"] + box["width"] <= 360, box
+    still = pages(False)
+    still.goto(site + PAGE)
+    expect(still.locator("figure[data-p2m-chart] svg[role=img] circle").first).to_be_attached()
+
+
 # ---- the status block at the top: the whole queue as one bar in parts per trial, a line per open trial, the numbers
 
 STATS = {"updated": "2026-11-18T14:58:00Z", "nodes": {"online": 2, "busy": 1, "slots": 2, "held": 0, "paused": 0},

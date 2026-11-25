@@ -20,6 +20,8 @@ import { p2mTaskOptions } from '../../data/prove2me-tasks';
 import { queueBarHTML, statusTexts, statusView, type StatusView } from '../../data/prove2me-status';
 import { nowAll, nowBlocksHTML } from '../../data/prove2me-now';
 import { buildRecords } from '../../data/prove2me-build';
+import { acceptedSeries } from '../../data/prove2me-chart';
+import AcceptedChart from '../../components/AcceptedChart.astro';
 
 const safe = (u: string) => (theoremURL.test(u) ? u : undefined);
 const groupLabel = { calibration: 'Calibration', open: 'Open' } as Record<string, string>;
@@ -38,6 +40,8 @@ const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.
 // build fetched; the browser redoes them with the records it reads and the same renderers (prove2me-view.ts).
 const hist = historyOf(p2m);
 const view = scienceView(hist, rec);
+// The proofs prove2me accepted, counted up over time (as on the home page), under the headline numbers.
+const acceptedOverTime = acceptedSeries(view);
 const kp = kpisHTML(view.kpis);
 const lv = leavesView(hist, rec);
 const score = leafScoreHTML(lv);
@@ -167,6 +171,7 @@ const leafCols = [
 	{/* The build's numbers; the browser redoes them from the gateway's records (see the script). */}
 	<dl class="p2m-kpis not-content" data-p2m-kpis data-source="build" style={`--kpis: ${kp.n}`} set:html={kp.html} />
 	<p data-p2m-small set:html={smallNumbersHTML(view, f01?.tasks?.length, idOfAlias)} />
+	{acceptedOverTime && <AcceptedChart series={acceptedOverTime} class="p2m-accepted-chart" />}
 
 	<section class="p2m-live not-content" data-p2m-live hidden aria-labelledby="p2m-live-head">
 		<h3 id="p2m-live-head">prove2me on the network</h3>
@@ -427,6 +432,7 @@ const leafCols = [
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
 	import { parseNodes, queueBarHTML, statusTexts, statusView, type Nodes, type StatusView } from '../../data/prove2me-status';
 	import { isBenchDoc, nowAll, nowBlocksHTML } from '../../data/prove2me-now';
+	import { mountAcceptedChart } from '../../data/prove2me-chart';
 
 	// Every task: the build's rows, filtered here; every task of trial 6 on and of the outline probes from the gateway
 	// replaces or joins them (trials 1 to 5 stay the build's).
@@ -567,10 +573,13 @@ const leafCols = [
 		statusBox.dataset.source = v.source === 'live' ? 'live' : stNodes ? 'nodes' : 'build';
 		statusBox.dataset.trials = v.trials.map((t) => t.label).join(' ');
 	};
+	// The chart under the headline numbers: drawn again at its real width, and with each newer read of the records.
+	const acceptedChart = mountAcceptedChart(document.querySelector<HTMLElement>('[data-p2m-chart]'));
 	const showRecords = (live: Records) => {
 		if (!recordsKnown) return;
 		const h = recordsKnown.history;
 		const v = scienceView(h, live);
+		acceptedChart.update(v);
 		const kpis = document.querySelector<HTMLElement>('[data-p2m-kpis]');
 		if (kpis) {
 			const k = kpisHTML(v.kpis);
@@ -917,6 +926,8 @@ const leafCols = [
 	.p2m-kpis dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); color: var(--sl-color-white); }
 	.p2m-kpis dt { margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
 	@media (max-width: 40rem) { .p2m-kpis { grid-template-columns: 1fr; } }
+	/* The chart of accepted proofs under the numbers (components/AcceptedChart.astro): no wider than reads well. */
+	.p2m-accepted-chart { max-width: 46rem; margin-block: 1.5rem 2rem !important; }
 
 	.p2m-live[hidden] { display: none !important; }
 	.p2m-live { margin: 1.25rem 0; padding: 1rem 1.25rem; border-radius: 0.5rem; background: var(--b-band, var(--b-surface)); }
