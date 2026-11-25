@@ -1,7 +1,8 @@
 ---
 // The home page ("volunteer science" design, 2026-10-10; node first, 2026-11-25): bold condensed
-// headlines, a warm accent and a drawn network of home GPUs. Order: what it is (hero), the network
-// live, run a node, the dev log (what is new), what the GPUs do (science), use it, what happens to a question.
+// headlines, a warm accent and a drawn network of home GPUs. Order: what it is (hero), what the GPUs do
+// (science, with the prove2me chart), the network live, run a node, the dev log (what is new), use it, what happens
+// to a question. Science comes before the ask: what the network does, then how small it is, then join it.
 // Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { Code } from '@astrojs/starlight/components';
@@ -14,6 +15,7 @@ import { p2m } from '../data/prove2me';
 import { historyOf, scienceView } from '../data/prove2me-records';
 import { buildRecords } from '../data/prove2me-build';
 import { homeLine } from '../data/prove2me-view';
+import { acceptedChartSVG, acceptedRowsHTML, acceptedSeries } from '../data/prove2me-chart';
 import { homeDescription, homeJsonLd, homeTitle, jsonLdScript } from '../data/seo';
 
 // The newest dev log posts (design C of three), with the dev log's own publish
@@ -24,6 +26,8 @@ const latest = (await posts()).slice(0, 3);
 // gateway's records (see the script).
 const p2mHistory = historyOf(p2m);
 const p2mView = scienceView(p2mHistory, (await buildRecords()).records);
+// The chart of proofs accepted over time: drawn here at a default width; the browser draws it again at its own width.
+const p2mSeries = acceptedSeries(p2mView);
 
 // Home GPUs around the gateway: [x, y, scale]. Coordinates in the 560 x 460 viewBox.
 const hub = { x: 280, y: 228 };
@@ -94,6 +98,59 @@ const nodeShotAlt =
 				</g>
 				<text class="hub-label" x={hub.x + 82} y={hub.y + 5}>gateway</text>
 			</svg>
+		</section>
+
+		<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
+			<p class="kicker">What the GPUs do</p>
+			<h2 id="b-sci">Our GPUs prove theorems</h2>
+			<div class="sci-body">
+				<div class="sci-words">
+					<p class="sci-text" data-home-prove2me data-source="build">
+						<strong class="sci-count" data-home-p2m-accepted>{p2mView.kpis.accepted}</strong>{' '}
+						<span data-home-p2m-text>{homeLine(p2mView, p2m.model)}</span>{' '}
+						<a href="/science/prove2me/" data-home-p2m-link>See the trials <span aria-hidden="true">→</span></a>
+					</p>
+					<script is:inline type="application/json" data-home-p2m-known set:html={JSON.stringify({ history: p2mHistory, model: p2m.model }).replace(/</g, '\\u003c')} />
+					{science.merged > 0 && (
+						<p class="sci-text sci-past" data-home-tauceti>
+							Before that: <strong data-home-science-merged>{science.merged}</strong>{' '}
+							<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, a
+							library of formal mathematics (finished, at the maintainers’ request).{' '}
+							<a href={science.pagePath}>Every pull request <span aria-hidden="true">→</span></a>
+						</p>
+					)}
+					<a class="more" href="/science/" data-home-science-all>All science <span aria-hidden="true">→</span></a>
+				</div>
+				{p2mSeries && (
+					<figure class="p2m-chart" data-home-p2m-chart>
+						<figcaption>Proofs accepted by prove2me, counted up</figcaption>
+						<ul class="legend" aria-hidden="true">
+							<li><span class="swatch dot"></span>Proof</li>
+							<li><span class="swatch dot hollow"></span>Closed by reusing a proof</li>
+							<li><span class="swatch dash"></span>A trial starts (its number above)</li>
+						</ul>
+						<div class="p2m-svg" data-home-p2m-svg set:html={acceptedChartSVG(p2mSeries)} />
+							<details class="p2m-table">
+							<summary>The numbers</summary>
+							<div class="p2m-table-wrap">
+								<table>
+									<thead>
+										<tr>
+											<th scope="col">Accepted (UTC)</th>
+											<th scope="col" class="num">Trial</th>
+											<th scope="col">Lemma</th>
+											<th scope="col">How</th>
+											<th scope="col" class="num">Total</th>
+										</tr>
+									</thead>
+									<tbody data-home-p2m-rows set:html={acceptedRowsHTML(p2mSeries)} />
+								</table>
+							</div>
+						</details>
+						<script is:inline type="application/json" data-home-p2m-series set:html={JSON.stringify(p2mSeries).replace(/</g, '\\u003c')} />
+					</figure>
+				)}
+			</div>
 		</section>
 
 		<LiveStats class="live" />
@@ -187,26 +244,6 @@ const nodeShotAlt =
 			</section>
 		)}
 
-		<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
-			<p class="kicker">What the GPUs do</p>
-			<h2 id="b-sci">Our GPUs prove theorems</h2>
-			<p class="sci-text" data-home-prove2me data-source="build">
-				<strong class="sci-count" data-home-p2m-accepted>{p2mView.kpis.accepted}</strong>{' '}
-				<span data-home-p2m-text>{homeLine(p2mView, p2m.model)}</span>{' '}
-				<a href="/science/prove2me/" data-home-p2m-link>See the trials <span aria-hidden="true">→</span></a>
-			</p>
-			<script is:inline type="application/json" data-home-p2m-known set:html={JSON.stringify({ history: p2mHistory, model: p2m.model }).replace(/</g, '\\u003c')} />
-			{science.merged > 0 && (
-				<p class="sci-text sci-past" data-home-tauceti>
-					Before that: <strong data-home-science-merged>{science.merged}</strong>{' '}
-					<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, a
-					library of formal mathematics (finished, at the maintainers’ request).{' '}
-					<a href={science.pagePath}>Every pull request <span aria-hidden="true">→</span></a>
-				</p>
-			)}
-			<a class="more" href="/science/" data-home-science-all>All science <span aria-hidden="true">→</span></a>
-		</section>
-
 		<section class="block" aria-labelledby="b-use">
 			<h2 id="b-use">Use it</h2>
 			<ul class="cards grid gap-5 md:grid-cols-3">
@@ -246,6 +283,25 @@ const nodeShotAlt =
 	// build's line stays.
 	import { liveSummary, type History } from '../data/prove2me-records';
 	import { homeLine } from '../data/prove2me-view';
+	import { acceptedChartSVG, acceptedRowsHTML, acceptedSeries, type AcceptedSeries } from '../data/prove2me-chart';
+
+	// The chart: drawn again at its real width (the build's copy is scaled), on load, on resize and with live records.
+	const chart = document.querySelector<HTMLElement>('[data-home-p2m-svg]');
+	let series: AcceptedSeries | null = null;
+	try {
+		series = JSON.parse(document.querySelector('[data-home-p2m-series]')?.textContent || 'null');
+	} catch {
+		series = null;
+	}
+	const draw = () => {
+		if (chart && series && chart.clientWidth > 0) chart.innerHTML = acceptedChartSVG(series, chart.clientWidth);
+	};
+	draw();
+	let resized = 0;
+	window.addEventListener('resize', () => {
+		cancelAnimationFrame(resized);
+		resized = requestAnimationFrame(draw);
+	});
 
 	const box = document.querySelector<HTMLElement>('[data-home-prove2me]');
 	const load = async () => {
@@ -258,6 +314,14 @@ const nodeShotAlt =
 			box.querySelector<HTMLElement>('[data-home-p2m-accepted]')!.textContent = String(v.kpis.accepted);
 			box.querySelector<HTMLElement>('[data-home-p2m-text]')!.textContent = homeLine(v, known.model);
 			box.dataset.source = 'live';
+			const s = acceptedSeries(v);
+			const rows = document.querySelector<HTMLElement>('[data-home-p2m-rows]');
+			if (s && chart && rows) {
+				series = s;
+				draw();
+				rows.innerHTML = acceptedRowsHTML(s);
+				chart.closest<HTMLElement>('[data-home-p2m-chart]')!.dataset.source = 'live';
+			}
 		} catch {
 			// keep the build's line
 		}
@@ -383,6 +447,7 @@ const nodeShotAlt =
 
 	/* Live counters */
 	.vb :global(.live) {
+		margin-top: clamp(2rem, 5vw, 3rem);
 		display: grid;
 		grid-template-columns: auto 1fr auto;
 		align-items: center;
@@ -548,6 +613,41 @@ const nodeShotAlt =
 		.node .guar h3 { margin-bottom: 0.25rem; font-size: 1.2rem; }
 	}
 	.sci-past { font-size: 0.92rem; color: var(--sl-color-gray-3); }
+
+	/* The prove2me chart beside the words (below them on a phone), in the network page's chart style. */
+	.sci-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.5rem 2.5rem; align-items: start; }
+	@media (max-width: 56rem) { .sci-body { grid-template-columns: minmax(0, 1fr); } }
+	.p2m-chart {
+		--c-line: #199e70;
+		margin: 0;
+		min-width: 0;
+	}
+	:global(:root[data-theme='light']) .p2m-chart { --c-line: #1baf7a; }
+	.p2m-chart figcaption { margin-bottom: 0.4rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.p2m-chart .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+	.p2m-chart .legend li { display: flex; align-items: center; gap: 0.4rem; }
+	.swatch.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--c-line); }
+	.swatch.dot.hollow { background: transparent; border: 2px solid var(--c-line); }
+	.swatch.dash { width: 0; height: 0.9rem; border-left: 1px dashed var(--sl-color-gray-3); }
+	.p2m-svg { width: 100%; }
+	.p2m-svg :global(svg) { display: block; width: 100%; height: auto; overflow: visible; }
+	.p2m-svg :global(.grid) { stroke: var(--sl-color-gray-5); stroke-width: 1; }
+	.p2m-svg :global(.base) { stroke: var(--sl-color-gray-4); stroke-width: 1; }
+	.p2m-svg :global(.tick) { fill: var(--sl-color-gray-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+	.p2m-svg :global(.end-n) { fill: var(--sl-color-white); font-weight: 700; font-size: 13px; }
+	.p2m-svg :global(.trial) { stroke: var(--sl-color-gray-4); stroke-width: 1; stroke-dasharray: 3 3; }
+	.p2m-svg :global(.step) { fill: none; stroke: var(--c-line); stroke-width: 2.5; stroke-linejoin: round; }
+	.p2m-svg :global(.pt) { fill: var(--c-line); stroke: var(--b-surface); stroke-width: 1.5; }
+	.p2m-svg :global(.pt.reuse) { fill: var(--b-surface); stroke: var(--c-line); stroke-width: 2; }
+	.p2m-table { margin-top: 0.5rem; }
+	.p2m-table summary { cursor: pointer; font-size: 0.9rem; color: var(--sl-color-gray-2); }
+	.p2m-table-wrap { max-height: 18rem; overflow: auto; }
+	.p2m-table table { width: 100%; margin-top: 0.5rem; border-collapse: collapse; font-size: 0.85rem; }
+	.p2m-table :global(:is(th, td)) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: top; }
+	.p2m-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
+	.p2m-table :global(.num) { text-align: right; font-variant-numeric: tabular-nums; }
+	.p2m-table :global(td:first-child) { white-space: nowrap; }
+	.p2m-table :global(.lemma a) { color: var(--sl-color-accent-high); }
 	.sci-past strong { color: var(--sl-color-white); }
 </style>
 

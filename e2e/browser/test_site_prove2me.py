@@ -740,6 +740,35 @@ def test_home_and_science_overview_read_the_records(pages, site, records):
     expect(page.locator("[data-home-prove2me]")).to_have_attribute("data-source", "build")
 
 
+def test_home_chart_of_accepted_proofs(pages, site, records):
+    """The home page's science section comes before the live strip and the node block, and carries a chart of the
+    proofs prove2me accepted: one point per accepted proof (8 with the records of 2026-11-18), its total at the end, a
+    text alternative, and the same proofs in its table, newest first. Without JavaScript the build's chart is there."""
+    page = _records_page(pages, records, path="/", site=site)
+    expect(page.locator("[data-home-prove2me][data-source=live]")).to_be_attached()
+    fig = page.locator("[data-home-p2m-chart]")
+    expect(fig).to_have_attribute("data-source", "live")
+    svg = fig.locator("svg[role=img]")
+    assert svg.get_attribute("aria-label").startswith("8 proofs accepted by prove2me from ")
+    expect(svg.locator("circle")).to_have_count(8)
+    expect(svg.locator("text.end-n")).to_have_text("8")
+    fig.locator("summary").click()
+    rows = fig.locator("tbody tr")
+    expect(rows).to_have_count(8)
+    expect(rows.first.locator("td").last).to_have_text("8")
+    order = page.evaluate("""() => [...document.querySelectorAll('[data-home-science], [data-live-stats], [data-home-node], [data-home-devlog]')]
+        .map((e) => e.matches('[data-home-science]') ? 'science' : e.matches('[data-live-stats]') ? 'live' : e.matches('[data-home-node]') ? 'node' : 'devlog')""")
+    assert order == ["science", "live", "node", "devlog"], order
+    page.set_viewport_size({"width": 360, "height": 800})
+    page.wait_for_timeout(200)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    box = svg.bounding_box()
+    assert box["x"] >= 0 and box["x"] + box["width"] <= 360
+    still = pages(False)
+    still.goto(site + "/")
+    expect(still.locator("[data-home-p2m-chart] svg[role=img] circle").first).to_be_attached()
+
+
 # ---- the status block at the top: the whole queue as one bar in parts per trial, a line per open trial, the numbers
 
 STATS = {"updated": "2026-11-18T14:58:00Z", "nodes": {"online": 2, "busy": 1, "slots": 2, "held": 0, "paused": 0},
