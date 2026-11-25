@@ -130,6 +130,7 @@ func (s *AccountStore) RegisterAnon(now time.Time) (token, nodeID string, err er
 		t := now.UTC()
 		f.Accounts = append(f.Accounts, &Account{ID: id, Status: StatusUnclaimed, Created: t, FirstNode: &t, NodeSeq: 1,
 			Nodes: []AccountNode{{ID: nodeID, Hash: keyHash(token), Prefix: token[:len("nt-")+len(nodeID)+1+4], Created: t, Via: viaAnon}}})
+		f.funnelDay(t).Anon++
 		return nil
 	})
 	if err != nil {
@@ -157,22 +158,6 @@ func (s *AccountStore) anonSeen(account, nodeID string, now time.Time) error {
 					t := now.UTC()
 					a.Nodes[i].LastSeen = &t
 				}
-			}
-		}
-		return nil
-	})
-}
-
-// removeAnon deletes a node without an account (its account and token): linked to an account, or expired.
-func (s *AccountStore) removeAnon(account string) error {
-	if !isAnon(account) {
-		return errors.New("not a node without an account")
-	}
-	return s.Update(func(f *AccountsFile) error {
-		for i, a := range f.Accounts {
-			if a.ID == account {
-				f.Accounts = append(f.Accounts[:i], f.Accounts[i+1:]...)
-				return nil
 			}
 		}
 		return nil

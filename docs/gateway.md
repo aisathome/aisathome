@@ -9,6 +9,7 @@ Config fields beyond the example (`examples/gateway.json`):
 | Field | What |
 |---|---|
 | `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown; the guard log `guard-log.json`, below, saved likewise; the task queues; the science database `science.db`, below). Without it a restart gives every key a fresh day and forgets credit, and the science records live in memory. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
+| `site_stats_file` | The site statistics file `tools/sitestats` writes on the same host (daily aggregates only), read for the funnel card on `/account/ops`: visitors, views of the node pages (`/node/`, `/node/windows/`, `/node/install/`, `/node/binaries/`) and install starts (fetches of `/node.sh`). Read-only, reread when it changes. Absent or unreadable: the card shows the gateway's own counts and says why the site's are missing. |
 | `tokenizer_file`, `tokenizer_sha256` | The model's `tokenizer.json`, so the gateway counts tokens for credit itself (see [credit.md](credit.md)); the gateway refuses to start if the file does not match the SHA-256. |
 | `model_check` | The gateway's model check of every node and pilot: secret probe prompts at random times, their logprobs compared with a secret reference ([modelcheck.md](modelcheck.md), "The gateway's check"). `enabled`, `references` (`model`, `file`, `sha256`; the gateway refuses to start if a file is missing or does not match), `interval_seconds` (1800), `recheck_seconds` (300), `withhold` (false: observe-only; when true, a failing node is held, and only after 3 days of observing), `cover_share` (0.2). Results in `state_dir/model-check.json`, on `/account/ops` and `aisathome-gateway accounts model-check`. Read at start. |
 | `node_protocol_min`, `node_protocol_max` | The node protocol versions the gateway accepts (`protocol/PROTOCOL.md`, "Protocol versions"). Default: the gateway's own version and the one before it, so nodes of the current and the previous release connect. A node outside the range is refused with close code 4001 and a reason its volunteer sees, logged as `msg="node refused: unsupported protocol version"`. Every connect logs `protocol=<version>`; the account page shows it next to the node's software version. Max cannot exceed the gateway's own version; raise min only on a published retirement date. |
@@ -668,6 +669,19 @@ The operations page (`/account/ops`, card "Answer checks") shows per node since 
 answers, failed checks by rule, credit voided, answers at `max_tokens`, bad tool calls, discarded and
 degenerate answers. `accounts node-checks [days] [node]` gives the same from the usage log over days
 (default 7), with credit and output tok/s (median, 99th percentile, max).
+
+The card "Funnel" shows, for today and the 7 UTC days before it, totals only: from `site_stats_file`
+(above) the site's visitors, views of the node pages and install starts (distinct clients fetching
+`/node.sh`, and the curl and wget share of all its fetches); and the gateway's own daily counters: nodes
+registered without an account, nodes added to an account (account page or link), of those by an approved
+link, nodes without an account linked to an account, and distinct nodes connected for the first time. The
+nodes of the admin accounts (`accounts.admins`) are shown apart as the project's own and left out of the
+one-line conversion summary; nodes without an account cannot be told apart, and nodes on the config's
+`node_tokens` are not counted. The counters live in the accounts file (`funnel`: numbers per day, kept
+400 days, never a node or account), each counted in the write that records its event; a node record
+keeps one flag, `connected`, so a reconnect is not a first connection. First connections count only for
+nodes created after the counters started (`funnel.since`, shown on the card). Downloads of the Windows
+installer and the Linux bundle are counted by GitHub on the release page; the card links there.
 
 ## Chat rules: operator terms
 

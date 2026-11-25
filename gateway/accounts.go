@@ -240,6 +240,7 @@ type AccountsFile struct {
 	Settings  AccountSettings `json:"settings"`
 	Accounts  []*Account      `json:"accounts"`
 	NodeHolds []NodeHold      `json:"node_holds,omitempty"` // nodes stopped by a guard, until the operator clears them
+	Funnel    *Funnel         `json:"funnel,omitempty"`     // daily counts for the ops page's funnel card (funnel.go)
 }
 
 // promote lets waiting accounts in, oldest first, while there is room.
@@ -310,12 +311,14 @@ type AccountStore struct {
 	byKey  map[string]*Account // key hash → account
 	byNode map[string]nodeRef  // node token hash → account and node
 	held   map[string]bool     // node id → held by a guard
+
+	own func(account string) bool // the project's own accounts, for the funnel counts (SetOwn)
 }
 
 // OpenAccountStore opens (or starts) the accounts file at path.
 func OpenAccountStore(path string) (*AccountStore, error) {
 	s := &AccountStore{path: path}
-	if err := s.Update(func(*AccountsFile) error { return nil }); err != nil {
+	if err := s.Update(func(f *AccountsFile) error { f.startFunnel(time.Now()); return nil }); err != nil {
 		return nil, err
 	}
 	return s, nil
