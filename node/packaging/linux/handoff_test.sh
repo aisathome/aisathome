@@ -259,11 +259,53 @@ inst() {
   shift
   out="$(env UI_PORT=off "${env[@]}" "${model_env[@]}" bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "${NODE_BIN:-$node_bin}" "$@" 2>&1)"; code=$?
 }
-# tty_inst <input> -- <args>: the same at a terminal (a pty from script(1)), typing <input>.
+# tty_inst [<prompt> <input>]... -- <args>: the same at a terminal (a pty), typing each <input> once its
+# <prompt> has appeared (after the previous one's). An input whose prompt never appears is never typed. The
+# installer prints a question only once the terminal no longer echoes, so $out shows what was echoed.
+cat > "$tmp/pty_run.py" <<'PY'
+import os, pty, select, sys, time
+args = sys.argv[1:]
+cut = args.index("--")
+pairs = [(args[i].encode(), args[i + 1].encode()) for i in range(0, cut, 2)]
+cmd = args[cut + 1:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(cmd[0], cmd)
+out, seen, status, deadline = b"", 0, None, time.time() + 600
+while time.time() < deadline:
+    if status is None:
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            status = st
+    ready, _, _ = select.select([fd], [], [], 0.2 if status is not None else 1)
+    if not ready:
+        if status is not None:
+            break  # exited, and nothing more to read
+        continue
+    try:
+        chunk = os.read(fd, 4096)
+    except OSError:
+        chunk = b""
+    if not chunk:
+        if status is None:
+            status = os.waitpid(pid, 0)[1]
+        break
+    out += chunk
+    while pairs and out.find(pairs[0][0], seen) >= 0:
+        seen = out.find(pairs[0][0], seen) + len(pairs[0][0])
+        os.write(fd, pairs.pop(0)[1])
+sys.stdout.buffer.write(out)
+if status is None:
+    os.kill(pid, 9)
+    print("\npty_run: timed out", flush=True)
+    sys.exit(124)
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
 tty_inst() {
-  local input="$1"; shift 2
-  local cmd; printf -v cmd '%q ' env "${model_env[@]}" UI_PORT=off bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "$node_bin" "$@"
-  out="$( { sleep 2; printf '%s' "$input"; sleep 2; } | script -qefc "$cmd" /dev/null 2>&1)"; code=$?
+  local pairs=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do pairs+=("$1"); shift; done
+  shift
+  out="$(python3 "$tmp/pty_run.py" "${pairs[@]}" -- env "${model_env[@]}" UI_PORT=off bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "$node_bin" "$@" 2>&1)"; code=$?
 }
 tok_env() { cat "$conf/token.env" 2>/dev/null; }
 json() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$1" "$2" 2>/dev/null; }
@@ -320,24 +362,31 @@ token_is "upgrade --keep-token" "$toka" "$gwa"; node_json_canonical "upgrade --k
 agent_accepts "upgrade --keep-token"
 # The same at a terminal: kept without a question.
 seed "$gwa" "$toka"
-tty_inst $'n\r' --
+tty_inst "[Y/n]" $'n\r' --
 want_code "upgrade at a terminal" 0; token_is "upgrade at a terminal" "$toka" "$gwa"; lacks "upgrade at a terminal" "[Y/n]"
 
 # A fresh install at a terminal: "Link this node to your account? [Y/n]". y links in the browser, n runs the
 # node without an account.
 fresh
-tty_inst $'y\r' -- --gateway-url "$gwa"
+tty_inst "[Y/n]" $'y\r' -- --gateway-url "$gwa"
 want_code "fresh, y at a terminal" 0; has "fresh, y at a terminal" "Link this node to your account? [Y/n]"
 has "fresh, y at a terminal" "Linked: this is node n-0000a001"; has "fresh, y at a terminal" "model.gguf: 0.0 of 0.0 GB (100%)"; token_is "fresh, y at a terminal" "$toka" "$gwa"
 fresh
-tty_inst $'n\r' -- --gateway-url "$gwa"
+tty_inst "[Y/n]" $'n\r' -- --gateway-url "$gwa"
 want_code "fresh, n at a terminal" 0; has "fresh, n at a terminal" "You must be 18 or older"
 has "fresh, n at a terminal" "This node runs without an account"; token_is "fresh, n at a terminal" "$anona" "$gwa"
 # --token-stdin at a terminal: pasted, not echoed.
 fresh
-tty_inst "$tokb"$'\r' -- --gateway-url "$gwb" --token-stdin
+tty_inst "Paste the node token (input hidden):" "$tokb"$'\r' -- --gateway-url "$gwb" --token-stdin
 want_code "--token-stdin at a terminal" 0; has "--token-stdin at a terminal" "Paste the node token (input hidden)"
 token_is "--token-stdin at a terminal" "$tokb" "$gwb"; [[ "$out" != *"$tokb"* ]] || fail "--token-stdin at a terminal: the token was echoed"
+# A token pasted at the question (the older installer asked for one there): not echoed, not kept, and the
+# question comes again.
+fresh
+tty_inst "[Y/n]" "$tokb"$'\r' "[Y/n]" $'n\r' -- --gateway-url "$gwa"
+want_code "token at the question" 0; has "token at the question" "It was not stored, and it was not shown"
+[[ "$out" != *"$tokb"* && "$out" != *"${tokb#nt-?-}"* ]] || fail "token at the question: the token was echoed"
+token_is "token at the question" "$anona" "$gwa"; never_sent "token at the question" a "$tokb"
 
 # An installed node.json with two keys equal in any case: refused, as the agent refuses it.
 seed "$gwa" "$toka"

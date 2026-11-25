@@ -69,11 +69,11 @@ type preflightResult struct {
 // preflightEnv is what the preflight works with; tests replace the parts that touch the system.
 type preflightEnv struct {
 	stdin       io.Reader
-	interactive bool                          // stdin is a terminal: a person answers
-	readSecret  func() (string, error)        // a line from the terminal, not echoed
-	hostname    func() (string, error)        // os.Hostname
-	httpClient  func() *http.Client           // asks a token's gateway about it
-	tokenState  func(token, gw string) string // default: preflightEnv.askTokenState
+	interactive bool                                // stdin is a terminal: a person answers
+	readSecret  func(prompt func()) (string, error) // a line from the terminal, not echoed; prompt runs once echo is off
+	hostname    func() (string, error)              // os.Hostname
+	httpClient  func() *http.Client                 // asks a token's gateway about it
+	tokenState  func(token, gw string) string       // default: preflightEnv.askTokenState
 }
 
 var reNodeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -379,8 +379,7 @@ func (e preflightEnv) askToken(o preflightOpts, old, parked, gw string, r *prefl
 	var line string
 	var err error
 	if e.interactive {
-		say("Paste the node token (input hidden):")
-		line, err = e.readSecret()
+		line, err = e.readSecret(func() { say("Paste the node token (input hidden):") })
 	} else {
 		line, err = readLine(e.stdin)
 	}
@@ -406,21 +405,26 @@ func (e preflightEnv) askToken(o preflightOpts, old, parked, gw string, r *prefl
 }
 
 // askLink asks a person at the terminal whether to link the node to an account: y (or Enter) links it in
-// the browser at the end of the install, n runs it without an account (science only).
+// the browser at the end of the install, n runs it without an account (science only). The answer is read
+// without echo, like a token: someone used to the older installer, which asked for a node token here, may
+// paste one, and it must not end up on the screen or in a terminal log. Whatever is not y or n is dropped
+// unseen; a token-like answer is told that it was neither kept nor shown, and how to give a token.
 func (e preflightEnv) askLink(r *preflightResult, say func(string, ...any)) error {
 	for range 3 {
-		say("")
-		say("Link this node to your account? [Y/n]")
-		say("  y: link it in your browser at the end of the install (a link and a code; approve on any device)")
-		say("  n: run it without an account. %s", strings.ReplaceAll(RegisterNotice, "\n", "\n     "))
-		line, err := readLine(e.stdin)
+		line, err := e.readSecret(func() {
+			say("")
+			say("Link this node to your account? [Y/n] (the answer is not shown as you type)")
+			say("  y: link it in your browser at the end of the install (a link and a code; approve on any device)")
+			say("  n: run it without an account. %s", strings.ReplaceAll(RegisterNotice, "\n", "\n     "))
+		})
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 		if errors.Is(err, io.EOF) && line == "" {
 			break // the terminal closed: no answer (Enter is a line, not the end)
 		}
-		switch strings.ToLower(strings.TrimSpace(line)) {
+		answer := strings.ToLower(strings.TrimSpace(line))
+		switch answer {
 		case "", "y", "yes":
 			r.Account = "link"
 			say("account: the install ends with linking this node to your account in the browser")
@@ -430,12 +434,21 @@ func (e preflightEnv) askLink(r *preflightResult, say func(string, ...any)) erro
 			say("account: none; the install ends with registering this node without an account (science only)")
 			return nil
 		}
+		if looksLikeToken(answer) {
+			say("That is not y or n, and it looks like a node token: a token is not taken at this question. It was not stored, and it was not shown. To give the node a token: run the installer again with --token-stdin (it reads the token without showing it, or from a pipe).")
+		}
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		say("Answer y or n.")
 	}
 	return usagef("no answer to \"Link this node to your account?\": run the installer again, or use --link or --anonymous")
+}
+
+// looksLikeToken is an answer to a y/n question that may be a pasted credential: a node token's prefix,
+// or anything longer than a word.
+func looksLikeToken(answer string) bool {
+	return strings.HasPrefix(answer, "nt-") || len(answer) > 8
 }
 
 // checkGivenToken is a token a person pasted or a script piped: without surrounding whitespace (systemd

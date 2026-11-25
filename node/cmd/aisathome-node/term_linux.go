@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,13 +17,21 @@ func stdinIsTerminal() bool {
 	return err == nil
 }
 
-// readSecretLine reads a line from the terminal on stdin without echoing it (a pasted token). Echo comes
-// back afterwards, also when the read is interrupted (Ctrl+C: exit 130).
-func readSecretLine() (string, error) {
-	fd := int(os.Stdin.Fd())
+// readSecretLine reads a line from the terminal on stdin without echoing it (a pasted token, or an answer
+// that may be one). prompt runs once echo is off, so nothing typed or pasted right after the question shows.
+// Echo comes back afterwards, also when the read is interrupted (Ctrl+C: exit 130).
+func readSecretLine(prompt func()) (string, error) {
+	return readSecretFrom(os.Stdin, os.Stderr, prompt)
+}
+
+// readSecretFrom is readSecretLine for the terminal tty (stdin), with the closing newline on msg. Not a
+// terminal: prompt, and a plain read.
+func readSecretFrom(tty *os.File, msg io.Writer, prompt func()) (string, error) {
+	fd := int(tty.Fd())
 	old, err := unix.IoctlGetTermios(fd, unix.TCGETS)
 	if err != nil {
-		return readLine(os.Stdin)
+		prompt()
+		return readLine(tty)
 	}
 	quiet := *old
 	quiet.Lflag &^= unix.ECHO
@@ -38,15 +47,16 @@ func readSecretLine() (string, error) {
 		select {
 		case <-sig:
 			restore()
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(msg)
 			os.Exit(130)
 		case <-done:
 		}
 	}()
-	line, err := readLine(os.Stdin)
+	prompt()
+	line, err := readLine(tty)
 	close(done)
 	signal.Stop(sig)
 	restore()
-	fmt.Fprintln(os.Stderr) // the Enter the person typed was not echoed
+	fmt.Fprintln(msg) // the Enter the person typed was not echoed
 	return line, err
 }
