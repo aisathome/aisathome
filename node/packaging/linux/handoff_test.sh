@@ -122,6 +122,20 @@ printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/journalctl"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/useradd"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/userdel"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/chown"
+# The service users do not exist in the sandbox (only root is mapped): id says they are root, and setpriv
+# runs the command as it is. So the tests below check what the installer does about links it finds, not the
+# privilege drop itself (which stops a link swapped in during the install from doing harm).
+cat > "$tmp/stubs/id" <<'SH'
+#!/bin/sh
+case "$*" in *aisathome*) case "$1" in -u|-g) echo 0 ;; esac; exit 0 ;; esac
+exec /usr/bin/id "$@"
+SH
+cat > "$tmp/stubs/setpriv" <<'SH'
+#!/bin/sh
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+SH
 # install -o/-g: the aisathome user does not exist in the sandbox; everything else is the real install.
 cat > "$tmp/stubs/install" <<'SH'
 #!/usr/bin/env bash
@@ -214,7 +228,7 @@ fail() { echo "FAIL: $1"; echo "$out" | sed 's/^/    /' | tail -n 40; fails=$((f
 has() { [[ "$out" == *"$2"* ]] || fail "$1: missing '$2'"; }
 lacks() { [[ "$out" != *"$2"* ]] || fail "$1: unexpected '$2'"; }
 want_code() { [[ $code -eq $2 ]] || fail "$1: exit $code, want $2"; }
-conf=/etc/aisathome-node
+conf=/etc/aisathome-node models_dir=/var/lib/aisathome-node/models
 node_bin="$tmp/bin/aisathome-node"
 
 # fresh: a machine with nothing installed.
@@ -470,6 +484,47 @@ fresh
 inst UI_PORT=7381 -- --link --gateway-url "$gwa"
 echo uninstall-purge > "$ctl"; control
 want_code "control: uninstall-purge" 0; [[ ! -e /var/lib/aisathome-node && ! -e /usr/local/sbin/aisathome-node-uninstall ]] || fail "control: uninstall-purge left files"
+
+# The models folder belongs to the engine's user, which could put links in it: the installer, as root, never
+# follows one. Links planted in place of the model's and the draft model's download (.part) and of the files
+# themselves are deleted, and the files they point at keep their content and mode; the model ends up a
+# plain file, mode 0640. --model is moved in by a rename (same filesystem) or copied (another one), which
+# replaces a link and never writes through it.
+victims() { for v in 1 2 3 4; do printf 'system file %s\n' "$v" > "$tmp/victim$v"; chmod 0600 "$tmp/victim$v"; done; }
+victims_intact() {
+  local v
+  for v in 1 2 3 4; do
+    [[ "$(cat "$tmp/victim$v")" = "system file $v" && "$(stat -c %a "$tmp/victim$v")" = 600 ]] || fail "$1: a link was followed (victim$v: $(stat -c %a "$tmp/victim$v"), $(head -c 40 "$tmp/victim$v"))"
+  done
+}
+plain_0640() { [[ -f "$2" && ! -L "$2" && "$(stat -c %a "$2")" = 640 ]] || fail "$1: $2 is not a plain file with mode 0640: $(ls -l "$2" 2>&1)"; }
+mkdir -p "$tmp/llama-new/bin"
+printf '#!/bin/sh\necho "version: 0.9.0-dev (build 12342, commit 0fb8f1577)" >&2\n' > "$tmp/llama-new/bin/llama-server"; chmod +x "$tmp/llama-new/bin/llama-server"
+head -c 50000 /dev/urandom > "$tmp/draft.gguf"
+draft_env=(DRAFT_URL="file://$tmp/draft.gguf" DRAFT_SHA256="$(sha256sum "$tmp/draft.gguf" | cut -d' ' -f1)" DRAFT_SIZE=50000)
+fresh; victims; mkdir -p "$models_dir"
+ln -s "$tmp/victim1" "$models_dir/model.gguf.part"; ln -s "$tmp/victim2" "$models_dir/model.gguf"
+ln -s "$tmp/victim3" "$models_dir/draft.gguf.part"; ln -s "$tmp/victim4" "$models_dir/draft.gguf"
+out="$(env UI_PORT=off "${model_env[@]}" "${draft_env[@]}" bash "$here/install.sh" --llama-build "$tmp/llama-new" --node-bin "$node_bin" --link --gateway-url "$gwa" 2>&1)"; code=$?
+want_code "planted links, download" 0; has "planted links, download" "speculation: mtp (the default"
+victims_intact "planted links, download"
+plain_0640 "planted links, download" "$models_dir/model.gguf"; plain_0640 "planted links, download" "$models_dir/draft.gguf"
+cmp -s "$models_dir/model.gguf" "$tmp/model.gguf" || fail "planted links, download: not the model"
+# --model on the same filesystem (a rename) and from another one (a copy), over a planted link.
+for where in /var/lib/handoff-src "$tmp/src"; do
+  fresh; victims; mkdir -p "$models_dir" "$where"
+  ln -s "$tmp/victim2" "$models_dir/model.gguf"; ln -s "$tmp/victim1" "$models_dir/model.gguf.part"
+  cp "$tmp/model.gguf" "$where/own.gguf"
+  inst -- --link --gateway-url "$gwa" --model "$where/own.gguf"
+  want_code "planted link, --model from $where" 0; victims_intact "planted link, --model from $where"
+  plain_0640 "planted link, --model from $where" "$models_dir/model.gguf"
+  [[ ! -e "$where/own.gguf" ]] || fail "planted link, --model from $where: the file was not moved"
+done
+# The state folder is the agent's (0751: the engine passes through to models/ only), models/ the engine's,
+# and llama-server runs as its own user.
+[[ "$(stat -c %a /var/lib/aisathome-node)" = 751 && "$(stat -c %a "$models_dir")" = 750 ]] || fail "folder modes: $(stat -c '%n %a' /var/lib/aisathome-node "$models_dir")"
+grep -qx "User=aisathome-llama" /etc/systemd/system/aisathome-llama.service && grep -qx "User=aisathome" /etc/systemd/system/aisathome-node.service ||
+  fail "the engine does not run as its own user"
 
 # A node binary older than the installer (no config preflight): refused before anything changes, and never
 # run with arguments it does not know (an old binary would start the agent on "config ..."). It stands in

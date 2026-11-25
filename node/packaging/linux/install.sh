@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install an AIs@home node on Linux (systemd): llama-server plus aisathome-node, both
-# running as the unprivileged system user "aisathome", sandboxed by systemd.
+# running as the unprivileged system users "aisathome" (the agent) and "aisathome-llama" (the
+# engine), sandboxed by systemd.
 #
 # From the prebuilt bundle (this script next to bin/llama-server, lib/ and aisathome-node):
 #   sudo ./install.sh [--node-id <id>] [--enable-at-boot] [--dry-run]
@@ -318,8 +319,10 @@ Requires=aisathome-gpu-init.service
 After=nvidia-resume.service
 
 [Service]
-User=aisathome
-Group=aisathome
+# Its own user, not the agent's: the engine reads the model only, and cannot write the agent's state or the
+# files through which the agent asks root to restart, stop or uninstall the node.
+User=aisathome-llama
+Group=aisathome-llama
 Environment=LD_LIBRARY_PATH=/opt/aisathome-node/lib
 # On a crash, ggml forks a debugger to print a backtrace; inside this sandbox that can hang
 # the process instead of ending it (CUDA MMU fault, 2026-10-09). Exit at once so systemd
@@ -829,18 +832,32 @@ download_progress_end() {
   elif (( progress_tenth < 10 )); then echo "$3: $(gb "$have") of $(gb "$2") GB (100%)" >&2; fi
 }
 
+# as_engine <command...>: runs a command on the files in the models folder (fetch_model, place_file) as the
+# engine's user (aisathome-llama), which owns that folder and could swap any file in it for a link to a
+# system file at any moment: as root, a write, chmod or chown there could follow such a link. Unset
+# (the command runs as is) for --download-only, which writes to the person's own folder.
+engine_files=()
+as_engine() { "${engine_files[@]}" "$@"; }
+models_dir=/var/lib/aisathome-node/models
+
 # fetch_model <file>: download the model to <file> and verify its SHA-256. An interrupted
-# download resumes from <file>.part; a complete <file> with the right hash is kept.
+# download resumes from <file>.part; a complete <file> with the right hash is kept. In the models folder
+# every file operation runs as the engine's user (as_engine), and links found in place of <file> or its
+# .part are deleted, never followed; the file ends up 0640.
 fetch_model() {
-  local dest="$1" part="$1.part" have=0 got rc i pid
+  local dest="$1" part="$1.part" have=0 got rc i pid f
+  for f in "$dest" "$part"; do [[ ! -L "$f" ]] || as_engine unlink -- "$f"; done
   if [[ -f "$dest" && "$(stat -c %s "$dest")" = "$model_size" ]]; then
     echo "model: checking the existing $dest (about a minute)" >&2
-    got="$(sha256sum "$dest" | cut -d' ' -f1)"
-    if [[ "$got" = "$model_sha" ]]; then echo "model: $dest, sha256 $got (verified)" >&2; return 0; fi
+    got="$(as_engine sha256sum -- "$dest" | cut -d' ' -f1)"
+    if [[ "$got" = "$model_sha" ]]; then
+      as_engine chmod 0640 -- "$dest"
+      echo "model: $dest, sha256 $got (verified)" >&2; return 0
+    fi
     echo "model: $dest is not the pinned model; downloading it" >&2
   fi
   if [[ -f "$part" ]]; then have="$(stat -c %s "$part")"; fi
-  if (( have > model_size )); then rm -f "$part"; have=0; fi
+  if (( have > model_size )); then as_engine unlink -- "$part"; have=0; fi
   check_disk "$(dirname "$dest")" $((model_size - have + reserve))
   if (( have < model_size )); then
     if (( have > 0 )); then
@@ -853,7 +870,7 @@ fetch_model() {
     # server that cannot resume (33) gets a fresh download.
     for i in 1 2 3 4 5; do
       rc=0
-      curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 --retry-delay 5 \
+      "${engine_files[@]}" curl -q -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 --retry-delay 5 \
         --connect-timeout 30 --speed-limit 10000 --speed-time 60 -C - -o "$part" "$model_url" &
       pid=$! dl_pid=$!
       download_progress "$part" "$model_size" "${dest##*/}" "$pid"
@@ -863,7 +880,7 @@ fetch_model() {
       [[ $rc -ne 0 ]] || break
       case $rc in
         22|37) die "model download failed: $model_url (curl exit $rc)" ;;
-        33) rm -f "$part" ;;
+        33) as_engine unlink -- "$part" ;;
       esac
       (( i < 5 )) || die "model download failed 5 times (curl exit $rc); run the installer again to resume"
       echo "model: download interrupted (curl exit $rc); resuming in 10 s" >&2
@@ -871,13 +888,66 @@ fetch_model() {
     done
   fi
   echo "model: checking sha256 (about a minute)" >&2
-  got="$(sha256sum "$part" | cut -d' ' -f1)"
+  got="$(as_engine sha256sum -- "$part" | cut -d' ' -f1)"
   if [[ "$got" != "$model_sha" ]]; then
-    rm -f "$part"
+    as_engine unlink -- "$part"
     die "model checksum mismatch: got $got, want $model_sha. The download was deleted; run the installer again to download it again."
   fi
-  mv -f "$part" "$dest"
+  as_engine mv -f -- "$part" "$dest"
+  as_engine chmod 0640 -- "$dest"
   echo "model: $dest, sha256 $got (verified)" >&2
+}
+
+# engine_models_dir: the models folder belongs to the engine's user, and so does everything in it (an
+# install before the engine had its own user left the agent's there). The folder is opened without
+# following a link, its owner and mode are set through that handle, and each entry's owner on the entry
+# itself (a link is changed, never followed).
+engine_models_dir() {
+  python3 - "$models_dir" "$(id -u aisathome-llama)" "$(id -g aisathome-llama)" <<'PY'
+import os, sys
+path, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+fl = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+parent = os.open(os.path.dirname(path), fl)
+name = os.path.basename(path)
+try:
+    os.mkdir(name, 0o750, dir_fd=parent)
+except FileExistsError:
+    pass
+d = os.open(name, fl, dir_fd=parent)
+os.fchown(d, uid, gid)
+os.fchmod(d, 0o750)
+for e in os.listdir(d):
+    os.chown(e, uid, gid, dir_fd=d, follow_symlinks=False)
+PY
+}
+
+# place_file <file> <name>: moves a person's file (--model, and a draft model beside it) into the models
+# folder as <name>, owned by the engine's user, mode 0640. The folder is opened without following a link,
+# the move is a rename (it replaces whatever <name> is there and never follows it), and the owner is set on
+# the name itself. Across filesystems the engine's user copies it in instead, and the original goes.
+place_file() {
+  local rc=0
+  python3 - "$1" "$models_dir" "$2" "$(id -u aisathome-llama)" "$(id -g aisathome-llama)" <<'PY' || rc=$?
+import errno, os, sys
+src, path, name, uid, gid = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+fl = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+d = os.open(os.path.basename(path), fl, dir_fd=os.open(os.path.dirname(path), fl))
+try:
+    os.rename(src, name, dst_dir_fd=d)
+except OSError as e:
+    sys.exit(3 if e.errno == errno.EXDEV else f"cannot move {src}: {e}")
+os.chown(name, uid, gid, dir_fd=d, follow_symlinks=False)
+PY
+  if [[ $rc = 3 ]]; then
+    echo "model: copying $1 to $models_dir/$2 (another filesystem)" >&2
+    [[ ! -e "$models_dir/$2.part" && ! -L "$models_dir/$2.part" ]] || as_engine unlink -- "$models_dir/$2.part"
+    { as_engine sh -c 'cat > "$1"' sh "$models_dir/$2.part" < "$1" && as_engine mv -f -- "$models_dir/$2.part" "$models_dir/$2"; } ||
+      die "cannot copy $1 to $models_dir/$2"
+    unlink -- "$1"
+  elif [[ $rc != 0 ]]; then
+    die "cannot move $1 into $models_dir"
+  fi
+  as_engine chmod 0640 -- "$models_dir/$2"
 }
 
 # install_libs <build dir> <lib dir>: llama.cpp's shared libraries, with modes set here rather
@@ -1095,6 +1165,9 @@ preflight
 
 # 1. Unprivileged system user without a login shell.
 id aisathome >/dev/null 2>&1 || useradd --system --home-dir /var/lib/aisathome-node --shell /usr/sbin/nologin aisathome
+# llama-server's own user: the engine is the part that reads prompts from the network, so it gets no write
+# access to the agent's state (where the agent's requests to root go).
+id aisathome-llama >/dev/null 2>&1 || useradd --system --no-create-home --home-dir "$models_dir" --shell /usr/sbin/nologin aisathome-llama
 
 # 2. Binaries and llama.cpp shared libraries. The old lib/ is removed first: no stale
 # libraries from an earlier build, and a running llama-server keeps its unlinked copies
@@ -1118,23 +1191,25 @@ else
   echo "no uninstall.sh beside install.sh: $uninstaller is not installed" >&2
 fi
 
-# 3. Model (moved to save disk space, or downloaded and verified) and state directory.
-install -d -o aisathome -g aisathome -m 0750 /var/lib/aisathome-node /var/lib/aisathome-node/models
+# 3. Model (moved to save disk space, or downloaded and verified) and state directory. The state directory
+# is the agent's (0751: the engine may pass through to models/, nothing more); models/ is the engine's, and
+# root does nothing there but set its owner without following links (engine_models_dir, place_file).
+install -d -o aisathome -g aisathome -m 0751 /var/lib/aisathome-node
+engine_models_dir
+engine_files=(setpriv --reuid=aisathome-llama --regid=aisathome-llama --clear-groups --)
 if [[ -z "$model" ]]; then
   fetch_model "$target"
 elif [[ "$(readlink -f "$model")" != "$target" ]]; then
   check_model_file "$model" 1
-  mv "$model" "$target"
+  place_file "$model" "${target##*/}"
 fi
-chown aisathome:aisathome "$target"; chmod 0640 "$target"
 if [[ $spec != off ]]; then
   # A draft downloaded with --download-only beside the --model file is moved along (fetch_draft
   # then checks it and keeps it), instead of downloading it again.
   if [[ -n "$model" && ! -f "$draft_target" && -f "$(dirname "$model")/${draft_target##*/}" ]]; then
-    mv "$(dirname "$model")/${draft_target##*/}" "$draft_target"
+    place_file "$(dirname "$model")/${draft_target##*/}" "${draft_target##*/}"
   fi
   fetch_draft "$draft_target"
-  chown aisathome:aisathome "$draft_target"; chmod 0640 "$draft_target"
 fi
 
 # 4. Config and token.
