@@ -18,6 +18,7 @@ import (
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/nodeconf"
+	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/node/setupflow"
 	"github.com/aisathome/aisathome/protocol"
 )
@@ -254,7 +255,7 @@ func (e preflightEnv) preflight(o preflightOpts, msg io.Writer) (preflightResult
 			say("node.json: node id %s, gateway %s", r.NodeID, gw)
 		}
 		supplied = map[string]any{"node_id": r.NodeID, "gateway_url": gw, "upstream": o.upstream,
-			"models": []any{map[string]any{"name": o.model, "roles": []string{"deep", "agent"}, "slots": o.slots, "ctx": o.ctx}}}
+			"models": []any{map[string]any{"name": o.model, "roles": setup.EngineRoles, "slots": o.slots, "ctx": o.ctx}}}
 	}
 
 	b, err := encodeConfig(supplied)
