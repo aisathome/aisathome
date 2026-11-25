@@ -1,0 +1,134 @@
+// BOINC's own programs for work units (tools/ in BOINC's source): create_work, cancel_jobs and
+// dir_hier_path, run in the project directory as the project's user. Not stage_file: server
+// 1.6.3's copy calls a PHP function that release removed.
+//
+// SPDX-License-Identifier: Apache-2.0
+package bridge
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// ExecTools runs the project's programs.
+type ExecTools struct {
+	cfg Config
+}
+
+// NewExecTools returns Tools for the project in cfg.
+func NewExecTools(cfg Config) *ExecTools { return &ExecTools{cfg: cfg} }
+
+func (t *ExecTools) Stage(ctx context.Context, name string, content []byte) error {
+	p, err := t.downloadPath(ctx, name)
+	if err != nil {
+		return err
+	}
+	// Group-readable: the web server serves it to the client the work unit goes to.
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+	if err != nil {
+		return fmt.Errorf("staging an input file: %w", err)
+	}
+	if _, err = f.Write(content); err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(p)
+		return fmt.Errorf("staging an input file: %w", err)
+	}
+	return nil
+}
+
+func (t *ExecTools) Unstage(ctx context.Context, name string) error {
+	p, err := t.downloadPath(ctx, name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string) error {
+	args := []string{"--appname", t.cfg.App, "--wu_name", name, "--batch", strconv.Itoa(t.cfg.Batch),
+		"--wu_template", t.cfg.WUTemplate, "--result_template", t.cfg.ResultTemplate,
+		// The wrapper refuses options it does not know and hands the task what follows
+		// --passthrough_child (the pilot app's job.xml).
+		"--command_line", "--passthrough_child --gateway " + t.cfg.PilotGateway}
+	if t.cfg.TargetHost > 0 {
+		args = append(args, "--target_host", strconv.FormatInt(t.cfg.TargetHost, 10))
+	}
+	// Input files in the template's order: 0 the model (remote, sticky), 1 the credential.
+	args = append(args, "--remote_file", t.cfg.Model.URL, strconv.FormatInt(t.cfg.Model.NBytes, 10), t.cfg.Model.MD5,
+		credentialFile)
+	_, err := t.run(ctx, "bin/create_work", args...)
+	return err
+}
+
+func (t *ExecTools) Cancel(ctx context.Context, name string) error {
+	_, err := t.run(ctx, "bin/cancel_jobs", "--name", name)
+	return err
+}
+
+// downloadPath is where an input file goes (dir_hier_path also makes its directory).
+func (t *ExecTools) downloadPath(ctx context.Context, name string) (string, error) {
+	if !safeFileName(name) {
+		return "", errors.New("bad input file name")
+	}
+	out, err := t.run(ctx, "bin/dir_hier_path", name)
+	if err != nil {
+		return "", err
+	}
+	p := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(t.cfg.ProjectDir, p)
+	}
+	p = filepath.Clean(p)
+	dl := filepath.Join(t.cfg.ProjectDir, "download") + string(filepath.Separator)
+	if filepath.Base(p) != name || !strings.HasPrefix(p, dl) {
+		return "", fmt.Errorf("dir_hier_path: unexpected path for an input file")
+	}
+	return p, nil
+}
+
+// run runs a project program with a time limit; its output goes into the error, shortened.
+func (t *ExecTools) run(ctx context.Context, prog string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(t.cfg.ProjectDir, prog), args...)
+	cmd.Dir = t.cfg.ProjectDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String() + " " + stdout.String())
+		if len(msg) > 300 {
+			msg = msg[:300] + "..."
+		}
+		return nil, fmt.Errorf("%s: %w: %s", prog, err, msg)
+	}
+	return stdout.Bytes(), nil
+}
+
+// safeFileName: letters, digits, '-', '_' and '.', not starting with '-' or '.'.
+func safeFileName(s string) bool {
+	if s == "" || len(s) > 128 || s[0] == '-' || s[0] == '.' {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
+}

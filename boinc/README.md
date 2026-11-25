@@ -52,6 +52,7 @@ the task with those variables instead of its own environment, so `job.xml` sets 
 | `templates/pilot_in.xml` | input template: file 0 the model, a remote sticky file from its pinned Hugging Face URL (`create_work --remote_file URL NBYTES MD5`, open name `model.gguf`); file 1 the credential (open name `credential`); one result, no quorum, 2-day deadline |
 | `templates/pilot_out.xml` | output template: the summary (`summary.json`, at most 64 KB) |
 | `app-version.sh` | lays out one app version for a project's `apps/` folder, unsigned |
+| `bridge/` | the bridge between the project and a gateway (below) |
 
 A work unit's command line is `--passthrough_child --gateway wss://<gateway>/v1/node/connect`.
 The command line goes to the wrapper, which refuses options it does not know; it hands what
@@ -78,13 +79,71 @@ The bundle runs on x86_64 Linux with an NVIDIA GPU of compute capability 8.6, 8.
 40 and 50 series) and a driver new enough for its CUDA 12 build; the project's plan class must
 match (`scripts/build-llama.sh`). The big tier needs about 22 GB of GPU memory.
 
+## The bridge (`aisathome-bridge`)
+
+The bridge joins the project to a gateway as its connector (`docs/gateway.md`, "Connectors and
+pilots"). It runs on the project's host as the project's user, where BOINC's tools and the project
+directory are (for example in a container from the server's own image), and holds the only connector
+key. The gateway is the source of truth; the bridge mirrors it into BOINC:
+
+| Every | What |
+|---|---|
+| 60 s | **Demand**: as many pilots as the gateway wants. For each, it creates the pilot at the gateway, writes the credential into the download directory as a per-work-unit input file with an unguessable name (`bin/dir_hier_path`, mode 0640) and runs `bin/create_work` with the pilot's id as the work unit's name, the model as a remote sticky file and the credential as file 1. Unsent work units the gateway no longer wants (newest first), and those whose pilot has less than `min_runway_hours` left, are cancelled (`bin/cancel_jobs --name`) and reported `cancelled` |
+| 10 s | **Binds and ends**: when BOINC sends a work unit, it tells the gateway the BOINC user, host and team (`result.userid`, `hostid`, `teamid`); when the result is over, it reports the outcome (success, error, `expired` for no reply by the deadline, `cancelled`). A pilot with no work unit 5 minutes after its creation is reported `error` (the bridge stopped between the two steps) |
+| 60 s | **Credit**: for each successful result that waits for validation, it asks the gateway for the pilot's credit and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole). The validator reads that file into the result's claimed credit and grants it with `--post_assigned_credit`; until the file is there it tells BOINC to try again later. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
+| 10 s | **People's requests**: "Run on BOINC" calls `create_account.php` with the address, the display name and the person's password hash (or, without one, the hash of a password derived from the request with the connector key, so a retry after a crash finds the same user), then `am_get_info.php` for the user id and the weak (attach-only) key. A claim calls `am_get_info.php` with the account key the person gave. BOINC's refusals become the request's failure reason; a failed call (network, database, a wrong invitation code) is tried again 2 minutes later |
+| 60 s | A status line in its log (open pilots by state, created, cancelled, bound, reported, requests answered, credit files, errors) |
+
+It reads the project's database (SELECT on `workunit`, `result` and `app` only; give it a user with no
+other rights, or it uses `config.xml`'s) and never writes it: BOINC's own tools make and cancel work
+units. Its work units carry `create_work --batch <batch>`, and it looks only at its own batch, so a
+test work unit made by hand, or a second bridge for another gateway (a staging one, with
+`target_host` and `zero_credit`), share the project safely. Never give two bridges the same batch or
+the same connector. It never logs a credential, an account key, a weak key, an address or a password
+hash. The account RPCs take their parameters in the query string: the bridge calls them on the
+project's own web server, which should keep those pages out of its access log.
+
+```json
+{
+  "gateway": "https://api.example.org",
+  "connector": "boinc",
+  "key_file": "/run/bridge/connector.key",
+  "pilot_gateway": "wss://api.example.org/v1/node/connect",
+  "project_dir": "/home/boincadm/project",
+  "batch": 1,
+  "model": {"url": "https://huggingface.co/<repo>/resolve/<revision>/<file>.gguf", "nbytes": 14252845984, "md5": "<32 hex>"},
+  "web_url": "http://apache/project/",
+  "invite_code_file": "/run/bridge/invite_code",
+  "db_dsn_file": "/run/bridge/db.dsn"
+}
+```
+
+Optional: `app` (`pilot`), `wu_template` and `result_template` (`templates/pilot_in`,
+`templates/pilot_out`), `target_host`, `deadline_hours` (168: the pilot's deadline at the gateway),
+`min_runway_hours` (54: the work unit's 48 h delay bound, a 4 h pilot and 2 h), `credit_dir`
+(`project_dir/credit`), `zero_credit`, `poll_seconds` (10), `demand_seconds` (60).
+
+```sh
+go build -o aisathome-bridge ./boinc/bridge/cmd/aisathome-bridge
+aisathome-bridge -config bridge.json -check   # key, database, tools, credit directory
+aisathome-bridge -config bridge.json
+```
+
+Tests: `go test -race ./boinc/bridge/` (stand-ins for the gateway and BOINC);
+`AISATHOME_BRIDGE_TEST_MYSQL='user:pass@tcp(127.0.0.1:3306)/empty_db'` adds the SQL against a real
+MariaDB; `e2e/bridge_test.go` runs it against the real gateway with a real node agent as the pilot.
+
 ## Open
 
 - The pilot starts a fresh 4-hour budget when the client restarts a task it quit.
 - The client's RAM accounting with the memory-mapped model and the prompt cache is not measured.
-- The gateway now mints per-pilot credentials (`pc-<hex>.<secret>`, "Connectors and pilots" in
+- The gateway mints per-pilot credentials (`pc-<hex>.<secret>`, "Connectors and pilots" in
   `docs/gateway.md`): one pilot, one connection at a time, until the pilot ends or its deadline
-  passes; the node agent takes its node id from it. The bridge that requests them comes next; until
-  then a test work unit can still carry an ordinary node token. The project keeps the credential
-  file in its download folder until the work unit is done and the file deleter removes it; the
-  credential dies with the pilot, which makes that copy worthless.
+  passes; the node agent takes its node id from it. The bridge (below) requests them; a test work
+  unit made by hand can still carry an ordinary node token. The project keeps the credential file in
+  its download folder until the work unit is done and the file deleter removes it; the credential
+  dies with the pilot, which makes that copy worthless.
+- The validator that reads the bridge's credit files (BOINC's validator framework with
+  `--post_assigned_credit`) is not in this repository yet.
+- A pilot that ends with exit 1 (its engine kept failing) is a client error in BOINC, which BOINC
+  never validates: answers it served before that earn no BOINC credit.

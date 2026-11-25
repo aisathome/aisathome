@@ -61,6 +61,13 @@ jobs:
         uses: ./.github/actions/go
         with:
           cache: test
+      - name: MariaDB for the BOINC bridge's SQL test
+        # boinc/bridge/mysql_test.go runs the bridge's queries against a real server when the DSN is
+        # set (the test waits for the server to answer). mariadb:lts (12.3.3) by digest.
+        run: |
+          docker run -d --name bridge-mariadb -e MARIADB_ROOT_PASSWORD=ci -e MARIADB_DATABASE=boinc_test \
+            -p 127.0.0.1:3306:3306 docker.io/library/mariadb@sha256:4aaf88b3106382c8c18e49f0cec60267be618fc22f858c4503afb2a2555afed3
+          echo 'AISATHOME_BRIDGE_TEST_MYSQL=root:ci@tcp(127.0.0.1:3306)/boinc_test' >> "$GITHUB_ENV"
       - name: go test -race (all but e2e)
         run: go test -race -count=1 $(go list ./... | grep -v -E '/e2e(/|$)')
       - name: install.sh tests

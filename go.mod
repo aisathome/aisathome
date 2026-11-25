@@ -5,12 +5,14 @@ go 1.27.1
 require (
 	fyne.io/systray v1.12.2
 	github.com/coder/websocket v1.8.15
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/ulikunitz/xz v0.5.17
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.1
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
