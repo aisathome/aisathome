@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -190,6 +192,10 @@ type fakeBOINC struct {
 	// createWorkThenFail: create_work inserts the work unit, then fails (a timeout).
 	createWorkThenFail bool
 	creditCalls        int
+	wuIDs              map[string]int64 // work unit ids, in the order they appeared
+	validated          []int64          // Validate's work unit ids
+	validateErr        error
+	creditDir          string // where Validate looks for the file, as the validator does
 
 	accounts map[string]*fakeAccount // by account key
 	byEmail  map[string]*fakeAccount
@@ -208,13 +214,42 @@ type fakeAccount struct {
 
 func newFakeBOINC() *fakeBOINC {
 	return &fakeBOINC{jobs: map[string]Job{}, staged: map[string][]byte{}, works: map[string]string{},
-		accounts: map[string]*fakeAccount{}, byEmail: map[string]*fakeAccount{}, nextID: 100}
+		accounts: map[string]*fakeAccount{}, byEmail: map[string]*fakeAccount{}, nextID: 100, wuIDs: map[string]int64{}}
 }
 
 func (f *fakeBOINC) setJob(name string, j Job) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.putJob(name, j)
+}
+
+func (f *fakeBOINC) putJob(name string, j Job) {
+	if _, ok := f.wuIDs[name]; !ok {
+		f.wuIDs[name] = int64(len(f.wuIDs) + 1)
+	}
 	f.jobs[name] = j
+}
+
+// Validate does what the pilot validator does to a work unit: valid once its credit file is there.
+func (f *fakeBOINC) Validate(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.validated = append(f.validated, id)
+	if f.validateErr != nil {
+		return f.validateErr
+	}
+	for n, wid := range f.wuIDs {
+		if wid != id {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(f.creditDir, n)); err != nil {
+			return nil // left as it was
+		}
+		j := f.jobs[n]
+		j.ValidateState = ValidateStateValid
+		f.jobs[n] = j
+	}
+	return nil
 }
 
 func (f *fakeBOINC) Jobs(_ context.Context, names []string) (map[string]Job, error) {
@@ -232,7 +267,7 @@ func (f *fakeBOINC) Jobs(_ context.Context, names []string) (map[string]Job, err
 	return out, nil
 }
 
-// AwaitingCredit pages by a result id: the work unit's place in name order.
+// AwaitingCredit pages by result id; a work unit's result has the work unit's id here.
 func (f *fakeBOINC) AwaitingCredit(_ context.Context, after int64, limit int) ([]Awaiting, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -241,11 +276,11 @@ func (f *fakeBOINC) AwaitingCredit(_ context.Context, after int64, limit int) ([
 	for n := range f.jobs {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool { return f.wuIDs[names[i]] < f.wuIDs[names[j]] })
 	var out []Awaiting
-	for i, n := range names {
-		if id := int64(i + 1); id > after && f.jobs[n].awaitingValidation() && len(out) < limit {
-			out = append(out, Awaiting{ResultID: id, Name: n})
+	for _, n := range names {
+		if id := f.wuIDs[n]; id > after && f.jobs[n].awaitingValidation() && len(out) < limit {
+			out = append(out, Awaiting{ResultID: id, WorkunitID: id, Name: n})
 		}
 	}
 	return out, nil
@@ -273,7 +308,7 @@ func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string) error {
 	defer f.mu.Unlock()
 	if f.createWorkThenFail {
 		f.works[name] = cred
-		f.jobs[name] = Job{}
+		f.putJob(name, Job{})
 		return errors.New("create_work: signal: killed")
 	}
 	if f.createErr != nil {
@@ -283,7 +318,7 @@ func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string) error {
 		return errors.New("create_work: input file not staged")
 	}
 	f.works[name] = cred
-	f.jobs[name] = Job{} // the transitioner has not made the result yet
+	f.putJob(name, Job{}) // the transitioner has not made the result yet
 	return nil
 }
 
@@ -386,6 +421,7 @@ func newRig(t *testing.T, edit ...func(*Config)) *rig {
 		e(&cfg)
 	}
 	fb := newFakeBOINC()
+	fb.creditDir = cfg.CreditDir
 	logs := &bytes.Buffer{}
 	log := slog.New(slog.NewTextHandler(&lockedWriter{w: logs}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	b, err := New(cfg, testKey, fb, fb, fb, log)

@@ -59,6 +59,13 @@ type Config struct {
 	// ZeroCredit writes 0 for every pilot: a bridge whose pilots serve a test gateway grants no
 	// BOINC credit.
 	ZeroCredit bool `json:"zero_credit,omitempty"`
+	// Validator, if set, is the app's validator (boinc/validator), relative to ProjectDir
+	// ("bin/pilot_validator"): the bridge runs it on each work unit right after writing its credit
+	// file. It must not also run as a daemon for the app: a daemon cannot wait for the file.
+	Validator string `json:"validator,omitempty"`
+	// MaxGrantedCredit caps one result's credit in the validator (--max_granted_credit); needed
+	// with Validator. The gateway caps a pilot's credit too (max_credit_per_pilot).
+	MaxGrantedCredit float64 `json:"max_granted_credit,omitempty"`
 
 	// WebURL is the project's web root on its own web server, for the stock RPCs
 	// ("http://apache/project/"). The account RPCs take their parameters in the query string, so
@@ -145,9 +152,15 @@ func (c *Config) check() error {
 	if c.ResultTemplate == "" {
 		c.ResultTemplate = "templates/pilot_out"
 	}
-	for _, t := range []string{c.WUTemplate, c.ResultTemplate} {
+	if c.Validator != "" && c.MaxGrantedCredit <= 0 {
+		bad("max_granted_credit: needed with validator, more than 0")
+	}
+	for _, t := range []string{c.WUTemplate, c.ResultTemplate, c.Validator} {
+		if t == "" {
+			continue
+		}
 		if filepath.IsAbs(t) || strings.HasPrefix(filepath.Clean(t), "..") || strings.HasPrefix(t, "-") {
-			bad("templates: paths relative to project_dir")
+			bad("templates and validator: paths relative to project_dir")
 		}
 	}
 	if u, err := url.Parse(c.Model.URL); err != nil || u.Scheme != "https" || u.Host == "" {

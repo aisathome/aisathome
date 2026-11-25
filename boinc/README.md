@@ -53,6 +53,7 @@ the task with those variables instead of its own environment, so `job.xml` sets 
 | `templates/pilot_out.xml` | output template: the summary (`summary.json`, at most 64 KB) |
 | `app-version.sh` | lays out one app version for a project's `apps/` folder, unsigned |
 | `bridge/` | the bridge between the project and a gateway (below) |
+| `validator/` | the pilot app's validator, which grants the bridge's credit (below) |
 
 A work unit's command line is `--passthrough_child --gateway wss://<gateway>/v1/node/connect`.
 The command line goes to the wrapper, which refuses options it does not know; it hands what
@@ -90,7 +91,7 @@ key. The gateway is the source of truth; the bridge mirrors it into BOINC:
 |---|---|
 | 60 s | **Demand**: as many pilots as the gateway wants. For each, it creates the pilot at the gateway, writes the credential into the download directory as a per-work-unit input file with an unguessable name (`bin/dir_hier_path`, mode 0640) and runs `bin/create_work` with the pilot's id as the work unit's name, the model as a remote sticky file and the credential as file 1. Unsent work units the gateway no longer wants (newest first), and those whose pilot has less than `min_runway_hours` left, are cancelled (`bin/cancel_jobs --name`) and reported `cancelled`. If BOINC sent the work unit while it was being cancelled, the pilot is not ended: it is bound and reported when its result is over. If `create_work` fails, the pilot is ended and its credential removed only when the work unit really is not there (a timed-out `create_work` may have made it) |
 | 10 s | **Binds and ends**: when BOINC sends a work unit, it tells the gateway the BOINC user, host and team (`result.userid`, `hostid`, `teamid`); when the result is over, it reports the outcome (success, error, `expired` for no reply by the deadline, `cancelled`). A pilot with no work unit 5 minutes after its creation is reported `error` (the bridge stopped between the two steps) |
-| 60 s | **Credit**: for each successful result that waits for validation, it asks the gateway for the pilot's credit (BOINC's "not validated yet" and "inconclusive": the validator's first look, before the file exists, leaves a lone result inconclusive, and it looks again later; every page of them, oldest first, so a backlog still in the gateway's hold never keeps later ones out) and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole). The validator reads that file into the result's claimed credit and grants it with `--post_assigned_credit`; until the file is there it tells BOINC to try again later. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
+| 60 s | **Credit**: for each successful result that waits for validation (every page of them, oldest first, so a backlog still in the gateway's hold never keeps later ones out), it asks the gateway for the pilot's credit and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole) and runs the validator (below) on that one work unit, which grants it. A run that failed is tried again on a later pass, at most every 10 minutes. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
 | 10 s | **People's requests**: "Run on BOINC" calls `create_account.php` with the address, the display name and the person's password hash (or, without one, the hash of a password derived from the request with the connector key, so a retry after a crash finds the same user), then `am_get_info.php` for the user id and the weak (attach-only) key. A claim calls `am_get_info.php` with the account key the person gave. BOINC's refusals become the request's failure reason; a failed call (network, database, a wrong invitation code) is tried again 2 minutes later |
 | 60 s | A status line in its log (open pilots by state, created, cancelled, bound, reported, requests answered, credit files, errors) |
 
@@ -129,14 +130,18 @@ project's own web server, which should keep those pages out of its access log.
   "model": {"url": "https://huggingface.co/<repo>/resolve/<revision>/<file>.gguf", "nbytes": 14252845984, "md5": "<32 hex>"},
   "web_url": "http://apache/project/",
   "invite_code_file": "/run/bridge/invite_code",
-  "db_dsn_file": "/run/bridge/db.dsn"
+  "db_dsn_file": "/run/bridge/db.dsn",
+  "validator": "bin/pilot_validator",
+  "max_granted_credit": 150000
 }
 ```
 
 Optional: `app` (`pilot`), `wu_template` and `result_template` (`templates/pilot_in`,
 `templates/pilot_out`), `target_host`, `deadline_hours` (60: the pilot's deadline at the gateway, after which its credential is refused),
 `min_runway_hours` (54: the work unit's 48 h delay bound, a 4 h pilot and 2 h), `credit_dir`
-(`project_dir/credit`), `zero_credit`, `poll_seconds` (10), `demand_seconds` (60).
+(`project_dir/credit`), `zero_credit`, `poll_seconds` (10), `demand_seconds` (60). Without `validator`
+the bridge only writes the credit files; with it, `max_granted_credit` is needed (the validator's
+cap on one result; the gateway caps a pilot's credit too).
 
 ```sh
 go build -o aisathome-bridge ./boinc/bridge/cmd/aisathome-bridge
@@ -148,6 +153,55 @@ Tests: `go test -race ./boinc/bridge/` (stand-ins for the gateway and BOINC);
 `AISATHOME_BRIDGE_TEST_MYSQL='user:pass@tcp(127.0.0.1:3306)/empty_db'` adds the SQL against a real
 MariaDB; `e2e/bridge_test.go` runs it against the real gateway with a real node agent as the pilot.
 
+## The validator (`validator/`)
+
+BOINC grants a result's credit through the app's validator. The pilot's (`pilot_validator.cpp`) is
+BOINC's validator framework (`sched/validator.cpp`) with its own `check_set` and `check_pair`, the
+framework's lower-level interface: `check_set` reads `<credit_dir>/<work unit name>`, the file the
+bridge writes once the gateway's credit is final, into the result's claimed credit and makes the
+result canonical and valid; with `--post_assigned_credit` BOINC grants exactly that, capped by
+`--max_granted_credit`.
+
+**It never runs as a daemon.** The bridge runs it on one work unit right after writing that work
+unit's file:
+
+```sh
+pilot_validator --app pilot --one_pass --one_pass_N_WU 1 --min_wu_id N --max_wu_id N \
+  --post_assigned_credit --max_granted_credit 150000 --credit_dir /home/boincadm/project/credit
+```
+
+The gateway holds credit for a day after a pilot ends, and BOINC's framework cannot wait on a work
+unit with one result. If a pass finds no canonical result (the usual "transient error, try later"),
+it marks the result inconclusive, raises the work unit's `target_nresults` and transitions it at
+once: with `max_total_results` 1 that errors the work unit, and the transitioner never asks again for
+an inconclusive result. If `check_set` returns an error instead, the work unit is left as it was,
+but a daemon's scan reads the same work unit again at once and spins (measured: about 4,300 passes a
+second). Run on one work unit, a run without the file ends and leaves the work unit as it was, so
+the work unit simply keeps waiting with `need_validate` set until the bridge has its credit. Do not
+start the stock validator daemon for the pilot app.
+
+- A file holding 0 (withheld, idle) is valid with no credit.
+- A file that is not one non-negative number is an error, logged: the result waits (the bridge's
+  to fix) instead of losing its credit.
+- A work unit that is not a pilot's (`p-` and 12 hex digits), such as a test work unit made by
+  hand: valid with no credit.
+- A second result of a work unit (there should never be one) is invalid, so a pilot never earns
+  twice.
+
+It is built against the BOINC server source the project runs, with its `lib/`, `db/` and `sched/`
+libraries built and `svn_version.h` generated, and rebuilt with every server upgrade:
+
+```sh
+make -C boinc/validator BOINC=/path/to/boinc test   # pilot_validator, then the check_set fixture test
+BOINC=/path/to/boinc MYSQL_HOST=127.0.0.1 MYSQL_USER=root MYSQL_PASSWORD=... \
+  boinc/validator/integration_test.sh               # in BOINC's framework, against MariaDB
+```
+
+CI builds it against server release 1.6.3 (`server_release/1.6/1.6.3`) and runs both: the
+integration test loads BOINC's own schema, runs the validator on one work unit at a time as the
+bridge does, and checks the grant, the cap, the host and user totals, and that a work unit without
+its file is left exactly as it was.
+
 ## Open
 
 - The pilot starts a fresh 4-hour budget when the client restarts a task it quit.
@@ -158,7 +212,5 @@ MariaDB; `e2e/bridge_test.go` runs it against the real gateway with a real node 
   unit made by hand can still carry an ordinary node token. The project keeps the credential file in
   its download folder until the work unit is done and the file deleter removes it; the credential
   dies with the pilot, which makes that copy worthless.
-- The validator that reads the bridge's credit files (BOINC's validator framework with
-  `--post_assigned_credit`) is not in this repository yet.
 - A pilot that ends with exit 1 (its engine kept failing) is a client error in BOINC, which BOINC
   never validates: answers it served before that earn no BOINC credit.

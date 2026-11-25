@@ -22,9 +22,10 @@ func fakeProject(t *testing.T, dirHier string) Config {
 		dirHier = `mkdir -p "` + dir + `/download/1f" && echo "` + dir + `/download/1f/$1"`
 	}
 	scripts := map[string]string{
-		"create_work":   logArgs,
-		"cancel_jobs":   logArgs,
-		"dir_hier_path": dirHier,
+		"create_work":     logArgs,
+		"cancel_jobs":     logArgs,
+		"pilot_validator": logArgs,
+		"dir_hier_path":   dirHier,
 	}
 	for name, body := range scripts {
 		if err := os.WriteFile(filepath.Join(dir, "bin", name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
@@ -125,5 +126,23 @@ func TestCheckNotListed(t *testing.T) {
 	srv.Close()
 	if err := NewExecTools(cfg).CheckNotListed(ctx); err == nil {
 		t.Error("no error when the web server cannot be asked")
+	}
+}
+
+func TestExecToolsValidate(t *testing.T) {
+	cfg := fakeProject(t, "")
+	cfg.Validator, cfg.MaxGrantedCredit = "bin/pilot_validator", 150000
+	if err := NewExecTools(cfg).Validate(ctx, 4321); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join([]string{"--app", "pilot", "--one_pass", "--one_pass_N_WU", "1", "--min_wu_id", "4321",
+		"--max_wu_id", "4321", "--post_assigned_credit", "--max_granted_credit", "150000",
+		"--credit_dir", cfg.CreditDir, "--"}, "\n") + "\n"
+	if got := argsLog(t, cfg); got != want {
+		t.Errorf("validator args:\n%s\nwant:\n%s", got, want)
+	}
+	cfg.Validator = ""
+	if err := NewExecTools(cfg).Validate(ctx, 1); err == nil {
+		t.Error("ran without a validator")
 	}
 }

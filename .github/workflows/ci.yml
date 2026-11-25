@@ -186,11 +186,56 @@ jobs:
           path: ${{ steps.go.outputs.cache-paths }}
           key: ${{ steps.go.outputs.cache-key }}
 
+  validator:
+    # boinc/validator: the pilot app's BOINC validator, built against the BOINC server release the
+    # project runs (tag server_release/1.6/1.6.3); the fixture test of its check_set, then the
+    # validator in BOINC's framework against MariaDB with BOINC's schema, run as the bridge runs it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: BOINC's source at server release 1.6.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: BOINC/boinc
+          ref: 351ad42a102c2bbe70e33f7aa44c23ac6ac3db9c
+          path: boinc-src
+          persist-credentials: false
+      - name: build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends autoconf automake libtool pkg-config m4 \
+            default-libmysqlclient-dev libssl-dev libcurl4-openssl-dev zlib1g-dev nlohmann-json3-dev mariadb-client
+      - name: BOINC's server libraries (lib, db, libsched)
+        working-directory: boinc-src
+        run: |
+          ./_autosetup
+          ./configure --disable-client --disable-manager --enable-server --disable-fcgi
+          make -C lib -j"$(nproc)"
+          make -C db -j"$(nproc)"
+          make -C sched -j"$(nproc)" libsched.la
+          bash ./generate_svn_version.sh # svn_version.h, which validator.cpp includes
+      - name: MariaDB for the integration test (mariadb:lts, 12.3.3, by digest)
+        run: |
+          docker run -d --name validator-mariadb -e MARIADB_ROOT_PASSWORD=ci -p 127.0.0.1:3306:3306 \
+            docker.io/library/mariadb@sha256:4aaf88b3106382c8c18e49f0cec60267be618fc22f858c4503afb2a2555afed3
+      - name: the validator and its fixture test
+        run: make -C boinc/validator BOINC="$PWD/boinc-src" test
+      - name: the validator in BOINC's framework, one work unit at a time
+        env:
+          BOINC: ${{ github.workspace }}/boinc-src
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_USER: root
+          MYSQL_PASSWORD: ci
+        run: boinc/validator/integration_test.sh
+
   check:
     # The required status check: green only when every Linux check above is green (a failed
     # or skipped job counts as a failure here).
     if: ${{ always() }}
-    needs: [lint, test, e2e, browser]
+    needs: [lint, test, e2e, browser, validator]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -198,7 +243,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "lint, test, e2e, browser: $RESULTS"
+          echo "lint, test, e2e, browser, validator: $RESULTS"
           for r in $RESULTS; do [ "$r" = success ] || exit 1; done
 
   windows:

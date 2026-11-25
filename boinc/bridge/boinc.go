@@ -24,9 +24,9 @@ const (
 
 	ValidateStateInit  = 0 // VALIDATE_STATE_INIT: not validated yet
 	ValidateStateValid = 1 // VALIDATE_STATE_VALID
-	// VALIDATE_STATE_INCONCLUSIVE: the validator looked and found no canonical result yet. A
-	// transient error in init_result (no credit file yet) leaves a lone result here, and the
-	// validator looks at it again later (sched/validator.cpp, handle_wu).
+	// VALIDATE_STATE_INCONCLUSIVE: a validator pass found no canonical result. The pilot validator
+	// never leaves a result here (the bridge runs it only once the credit file is written; see
+	// boinc/validator), but a result some other pass left here still gets its file.
 	ValidateStateInconclusive = 4
 
 	WUErrorCancelled = 16 // WU_ERROR_CANCELLED
@@ -100,10 +100,12 @@ type Store interface {
 	AwaitingCredit(ctx context.Context, afterID int64, limit int) ([]Awaiting, error)
 }
 
-// Awaiting is a result that waits for its credit: its id (for paging) and its work unit's name.
+// Awaiting is a result that waits for its credit: its id (for paging), its work unit's id and
+// name.
 type Awaiting struct {
-	ResultID int64
-	Name     string
+	ResultID   int64
+	WorkunitID int64
+	Name       string
 }
 
 // Tools makes and cancels work units with the project's own programs.
@@ -116,6 +118,8 @@ type Tools interface {
 	CreateWork(ctx context.Context, name, credentialFile string) error
 	// Cancel cancels a work unit (its unsent result is not sent).
 	Cancel(ctx context.Context, name string) error
+	// Validate runs the app's validator on one work unit, whose credit file is written.
+	Validate(ctx context.Context, workunitID int64) error
 }
 
 // Account is what am_get_info.php says about a BOINC user.
