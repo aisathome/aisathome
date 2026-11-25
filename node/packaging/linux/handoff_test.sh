@@ -313,7 +313,7 @@ want_code "upgrade at a terminal" 0; token_is "upgrade at a terminal" "$toka" "$
 fresh
 tty_inst $'y\r' -- --gateway-url "$gwa"
 want_code "fresh, y at a terminal" 0; has "fresh, y at a terminal" "Link this node to your account? [Y/n]"
-has "fresh, y at a terminal" "Linked: this is node n-0000a001"; token_is "fresh, y at a terminal" "$toka" "$gwa"
+has "fresh, y at a terminal" "Linked: this is node n-0000a001"; has "fresh, y at a terminal" "model.gguf: 0.0 of 0.0 GB (100%)"; token_is "fresh, y at a terminal" "$toka" "$gwa"
 fresh
 tty_inst $'n\r' -- --gateway-url "$gwa"
 want_code "fresh, n at a terminal" 0; has "fresh, n at a terminal" "You must be 18 or older"

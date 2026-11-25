@@ -751,11 +751,40 @@ check_disk() {
   echo "disk: $(gb $((kb * 1024))) GB free on $d, $(gb "$2") GB needed" >&2
 }
 
+# download_progress <file> <total bytes> <label> <pid>: how far <file> has grown while the download
+# (process <pid>) runs. At a terminal: one line, updated in place every second, with the speed. Piped
+# or logged (no terminal): a plain line at each further 10%, so a log gets at most 11 of them.
+progress_tenth=-1
+download_progress() {
+  local f="$1" total="$2" label="$3" pid="$4" have start t0=$SECONDS secs pct rate
+  start="$(stat -c %s "$f" 2>/dev/null || echo 0)" progress_tenth=-1
+  while kill -0 "$pid" 2>/dev/null; do
+    have="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    pct=$(( total > 0 ? have * 100 / total : 0 ))
+    if [[ -t 2 ]]; then
+      secs=$(( SECONDS - t0 )); rate=""
+      (( secs > 0 )) && rate=", $(( (have - start) / secs / 1000000 )) MB/s"
+      printf '\r%s: %s of %s GB (%d%%)%s   ' "$label" "$(gb "$have")" "$(gb "$total")" "$pct" "$rate" >&2
+    elif (( pct / 10 > progress_tenth )); then
+      progress_tenth=$(( pct / 10 ))
+      echo "$label: $(gb "$have") of $(gb "$total") GB ($pct%)" >&2
+    fi
+    sleep 1
+  done
+}
+# download_progress_end <file> <total bytes> <label> <curl exit code>: ends the progress: the last line
+# of a download that ended well; at a terminal, otherwise, the line ends where it stopped.
+download_progress_end() {
+  local have; have="$(stat -c %s "$1" 2>/dev/null || echo 0)"
+  if [[ $4 -ne 0 ]]; then [[ ! -t 2 ]] || echo >&2
+  elif [[ -t 2 ]]; then printf '\r%s: %s of %s GB (100%%)          \n' "$3" "$(gb "$have")" "$(gb "$2")" >&2
+  elif (( progress_tenth < 10 )); then echo "$3: $(gb "$have") of $(gb "$2") GB (100%)" >&2; fi
+}
+
 # fetch_model <file>: download the model to <file> and verify its SHA-256. An interrupted
 # download resumes from <file>.part; a complete <file> with the right hash is kept.
 fetch_model() {
-  local dest="$1" part="$1.part" have=0 got rc i progress=(-sS)
-  [[ -t 2 ]] && progress=(-#)
+  local dest="$1" part="$1.part" have=0 got rc i pid
   if [[ -f "$dest" && "$(stat -c %s "$dest")" = "$model_size" ]]; then
     echo "model: checking the existing $dest (about a minute)" >&2
     got="$(sha256sum "$dest" | cut -d' ' -f1)"
@@ -776,8 +805,12 @@ fetch_model() {
     # server that cannot resume (33) gets a fresh download.
     for i in 1 2 3 4 5; do
       rc=0
-      curl -fL "${progress[@]}" --proto '=https,file' --proto-redir '=https' --retry 3 --retry-delay 5 \
-        --connect-timeout 30 --speed-limit 10000 --speed-time 60 -C - -o "$part" "$model_url" || rc=$?
+      curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 --retry-delay 5 \
+        --connect-timeout 30 --speed-limit 10000 --speed-time 60 -C - -o "$part" "$model_url" &
+      pid=$!
+      download_progress "$part" "$model_size" "${dest##*/}" "$pid"
+      wait "$pid" || rc=$?
+      download_progress_end "$part" "$model_size" "${dest##*/}" "$rc"
       [[ $rc -ne 0 ]] || break
       case $rc in
         22|37) die "model download failed: $model_url (curl exit $rc)" ;;

@@ -50,6 +50,13 @@ for a in "\$@"; do
     *://*) echo "\$a" >> "$tmp/net.log"; echo "curl: (7) no network in install_test.sh" >&2; exit 7 ;;
   esac
 done
+# FAKE_CURL_SLOW=1: a file:// download (-o <file> <url>) arrives in four parts, a second apart.
+if [ -n "\$FAKE_CURL_SLOW" ]; then
+  o="" u=""; while [ \$# -gt 0 ]; do case "\$1" in -o) o="\$2"; shift ;; file://*) u="\${1#file://}" ;; esac; shift; done
+  n=\$(stat -c %s "\$u"); q=\$(( n / 4 + 1 )); : > "\$o"
+  for i in 0 1 2 3; do dd if="\$u" bs=\$q skip=\$i count=1 2>/dev/null >> "\$o"; sleep 1.2; done
+  exit 0
+fi
 exec "$real_curl" "\$@"
 FAKE
 chmod +x "$tmp/fake/df" "$tmp/fake/nvidia-smi" "$tmp/fake/systemctl" "$tmp/fake/curl"
@@ -830,7 +837,20 @@ msha="$(sha256sum "$tmp/hf/test-model.gguf" | cut -d' ' -f1)"
 m=(MODEL_URL="file://$tmp/hf/test-model.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000)
 run "${m[@]}" -- --download-only "$tmp/dl1" --speculation off
 ok "download"; has "download" "(verified)"; has "download" "Install with --model $tmp/dl1/test-model.gguf"
+# Progress without a terminal: plain lines, the last one at 100%, no carriage returns.
+has "download" "test-model.gguf: 0.0 of 0.0 GB (100%)"; [[ "$out" != *$'\r'* ]] || fail "download: a carriage return in piped output"
 cmp -s "$tmp/hf/test-model.gguf" "$tmp/dl1/test-model.gguf" || fail "download: file differs"
+# A slower download: a line at each further 10% when piped; at a terminal one line updated in place.
+mkdir -p "$tmp/dl7" "$tmp/dl8"
+run "${m[@]}" FAKE_CURL_SLOW=1 -- --download-only "$tmp/dl7" --speculation off
+ok "slow download"; has "slow download" "test-model.gguf: 0.0 of 0.0 GB (25%)"; has "slow download" "(50%)"; has "slow download" "(100%)"
+[[ $(grep -c '^test-model.gguf: ' <<<"$out") -le 11 ]] || fail "slow download: too many progress lines"
+if command -v script >/dev/null; then
+  printf -v cmd '%q ' env -i PATH="$PATH" FAKE_CURL_SLOW=1 "${m[@]}" bash "$installer" --download-only "$tmp/dl8" --speculation off
+  out="$(script -qefc "$cmd" /dev/null </dev/null 2>&1)"; code=$?
+  ok "slow download at a terminal"; has "slow download at a terminal" $'\rtest-model.gguf: 0.0 of 0.0 GB ('
+  has "slow download at a terminal" "(100%)"; has "slow download at a terminal" " MB/s"
+fi
 # A complete file is checked, not downloaded again (the URL now points nowhere).
 run MODEL_URL="file://$tmp/gone/test-model.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000 -- --download-only "$tmp/dl1" --speculation off
 ok "existing model"; has "existing model" "checking the existing"; lacks "existing model" "downloading"
