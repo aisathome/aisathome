@@ -1,14 +1,24 @@
 // A leaf's outlines in words (2026-11-15: the task table and its one-line count were hard to follow). Newest
-// outline first, each with its state (in progress, refuted and why, proved, abandoned and why), one row per hole with
-// its state (proved, false, closed by the pre-pass, the index or the ledger, running with its live steps, queued, not
-// tried, cancelled), the holes left in the outline's file ("in place") and the assembly; above them one line for the
-// whole leaf ("Running: outline 2, hole 1"). The task table stays below as the detail.
+// outline first, each with its state (in progress, refuted and why, proved, abandoned and why), one row per hole and
+// the assembly; above them one line for the whole leaf ("Running: outline 2, hole 1"). The task table stays below as
+// the detail.
+//
+// A hole shows one of three states (2026-11-25): Waiting (held back behind another hole, its task not made or not
+// started, its task failed, its outline ended without it, or nothing known), Working (its own task is queued or
+// running, with the try and its steps) or Solved (by any route: the pre-pass, a theorem already known, a proof from
+// earlier, the in-place task once the assembly checked it, its own task). Why it waits and how it was solved go into a
+// tooltip only ("starts when hole 3 is done", "a new outline is being made", "solved automatically: simp", "already
+// known: X", "with the outline", "own task").
 //
 // Made from the leaf's tasks (their roles, outlines, holes, tries, states and outcomes, and `closed_by`: GET /v1/tasks
 // or the build's data), the build's outline records (holes, how many in place, what the pre-pass closed) and, when the
 // project's data document has them, its per-hole states: which holes are in place, what closed a hole without a task,
-// and a verdict reached outside a task (a hole re-judged false after our check failed on the model's disproof). What
-// an outcome means (a leaf proved, the holes in place, closed_by, an outcome in words) is prove2me-outcomes.ts's.
+// and a verdict reached outside a task (a hole re-judged false after our check failed on the model's disproof). From
+// 2026-11-25 the outline's tasks name every hole in one word (the label `hole_states`, set by the prove2me runner when
+// it makes them): its own task, held back behind the riskiest hole, solved by the pre-pass, already known (an imported
+// theorem), proved before, left in place; so every hole of the outline has its row, those after the last hole task
+// too. What an outcome means (a leaf proved, the holes in place, closed_by, an outcome in words) is
+// prove2me-outcomes.ts's.
 // Pure functions and one HTML renderer (every value escaped) for the build and the browser alike.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -32,14 +42,21 @@ export interface OutlineHoles {
 	holes: HoleInfo[];
 }
 
-export type HoleState = 'proved' | 'false' | 'prepass' | 'index' | 'ledger' | 'closed' | 'running' | 'queued' | 'waiting' | 'not_tried' | 'cancelled' | 'not_proved' | 'failed';
+export type HoleState = 'proved' | 'false' | 'prepass' | 'index' | 'ledger' | 'closed' | 'running' | 'queued' | 'waiting' | 'not_tried' | 'cancelled' | 'not_proved' | 'failed' | 'unknown';
+/** What the page shows of a hole: three states only. */
+export type HoleShow = 'waiting' | 'working' | 'solved';
 export interface HoleView {
 	/** The hole's number in the outline; null for the in-place holes' row when their numbers are not known, and for the assembly. */
 	hole: number | null;
 	label: string;
 	kind: 'lemma' | 'inplace' | 'assembly';
-	state: HoleState;
+	/** A hole's: waiting, working or solved; the assembly's own state. */
+	state: HoleShow | HoleState;
+	/** "Waiting", "Working (try 1, 14 steps so far)", "Solved"; the assembly's in words. */
 	text: string;
+	/** The detail, for a tooltip only: why it waits ("starts when hole 3 is done"), or how it was solved
+	 * ("solved automatically: simp", "already known: X", "with the outline", "own task"). Empty when there is none. */
+	title: string;
 }
 export type OutlineState = 'queued' | 'writing' | 'in_progress' | 'proved' | 'refuted' | 'abandoned' | 'ended' | 'stopped';
 export interface OutlineView {
@@ -64,19 +81,35 @@ export function holesText(ns: number[]): string {
 	if (s.length <= 1) return `hole ${s[0] ?? ''}`;
 	return `holes ${s.slice(0, -1).join(', ')} and ${s.at(-1)}`;
 }
-/** "holes 2 to 12", "holes 1, 3 and 5", "holes 2 to 4 and 7". */
-export function rangesText(ns: number[]): string {
-	const s = [...ns].sort((a, b) => a - b);
-	const runs: string[] = [];
-	for (let i = 0; i < s.length; ) {
-		let j = i;
-		while (j + 1 < s.length && s[j + 1] === s[j] + 1) j++;
-		runs.push(j - i >= 2 ? `${s[i]} to ${s[j]}` : j > i ? `${s[i]}, ${s[j]}` : `${s[i]}`);
-		i = j + 1;
-	}
-	const parts = runs.join(', ').split(', ');
-	return `hole${s.length > 1 ? 's' : ''} ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]}`;
+/** A hole as its outline's tasks name it (the label `hole_states`: "1=wait:3 2=task 3=prepass:simp 4=inplace"). */
+export interface HolePlan {
+	state: 'task' | 'wait' | 'busy' | 'prepass' | 'known' | 'reused' | 'false' | 'inplace' | 'unknown';
+	/** wait: the hole it waits for, or "inplace"; prepass: the tactic; known: the theorem's name. */
+	arg?: string;
 }
+const planWord = /^(task|busy|reused|false|inplace|wait:(?:[1-9][0-9]{0,2}|inplace)|(?:prepass|known)(?::[A-Za-z0-9_.'?!]{1,80})?)$/;
+/** The label `hole_states` as hole number -> state; a word the page does not know is "unknown"; null without one. */
+export function parseHoleStates(v: string | undefined | null): Map<number, HolePlan> | null {
+	if (!v || v.length > 200) return null;
+	const out = new Map<number, HolePlan>();
+	for (const tok of v.split(' ')) {
+		const m = /^([1-9][0-9]{0,2})=(.+)$/.exec(tok);
+		if (!m) continue;
+		const [state, ...rest] = planWord.test(m[2]) ? m[2].split(':') : ['unknown'];
+		out.set(Number(m[1]), { state: state as HolePlan['state'], ...(rest.length ? { arg: rest.join(':') } : {}) });
+	}
+	return out.size ? out : null;
+}
+
+/** A hole without a task of its own, as its outline's tasks name it, when that settles it. */
+function planHole(p: HolePlan): { state: HoleState; text: string } | null {
+	if (p.state === 'prepass') return { state: 'prepass', text: p.arg ? `solved automatically: ${p.arg}` : 'solved automatically' };
+	if (p.state === 'known') return { state: 'index', text: p.arg ? `already known: ${p.arg}` : 'already known' };
+	if (p.state === 'reused') return { state: 'ledger', text: 'proved earlier' };
+	if (p.state === 'false') return { state: 'false', text: 'false: a counterexample was found' };
+	return null;
+}
+
 const andList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
 /** A hole as the document states it, when that settles it (a verdict, or closed without a task). */
@@ -96,6 +129,8 @@ function docHole(e: HoleInfo): { state: HoleState; text: string } | null {
 }
 
 const byTry = (a: TaskRow, b: TaskRow) => a.attempt - b.attempt;
+/** The states a hole counts as solved in (by any route). */
+const SOLVED: HoleState[] = ['proved', 'prepass', 'index', 'ledger', 'closed'];
 
 /** A hole's (or the in-place holes') tasks in words; `why` names the outline's end for a try that was cancelled or never
  * made, unless the try's own `closed_by` names the task that ended the outline (`peers`: the leaf's tasks). */
@@ -164,11 +199,17 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	for (const r of rows) if (r.role === 'hole' && r.hole) holeTasks.set(r.hole, [...(holeTasks.get(r.hole) ?? []), r]);
 	const rest = rows.filter((r) => r.role === 'rest');
 	const docBy = new Map((doc ?? []).map((h) => [h.hole, h]));
+	// the outline's holes as its tasks name them (the data document's, when it has them, come first)
+	const plan = doc?.length ? null : parseHoleStates(rows.find((r) => r.hole_states)?.hole_states);
 	let lemmas: number[], inplace: number[] | null, inplaceCount: number | null;
 	if (doc?.length) {
 		lemmas = doc.filter((h) => h.kind === 'lemma').map((h) => h.hole);
 		inplace = doc.filter((h) => h.kind === 'inplace').map((h) => h.hole);
 		for (const h of holeTasks.keys()) if (!lemmas.includes(h)) lemmas.push(h);
+		inplaceCount = inplace.length;
+	} else if (plan) {
+		inplace = [...plan].filter(([h, p]) => p.state === 'inplace' && !holeTasks.has(h)).map(([h]) => h).sort((a, b) => a - b);
+		lemmas = [...new Set([...plan.keys(), ...holeTasks.keys()])].filter((h) => !inplace!.includes(h));
 		inplaceCount = inplace.length;
 	} else {
 		const known = new Set([...holeTasks.keys(), ...(o?.prepass_holes ?? []).map((p) => p.hole)]);
@@ -178,9 +219,9 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 		inplace = o && o.lemmas === known.size && o.holes === known.size + o.inplace ? Array.from({ length: o.holes }, (_, i) => i + 1).filter((n) => !known.has(n)) : null;
 	}
 	lemmas.sort((a, b) => a - b);
-	// Nothing known of the outline but its tasks: a number below the highest hole task without a task of its own is
-	// either closed before the hole tasks or left in place.
-	const gaps = !doc?.length && !o && lemmas.length ? Array.from({ length: lemmas.at(-1)! }, (_, i) => i + 1).filter((n) => !lemmas.includes(n)) : [];
+	// Nothing known of the outline but its tasks: a number below the highest hole task without a task of its own is not
+	// known (closed before the hole tasks, held back, or left in place).
+	const gaps = !doc?.length && !o && !plan && lemmas.length ? Array.from({ length: lemmas.at(-1)! }, (_, i) => i + 1).filter((n) => !lemmas.includes(n)) : [];
 	const pp = new Map((o?.prepass_holes ?? []).map((p) => [p.hole, p]));
 
 	// First pass: each hole's own state (a cancelled or untried one gets the outline's reason in the second pass).
@@ -190,6 +231,8 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 		const fromDoc = e ? docHole(e) : null;
 		if (fromDoc) return { hole: h, kind: 'lemma', ts: [], fixed: fromDoc };
 		const ts = holeTasks.get(h) ?? [];
+		const fromPlan = !ts.length && plan?.has(h) ? planHole(plan.get(h)!) : null;
+		if (fromPlan) return { hole: h, kind: 'lemma', ts, fixed: fromPlan };
 		if (!ts.length) {
 			const p = pp.get(h);
 			if (p?.closed_by) return { hole: h, kind: 'lemma', ts, fixed: p.closed_by.startsWith('formalpedia:') ? { state: 'index', text: 'closed by the index (reuse)' } : { state: 'prepass', text: 'closed by the pre-pass' } };
@@ -203,7 +246,8 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 		// a verdict the data document holds for a hole in place (e.g. false, found outside a task) comes first
 		const fixedFor = (h: number | null) => (h !== null && docBy.has(h) ? docHole(docBy.get(h)!) : null) ?? byAsm;
 		// one row per hole in place, as many as two; more share one row (they are one task)
-		if (inplace?.length && inplace.length <= 2) for (const h of inplace) drafts.push({ hole: h, kind: 'inplace', ts: rest, fixed: fixedFor(h) });
+		// every hole in place whose number is known has its row
+		if (inplace?.length) for (const h of inplace) drafts.push({ hole: h, kind: 'inplace', ts: rest, fixed: fixedFor(h) });
 		else drafts.push({ hole: null, kind: 'inplace', ts: rest, fixed: byAsm });
 	}
 	const own = (d: Draft) => d.fixed ?? (d.ts.length ? triesText(d.ts, '', peers) : null);
@@ -237,31 +281,76 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	const why = { refuted: 'outline refuted', abandoned: 'outline abandoned', proved: 'not needed', ended: 'outline ended', stopped: 'outline stopped' }[state as string] ?? '';
 	const ended = state !== 'in_progress';
 
+	const stateOf = (h: number) => states[drafts.findIndex((d) => d.kind === 'lemma' && d.hole === h)]?.state;
+	/** A lemma hole without a task, as the outline's tasks name it: held back, an earlier outline's, or its own to come. */
+	const planWait = (p: HolePlan): { state: HoleState; text: string } => {
+		if (p.state === 'wait') {
+			const k = p.arg === 'inplace' ? null : Number(p.arg);
+			if (!ended) return { state: 'waiting', text: `starts when ${k === null ? 'the holes in place are' : `hole ${k} is`} done` };
+			const kState = k === null ? undefined : stateOf(k);
+			const lost = k !== null && kState !== undefined && !SOLVED.includes(kState);
+			return { state: 'not_tried', text: lost ? `hole ${k} was not solved` : why };
+		}
+		if (p.state === 'busy') return { state: 'waiting', text: 'a task of an earlier outline works on it' };
+		if (p.state === 'task') return ended ? { state: 'not_tried', text: `its own task never started${why ? ` (${why})` : ''}` } : { state: 'waiting', text: 'its own task is not made yet' };
+		return { state: 'unknown', text: 'not known yet' };
+	};
+	// what an ended outline's waiting holes wait for: a newer outline
+	const newerLive = peers.some((r) => r.gen > gen && (r.state === 'running' || r.state === 'queued'));
+	const next = !ended || state === 'proved' ? '' : newerLive ? 'a new outline is being made' : newer ? 'a newer outline replaced this one' : '';
+	/** The three states the page shows, and the detail for the tooltip. */
+	const show = (d: Draft, s: { state: HoleState; text: string }, pre = ''): { state: HoleShow; text: string; title: string } => {
+		const tip = (t: string) => (t ? pre + t : pre.replace(/, $/, ''));
+		const last = [...d.ts].sort(byTry).at(-1);
+		if (SOLVED.includes(s.state)) {
+			// a task's closed_by names the tactic or the theorem: reuse:prepass:simp, reuse:formalpedia:X.y
+			const by = d.ts.find((t) => t.closed_by?.startsWith('reuse:'))?.closed_by?.split(':').slice(2).join(':');
+			const route =
+				s.state === 'prepass' ? (s.text.startsWith('solved automatically') ? s.text : by ? `solved automatically: ${by}` : 'solved automatically') :
+				s.state === 'index' ? (s.text.startsWith('already known') ? s.text : by ? `already known: ${by}` : 'already known') :
+				s.state === 'ledger' ? 'proved earlier' :
+				s.state === 'closed' ? s.text :
+				d.kind === 'inplace' ? 'with the outline' :
+				last ? `own task${last.attempt > 1 ? ` (try ${last.attempt})` : ''}` : s.text;
+			return { state: 'solved', text: 'Solved', title: tip(route) };
+		}
+		const earlier = s.text.includes('; ') ? s.text.slice(s.text.indexOf('; ') + 2) : '';
+		if (last && (s.state === 'running' || s.state === 'queued') && (last.state === 'running' || last.state === 'queued')) {
+			const a = last.attempt;
+			const detail = last.state === 'running' ? `try ${a}${last.steps !== null ? `, ${last.steps} steps so far` : ''}` : a > 1 ? `queued, try ${a}` : 'queued';
+			return { state: 'working', text: `Working (${detail})`, title: tip(earlier) };
+		}
+		// the holes in place, filled in: the assembly checks them now
+		if (d.kind === 'inplace' && s.state === 'waiting' && d.ts.length) return { state: 'working', text: 'Working (the assembly checks it)', title: tip('') };
+		return { state: 'waiting', text: 'Waiting', title: tip([s.text, next].filter(Boolean).join('; ')) };
+	};
 	const holes: HoleView[] = drafts.map((d, i) => {
 		let s = states[i];
 		if (s && (s.state === 'cancelled' || s.state === 'not_tried')) s = triesText(d.ts, why, peers);
+		const p = d.kind === 'lemma' && d.hole !== null ? plan?.get(d.hole) : undefined;
+		if (!s && p) s = planWait(p);
 		if (!s) {
 			// no task: in place before the in-place task exists, or a lemma hole with none
-			if (d.kind === 'inplace') s = ended ? { state: 'not_tried', text: `not tried${why ? ` (${why})` : ''}` } : { state: 'waiting', text: 'waiting for its task' };
+			if (d.kind === 'inplace') s = ended ? { state: 'not_tried', text: `not tried${why ? ` (${why})` : ''}` } : { state: 'waiting', text: 'its task is not made yet' };
 			else if (!pp.has(d.hole!) && o && !doc?.length) s = { state: 'closed', text: 'closed before the pre-pass (proved before, or disproved)' };
 			else if (state === 'proved') s = { state: 'closed', text: 'closed without a task of its own' };
-			else s = ended ? { state: 'not_tried', text: `not tried${why ? ` (${why})` : ''}` } : { state: 'waiting', text: 'waiting for its task' };
+			else s = ended ? { state: 'not_tried', text: `not tried${why ? ` (${why})` : ''}` } : { state: 'waiting', text: 'its task is not made yet' };
 		}
-		if (d.kind === 'inplace') {
-			const n = inplace?.length ? null : inplaceCount;
-			const pre =
-				d.hole !== null ? 'in place, ' : inplace?.length ? `${rangesText(inplace)}, ` : n && n > 1 ? `${n} holes left in the outline’s file, ` : n === 1 ? '1 hole left in the outline’s file, ' : '';
-			return { hole: d.hole, label: d.hole !== null ? `Hole ${d.hole}` : 'In place', kind: 'inplace', state: s.state, text: pre + s.text };
+		if (d.kind === 'inplace' && d.hole === null) {
+			// the holes in place, their numbers not known: one row
+			const n = inplaceCount;
+			const pre = n && n > 1 ? `${n} holes left in the outline’s file, ` : n === 1 ? '1 hole left in the outline’s file, ' : '';
+			return { hole: null, label: 'In place', kind: 'inplace', ...show(d, s, pre) };
 		}
-		return { hole: d.hole, label: `Hole ${d.hole}`, kind: 'lemma', state: s.state, text: s.text };
+		return { hole: d.hole, label: `Hole ${d.hole}`, kind: d.kind, ...show(d, s, d.kind === 'inplace' ? 'in place, ' : '') };
 	});
-	for (const h of gaps) holes.push({ hole: h, label: `Hole ${h}`, kind: 'lemma', state: 'closed', text: 'no task of its own (closed before the hole tasks, or left in place)' });
+	for (const h of gaps) holes.push({ hole: h, label: `Hole ${h}`, kind: 'lemma', state: 'waiting', text: 'Waiting', title: 'not known yet' });
 	holes.sort((a, b) => (a.hole ?? 1e9) - (b.hole ?? 1e9));
 	if (asm) {
 		const asmText: Record<string, string> = { running: 'running', queued: 'queued', failed: 'stopped by a fault', cancelled: 'cancelled' };
 		const t = asmText[asm.state] ?? (asm.outcome === 'proved' ? (asm.attempt > 1 ? `proved: our full check passed (try ${asm.attempt})` : 'proved: our full check passed') : `did not check${asm.attempt > 1 ? ` (try ${asm.attempt})` : ''}`);
 		const st: HoleState = asm.state === 'finished' ? (asm.outcome === 'proved' ? 'proved' : 'not_proved') : asm.state === 'running' ? 'running' : asm.state === 'queued' ? 'queued' : asm.state === 'failed' ? 'failed' : 'cancelled';
-		holes.push({ hole: null, label: 'Assembly', kind: 'assembly', state: st, text: t });
+		holes.push({ hole: null, label: 'Assembly', kind: 'assembly', state: st, text: t, title: '' });
 	}
 	return view(state, text, reason, holes);
 }
@@ -331,7 +420,7 @@ export function leafPlanHTML(leaf: string, p: LeafPlan, summary = false): string
 					? `<ul class="p2m-holes">${o.holes
 							.map(
 								(h) =>
-									`<li data-hole="${h.hole ?? (h.kind === 'assembly' ? 'asm' : 'inplace')}" data-hole-kind="${h.kind}" data-hole-state="${esc(h.state)}">` +
+									`<li data-hole="${h.hole ?? (h.kind === 'assembly' ? 'asm' : 'inplace')}" data-hole-kind="${h.kind}" data-hole-state="${esc(h.state)}"${h.title ? ` title="${esc(h.title)}"` : ''}>` +
 									`<span class="p2m-hname">${esc(h.label)}</span><span class="p2m-htext">${esc(h.text)}</span></li>`,
 							)
 							.join('')}</ul>`

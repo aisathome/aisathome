@@ -213,7 +213,7 @@ def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, dat
     o1 = x1.locator("[data-leaf-plan=X01] .p2m-outline[data-outline='1']")
     expect(o1.locator("[data-outline-text]")).to_have_text("in progress")
     expect(o1.locator("[data-outline-cost]")).to_have_text("written in 40 steps · 50.0 min")
-    expect(o1.locator("li[data-hole='1'] .p2m-htext")).to_have_text("running (try 1, 12 steps so far)")   # the live counters
+    expect(o1.locator("li[data-hole='1'] .p2m-htext")).to_have_text("Working (try 1, 12 steps so far)")   # the live counters
     expect(o1.locator("li[data-hole=asm] .p2m-htext")).to_have_text("queued")
     tasks = x1.locator("details[data-leaf-tasks=X01]")
     tasks.locator("summary").click()
@@ -349,9 +349,10 @@ def _outline(li, gen):
     return li.locator(f"[data-leaf-plan] .p2m-outline[data-outline='{gen}']")
 
 
-def _holes(o) -> list[tuple[str, str, str]]:
-    return [(h.locator(".p2m-hname").inner_text(), h.get_attribute("data-hole-state"), h.locator(".p2m-htext").inner_text())
-            for h in o.locator("li[data-hole]").all()]
+def _holes(o) -> list[tuple[str, str, str, str]]:
+    """Each hole's name, state (waiting, working, solved; the assembly's own), text and tooltip."""
+    return [(h.locator(".p2m-hname").inner_text(), h.get_attribute("data-hole-state"), h.locator(".p2m-htext").inner_text(),
+             h.get_attribute("title") or "") for h in o.locator("li[data-hole]").all()]
 
 
 @pytest.mark.parametrize("theme", ("dark", "light"))
@@ -376,13 +377,15 @@ def test_working_on_now_shows_each_outline_and_hole_in_words(pages, site, data, 
     expect(o2).to_have_attribute("data-outline-state", "in_progress")
     expect(o2.locator("[data-outline-text]")).to_have_text("in progress")
     expect(o2.locator("[data-outline-cost]")).to_have_text("written in 28 steps · 12.8 min")
-    assert _holes(o2) == [("Hole 1", "running", "running (try 1, 14 steps so far)"), ("Hole 2", "prepass", "closed by the pre-pass"),
-                          ("Hole 3", "queued", "queued"), ("Hole 4", "queued", "queued"), ("In place", "queued", "queued")], _holes(o2)
+    assert _holes(o2) == [("Hole 1", "working", "Working (try 1, 14 steps so far)", ""),
+                          ("Hole 2", "solved", "Solved", "solved automatically"),
+                          ("Hole 3", "working", "Working (queued)", ""), ("Hole 4", "working", "Working (queued)", ""),
+                          ("In place", "working", "Working (queued)", "")], _holes(o2)
     expect(o1).to_have_attribute("data-outline-state", "refuted")
     expect(o1.locator("[data-outline-text]")).to_have_text("refuted: hole 2 is false")
     expect(o1.locator("[data-outline-cost]")).to_have_text("written in 59 steps · 27.0 min")
-    assert _holes(o1) == [("Hole 1", "cancelled", "in place, cancelled (outline refuted)"),
-                          ("Hole 2", "false", f"false, disproved by the model; {REJUDGED}")], _holes(o1)
+    assert _holes(o1) == [("Hole 1", "waiting", "Waiting", "in place, cancelled (outline refuted); a new outline is being made"),
+                          ("Hole 2", "waiting", "Waiting", f"false, disproved by the model; {REJUDGED}; a new outline is being made")], _holes(o1)
     assert "check_error" not in n03.inner_text()
     # the task table stays, collapsed, with every task
     table = n03.locator("details[data-leaf-tasks=N03]")
@@ -394,8 +397,9 @@ def test_working_on_now_shows_each_outline_and_hole_in_words(pages, site, data, 
     o = _outline(c07, 1)
     expect(o).to_have_attribute("data-outline-state", "proved")
     expect(o.locator("[data-outline-text]")).to_have_text("proved (assembled)")
-    assert _holes(o) == [("Hole 1", "index", "closed by the index (reuse)"), ("Hole 2", "proved", "proved"),
-                         ("Hole 3", "prepass", "closed by the pre-pass"), ("Assembly", "proved", "proved: our full check passed")], _holes(o)
+    assert _holes(o) == [("Hole 1", "solved", "Solved", "already known"), ("Hole 2", "solved", "Solved", "own task"),
+                         ("Hole 3", "solved", "Solved", "solved automatically"),
+                         ("Assembly", "proved", "proved: our full check passed", "")], _holes(o)
 
     n05 = box.locator("li[data-current-leaf=N05]")
     expect(n05.locator(".state")).to_have_text("Closed by reuse: imports NestedSeatAlloc.IntPolicy.eq27_er1_clbi")
@@ -411,7 +415,7 @@ def test_working_on_now_shows_each_outline_and_hole_in_words(pages, site, data, 
 
 def test_without_the_documents_holes_the_outlines_come_from_the_tasks(pages, site, data):
     """A document of schema /1 (no holes, no reuse details): the outlines still come from the tasks, a hole number
-    without a task of its own says it may be closed or in place, the false hole is not claimed (the task list only
+    without a task of its own waits, "not known yet" in its tooltip (nothing is guessed), the false hole is not claimed (the task list only
     knows our check's failure), and the reuse leaf's imported theorem comes from the build when it knows the leaf, else
     the line says a proved theorem."""
     page = _page(pages, live=(_out_doc(data, schema=1), _tasks(_out_tasks())))
@@ -422,12 +426,38 @@ def test_without_the_documents_holes_the_outlines_come_from_the_tasks(pages, sit
     expect(n03.locator(".state")).to_have_text("Running: outline 2, hole 1")
     o1 = _outline(n03, 1)
     expect(o1).to_have_attribute("data-outline-state", "abandoned")
-    expect(o1.locator("li[data-hole='2'] .p2m-htext")).to_have_text("try 1: our check failed; try 2 not tried (outline abandoned)")
-    expect(_outline(n03, 2).locator("li[data-hole='2'] .p2m-htext")).to_have_text(
-        "no task of its own (closed before the hole tasks, or left in place)")
+    expect(o1.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Waiting")
+    expect(o1.locator("li[data-hole='2']")).to_have_attribute(
+        "title", "try 1: our check failed; try 2 not tried (outline abandoned); a new outline is being made")
+    expect(_outline(n03, 2).locator("li[data-hole='2'] .p2m-htext")).to_have_text("Waiting")
+    expect(_outline(n03, 2).locator("li[data-hole='2']")).to_have_attribute("title", "not known yet")
     reused = next((s["reuses"]["theorem"] for s in data["submissions"] if s["theorem"] == OUT_LEAVES[2]["theorem"] and s.get("reuses")),
                   "a theorem already proved on prove2me")
     expect(box.locator("li[data-current-leaf=N05] .state")).to_have_text(f"Closed by reuse: imports {reused}")
+
+
+def test_every_hole_waits_works_or_is_solved_the_detail_in_a_tooltip(pages, site, data):
+    """From 2026-11-25 every task of an outline carries the label `hole_states` (set by the prove2me runner): every
+    hole shows, the ones after the last hole task too, each Waiting, Working or Solved; why it waits and how it was
+    solved only in its tooltip (trial 11's p2m-dabfa9: holes held back behind the riskiest one had been shown as
+    "closed before the hole tasks, or left in place", hole 4 not at all)."""
+    states = "1=task 2=prepass:simp 3=task 4=task 5=inplace 6=wait:1"
+    tasks = [{**x, "labels": {**x["labels"], "hole_states": states}} if x["id"].startswith("t98-p2m-dbd69f-s2-") else x
+             for x in _out_tasks()]
+    page = _page(pages, width=390, live=(_out_doc(data, schema=1), _tasks(tasks)))
+    page.goto(site + PAGE)
+    box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
+    expect(box).to_be_visible()
+    o2 = _outline(box.locator("li[data-current-leaf=N03]"), 2)
+    expect(o2).to_have_attribute("data-outline-state", "in_progress")
+    expect(o2.locator("li[data-hole='6']")).to_be_visible()
+    assert _holes(o2) == [("Hole 1", "working", "Working (try 1, 14 steps so far)", ""),
+                          ("Hole 2", "solved", "Solved", "solved automatically: simp"),
+                          ("Hole 3", "working", "Working (queued)", ""), ("Hole 4", "working", "Working (queued)", ""),
+                          ("Hole 5", "working", "Working (queued)", "in place"),
+                          ("Hole 6", "waiting", "Waiting", "starts when hole 1 is done")], _holes(o2)
+    assert "starts when" not in o2.inner_text(), "the reason is in the tooltip only"
+    assert page.evaluate("document.documentElement.scrollWidth") <= 390, "the page scrolls sideways"
 
 
 def _n03_finished(asm_state="done", asm_outcome="proved"):
@@ -452,9 +482,9 @@ def _n03_finished(asm_state="done", asm_outcome="proved"):
 
 
 @pytest.mark.parametrize("asm_state,asm_outcome,outline_state,want", (
-    ("done", "proved", "proved", ("proved", "in place, proved (checked in the assembly)")),
-    ("queued", None, "in_progress", ("waiting", "in place, filled in; the assembly checks it")),
-    ("done", "compile_error", "ended", ("not_proved", "in place, filled in, but the assembly did not check")),
+    ("done", "proved", "proved", ("solved", "Solved", "in place, with the outline")),
+    ("queued", None, "in_progress", ("working", "Working (the assembly checks it)", "in place")),
+    ("done", "compile_error", "ended", ("waiting", "Waiting", "in place, filled in, but the assembly did not check")),
 ))
 def test_a_hole_in_place_is_decided_by_the_assembly(pages, site, data, asm_state, asm_outcome, outline_state, want):
     """Trial 6's N03: the in-place task ends `rest_done` (it fills the holes in, the assembly's full check decides), so
@@ -471,7 +501,7 @@ def test_a_hole_in_place_is_decided_by_the_assembly(pages, site, data, asm_state
     expect(o2).to_have_attribute("data-outline-state", outline_state)
     holes = _holes(o2)
     assert ("Hole 2", *want) in holes, holes
-    assert all("rest done" not in text for _, _, text in holes), holes
+    assert all("rest done" not in " ".join(h) for h in holes), holes
 
 
 def test_a_hole_in_place_keeps_the_documents_verdict(pages, site, data):
@@ -487,7 +517,7 @@ def test_a_hole_in_place_keeps_the_documents_verdict(pages, site, data):
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
     holes = _holes(_outline(box.locator("li[data-current-leaf=N03]"), 2))
-    assert ("Hole 2", "false", "in place, false, disproved; re-judged") in holes, holes
+    assert ("Hole 2", "waiting", "Waiting", "in place, false, disproved; re-judged") in holes, holes
 
 
 @pytest.mark.parametrize("broken", ["document 500", "tasks 500", "document not one", "tasks not a list", "document 404"])
@@ -621,7 +651,9 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     expect(d8.locator(":scope > summary")).to_have_text("Trial 8 · since 16 November 2026 · 2 of 6 proved")
     # the wording fix (2026-11-18): trial 8's p2m-03d4b4, outline 1's second tries cancelled when the outline was abandoned
     n13 = d8.locator("[data-trial-leaf=N13] .p2m-outline[data-outline='1']")
-    expect(n13.locator("li[data-hole='2'] .p2m-htext")).to_have_text("try 1: a sorry left; try 2 cancelled: outline abandoned after hole 1 failed")
+    expect(n13.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Waiting")
+    expect(n13.locator("li[data-hole='2']")).to_have_attribute(
+        "title", re.compile(r"^try 1: a sorry left; try 2 cancelled: outline abandoned after hole 1 failed"))
     assert "closed by another task" not in d8.inner_text()
 
     now = page.locator("[data-p2m-now][data-source=live][data-trial=t8]")
