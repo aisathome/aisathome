@@ -39,7 +39,20 @@ cat > "$tmp/fake/systemctl" <<'FAKE'
 #!/bin/sh
 case "$*" in *MainPID*) echo "${FAKE_MAINPID:-0}" ;; *) exit 1 ;; esac
 FAKE
-chmod +x "$tmp/fake/df" "$tmp/fake/nvidia-smi" "$tmp/fake/systemctl"
+# curl: no test reaches the network. file:// and loopback addresses go to the real curl; any other address
+# is logged in $tmp/net.log and fails as an unreachable host would (exit 7).
+real_curl="$(command -v curl)"
+cat > "$tmp/fake/curl" <<FAKE
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    file://*|http://127.0.0.1*|http://localhost*) ;;
+    *://*) echo "\$a" >> "$tmp/net.log"; echo "curl: (7) no network in install_test.sh" >&2; exit 7 ;;
+  esac
+done
+exec "$real_curl" "\$@"
+FAKE
+chmod +x "$tmp/fake/df" "$tmp/fake/nvidia-smi" "$tmp/fake/systemctl" "$tmp/fake/curl"
 PATH="$tmp/fake:$PATH"
 
 # The node binary, built from this repository: a dry run shows node.json and the account plan only with one
@@ -194,6 +207,36 @@ ok "spec, standard"; has "spec, standard" "mtp runs on the big tier (24 GB cards
 lacks "spec, standard" "--spec-type"
 run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12342" --speculation off
 ok "spec off"; lacks "spec off" "--spec-type"; lacks "spec off" "speculation:"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12342" --speculation none
+ok "spec none"; lacks "spec none" "--spec-type"; lacks "spec none" "speculation:"
+# Without --speculation: mtp on the big tier (the default), when the build and the free memory allow it;
+# a 16 GB card stays off without a word.
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb12342"
+ok "spec default"; has "spec default" "speculation: mtp (the default on 24 GB cards; --speculation off turns it off) (llama.cpp b12342"
+has "spec default" "--spec-type draft-mtp -md /var/lib/aisathome-node/models/mtp-Qwen3.8-27B-Q4_0.gguf --spec-draft-n-max 2"
+has "spec default" "tier: big, speculation mtp: 1 x 196608 tokens"
+run FAKE_MEM="$(card 24564 21979 'NVIDIA GeForce RTX 4090')" -- --dry-run --llama-build "$tmp/llb12342"
+ok "spec default, RTX 4090 with a desktop"; has "spec default, RTX 4090 with a desktop" "speculation: mtp (the default"
+run FAKE_MEM="$(card 24576 20999)" -- --dry-run --llama-build "$tmp/llb12342"
+ok "spec default, little free"; has "spec default, little free" "speculation: off; mtp (the default on 24 GB cards; --speculation off turns it off) needs 21000 MiB free on the card, and it has 20999"
+lacks "spec default, little free" "--spec-type"
+run FAKE_MEM="$(card 24576 24000)" -- --dry-run --llama-build "$tmp/llb11146"
+ok "spec default, old build"; has "spec default, old build" "speculation: off; mtp (the default"; lacks "spec default, old build" "--spec-type"
+run FAKE_MEM="$(card 16303 15000 'NVIDIA GeForce RTX 5070 Ti')" -- --dry-run --llama-build "$tmp/llb12342"
+ok "spec default, standard"; lacks "spec default, standard" "speculation:"; lacks "spec default, standard" "--spec-type"
+# An earlier install's choice (/etc/aisathome-node/speculation, a copy of the installer pointed at a fake
+# one): mtp and dflash2 stay, none (--speculation off) stays off, and "off" (what installers before the
+# default wrote for every node) or nothing is the default.
+sc="$tmp/spec-etc"; mkdir -p "$sc"
+sed "s|^conf=/etc/aisathome-node\$|conf=$sc|" "$installer" > "$tmp/install-spec.sh"
+for c in "mtp mtp" "dflash2 dflash2" "none off" "off mtp" "garbage mtp"; do
+  read -r stored want <<<"$c"
+  echo "$stored" > "$sc/speculation"
+  out="$(env -i PATH="$PATH" FAKE_MEM="$(card 24576 24000)" bash "$tmp/install-spec.sh" --dry-run --llama-build "$tmp/llb12342" 2>&1)"; code=$?
+  ok "stored speculation $stored"
+  if [[ $want = off ]]; then lacks "stored speculation $stored" "--spec-type"; else has "stored speculation $stored" "tier: big, speculation $want:"; fi
+done
+grep -q 'printf .%s\\n. "$(spec_choice)" > /etc/aisathome-node/speculation' "$installer" || fail "the install does not keep the speculation choice"
 
 # Explicit variables override the tier, one at a time (testing); the free-memory check is skipped.
 run SLOTS=3 -- --dry-run
@@ -785,40 +828,52 @@ mkdir -p "$tmp/hf" "$tmp/dl1" "$tmp/dl2" "$tmp/dl3" "$tmp/dl4"
 head -c 300000 /dev/urandom > "$tmp/hf/test-model.gguf"
 msha="$(sha256sum "$tmp/hf/test-model.gguf" | cut -d' ' -f1)"
 m=(MODEL_URL="file://$tmp/hf/test-model.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000)
-run "${m[@]}" -- --download-only "$tmp/dl1"
+run "${m[@]}" -- --download-only "$tmp/dl1" --speculation off
 ok "download"; has "download" "(verified)"; has "download" "Install with --model $tmp/dl1/test-model.gguf"
 cmp -s "$tmp/hf/test-model.gguf" "$tmp/dl1/test-model.gguf" || fail "download: file differs"
 # A complete file is checked, not downloaded again (the URL now points nowhere).
-run MODEL_URL="file://$tmp/gone/test-model.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000 -- --download-only "$tmp/dl1"
+run MODEL_URL="file://$tmp/gone/test-model.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000 -- --download-only "$tmp/dl1" --speculation off
 ok "existing model"; has "existing model" "checking the existing"; lacks "existing model" "downloading"
 # Resume: an interrupted download continues from the .part file.
 head -c 120000 "$tmp/hf/test-model.gguf" > "$tmp/dl2/test-model.gguf.part"
-run "${m[@]}" -- --download-only "$tmp/dl2"
+run "${m[@]}" -- --download-only "$tmp/dl2" --speculation off
 ok "resume"; has "resume" "resuming at 0.0 of 0.0 GB"; has "resume" "(verified)"
 cmp -s "$tmp/hf/test-model.gguf" "$tmp/dl2/test-model.gguf" || fail "resume: file differs"
 [[ ! -e "$tmp/dl2/test-model.gguf.part" ]] || fail "resume: .part left behind"
 # Verification failure: wrong hash, and a corrupt .part (resumed into a bad file). Both
 # delete the download, so the next run starts clean.
-run MODEL_URL="file://$tmp/hf/test-model.gguf" MODEL_SHA256="$(printf '0%.0s' {1..64})" MODEL_SIZE=300000 -- --download-only "$tmp/dl3"
+run MODEL_URL="file://$tmp/hf/test-model.gguf" MODEL_SHA256="$(printf '0%.0s' {1..64})" MODEL_SIZE=300000 -- --download-only "$tmp/dl3" --speculation off
 [[ $code -eq 1 ]] || fail "bad checksum: exit $code, want 1"; has "bad checksum" "model checksum mismatch: got $msha"
 [[ -z "$(ls -A "$tmp/dl3")" ]] || fail "bad checksum: files left behind: $(ls "$tmp/dl3")"
 head -c 120000 /dev/zero > "$tmp/dl4/test-model.gguf.part"
-run "${m[@]}" -- --download-only "$tmp/dl4"
+run "${m[@]}" -- --download-only "$tmp/dl4" --speculation off
 [[ $code -eq 1 ]] || fail "corrupt part: exit $code, want 1"; has "corrupt part" "model checksum mismatch"
 [[ -z "$(ls -A "$tmp/dl4")" ]] || fail "corrupt part: files left behind: $(ls "$tmp/dl4")"
-run "${m[@]}" -- --download-only "$tmp/dl4"
+run "${m[@]}" -- --download-only "$tmp/dl4" --speculation off
 ok "after corrupt part"; has "after corrupt part" "(verified)"
 # A complete file with the wrong content is replaced.
 head -c 300000 /dev/zero > "$tmp/dl4/test-model.gguf"
-run "${m[@]}" -- --download-only "$tmp/dl4"
+run "${m[@]}" -- --download-only "$tmp/dl4" --speculation off
 ok "wrong existing model"; has "wrong existing model" "is not the pinned model"
 cmp -s "$tmp/hf/test-model.gguf" "$tmp/dl4/test-model.gguf" || fail "wrong existing model: not replaced"
-run MODEL_URL="file://$tmp/hf/gone.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000 -- --download-only "$tmp/dl3"
+run MODEL_URL="file://$tmp/hf/gone.gguf" MODEL_SHA256="$msha" MODEL_SIZE=300000 -- --download-only "$tmp/dl3" --speculation off
 [[ $code -eq 1 ]] || fail "missing download: exit $code, want 1"; has "missing download" "model download failed"
-run "${m[@]}" FAKE_DF_KB=1000 -- --download-only "$tmp/dl3"
+run "${m[@]}" FAKE_DF_KB=1000 -- --download-only "$tmp/dl3" --speculation off
 [[ $code -eq 1 ]] || fail "download, no disk space: exit $code, want 1"; has "download, no disk space" "not enough disk space on $tmp/dl3"
 run "${m[@]}" -- --download-only "$tmp/nonexistent"
 usage_err "--download-only without a directory"
+# On the big tier the draft model for the default speculation (mtp) comes along; --speculation off leaves it.
+head -c 50000 /dev/urandom > "$tmp/hf/draft.gguf"
+dm=(DRAFT_URL="file://$tmp/hf/draft.gguf" DRAFT_SHA256="$(sha256sum "$tmp/hf/draft.gguf" | cut -d' ' -f1)" DRAFT_SIZE=50000)
+mkdir -p "$tmp/dl5" "$tmp/dl6"
+run "${m[@]}" "${dm[@]}" -- --download-only "$tmp/dl5"
+ok "download, the default draft"; cmp -s "$tmp/hf/draft.gguf" "$tmp/dl5/draft.gguf" || fail "download, the default draft: not downloaded"
+run "${m[@]}" "${dm[@]}" FAKE_MEM="$(card 16303 15841)" -- --download-only "$tmp/dl6"
+ok "download, standard tier"; [[ ! -e "$tmp/dl6/draft.gguf" ]] || fail "download, standard tier: a draft model was downloaded"
+run "${m[@]}" "${dm[@]}" -- --download-only "$tmp/dl6" --speculation none
+ok "download, --speculation none"; [[ ! -e "$tmp/dl6/draft.gguf" ]] || fail "download, --speculation none: a draft model was downloaded"
+run DRAFT_URL=file:///x.gguf -- --dry-run
+usage_err "DRAFT_URL alone"
 # --download-only picks the tier's file: --tier, else this machine's card. (No real download:
 # too little disk space stops it after the choice.)
 run FAKE_DF_KB=1000 -- --download-only "$tmp/dl3" --tier standard
@@ -995,6 +1050,9 @@ if [[ $EUID -ne 0 ]]; then
   [[ $code -ne 0 ]] || fail "non-root install: exit 0"
   has "non-root install" "run with sudo"
 fi
+
+# Nothing went to the network but the addresses the tests meant to (none).
+[[ ! -s "$tmp/net.log" ]] || { out="$(sort -u "$tmp/net.log")"; fail "a test tried the network"; }
 
 if [[ $fails -gt 0 ]]; then echo "$fails failure(s)"; exit 1; fi
 echo "install.sh: all tests passed"

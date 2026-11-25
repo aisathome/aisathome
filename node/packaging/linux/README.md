@@ -165,7 +165,8 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot`.
-- `--speculation off|mtp|dflash2`: speculative decoding on 24 GB cards (below); off by default.
+- `--speculation off|mtp|dflash2`: speculative decoding on 24 GB cards (below); `mtp` by default
+  there, `off` (or `none`) turns it off.
 - `--dry-run` runs the checks (bundle, driver, GPU, the tier's free memory, disk), prints the generated `node.json`,
   the `llama-server` command and its systemd unit, and exits without installing (no root
   needed; with `--node-release` it downloads and verifies the binary too).
@@ -207,13 +208,17 @@ session never switches between the two files midway; both serve the roles `deep`
   19,202 MiB at the peak, hard needles 77/80 at ~195k and 62/80 at ~247k (hence 192k).
   `q8_0` KV with `UD-IQ4_XS` does not fit 80k in 16 GB.
 
-### Speculative decoding (big tier, opt-in)
+### Speculative decoding (big tier, MTP by default)
 
-`--speculation mtp` (or `dflash2`) lets `llama-server` draft a few tokens with a small model and
-check them in one step of the big one: the node writes faster, and the output follows the model's
-own distribution (a draft is only kept where the model agrees). It is off by default and kept on
-updates (`/etc/aisathome-node/speculation`; `--speculation off` turns it off again). The node runs
-it only when it qualifies, else it runs without and the installer says why:
+Speculation lets `llama-server` draft a few tokens with a small model and check them in one step
+of the big one: the node writes faster (MTP: about 1.7-1.9x on our 24 GB nodes), and the output
+follows the model's own distribution (a draft is only kept where the model agrees; the model check
+passes with it). On the big tier (24 GB cards) the installer runs `mtp` unless you choose
+otherwise: `--speculation off` (or `none`) turns it off, `--speculation dflash2` picks the other
+drafter. A choice is kept on updates (`/etc/aisathome-node/speculation`); a node that never chose
+(installers before this default wrote `off` for those) gets the default. The node runs it only when
+it qualifies, else it runs without and the installer says why (on a 16 GB card it stays off without
+a word):
 
 | Mode | Draft model (downloaded and checked like the model) | Needs llama.cpp | Extra free GPU memory |
 |---|---|---|---|
@@ -222,7 +227,8 @@ it only when it qualifies, else it runs without and the installer says why:
 
 Big tier only: on 16 GB cards neither fits beside the standard tier's context. The Windows node
 takes the same setting as `"engine": {"speculation": "mtp"}` in `node.json`, with the draft
-model beside the model (or `"draft_model"`); the setup page does not offer it yet.
+model beside the model (or `"draft_model"`); it stays off there unless set, and the setup page does
+not offer it yet.
 
 For testing only, `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE`, `REASONING_BUDGET` (`-1` =
 unlimited), `CACHE_RAM_MIB`, `MODEL_ALIAS` and `MIN_DECODE_TPS` (`0`: measure, never refuse)

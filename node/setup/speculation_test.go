@@ -39,7 +39,7 @@ func TestBuildInfoTag(t *testing.T) {
 }
 
 func TestNormSpec(t *testing.T) {
-	for in, want := range map[string]string{"": SpecOff, "off": SpecOff, "MTP": SpecMTP, " dflash2 ": SpecDFlash2} {
+	for in, want := range map[string]string{"": SpecOff, "off": SpecOff, "none": SpecOff, "MTP": SpecMTP, " dflash2 ": SpecDFlash2} {
 		if got, err := NormSpec(in); err != nil || got != want {
 			t.Errorf("%q: %q %v, want %q", in, got, err, want)
 		}

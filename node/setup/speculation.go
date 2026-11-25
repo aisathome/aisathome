@@ -66,7 +66,7 @@ const SpecModes = "off, mtp or dflash2"
 func NormSpec(mode string) (string, error) {
 	m := strings.ToLower(strings.TrimSpace(mode))
 	switch m {
-	case "", SpecOff:
+	case "", SpecOff, "none": // none: the Linux installer's other word for off
 		return SpecOff, nil
 	case SpecMTP, SpecDFlash2:
 		return m, nil
