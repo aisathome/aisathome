@@ -1,13 +1,13 @@
 ---
 // The home page ("volunteer science" design, 2026-10-10; node first, 2026-11-25): bold condensed
 // headlines, a warm accent and a drawn network of home GPUs. Order: what it is (hero), the network
-// live, run a node in one command, what the GPUs do (science), use it, how it works, dev log.
+// live, run a node, the dev log (what is new), what the GPUs do (science), use it, what happens to a question.
 // Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { Code } from '@astrojs/starlight/components';
 import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, nodeBlock, steps } from '../data/home';
-import { anonCommand, installerSize, installerURL, needs, nodeRelease, nodeShSource } from '../data/node-release';
+import { anonCommand, installerSize, installerURL, nodeRelease, nodeShSource } from '../data/node-release';
 import { posts, postURL, shortDate, isoDate } from '../data/devlog';
 import { science } from '../data/science';
 import { p2m } from '../data/prove2me';
@@ -133,23 +133,19 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 			<div class="node-facts">
 				<div>
 					<h3>What you need</h3>
-					<ul>
-						<li>An NVIDIA GPU with <strong>24 GB or more</strong> (RTX 3090, 4090, 5090 class), or <strong>16 GB</strong> (RTX 4080, 5070 Ti, 5080 class) with at most a light desktop on it. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti) fail the speed test.</li>
-						<li>x86_64 Linux with systemd (Ubuntu 22.04, Debian 12 or newer) and driver {needs.linuxDriver} or newer ({needs.linuxDriverRTX50} for an RTX 50), or Windows 10 or 11 with driver {needs.windowsDriver} or newer ({needs.windowsDriverRTX50} for an RTX 50).</li>
-						<li>About {needs.diskGB} GB free disk: the model is {needs.modelGB} GB.</li>
-						<li>You must be 18 or older; running a node means you accept the <a href={links.terms}>terms</a>.</li>
-					</ul>
+					<p>
+						An NVIDIA GPU with <strong>24 GB or more</strong> (RTX 3090, 4090, 5090 class), or <strong>16 GB</strong> (RTX 4080,
+						5070 Ti, 5080 class) with at most a light desktop on it. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti) fail the speed
+						test. <a href={`${links.node}#what-you-need`}>Everything it needs</a>
+					</p>
 				</div>
 				<div>
-					<h3>Stop, remove, link later</h3>
-					<dl>
-						<dt>Pause and free the GPU</dt>
-						<dd><code>sudo systemctl stop aisathome-node aisathome-llama</code> (Windows: <b>Stop engine</b> in the tray)</dd>
-						<dt>Uninstall</dt>
-						<dd><code>sudo ./uninstall.sh</code> in the folder the script unpacked (it keeps the model; <code>--purge</code> removes it). Windows: Settings → Apps.</dd>
-						<dt>Link to an account</dt>
-						<dd><code>sudo aisathome-node link</code>: then it serves chats too and earns credit (Windows: <b>Link to my account</b>).</dd>
-					</dl>
+					<h3>Your node’s own page</h3>
+					<p>
+						Once it runs, the node has a page on your computer at <code>http://127.0.0.1:7381/</code> (Windows opens it; on Linux
+						the installer prints it): its status and what it served, <b>Pause</b> and <b>Restart</b> behind a local password,
+						and how to link it to an account. <a href={`${links.node}#stop-remove-link-later`}>Stop, remove or link a node</a>
+					</p>
 				</div>
 			</div>
 
@@ -166,6 +162,25 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 			</ul>
 			<a class="more" href={links.node}>Everything about running a node <span aria-hidden="true">→</span></a>
 		</section>
+
+		{latest.length > 0 && (
+			<section class="block log-c" aria-labelledby="b-log" data-home-devlog>
+				<h2 id="b-log">Dev log</h2>
+				<ol>
+					{latest.slice(0, 3).map((p) => (
+						<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
+							<span class="log-c-num">#{p.data.number}</span>
+							<time datetime={isoDate(p.data.date)}>{shortDate(p.data.date)}</time>
+							<div>
+								<a href={postURL(p)} data-home-post-link>{p.data.title}</a>
+								<p>{p.data.summary}</p>
+							</div>
+						</li>
+					))}
+				</ol>
+				<a class="log-c-all" href="/devlog/">All posts <span aria-hidden="true">→</span></a>
+			</section>
+		)}
 
 		<section class="sci" aria-labelledby="b-sci" data-home-science data-generated={science.generatedAt?.toISOString() ?? ''}>
 			<p class="kicker">What the GPUs do</p>
@@ -204,7 +219,7 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 		</section>
 
 		<section class="block" aria-labelledby="b-how">
-			<h2 id="b-how">How it works</h2>
+			<h2 id="b-how">What happens to your question</h2>
 			<ol class="steps grid gap-8 md:grid-cols-3 md:gap-10">
 				{
 					steps.map((s, i) => (
@@ -218,24 +233,6 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 			</ol>
 		</section>
 
-		{latest.length > 0 && (
-			<section class="block log-c" aria-labelledby="b-log" data-home-devlog>
-				<h2 id="b-log">Dev log</h2>
-				<ol>
-					{latest.slice(0, 3).map((p) => (
-						<li data-home-post {...(!p.data.publish ? { 'data-devlog-draft': '' } : {})}>
-							<span class="log-c-num">#{p.data.number}</span>
-							<time datetime={isoDate(p.data.date)}>{shortDate(p.data.date)}</time>
-							<div>
-								<a href={postURL(p)} data-home-post-link>{p.data.title}</a>
-								<p>{p.data.summary}</p>
-							</div>
-						</li>
-					))}
-				</ol>
-				<a class="log-c-all" href="/devlog/">All posts <span aria-hidden="true">→</span></a>
-			</section>
-		)}
 	</div>
 </StarlightPage>
 
@@ -517,12 +514,8 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 		line-height: 1.55;
 	}
 	.node-facts h3 { margin-bottom: 0.75rem; font-size: 1.35rem; }
-	.node-facts ul { padding-left: 1.1rem; list-style: disc; }
-	.node-facts li + li { margin-top: 0.4rem; }
 	.node-facts strong, .node-facts b { color: var(--sl-color-white); }
-	.node-facts dt { margin-top: 0.6rem; font-weight: 700; color: var(--sl-color-white); }
-	.node-facts dt:first-child { margin-top: 0; }
-	.node-facts dd { margin: 0.15rem 0 0; }
+	.node-facts a { white-space: nowrap; }
 	.node .guar { margin-top: 2.25rem; padding-top: 1.75rem; border-top: 1px solid var(--sl-color-hairline-light); }
 	.node .guar h3 { font-size: 1.35rem; }
 	@media (max-width: 50rem) {

@@ -1,11 +1,14 @@
 ---
 title: Run a node
-description: Give your GPU to AIs@home. Download the node for Windows or install it on Linux; what you need, what the node does, and what you are responsible for.
+description: "Give your NVIDIA GPU (16 GB or more) to open AI: the AIs@home node serves Qwen3.8 27B to users and science. Windows installer or one Linux command. Unpaid; credit in BOINC's unit."
+head:
+  - tag: title
+    content: "Donate your GPU to open AI: run an AIs@home node"
 ---
 
 import NodeDownload from '../../../components/NodeDownload.astro';
 import { Code } from '@astrojs/starlight/components';
-import { anonCommand, nodeShSource } from '../../../data/node-release';
+import { anonCommand, linuxUninstallCommand, needs, nodeShSource } from '../../../data/node-release';
 
 <NodeDownload />
 
@@ -29,11 +32,16 @@ earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
 - A card fast enough on long prompts: the installer measures it and needs at least
   20 tokens/s after a 32,000-token prompt (slower 16 GB cards such as the RTX 4060 Ti and
   5060 Ti do not pass).
-- Linux with systemd, or Windows 10 or 11 (64-bit), and the NVIDIA driver (`nvidia-smi`
-  works).
-- About 17 GB of disk for the model. With the prebuilt bundle, the install is mostly the
-  13-14 GB download; building llama.cpp yourself takes about an hour.
-- An **account**: sign in on [your account page](/account) with GitHub, Google or email. A node
+- **Linux:** x86_64 with systemd and glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer), and
+  NVIDIA driver {needs.linuxDriver} or newer ({needs.linuxDriverRTX50} for an RTX 50).
+  **Windows:** 10 or 11, 64-bit, and NVIDIA driver {needs.windowsDriver} or newer
+  ({needs.windowsDriverRTX50} for an RTX 50). In both, `nvidia-smi` must work.
+- About {needs.diskGB} GB of disk for the model. With the prebuilt bundle, the install is mostly the
+  {needs.modelGB} GB download; building llama.cpp yourself takes about an hour.
+- **You must be 18 or older.** Running a node means you accept the [terms](/about/terms/)
+  (for a linked node, the [operator terms, §6](/about/terms/#6-requests-your-node-answers)). The
+  installers ask you to confirm both before the node starts.
+- An **account** is optional: sign in on [your account page](/account) with GitHub or Google. A node
   links to it in your browser (below); up to 10 nodes per account, at most 10 of them connected
   from one internet address. The network takes 25 nodes for now; when it is full, the approval
   page says so. Without an account, a node does science only ([below](#without-an-account-science-only)).
@@ -105,8 +113,33 @@ says what is missing. Tell us what worked for you: [contact@aisathome.org](mailt
 - **Fewer traces on disk.** No core dumps, no swap for the services, a bounded prompt cache
   in RAM, no prompt logging.
 - **Anonymous requests.** Your node never learns who sent a request.
-- **Stop any time.** `sudo systemctl stop aisathome-node aisathome-llama` frees the GPU; on
-  Windows, **Stop engine** in the tray menu.
+- **Stop any time:** see below.
+
+## Stop, remove, link later
+
+**The node's own page.** Once installed, the node has a page on your computer at
+**http://127.0.0.1:7381/** (Windows opens it; on Linux the installer prints the address, and
+desktops get an "AIs@home node" menu entry). It shows the node's status, its GPU and what it
+served, and has **Pause** and **Restart engine** behind a local password
+(`sudo cat /etc/aisathome-node/ui-password` on Linux); on Windows also **Stop engine** and the
+setup page. Details: [Day to day](/node/operate/#local-ui).
+
+| | Linux | Windows |
+|---|---|---|
+| Pause (the model stays loaded) | **Pause** on the node's page | **Pause** on the node's page |
+| Stop and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` | **Stop engine** in the tray menu or on the node's page |
+| Start again | `sudo systemctl start aisathome-llama aisathome-node` | **Start engine** |
+| Link to an account | `sudo aisathome-node link` (credit starts then) | **Link to my account** on the setup page |
+| Uninstall | `sudo ./uninstall.sh` in the unpacked bundle (below) | Settings → Apps → **AIs@home node** → Uninstall |
+
+**Uninstall on Linux.** `uninstall.sh` comes with the bundle: run `sudo ./uninstall.sh` in the
+folder you installed from. It removes the services, the program and its settings and keeps the
+model; `sudo ./uninstall.sh --purge` removes the model and the `aisathome` user too. The one-line
+start unpacks the bundle in a temporary folder (it prints where, under `/tmp`), which a restart
+may clear. If that folder is gone, download and check the bundle again, ending in the
+uninstaller:
+
+<Code code={linuxUninstallCommand} lang="bash" />
 
 ## How new nodes start
 

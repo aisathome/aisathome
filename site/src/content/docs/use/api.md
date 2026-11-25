@@ -1,6 +1,9 @@
 ---
 title: API and opencode
-description: "Use AIs@home from your own tools: an OpenAI-compatible API with a personal key, the Qwen3.8 27B models, a curl example and opencode setup."
+description: "A free OpenAI-compatible API at api.aisathome.org/v1, served by volunteers' GPUs: Qwen3.8 27B, a personal key, a daily limit, curl and opencode examples."
+head:
+  - tag: title
+    content: "Free OpenAI-compatible API (Qwen3.8 27B) - AIs@home"
 ---
 
 The gateway speaks the OpenAI chat-completions API at **`https://api.aisathome.org/v1`**.

@@ -1,5 +1,8 @@
 ---
 title: Mission
+head:
+  - tag: title
+    content: "Mission: open AI without a monopoly - AIs@home"
 description: "Why AIs@home serves open-weight AI from volunteers' GPUs, who runs it (one volunteer maintainer, non-commercial) and how to reach the project."
 ---
 

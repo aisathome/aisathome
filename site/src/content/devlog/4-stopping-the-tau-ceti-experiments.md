@@ -2,7 +2,7 @@
 title: "Stopping the Tau Ceti experiments"
 number: 4
 date: 2026-11-13
-summary: "28 of Qwen's 34 Tau Ceti pull requests were merged before the maintainers asked us to stop: what they were, what they cost, and prove2me and a Windows node as next steps."
+summary: "27 of Qwen's 33 Tau Ceti pull requests were merged before the maintainers asked us to stop: what they were, what they cost, and prove2me and a Windows node as next steps."
 publish: true
 ---
 
@@ -23,6 +23,11 @@ Sadly I got asked to stop the contributions, since the maintainers are not confi
 | Fix | 1 |
 | Chore | 1 |
 | **Total** | **28** |
+
+*Correction, 25 November 2026: the 28 of 34 above count every pull request from the project's
+GitHub account. One of them, the merged chore [#24679](https://github.com/TauCetiProject/TauCeti/pull/24679),
+was a hand edit, not the model's. Qwen's own count is 27 merged of 33, as on the
+[Tau Ceti page](/science/tauceti/).*
 
 In total that is 1,140 lines added and 821 removed across 113 files. It took 91 attempts through the harness with opencode, 58.5 GPU hours and about 8M tokens per merged pull request, and 68% were approved at the first review ([live numbers](https://aisathome.org/science/tauceti/)).
 

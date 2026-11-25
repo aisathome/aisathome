@@ -30,13 +30,19 @@ export const installerSize = `${Math.round(nodeRelease.installerBytes / 2 ** 20)
 // bundle in the directory, code review 2026-11-22). The docs' long form does the same.
 const bundle = 'aisathome-node-bundle-linux-amd64.tar.xz';
 const linuxBundleCheck = `grep ' ${bundle}$' SHA256SUMS | sha256sum -c -`;
-export const linuxCommand = [
-	`u=${latest}`,
-	`curl -fLO $u/${bundle} && curl -fLO $u/SHA256SUMS \\`,
-	`  && ${linuxBundleCheck} \\`,
-	`  && tar -xJf ${bundle} \\`,
-	'  && cd aisathome-node-bundle-linux-amd64 && sudo ./install.sh',
-].join('\n');
+const bundleThen = (script: string) =>
+	[
+		`u=${latest}`,
+		`curl -fLO $u/${bundle} && curl -fLO $u/SHA256SUMS \\`,
+		`  && ${linuxBundleCheck} \\`,
+		`  && tar -xJf ${bundle} \\`,
+		`  && cd aisathome-node-bundle-linux-amd64 && sudo ./${script}`,
+	].join('\n');
+export const linuxCommand = bundleThen('install.sh');
+// Removing a node needs the bundle's uninstall.sh. node.sh unpacks the bundle in a temporary folder
+// (under /tmp, which a reboot may clear), so /node/ also gives the same download, checked, ending in
+// the uninstaller (it keeps the model; add --purge to remove it too).
+export const linuxUninstallCommand = bundleThen('uninstall.sh');
 
 // The one-line start without an account (science only), on the home page and /node/: site/public/node.sh,
 // served by this site (a test site serves it with its own defaults, so the command follows the domain). It
