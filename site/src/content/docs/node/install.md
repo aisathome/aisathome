@@ -114,8 +114,8 @@ You should see `CONNECTED`, the model, the tier and your GPU. For details, read 
 sudo journalctl -u aisathome-node -u aisathome-llama -n 20
 ```
 
-Keep the unpacked bundle directory: its `uninstall.sh` removes the node
-([day to day](/node/operate/)). Then tell us, and we check that requests reach you. For a
+To remove the node later: `sudo aisathome-node-uninstall` (installers before v0.7.0: keep the
+unpacked bundle directory, whose `uninstall.sh` does it; [day to day](/node/operate/)). Then tell us, and we check that requests reach you. For a
 new release, see [Update your node](/node/update/).
 
 ## Build it yourself

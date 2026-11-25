@@ -120,6 +120,7 @@ esac
 SH
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/journalctl"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/useradd"
+printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/userdel"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/chown"
 # install -o/-g: the aisathome user does not exist in the sandbox; everything else is the real install.
 cat > "$tmp/stubs/install" <<'SH'
@@ -242,7 +243,7 @@ inst() {
   local env=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do env+=("$1"); shift; done
   shift
-  out="$(env "${env[@]}" "${model_env[@]}" UI_PORT=off bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "${NODE_BIN:-$node_bin}" "$@" 2>&1)"; code=$?
+  out="$(env UI_PORT=off "${env[@]}" "${model_env[@]}" bash "$here/install.sh" --llama-build "$tmp/llama" --node-bin "${NODE_BIN:-$node_bin}" "$@" 2>&1)"; code=$?
 }
 # tty_inst <input> -- <args>: the same at a terminal (a pty from script(1)), typing <input>.
 tty_inst() {
@@ -436,6 +437,39 @@ want_code "the writers' lock" 0
 seed "$gwa"
 inst -- --link
 want_code "retry an unfinished link" 0; token_is "retry an unfinished link" "$toka" "$gwa"
+
+# The permanent uninstaller and the local UI's stop and uninstall: the installer puts the uninstaller at
+# /usr/local/sbin (the bundle's folder may be gone after a reboot) and a root control unit that does what
+# the agent writes to its trigger (aisathome-node's ControlNode): stop, uninstall or uninstall-purge, and
+# nothing else.
+ctl=/var/lib/aisathome-node/node-control
+fresh
+inst UI_PORT=7381 -- --link --gateway-url "$gwa"
+want_code "with the local UI" 0; has "with the local UI" "sudo aisathome-node-uninstall"
+[[ -x /usr/local/sbin/aisathome-node-uninstall && -x /usr/local/libexec/aisathome-node-control && -s /etc/systemd/system/aisathome-node-control.path ]] ||
+  fail "with the local UI: the uninstaller or the control unit is missing"
+grep -qx "Environment=AISATHOME_CONTROL_TRIGGER=$ctl" /etc/systemd/system/aisathome-node.service.d/local-ui.conf || fail "with the local UI: no control trigger for the agent"
+grep -qx "PathChanged=$ctl" /etc/systemd/system/aisathome-node-control.path || fail "with the local UI: the control unit watches another file"
+control() { : > "$st/systemctl.log"; out="$(/usr/local/libexec/aisathome-node-control 2>&1)"; code=$?; }
+echo stop > "$ctl"; control
+want_code "control: stop" 0; grep -q "^stop aisathome-node " "$st/systemctl.log" || fail "control: stop did not stop the node: $(cat "$st/systemctl.log")"
+for junk in "restart" "rm -rf /" "stopp" ""; do
+  printf '%s\n' "$junk" > "$ctl"; control
+  [[ ! -s "$st/systemctl.log" && -e /opt/aisathome-node ]] || fail "control: '$junk' did something"
+done
+rm -f "$ctl"; echo uninstall > "$tmp/elsewhere"; ln -s "$tmp/elsewhere" "$ctl"; control
+[[ ! -s "$st/systemctl.log" && -e /opt/aisathome-node ]] || fail "control: a link to a file was followed"
+rm -f "$ctl"; echo uninstall > "$ctl"; control
+want_code "control: uninstall" 0; has "control: uninstall" "kept /var/lib/aisathome-node"
+for f in /opt/aisathome-node "$conf" /etc/systemd/system/aisathome-node.service /etc/systemd/system/aisathome-node-control.path \
+         /usr/local/libexec/aisathome-node-control /usr/local/sbin/aisathome-node-uninstall /usr/local/bin/aisathome-node; do
+  [[ ! -e "$f" ]] || fail "control: uninstall left $f"
+done
+[[ -s /var/lib/aisathome-node/models/model.gguf ]] || fail "control: uninstall removed the model"
+fresh
+inst UI_PORT=7381 -- --link --gateway-url "$gwa"
+echo uninstall-purge > "$ctl"; control
+want_code "control: uninstall-purge" 0; [[ ! -e /var/lib/aisathome-node && ! -e /usr/local/sbin/aisathome-node-uninstall ]] || fail "control: uninstall-purge left files"
 
 # A node binary older than the installer (no config preflight): refused before anything changes, and never
 # run with arguments it does not know (an old binary would start the agent on "config ..."). It stands in

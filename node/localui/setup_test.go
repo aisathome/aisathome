@@ -63,8 +63,9 @@ func (a *engineAgent) Status() node.Status {
 	st.CanRestart = true
 	return st
 }
-func (a *engineAgent) StopEngine() error  { a.stops++; return nil }
-func (a *engineAgent) StartEngine() error { a.starts++; return nil }
+func (a *engineAgent) StopEngine() error        { a.stops++; return nil }
+func (a *engineAgent) StartEngine() error       { a.starts++; return nil }
+func (a *engineAgent) ControlNode(string) error { return node.ErrNoNodeControl }
 func (a *engineAgent) RestartEngine() error {
 	return nil
 }

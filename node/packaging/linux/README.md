@@ -262,11 +262,11 @@ prompts from RAM or VRAM while they are being served.
 |---|---|
 | Status | `aisathome-node status` (exit code 0 when connected), or the local UI below |
 | Pause (model stays loaded) | the local UI's **Pause** button |
-| Pause and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` |
+| Pause and free the GPU | the local UI's **Stop and free the GPU**, or `sudo systemctl stop aisathome-node aisathome-llama` (start again: `sudo systemctl start aisathome-llama aisathome-node`) |
 | Resume | `sudo systemctl start aisathome-llama aisathome-node` |
 | Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
 | Update | `sudo ./install.sh --keep-token` from the new bundle (below) |
-| Remove | `sudo ./uninstall.sh` (keeps the model; `--purge` removes it too) |
+| Remove | `sudo aisathome-node-uninstall` (keeps the model; `--purge` removes it too), or the local UI's **Uninstall** |
 
 **Update:** unpack the new release's bundle and run its `install.sh` (`--keep-token` in a
 script). It keeps the token, the node id, the gateway and the
@@ -290,8 +290,8 @@ gateway, node id, model and preset, slots in use, the GPU (name, memory, tempera
 (connections, pauses, errors). It never shows prompts or answers. **Your nodes** links to
 your account page.
 
-**Controls** (pause, resume, restart the engine) need the local password, created by the
-installer:
+**Controls** (pause, resume, restart the engine, stop the node, uninstall) need the local
+password, created by the installer:
 
 ```bash
 sudo cat /etc/aisathome-node/ui-password
@@ -306,6 +306,13 @@ changes. To change it, write a new one (12 characters or more) to that file.
   end. The agent has no privileges: it writes `/var/lib/aisathome-node/restart-engine`, and
   the root-owned `aisathome-node-restart.path` unit runs the restart. Without that unit the
   page shows the command to run instead: `sudo systemctl restart aisathome-llama`.
+- **Stop and free the GPU** stops the agent and `llama-server`; the page goes away with them.
+  Start them again with `sudo systemctl start aisathome-llama aisathome-node` (the page cannot:
+  it is served by the agent). **Uninstall** (after a confirm step; tick the box to remove the
+  model too) runs `/usr/local/sbin/aisathome-node-uninstall`, the installer's permanent copy of
+  `uninstall.sh`, which removes itself last. Both work as the restart does: the agent writes one
+  word to `/var/lib/aisathome-node/node-control`, and the root-owned `aisathome-node-control.path`
+  unit does that and nothing else. Without that unit the page shows the commands instead.
 
 The UI listens on 127.0.0.1 only, so there is no port to open or to close. It answers only
 to `127.0.0.1`, `localhost` or `[::1]` in the address bar, and its controls refuse requests

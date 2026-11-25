@@ -602,21 +602,29 @@ fetch_node_release() {
 ui_port="${UI_PORT:-7381}"
 ui_password=/etc/aisathome-node/ui-password
 ui_restart_trigger=/var/lib/aisathome-node/restart-engine
+ui_control_trigger=/var/lib/aisathome-node/node-control
+# The permanent copy of uninstall.sh (the bundle may be in a folder that is gone after a reboot, such as
+# the one-line install's /tmp); the local UI's Uninstall runs it too.
+uninstaller=/usr/local/sbin/aisathome-node-uninstall
 
 node_ui_check() {
   [[ "$ui_port" = off || ( "$ui_port" =~ ^[1-9][0-9]{3,4}$ && "$ui_port" -le 65535 && "$ui_port" != 8000 ) ]] ||
     die "UI_PORT must be a port from 1000 to 65535 other than 8000 (llama-server), or off" 2
 }
 
-# The agent's systemd drop-in: UI settings, state file and the GPU access nvidia-smi needs.
+# The agent's systemd drop-in: UI settings, state file and the GPU access nvidia-smi needs. With the UI,
+# the control trigger too (stop and uninstall from the UI; node_ui_install's control unit).
 node_ui_dropin() {
+  local ctl=""
+  [[ $ui_port = off ]] || ctl="Environment=AISATHOME_CONTROL_TRIGGER=$ui_control_trigger"
   cat <<UNIT
 [Service]
 Environment=AISATHOME_UI_PORT=$ui_port
 Environment=AISATHOME_UI_PASSWORD_FILE=$ui_password
 Environment=AISATHOME_STATE_FILE=/var/lib/aisathome-node/node-state.json
 Environment=AISATHOME_RESTART_TRIGGER=$ui_restart_trigger
-Environment="AISATHOME_PRESET=$tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
+${ctl:+$ctl
+}Environment="AISATHOME_PRESET=$tier_label: $slots x $ctx_per_slot tokens, KV $kv_type"
 # Read-only GPU facts for the UI (name, memory, temperature) through nvidia-smi.
 $gpu_devices
 UNIT
@@ -652,9 +660,46 @@ Description=AIs@home node: restart llama-server (asked by the local UI)
 Type=oneshot
 ExecStart=/bin/systemctl restart aisathome-llama.service
 UNIT
+  # Stop and uninstall from the UI, the same way: the agent writes one word (aisathome-node's
+  # ControlNode) to a file only it and root use, and this root unit reads it and does only that:
+  # stop the node and llama-server, or run the uninstaller (--purge for uninstall-purge). The word is
+  # read from a plain file only (never a link or a pipe), and root never writes the file.
+  # (The paths are ui_control_trigger's and uninstaller's.)
+  cat > /usr/local/libexec/aisathome-node-control <<'CTL'
+#!/bin/sh
+f=/var/lib/aisathome-node/node-control
+[ -f "$f" ] && [ ! -L "$f" ] || exit 0
+action="$(timeout 5 head -c 32 -- "$f" | head -n 1)"
+case "$action" in
+  stop) exec systemctl stop aisathome-node aisathome-llama ;;
+  uninstall) exec /usr/local/sbin/aisathome-node-uninstall ;;
+  uninstall-purge) exec /usr/local/sbin/aisathome-node-uninstall --purge ;;
+  *) echo "aisathome-node-control: ignored: not a node action" >&2 ;;
+esac
+CTL
+  chmod 0755 /usr/local/libexec/aisathome-node-control
+  cat > /etc/systemd/system/aisathome-node-control.path <<UNIT
+[Unit]
+Description=AIs@home node: stop or uninstall the node when the local UI asks
+
+[Path]
+PathChanged=$ui_control_trigger
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  cat > /etc/systemd/system/aisathome-node-control.service <<UNIT
+[Unit]
+Description=AIs@home node: stop or uninstall the node (asked by the local UI)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/aisathome-node-control
+UNIT
   systemctl daemon-reload
-  systemctl enable --now aisathome-node-restart.path
+  systemctl enable --now aisathome-node-restart.path aisathome-node-control.path
   # "aisathome-node status" on PATH, with this UI port.
+  install -d -m 0755 /usr/local/bin
   printf '#!/bin/sh\nexport AISATHOME_UI_PORT="${AISATHOME_UI_PORT:-%s}"\nexec /opt/aisathome-node/bin/aisathome-node "$@"\n' \
     "$ui_port" > /usr/local/bin/aisathome-node
   chmod 0755 /usr/local/bin/aisathome-node
@@ -1061,6 +1106,13 @@ for f in BUILD-INFO THIRD_PARTY_NOTICES.md licenses; do
 done
 chown -R root:root /opt/aisathome-node
 chmod -R u=rwX,go=rX /opt/aisathome-node
+# The uninstaller, at a path that outlives this bundle's folder.
+if [[ -f "$here/uninstall.sh" ]]; then
+  install -d -m 0755 "${uninstaller%/*}"
+  install -o root -g root -m 0755 "$here/uninstall.sh" "$uninstaller"
+else
+  echo "no uninstall.sh beside install.sh: $uninstaller is not installed" >&2
+fi
 
 # 3. Model (moved to save disk space, or downloaded and verified) and state directory.
 install -d -o aisathome -g aisathome -m 0750 /var/lib/aisathome-node /var/lib/aisathome-node/models
@@ -1307,7 +1359,7 @@ Installed. Pause the node and free the GPU:  sudo systemctl stop aisathome-node 
 Resume:                                      sudo systemctl start aisathome-llama aisathome-node
 Logs:                                        journalctl -u aisathome-node -u aisathome-llama -f
 Start at boot: $(systemctl is-enabled --quiet aisathome-node 2>/dev/null && echo yes || echo "no (re-run with --enable-at-boot, or: sudo systemctl enable aisathome-llama aisathome-node)")
-Remove:                                      sudo ./uninstall.sh
+Remove:                                      sudo aisathome-node-uninstall   (keeps the model; --purge removes it too)
 MSG
 node_ui_message
 if [[ $anonymous = 1 && $registered = 1 ]]; then

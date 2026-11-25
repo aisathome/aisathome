@@ -33,11 +33,12 @@ func (a *engineAgent) Status() node.Status {
 	}
 	return st
 }
-func (a *engineAgent) Pause()               {}
-func (a *engineAgent) Resume()              {}
-func (a *engineAgent) RestartEngine() error { return nil }
-func (a *engineAgent) StopEngine() error    { a.mu.Lock(); a.stopped = true; a.mu.Unlock(); return nil }
-func (a *engineAgent) StartEngine() error   { a.mu.Lock(); a.stopped = false; a.mu.Unlock(); return nil }
+func (a *engineAgent) Pause()                   {}
+func (a *engineAgent) Resume()                  {}
+func (a *engineAgent) RestartEngine() error     { return nil }
+func (a *engineAgent) StopEngine() error        { a.mu.Lock(); a.stopped = true; a.mu.Unlock(); return nil }
+func (a *engineAgent) StartEngine() error       { a.mu.Lock(); a.stopped = false; a.mu.Unlock(); return nil }
+func (a *engineAgent) ControlNode(string) error { return node.ErrNoNodeControl }
 
 type env struct {
 	agent *engineAgent

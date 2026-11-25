@@ -164,6 +164,7 @@ def test_setup_page_from_a_fresh_install_to_a_connected_node(node_page, harness)
     expect(p.locator("#setup-link")).to_be_visible()
     expect(p.locator("#help-engine")).to_be_visible()
     expect(p.locator("#help-linux")).to_be_hidden()
+    expect(p.locator("#node-ctl")).to_be_hidden()  # Linux only: stop the node and uninstall
     p.click("#engine-toggle")
     expect(p.locator("#state-line")).to_contain_text("Engine stopped")
     expect(p.locator("#state-word")).to_have_text("Disconnected")
