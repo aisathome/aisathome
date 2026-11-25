@@ -1,6 +1,7 @@
 // Copy for the home page (src/pages/index.astro). The node block's command, version, sizes and
 // driver minimums come from node-release.ts, so a release changes them in one place.
 import { chatURL } from './site';
+import { repoURL } from './node-release';
 
 export const links = {
 	chat: chatURL,
@@ -12,7 +13,8 @@ export const links = {
 	network: '/network/',
 	privacy: '/about/privacy/',
 	terms: '/about/terms/',
-	docs: '/use/chat/',
+	docs: '/docs/',
+	mission: '/about/',
 	github: 'https://github.com/aisathome/aisathome',
 	issues: 'https://github.com/aisathome/aisathome/issues',
 	reddit: 'https://www.reddit.com/r/aisathome/',
@@ -35,11 +37,15 @@ export const nodeBlock = {
 	title: 'Run a node',
 	intro:
 		'No account needed to start. A node without an account does science only: it works on prove2me proofs, never on people’s chats. Link it to an account later and it serves chats too and earns credit (recognition, not money).',
+	// A step may link some of its words (`link.words`, found in `text`).
 	does: [
-		'Downloads the latest release from GitHub and checks it against its SHA-256 sums.',
-		'Checks your driver, card and disk, says what it will install, and asks before it changes anything (it needs sudo).',
-		'Installs the node and the model for your card, tests its speed, and starts on science work.',
-	],
+		{
+			text: 'Downloads the latest release from GitHub and checks it against its SHA-256 sums.',
+			link: { words: 'the latest release', href: `${repoURL}/releases/latest` },
+		},
+		{ text: 'Checks your driver, card and disk, says what it will install, and asks before it changes anything (it needs sudo).' },
+		{ text: 'Installs the node and the model for your card, tests its speed, and starts on science work.' },
+	] as { text: string; link?: { words: string; href: string } }[],
 };
 
 export const steps = [

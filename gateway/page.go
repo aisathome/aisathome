@@ -157,9 +157,8 @@ var pageShell = `{{define "head"}}<!doctype html>
 {{define "bottom"}}</main>
 <footer class="site-foot"><div class="wrap">
 <div><p class="foot-name">AIs@home</p><p>Open AI models on volunteers’ GPUs. Non-commercial, open source, run by volunteers.</p></div>
-<nav aria-label="Footer"><ul><li><a href="/use/chat/">Docs</a></li><li><a href="/about/privacy/">Privacy</a></li>
+<nav aria-label="Footer"><ul><li><a href="/docs/">Docs</a></li><li><a href="/about/privacy/">Privacy</a></li>
 <li><a href="/about/terms/">Terms</a></li><li><a href="https://github.com/aisathome/aisathome">Source code</a></li>
-<li><a href="https://www.reddit.com/r/aisathome/">r/aisathome</a></li>
 <li><a href="mailto:contact@aisathome.org">contact@aisathome.org</a></li></ul></nav>
 </div></footer></body></html>{{end}}`
 
