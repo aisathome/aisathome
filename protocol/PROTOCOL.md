@@ -106,8 +106,11 @@ pool for nodes without an account is full, closed, or the gateway has no model c
 - **Limits:** a node announces 1 to 8 `slots` per model. A frame may be at most 68 KiB (a
   `chunk`'s `data` at most 64 KiB), an `error` 16 KiB (only the first 2 KiB of its text are
   kept), the `hello` 32 KiB, and any other frame 4 KiB; a larger frame closes the connection. A
-  request whose messages wait unread at the gateway beyond its budget (the client does not keep
-  up) is cancelled, and so is one whose answer exceeds the bytes its `max_tokens` allows. In an
+  frame that is not valid JSON or does not decode fails the request it names, or every request in
+  flight on the node if it names none (the node gets a `cancel`); more than 10 in a row close the
+  connection. A request whose messages wait unread at the gateway beyond its budget, and do not
+  drain (the client does not keep up), is cancelled, and so is one whose answer exceeds the bytes
+  its `max_tokens` allows. In an
   answer the gateway checks (from any node but the requester's own), a chunk it cannot read as one
   plain JSON object of the stream's shape (for example one that names a key twice) ends the answer.
 - **Pause:** a node whose last heartbeat said `paused: true` gets no new requests until a

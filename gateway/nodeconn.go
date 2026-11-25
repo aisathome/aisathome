@@ -95,13 +95,14 @@ type nodeConn struct {
 //
 // What its queue holds is counted against three budgets (take): the request's own, its node's
 // and the gateway's (maxQueuedPerReq, maxQueuedPerNode, maxQueuedTotal). A message that would
-// exceed one is not queued, and the request is given up on as one whose client is too slow:
-// its queue fills only while its relay does not take what the node sends.
+// exceed one waits while the queues drain (waitRoom); only when nothing drains for deliverGrace
+// is the request given up on (slow, with why naming the budget).
 type pendingReq struct {
 	ch       chan protocol.Msg
 	done     chan struct{}
-	slow     chan struct{} // closed when the client cannot keep up
+	slow     chan struct{} // closed when the request is given up on (why says why)
 	slowOnce sync.Once
+	why      string // why it was given up on (giveUp); written once before slow is closed
 	ended    chan struct{}
 	endOnce  sync.Once
 
@@ -110,6 +111,14 @@ type pendingReq struct {
 	queued        int64 // bytes of its messages in ch; guarded by qmu
 	finished      bool  // its relay is gone: nothing more is counted; guarded by qmu
 }
+
+// Why a request was given up on (pendingReq.why).
+const (
+	whyClientSlow = "client"  // its relay took nothing for deliverGrace: the client is not reading
+	whyNodeQueue  = "node"    // its node's queued messages stayed over maxQueuedPerNode
+	whyGatewayQ   = "gateway" // all nodes' queued messages stayed over maxQueuedTotal
+	whyBadFrame   = "frame"   // the node sent a frame for it that does not decode
+)
 
 func newPendingReq() *pendingReq {
 	return &pendingReq{ch: make(chan protocol.Msg, 64), done: make(chan struct{}), slow: make(chan struct{}),
@@ -126,6 +135,15 @@ func (g *Gateway) newPending(n *nodeConn) *pendingReq {
 
 func (p *pendingReq) end() { p.endOnce.Do(func() { close(p.ended) }) }
 
+// giveUp ends delivery to the request: its relay stops it (why says how), and later messages
+// are dropped.
+func (p *pendingReq) giveUp(why string) {
+	p.slowOnce.Do(func() {
+		p.why = why
+		close(p.slow)
+	})
+}
+
 // Budgets for node messages waiting in request queues. An honest node's chunk is a few hundred
 // bytes (a few KiB with logprobs): a queue of 64 such is far below maxQueuedPerReq. Without them a
 // node could make each of its requests hold 64 frames of the largest size.
@@ -138,8 +156,26 @@ const (
 // queuedSize is what a queued message counts: its variable parts and the envelope.
 func queuedSize(m protocol.Msg) int64 { return int64(len(m.Data) + len(m.Error) + len(m.Body) + 256) }
 
+// reserve adds n to a if the sum stays within max, atomically: readers of different nodes reserve
+// from the gateway's budget at once.
+func reserve(a *atomic.Int64, n, max int64) bool {
+	if a == nil {
+		return true
+	}
+	for {
+		cur := a.Load()
+		if cur+n > max {
+			return false
+		}
+		if a.CompareAndSwap(cur, cur+n) {
+			return true
+		}
+	}
+}
+
 // take counts size bytes against the budgets before a message is queued. queue is false if the
-// message must not be queued: the request ended, or a budget would be exceeded (over names it).
+// message must not be queued: the request ended (over ""), or a budget would be exceeded (over
+// names it: whyClientSlow for the request's own).
 func (p *pendingReq) take(size int64) (queue bool, over string) {
 	p.qmu.Lock()
 	defer p.qmu.Unlock()
@@ -147,24 +183,40 @@ func (p *pendingReq) take(size int64) (queue bool, over string) {
 	case p.finished:
 		return false, ""
 	case p.queued+size > maxQueuedPerReq:
-		return false, "request"
-	case p.nodeQ != nil && p.nodeQ.Load()+size > maxQueuedPerNode:
-		return false, "node"
-	case p.totalQ != nil && p.totalQ.Load()+size > maxQueuedTotal:
-		return false, "gateway"
+		return false, whyClientSlow
+	case !reserve(p.nodeQ, size, maxQueuedPerNode):
+		return false, whyNodeQueue
+	case !reserve(p.totalQ, size, maxQueuedTotal):
+		if p.nodeQ != nil {
+			p.nodeQ.Add(-size)
+		}
+		return false, whyGatewayQ
 	}
-	p.count(size)
+	p.queued += size
 	return true, ""
 }
 
-// count adds n bytes (negative: frees them) to the request's queue and the budgets. Caller holds qmu.
-func (p *pendingReq) count(n int64) {
-	p.queued += n
+// level is the queued bytes of the budget over names, to see whether it drains.
+func (p *pendingReq) level(over string) int64 {
+	switch {
+	case over == whyNodeQueue && p.nodeQ != nil:
+		return p.nodeQ.Load()
+	case over == whyGatewayQ && p.totalQ != nil:
+		return p.totalQ.Load()
+	}
+	p.qmu.Lock()
+	defer p.qmu.Unlock()
+	return p.queued
+}
+
+// free frees n bytes from the request's queue and the budgets. Caller holds qmu.
+func (p *pendingReq) free(n int64) {
+	p.queued -= n
 	if p.nodeQ != nil {
-		p.nodeQ.Add(n)
+		p.nodeQ.Add(-n)
 	}
 	if p.totalQ != nil {
-		p.totalQ.Add(n)
+		p.totalQ.Add(-n)
 	}
 }
 
@@ -173,7 +225,7 @@ func (p *pendingReq) give(size int64) {
 	p.qmu.Lock()
 	defer p.qmu.Unlock()
 	if !p.finished {
-		p.count(-size)
+		p.free(size)
 	}
 }
 
@@ -187,19 +239,56 @@ func (p *pendingReq) finish() {
 	defer p.qmu.Unlock()
 	if !p.finished {
 		p.finished = true
-		p.count(-p.queued)
+		p.free(p.queued)
 	}
 }
 
-// deliver never blocks the node's shared reader: if this request's client is not keeping up,
-// the request is dropped rather than stalling the node's other requests and heartbeats.
-// deliverGrace is how long a full request buffer may block the node's read loop before the
-// request is called too slow. Without it a burst of small chunks, or a briefly busy gateway,
-// was taken for a slow client (seen under the race detector, 2026-10-10); a client that
-// really stopped reading still holds the node for at most this long.
-const deliverGrace = 500 * time.Millisecond
+// deliver never blocks the node's shared reader for long: if this request's client is not keeping
+// up, the request is dropped rather than stalling the node's other requests and heartbeats.
+// deliverGrace is how long a full request queue (64 messages, or a byte budget) may go without
+// draining before the request is given up on. Without it a burst of small chunks, or a briefly
+// busy gateway, was taken for a slow client (seen under the race detector, 2026-10-10); a client
+// that really stopped reading still holds the node for at most this long. maxDeliverWait bounds
+// the wait for a budget that drains, but too slowly for what the node sends.
+const (
+	deliverGrace   = 500 * time.Millisecond
+	maxDeliverWait = 5 * time.Second
+	drainPoll      = 2 * time.Millisecond
+)
 
-// deliver queues m for the request; over names the budget (take) that kept it out, "" if none.
+// waitRoom takes size bytes of the budgets, waiting while a full one drains: it gives up (over
+// names the budget) only when that budget's level did not fall for deliverGrace, or after
+// maxDeliverWait. A fast engine's burst of large chunks, read by a client that keeps up, is not
+// cut short.
+func (p *pendingReq) waitRoom(size int64) (queue bool, over string) {
+	queue, over = p.take(size)
+	if queue || over == "" {
+		return queue, over
+	}
+	start := time.Now()
+	moved, low := start, p.level(over)
+	t := time.NewTicker(drainPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.done:
+			return false, ""
+		case now := <-t.C:
+			if queue, over = p.take(size); queue || over == "" {
+				return queue, over
+			}
+			if l := p.level(over); l < low {
+				moved, low = now, l
+			}
+			if now.Sub(moved) > deliverGrace || now.Sub(start) > maxDeliverWait {
+				return false, over
+			}
+		}
+	}
+}
+
+// deliver queues m for the request; over names the budget (take) that kept it out and that the
+// request was given up on for, "" if none.
 func (p *pendingReq) deliver(m protocol.Msg) (over string) {
 	select {
 	case <-p.done:
@@ -209,10 +298,10 @@ func (p *pendingReq) deliver(m protocol.Msg) (over string) {
 	default:
 	}
 	size := queuedSize(m)
-	queue, over := p.take(size)
+	queue, over := p.waitRoom(size)
 	if !queue {
 		if over != "" {
-			p.slowOnce.Do(func() { close(p.slow) })
+			p.giveUp(over)
 		}
 		return over
 	}
@@ -235,7 +324,7 @@ func (p *pendingReq) deliver(m protocol.Msg) (over string) {
 		p.give(size)
 	case <-t.C:
 		p.give(size)
-		p.slowOnce.Do(func() { close(p.slow) })
+		p.giveUp(whyClientSlow)
 	}
 	return ""
 }
@@ -576,10 +665,28 @@ func (g *Gateway) readLoop(ctx context.Context, n *nodeConn) error {
 			return err
 		}
 		var m protocol.Msg
-		if json.Unmarshal(b, &m) != nil { // skip a bad frame; only a run of them ends the node
+		if json.Unmarshal(b, &m) != nil {
+			// A frame that does not decode may have been a piece of an answer: the request it was
+			// for fails, so that a later done cannot end that answer as complete with a gap. It
+			// names its request if the envelope decoded that far; otherwise every request in flight
+			// on the node fails. The node stays, unless such frames keep coming.
 			if badFrames++; badFrames > 10 {
 				c.Close(websocket.StatusPolicyViolation, "malformed frames")
 				return nil
+			}
+			var hit []*pendingReq
+			n.mu.Lock()
+			for id, p := range n.pending {
+				if m.ReqID == "" || id == m.ReqID {
+					hit = append(hit, p)
+				}
+			}
+			n.mu.Unlock()
+			for _, p := range hit {
+				p.giveUp(whyBadFrame)
+			}
+			if len(hit) > 0 {
+				g.log.Warn("node sent a frame that does not decode; failing its request", "node", n.id, "requests", len(hit))
 			}
 			continue
 		}

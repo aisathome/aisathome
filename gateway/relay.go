@@ -80,6 +80,7 @@ type relay struct {
 	collected             []json.RawMessage // a non-streaming answer, assembled at the end
 	chunks                int
 	collectedBytes        int
+	writeWithin           time.Duration // a shorter write deadline than writeSSE's own (givenUp), or 0
 	free                  func()        // frees the node's slot; once, however often called
 	stopping              bool          // the node was told to stop: its slot waits for its confirmation
 	sent                  delivered     // what reached the client, as the node sent it (credit)
@@ -187,8 +188,8 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		case <-stall.C: // the node went silent (e.g. a hung engine): give up on it
 			g.log.Warn("node stalled", "node", n.id, "req", reqID, "started", rl.started)
 			err = rl.fail("failed", "the node stopped responding", errors.New("node stalled"))
-		case <-p.slow: // the client is not reading; free the node for others
-			err = rl.fail("cancelled", "", errors.New("client too slow"))
+		case <-p.slow: // delivery gave up on the request (pendingReq.giveUp)
+			err = rl.givenUp(p.why)
 		case <-r.Context().Done(): // client went away: tell the node to stop
 			err = rl.fail("cancelled", "", r.Context().Err())
 		case <-preempt: // a person's request waits for this slot (preempt.go)
@@ -251,6 +252,32 @@ func (rl *relay) fail(outcome, clientMsg string, err error) error {
 	}
 	return err
 }
+
+// givenUp ends an attempt whose delivery was given up on (pendingReq.giveUp), for why. The client
+// gets an error event in each case. One that is not reading may not see it: the write is given
+// errWriteWithin, not writeSSE's 30 s, so the relay does not wait on it for long.
+func (rl *relay) givenUp(why string) error {
+	switch why {
+	case whyGatewayQ: // the gateway is short of queue space, not this client or node
+		rl.g.log.Warn("gateway request queues full", "node", rl.n.id, "req", rl.reqID)
+		return rl.fail("failed", "the gateway is busy; try again", errGatewayBusy)
+	case whyNodeQueue:
+		return rl.fail("failed", "the node sent more than the gateway can hold for it", errNodeQueue)
+	case whyBadFrame:
+		return rl.fail("failed", "the node sent a malformed message", errBadFrame)
+	}
+	rl.writeWithin = errWriteWithin
+	return rl.fail("cancelled", "the client did not keep up with the answer", errClientSlow)
+}
+
+var (
+	errClientSlow = errors.New("client too slow")
+	errNodeQueue  = errors.New("node queue budget exceeded")
+	errBadFrame   = errors.New("node sent a malformed frame")
+)
+
+// errWriteWithin bounds the write of the error event to a client that stopped reading.
+const errWriteWithin = time.Second
 
 // stop tells the node to stop the request. Its engine may go on for a while (llama-server
 // notices a closed connection within a second and stops at the end of its current batch), so
@@ -386,7 +413,11 @@ func (rl *relay) writeSSE(data []byte) error {
 		rl.w.WriteHeader(http.StatusOK)
 		rl.sse = bufio.NewWriter(rl.w)
 	}
-	_ = rl.rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	within := 30 * time.Second
+	if rl.writeWithin > 0 {
+		within = rl.writeWithin
+	}
+	_ = rl.rc.SetWriteDeadline(time.Now().Add(within))
 	fmt.Fprintf(rl.sse, "data: %s\n\n", data)
 	if err := rl.sse.Flush(); err != nil {
 		return err
@@ -498,15 +529,14 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		g.log.Warn("node sent more output than requested", "node", rl.n.id, "chunks", rl.chunks)
 		return rl.fail("failed", "the node sent more output than requested", errTooMuchOutput)
 	}
-	data := []byte(m.Data)
-	if !rl.req.logprobs { // not asked for: a node that sends them anyway does not reach the client with them
-		data = dropLogprobs(data)
-	}
-	data = withModel(data, rl.model) // the client sees which model answered, not only the role it asked for
-	outs := [][]byte{data}
+	// The guard reads the chunk as the node wrote it: what the gateway changes afterwards
+	// (clean re-encodes a chunk) must not hide from it what a client would read, such as a key
+	// given twice.
+	raw := []byte(m.Data)
+	outs := [][]byte{raw}
 	if gd := rl.gd; gd != nil {
 		var big bool
-		outs, big = gd.filter(data)
+		outs, big = gd.filter(raw)
 		if gd.violation != "" {
 			return rl.block(gd.violationHit())
 		}
@@ -522,15 +552,25 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 		}
 	}
 	if !rl.req.clientStream {
-		rl.collected = append(rl.collected, data)
+		rl.collected = append(rl.collected, rl.clean(raw))
 		return nil
 	}
 	for _, data := range outs {
-		if err := rl.send(data); err != nil {
+		if err := rl.send(rl.clean(data)); err != nil {
 			return rl.fail("cancelled", "", err)
 		}
 	}
 	return nil
+}
+
+// clean is a chunk as the client gets it: without logprobs it did not ask for (a node that sends
+// them anyway does not reach the client with them), and naming the model that answered, not only
+// the role the client asked for.
+func (rl *relay) clean(data []byte) []byte {
+	if !rl.req.logprobs {
+		data = dropLogprobs(data)
+	}
+	return withModel(data, rl.model)
 }
 
 // onError passes on a node's error. The node ended the request itself: nothing to cancel.
@@ -630,7 +670,7 @@ func (rl *relay) deliverEnd(released [][]byte, ans map[string]any) error {
 		return nil
 	}
 	for _, data := range released {
-		if err := rl.send(data); err != nil {
+		if err := rl.send(rl.clean(data)); err != nil {
 			return err
 		}
 	}

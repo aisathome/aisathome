@@ -511,3 +511,19 @@ func TestIssuedCredentialsRedacted(t *testing.T) {
 		}
 	}
 }
+
+// tool_choice reaches the node with the tools: a secret used as a function's name is redacted in
+// both, to the same placeholder.
+func TestToolChoiceRedacted(t *testing.T) {
+	key, _ := newAPIKey()
+	r := newRedactor()
+	body := map[string]any{
+		"tools":       []any{map[string]any{"type": "function", "function": map[string]any{"name": key}}},
+		"tool_choice": map[string]any{"type": "function", "function": map[string]any{"name": key}},
+	}
+	r.redactBody(body)
+	b, _ := json.Marshal(forNode(body))
+	if strings.Contains(string(b), key[len(key)-20:]) || len(r.byPH) != 1 {
+		t.Fatalf("not redacted (%d placeholders): %s", len(r.byPH), b)
+	}
+}
