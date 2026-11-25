@@ -10,7 +10,8 @@
 # Options: --model <file.gguf>, --node-config <node.json>, --gateway-url <wss://...>,
 #   --enable-at-boot, --link, --anonymous, --keep-token, --token-stdin, --dry-run,
 #   --download-only <dir> [--tier standard|big],
-#   --speculation off|mtp|dflash2 (default: off, or what an earlier install chose).
+#   --speculation off|mtp|dflash2 (default: mtp on 24 GB cards, or what an earlier install chose;
+#   off, or none, turns it off and is remembered).
 #
 # Without --model, the tier's pinned model is downloaded from Hugging Face, resumed if
 # interrupted and checked against its SHA-256 (a --model file must be that same file).
@@ -119,6 +120,7 @@ case "$want_tier" in
 esac
 [[ -z "$want_tier" || -n "$download_only" ]] ||
   die "--tier is for --download-only; an install takes the tier from the card" 2
+[[ "$want_spec" != none ]] || want_spec=off
 case "$want_spec" in
   ""|off|mtp|dflash2) ;;
   *) die "--speculation must be off, mtp or dflash2" 2 ;;
@@ -192,9 +194,9 @@ tier_model() {
 }
 # Speculative decoding (--speculation): llama-server drafts tokens with a small model and checks
 # them in one step of the big one, so the node writes faster; the output distribution is the
-# model's own. Off by default; on only for the big tier, with free memory for the draft model,
-# and on a llama.cpp build new enough for the mode, else the node runs without it (pick_spec says
-# why). The Windows node has the same table in Go (node/setup/speculation.go); drift_test.go
+# model's own. MTP by default (spec_default); on only for the big tier, with free memory for the
+# draft model, and on a llama.cpp build new enough for the mode, else the node runs without it
+# (pick_spec says why). The Windows node keeps it off unless node.json's engine asks for it. The Windows node has the same table in Go (node/setup/speculation.go); drift_test.go
 # runs these spec_* functions and fails until both agree. Change both together.
 #   mtp      Qwen3.8's multi-token-prediction head (Unsloth's sidecar, the model's revision), 2
 #            drafted tokens a step; decode x1.8 on long agent steps, +2.5 GB (RTX 3090, 2026-11-12).
@@ -223,6 +225,16 @@ fi
 [[ -z "${MODEL_URL:-}" || "$MODEL_URL" =~ ^(https|file)://[^[:space:]]+$ ]] || die "MODEL_URL must start with https:// or file://" 2
 [[ -z "${MODEL_SHA256:-}" || "$MODEL_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "MODEL_SHA256 must be 64 lowercase hex digits" 2
 [[ -z "${MODEL_SIZE:-}" || "$MODEL_SIZE" =~ ^[1-9][0-9]{0,14}$ ]] || die "MODEL_SIZE must be a positive number of bytes" 2
+# DRAFT_URL, DRAFT_SHA256 and DRAFT_SIZE replace the draft model's file the same way (testing).
+if [[ -n "${DRAFT_URL:-}${DRAFT_SHA256:-}${DRAFT_SIZE:-}" ]] &&
+   ! [[ "${DRAFT_URL:-}" =~ ^(https|file)://[^[:space:]]+$ && "${DRAFT_SHA256:-}" =~ ^[0-9a-f]{64}$ && "${DRAFT_SIZE:-}" =~ ^[1-9][0-9]{0,14}$ ]]; then
+  die "set DRAFT_URL (https:// or file://), DRAFT_SHA256 and DRAFT_SIZE together" 2
+fi
+# set_draft <mode>: the draft model's file for the mode.
+set_draft() {
+  read -r draft_url draft_sha draft_size <<<"$(spec_model "$1")"
+  [[ -z "${DRAFT_URL:-}" ]] || draft_url="$DRAFT_URL" draft_sha="$DRAFT_SHA256" draft_size="$DRAFT_SIZE"
+}
 model_url="" model_sha="" model_size=0 model_name=""
 # set_model <tier>: the model file and model name for the tier (after the tier is known).
 set_model() {
@@ -431,34 +443,48 @@ llama_build_number() {
   [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1000 )) && echo "$v" || echo 0
 }
 
-# The speculation an earlier install chose (/etc/aisathome-node/speculation), so an update keeps
-# it without --speculation.
-installed_spec() {
+# spec_default: the speculation of a node that never chose one: mtp (MTP runs on the big tier only;
+# a 16 GB card stays off). Measured on our 24 GB nodes: about 1.7-1.9x output speed, and the model
+# check passes with it.
+spec_default() { echo mtp; }
+
+# spec_choice: the speculation chosen for this node, as /etc/aisathome-node/speculation keeps it:
+# --speculation (off is kept as "none"), else an earlier install's choice (mtp, dflash2 or none),
+# else "default". Installers before MTP was the default wrote "off" for every node that gave no
+# --speculation, so an "off" there counts as no choice.
+spec_choice() {
   local v=""
+  case "$want_spec" in off) echo none; return ;; mtp|dflash2) echo "$want_spec"; return ;; esac
   [[ -r "$conf/speculation" ]] && v="$(head -c 16 "$conf/speculation" | tr -dc 'a-z0-9')"
-  case "$v" in mtp|dflash2) echo "$v" ;; *) echo off ;; esac
+  case "$v" in mtp|dflash2|none) echo "$v" ;; *) echo default ;; esac
 }
 
-# pick_spec (after pick_tier and check_fit): the speculation this node runs: --speculation, else
-# an earlier install's, when the node qualifies (big tier, a new enough llama.cpp, free memory for
-# the draft model); otherwise off, and it says why. Sets spec, draft_target and the draft file.
+# pick_spec (after pick_tier and check_fit): the speculation this node runs: spec_choice (the default:
+# spec_default), when the node qualifies (big tier, a new enough llama.cpp, free memory for the draft
+# model); otherwise off, and it says why (for the default on a 16 GB card it says nothing). Sets spec,
+# draft_target and the draft file.
 spec=off draft_target="" draft_url="" draft_sha="" draft_size=0
 pick_spec() {
-  local want="${want_spec:-$(installed_spec)}" build need min
+  local want build need min what
+  want="$(spec_choice)" what=""
   spec=off
-  [[ "$want" != off ]] || return 0
+  [[ "$want" != none ]] || return 0
+  if [[ "$want" = default ]]; then
+    want="$(spec_default)" what=" (the default on 24 GB cards; --speculation off turns it off)"
+    [[ "$tier" = big ]] || return 0
+  fi
   build="$(llama_build_number)" min="$(spec_min_build "$want")" need=$(( $(tier_min_free "$tier") + $(spec_extra "$want") ))
   if [[ "$tier" != big ]]; then
     echo "speculation: off; $want runs on the big tier (24 GB cards) only, and this card is in the $tier tier" >&2
   elif (( build < min )); then
-    echo "speculation: off; $want needs llama.cpp b$min or newer, and this llama-server is $( (( build > 0 )) && echo "b$build" || echo "an unknown build")" >&2
+    echo "speculation: off; $want$what needs llama.cpp b$min or newer, and this llama-server is $( (( build > 0 )) && echo "b$build" || echo "an unknown build")" >&2
   elif [[ $custom = 0 ]] && (( gpu_free < need )); then
-    echo "speculation: off; $want needs $need MiB free on the card, and it has $gpu_free" >&2
+    echo "speculation: off; $want$what needs $need MiB free on the card, and it has $gpu_free" >&2
   else
     spec="$want"
-    read -r draft_url draft_sha draft_size <<<"$(spec_model "$spec")"
+    set_draft "$spec"
     draft_target="/var/lib/aisathome-node/models/${draft_url##*/}"
-    echo "speculation: $spec (llama.cpp b$build, $gpu_free MiB free, $need needed), draft model ${draft_url##*/}" >&2
+    echo "speculation: $spec$what (llama.cpp b$build, $gpu_free MiB free, $need needed), draft model ${draft_url##*/}" >&2
   fi
 }
 
@@ -926,8 +952,11 @@ if [[ -n "$download_only" ]]; then
   set_model "$tier"
   echo "model: the $tier tier's $model_name" >&2
   fetch_model "$download_only/$model_name"
-  if [[ -n "$want_spec" && "$want_spec" != off ]]; then
-    read -r draft_url draft_sha draft_size <<<"$(spec_model "$want_spec")"
+  # The draft model too, when the install would run one: --speculation, else the default on the big tier.
+  dl_spec="$want_spec"
+  [[ -n "$dl_spec" || "$tier" != big ]] || dl_spec="$(spec_default)"
+  if [[ -n "$dl_spec" && "$dl_spec" != off ]]; then
+    set_draft "$dl_spec"
     fetch_draft "$download_only/${draft_url##*/}"
   fi
   echo "Downloaded. Install with --model $download_only/$model_name (the file is moved)." >&2
@@ -1034,8 +1063,9 @@ install -o root -g aisathome -m 0640 "$work/node.json" /etc/aisathome-node/node.
 if [[ -s "$work/token.env" ]]; then
   (umask 077; cat "$work/token.env" > /etc/aisathome-node/token.env)
 fi
-# The speculation asked for (not what ran: a later update on a card with room may turn it on).
-printf '%s\n' "${want_spec:-$(installed_spec)}" > /etc/aisathome-node/speculation; chmod 0644 /etc/aisathome-node/speculation
+# The speculation chosen (not what ran: a later update on a card with room may turn it on): mtp, dflash2,
+# none (--speculation off), or default (spec_default).
+printf '%s\n' "$(spec_choice)" > /etc/aisathome-node/speculation; chmod 0644 /etc/aisathome-node/speculation
 [[ ! -e /etc/aisathome-node/token.env ]] || { chown root:root /etc/aisathome-node/token.env; chmod 0600 /etc/aisathome-node/token.env; }
 
 # 5. systemd units (the sandbox and llama-server's unit are defined above).

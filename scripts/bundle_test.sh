@@ -55,7 +55,7 @@ printf '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted 
 chmod +x "$tmp/fake/"*
 if [[ "$(uname -m)" = x86_64 ]] && grep -qw avx2 /proc/cpuinfo; then
   out="$(PATH="$tmp/fake:$PATH" "$d/install.sh" --dry-run --node-id ci 2>&1)" || fail "dry run: $out"
-  for want in "llama-server: prebuilt, llama.cpp b12342" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "tier: big: 1 x 196608 tokens"; do
+  for want in "llama-server: prebuilt, llama.cpp b12342" "GPU 0: NVIDIA GeForce RTX 3090" '"node_id": "ci"' "tier: big, speculation mtp: 1 x 196608 tokens" "speculation: mtp (the default"; do
     [[ "$out" == *"$want"* ]] || fail "dry run lacks '$want': $out"
   done
 fi
