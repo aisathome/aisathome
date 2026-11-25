@@ -303,10 +303,26 @@ token_is "upgrade --keep-token" "$toka" "$gwa"; node_json_canonical "upgrade --k
 [[ "$(json "$conf/node.json" node_id)" = n-0000a001 ]] || fail "upgrade --keep-token: node id $(json "$conf/node.json" node_id)"
 [[ ! -e "$conf/token.env.unlinked" ]] || fail "upgrade --keep-token: a token was moved aside"
 agent_accepts "upgrade --keep-token"
-# The same at a terminal with Enter.
+# The same at a terminal: kept without a question.
 seed "$gwa" "$toka"
-tty_inst $'\r' --
-want_code "upgrade, Enter at a terminal" 0; token_is "upgrade, Enter at a terminal" "$toka" "$gwa"
+tty_inst $'n\r' --
+want_code "upgrade at a terminal" 0; token_is "upgrade at a terminal" "$toka" "$gwa"; lacks "upgrade at a terminal" "[Y/n]"
+
+# A fresh install at a terminal: "Link this node to your account? [Y/n]". y links in the browser, n runs the
+# node without an account.
+fresh
+tty_inst $'y\r' -- --gateway-url "$gwa"
+want_code "fresh, y at a terminal" 0; has "fresh, y at a terminal" "Link this node to your account? [Y/n]"
+has "fresh, y at a terminal" "Linked: this is node n-0000a001"; token_is "fresh, y at a terminal" "$toka" "$gwa"
+fresh
+tty_inst $'n\r' -- --gateway-url "$gwa"
+want_code "fresh, n at a terminal" 0; has "fresh, n at a terminal" "You must be 18 or older"
+has "fresh, n at a terminal" "This node runs without an account"; token_is "fresh, n at a terminal" "$anona" "$gwa"
+# --token-stdin at a terminal: pasted, not echoed.
+fresh
+tty_inst "$tokb"$'\r' -- --gateway-url "$gwb" --token-stdin
+want_code "--token-stdin at a terminal" 0; has "--token-stdin at a terminal" "Paste the node token (input hidden)"
+token_is "--token-stdin at a terminal" "$tokb" "$gwb"; [[ "$out" != *"$tokb"* ]] || fail "--token-stdin at a terminal: the token was echoed"
 
 # An installed node.json with two keys equal in any case: refused, as the agent refuses it.
 seed "$gwa" "$toka"

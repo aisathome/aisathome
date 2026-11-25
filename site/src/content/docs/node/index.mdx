@@ -69,7 +69,7 @@ confirm it.
 
 **Advanced: a node token.** You can also create a node on your account page with **Add a node**
 and paste its token: on the Windows setup page under **Advanced: paste a node token**, or at the
-Linux installer's token question (or piped in for scripts: `cat token.txt | sudo ./install.sh`).
+Linux installer with `--token-stdin` (or piped in for scripts: `cat token.txt | sudo ./install.sh --token-stdin`).
 A node run by hand reads it from its config or the `AISATHOME_NODE_TOKEN` environment variable.
 
 ## Without an account (science only)

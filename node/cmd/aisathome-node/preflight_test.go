@@ -228,11 +228,23 @@ func TestPreflightToken(t *testing.T) {
 		{"piped token with a CR", pfCase{nodeJSON: nj, tokenEnv: same, stdin: pfNew + "\r\n"}, 0, "token", false, pfNew, "", ""},
 		{"piped empty", pfCase{nodeJSON: nj, tokenEnv: same, stdin: ""}, 1, "", false, "", "--keep-token", ""},
 		{"piped empty, no token", pfCase{nodeJSON: nj}, 1, "", false, "", "--link", ""},
-		{"Enter keeps", pfCase{nodeJSON: nj, tokenEnv: same, tty: true, stdin: "\n"}, 0, "keep", false, pfTok, "press Enter to keep the installed one", ""},
-		{"Enter links", pfCase{nodeJSON: nj, tty: true, stdin: "\n"}, 0, "link", false, "", "Press Enter to link", ""},
-		{"pasted", pfCase{nodeJSON: nj, tty: true, stdin: pfAnon + "\n"}, 0, "token", false, pfAnon, "", ""},
+		// At a terminal: an installed token for this gateway is kept without a question; otherwise the person
+		// answers "Link this node to your account? [Y/n]".
+		{"a terminal keeps the token", pfCase{nodeJSON: nj, tokenEnv: same, tty: true, stdin: "n\n"}, 0, "keep", false, pfTok, "keeping the installed one", "[Y/n]"},
+		{"Enter links", pfCase{nodeJSON: nj, tty: true, stdin: "\n"}, 0, "link", false, "", "Link this node to your account? [Y/n]", "input hidden"},
+		{"y links", pfCase{nodeJSON: nj, tty: true, stdin: "Y\n"}, 0, "link", false, "", "linking", ""},
+		{"n runs without an account", pfCase{nodeJSON: nj, tty: true, stdin: " no\n"}, 0, "anonymous", false, "", "You must be 18 or older", ""},
+		{"asked again", pfCase{nodeJSON: nj, tty: true, stdin: "maybe\nyes\n"}, 0, "link", false, "", "Answer y or n.", ""},
+		{"no answer", pfCase{nodeJSON: nj, tty: true, stdin: "maybe\n"}, 2, "", false, "", "--link or --anonymous", ""},
+		{"never an answer", pfCase{nodeJSON: nj, tty: true, stdin: "a\nb\nc\ny\n"}, 2, "", false, "", "no answer", ""},
+		{"a token is not an answer", pfCase{nodeJSON: nj, tty: true, stdin: pfAnon + "\n"}, 2, "", false, "", "Answer y or n.", ""},
 		{"Enter, another gateway's", pfCase{nodeJSON: nj, tokenEnv: other, tty: true, stdin: "\n"}, 0, "link", true, "", "moved aside", ""},
-		{"pasted over an unrecorded", pfCase{nodeJSON: nj, tokenEnv: norec, tty: true, stdin: pfAnon + "\n"}, 0, "token", true, pfAnon, "", ""},
+		{"n, another gateway's", pfCase{nodeJSON: nj, tokenEnv: other, tty: true, stdin: "n\n"}, 0, "anonymous", true, "", "moved aside", ""},
+		// --token-stdin: pasted (not echoed) at a terminal, or piped.
+		{"--token-stdin pasted", pfCase{nodeJSON: nj, tokenEnv: same, tty: true, stdin: pfAnon + "\n", args: []string{"-account", "token"}}, 0, "token", false, pfAnon, "input hidden", ""},
+		{"--token-stdin piped", pfCase{nodeJSON: nj, stdin: pfNew + "\n", args: []string{"-account", "token"}}, 0, "token", false, pfNew, "", ""},
+		{"--token-stdin empty", pfCase{nodeJSON: nj, tokenEnv: same, tty: true, stdin: "\n", args: []string{"-account", "token"}}, 2, "", false, "", "no token on stdin", ""},
+		{"--token-stdin over an unrecorded", pfCase{nodeJSON: nj, tokenEnv: norec, tty: true, stdin: pfAnon + "\n", args: []string{"-account", "token"}}, 0, "token", true, pfAnon, "", ""},
 		{"not the issued form", pfCase{nodeJSON: nj, stdin: "nt-n-0000000E." + strings.Repeat("N", 43) + "\n"}, 2, "", false, "", "is not a node token", "0000000E"},
 		{"a short token", pfCase{nodeJSON: nj, stdin: pfLegacy + "\n"}, 2, "", false, "", "is not a node token", ""},
 	} {
@@ -276,7 +288,7 @@ func TestPreflightMovedAsideTokenRefused(t *testing.T) {
 	for _, installed := range []string{tokenEnv(pfTok, pfOther), tokenEnv(pfTok, ""), "AISATHOME_NODE_TOKEN=" + pfTok + "  \r\nAISATHOME_TOKEN_GATEWAY=" + pfOther + "\n"} {
 		for _, given := range []string{pfTok, pfTok + " ", pfTok + "\r", "\t" + pfTok, " " + pfTok + "  "} {
 			for _, tty := range []bool{false, true} {
-				o := pfCase{nodeJSON: installedJSON(pfGW), tokenEnv: installed, stdin: given + "\n", tty: tty}.run(t)
+				o := pfCase{nodeJSON: installedJSON(pfGW), tokenEnv: installed, stdin: given + "\n", tty: tty, args: []string{"-account", "token"}}.run(t)
 				if o.code != 2 || !strings.Contains(o.stderr, "never sent there") {
 					t.Errorf("given %q over %q (tty %v): exit %d: %s", given, installed, tty, o.code, o.stderr)
 				}
@@ -339,7 +351,8 @@ func TestPreflightDryRun(t *testing.T) {
 			t.Errorf("dry run lacks %q: %s", want, o.stderr)
 		}
 	}
-	if o := (pfCase{args: []string{"-dry-run"}}).run(t); o.code != 0 || !strings.Contains(o.stderr, "node id: the one an account-page token carries") {
+	if o := (pfCase{args: []string{"-dry-run"}}).run(t); o.code != 0 || !strings.Contains(o.stderr, "node id: the one an account-page token carries") ||
+		!strings.Contains(o.stderr, "Link this node to your account? [Y/n]") {
 		t.Errorf("dry run, nothing installed: exit %d: %s", o.code, o.stderr)
 	}
 }

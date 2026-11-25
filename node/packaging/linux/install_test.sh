@@ -576,7 +576,13 @@ grep -q '^trap on_exit EXIT$' "$installer" || fail "no EXIT trap on_exit"
 # Linking in the plan: a dry run says how the install ends; --link with --keep-token is refused; the node's
 # unit stays off without a token (ConditionFileNotEmpty) instead of failing every few seconds.
 run -- --dry-run "${nb[@]}"
-ok "dry run, account"; has "dry run, account" "account: at a terminal, Enter at the token question ends the install with linking this node to your account in the browser (aisathome-node link)"
+ok "dry run, account"; has "dry run, account" 'account: at a terminal the install asks "Link this node to your account? [Y/n]"'
+run -- --dry-run "${nb[@]}" --token-stdin
+ok "dry run, --token-stdin"; has "dry run, --token-stdin" "account: the node token from stdin (--token-stdin)"
+for other in --link --keep-token --anonymous; do
+  run -- --dry-run --token-stdin "$other"
+  usage_err "--token-stdin with $other"; has "--token-stdin with $other" "use --token-stdin alone"
+done
 run -- --dry-run "${nb[@]}" --anonymous --gateway-url ws://gw.example.org/v1/node/connect
 usage_err "dry run, a ws:// gateway on another machine"; has "dry run, a ws:// gateway on another machine" "ws:// only to this machine"
 run -- --dry-run "${nb[@]}" --anonymous --gateway-url ws://127.0.0.1:8080/v1/node/connect
