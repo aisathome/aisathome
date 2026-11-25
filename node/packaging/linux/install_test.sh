@@ -413,6 +413,11 @@ printf '{"Node_ID": "mine", "Gateway_URL": "wss://gw.example.org/v1/node/connect
 run -- --dry-run "${nb[@]}" --node-config "$tmp/own-node.json"
 ok "--node-config"; has "--node-config" "node.json (from --node-config, canonical)"; json_is "--node-config" node_id mine
 lacks "--node-config" "nt-x"
+# A dry run shows no credentials from it (an upstream's user and password, credential-like keys).
+printf '{"gateway_url": "wss://gw.example.org/v1/node/connect", "upstream": "http://admin:hunter2@127.0.0.1:8000", "api_key": "sk-abc"}\n' > "$tmp/cred-node.json"
+run -- --dry-run "${nb[@]}" --node-config "$tmp/cred-node.json"
+ok "--node-config with credentials"; lacks "--node-config with credentials" "hunter2"; lacks "--node-config with credentials" "sk-abc"
+json_is "--node-config with credentials" upstream http://REDACTED@127.0.0.1:8000
 run -- --dry-run "${nb[@]}" --node-config /etc/hostname
 usage_err "--node-config, not JSON"
 # Without the node binary a dry run says it cannot show node.json and the account plan.

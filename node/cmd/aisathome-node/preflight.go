@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -261,6 +262,10 @@ func (e preflightEnv) preflight(o preflightOpts, msg io.Writer) (preflightResult
 			"models": []any{map[string]any{"name": o.model, "roles": setup.EngineRoles, "slots": o.slots, "ctx": o.ctx}}}
 	}
 
+	// A dry run's node.json is only shown (on a terminal, in a log): without credentials.
+	if o.dryRun {
+		supplied = redactConfig(supplied).(map[string]any)
+	}
 	b, err := encodeConfig(supplied)
 	if err != nil {
 		return r, err
@@ -549,6 +554,40 @@ func lowerKeys(v any) any {
 	case []any:
 		for i := range x {
 			x[i] = lowerKeys(x[i])
+		}
+	}
+	return v
+}
+
+// reSecretKey is a config key whose value is a credential.
+var reSecretKey = regexp.MustCompile(`(?i)(token|secret|password|passwd|credential|api_?key|auth)`)
+
+// redactConfig is a config to show: values of credential-like keys, and the user and password in any
+// URL (such as an upstream's http://user:pass@host), replaced by "REDACTED". The gateway fields stay
+// readable (a token's record is an address, not a secret).
+func redactConfig(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			if reSecretKey.MatchString(k) && k != "token_gateway" {
+				if s, ok := e.(string); !ok || s != "" {
+					e = "REDACTED"
+				}
+			}
+			m[k] = redactConfig(e)
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = redactConfig(e)
+		}
+		return out
+	case string:
+		if u, err := url.Parse(x); err == nil && u.User != nil && strings.Contains(x, "://") {
+			u.User = url.User("REDACTED")
+			return u.String()
 		}
 	}
 	return v
