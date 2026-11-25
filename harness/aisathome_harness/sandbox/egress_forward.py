@@ -97,10 +97,11 @@ class Hold:
 
 
 class Watch:
-    """Whether a byte stream holds one of `marks`, also split across chunks."""
+    """Whether a byte stream holds one of `marks`, also split across chunks. `on_seen()` (if given) runs when
+    the first mark is fed, before the caller passes those bytes on."""
 
-    def __init__(self, *marks: bytes):
-        self.marks, self.tail, self.seen = marks, b"", False
+    def __init__(self, *marks: bytes, on_seen=None):
+        self.marks, self.tail, self.seen, self.on_seen = marks, b"", False, on_seen
         self.keep = max(len(m) for m in marks) - 1
 
     def feed(self, data: bytes):
@@ -108,6 +109,8 @@ class Watch:
             buf = self.tail + data
             self.seen = any(m in buf for m in self.marks)
             self.tail = buf[-self.keep:] if self.keep else b""
+            if self.seen and self.on_seen:
+                self.on_seen()
 
 
 class Refused(Exception):
@@ -298,11 +301,11 @@ class Forwarder:
                 return
             self.counters["ok"] += 1
             uw.write(out)
-            watch = Watch(*PREEMPT_MARKS) if self.hold else None
+            # the hold starts as the preemption passes, before the client has it: its retry can come while
+            # this connection is still closing
+            watch = Watch(*PREEMPT_MARKS, on_seen=self.hold.preempted) if self.hold else None
             await asyncio.gather(pipe(cr, uw, stats, "up"), respond(ur, cw, stats, watch))
-            if watch and watch.seen:
-                self.hold.preempted()
-            elif watch and stats["down"]:
+            if watch and not watch.seen and stats["down"]:
                 self.hold.ok()
             c = self.counters
             h = (f", preempted {self.hold.counters['preempted']}, held {self.hold.counters['held']} "

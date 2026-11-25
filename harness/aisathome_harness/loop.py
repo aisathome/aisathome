@@ -103,13 +103,16 @@ class Timing:
     loop_grace: int = 2
     gateway_backoff_s: float = 120   # times the resume count, before resuming after an endpoint error
     wake_wait_s: float = 30          # before resuming after a suspend: the network comes back
-    # A preemption is a pause, not a failure (off when 0): a segment that opencode ended after the endpoint
-    # preempted its step (PREEMPTED) is resumed after `preempt_backoff_s`, doubling up to
-    # `preempt_backoff_max_s`, without counting against `max_resumes`, until the round has waited
-    # `preempt_wait_cap_s` in all (the gaps after preemptions inside segments, and these backoffs); then the
-    # session ends with `preempt_wait_exhausted` in run.json, for the project to give the task back. The waits
-    # do not count against the awake ceiling, neither in run_session nor in run_segment's live timer (the
-    # model's own time never counted them).
+    # A preemption is a pause, not a failure (off when 0): a segment that opencode ended inside a step the
+    # endpoint preempted (PREEMPTED; ended_in_preempted_step) is resumed after `preempt_backoff_s`, doubling
+    # up to `preempt_backoff_max_s`, without counting against `max_resumes`, until the round has waited
+    # `preempt_wait_cap_s` in all (preempt_waited: the gaps after preemptions inside segments, and these
+    # backoffs, as each segment records them, so a resume after a stop goes on counting); a segment still
+    # waiting when the cap is spent is stopped. Then the session ends with `preempt_wait_exhausted` in
+    # run.json, and the round engine gives the task back (rounds.Rounds.pause) instead of checking it; the
+    # resume after that starts a fresh wait. The waits are part of awake time (the monotonic clock: a suspend
+    # is in neither) and do not count against the awake ceiling, neither in run_session nor in run_segment's
+    # live timer (the model's own time never counted them).
     preempt_wait_cap_s: float = 0
     preempt_backoff_s: float = 15
     preempt_backoff_max_s: float = 60
@@ -357,9 +360,11 @@ def tree_changed(git: TreeGit, targets: list[str], accept: Callable[[str], bool]
 
 
 def interruptions(segments: list[dict]) -> int:
-    """Segments that continued after an interruption: every later one, except after a nudge's stop."""
-    ours = ("first_edit_nudge", "loop_nudge", "step_continue")
-    return max(0, len(segments) - 1 - sum(1 for s_ in segments if any(s_.get(k) for k in ours)))
+    """Segments that continued after an interruption: every later one, except after a nudge's stop or a
+    preemption's pause (those do not count against max_resumes)."""
+    ours = ("first_edit_nudge", "loop_nudge", "step_continue", "preempt_wait_exhausted")
+    return max(0, len(segments) - 1 - sum(1 for s_ in segments
+                                          if "preempt_pause_s" in s_ or any(s_.get(k) for k in ours)))
 
 
 class FirstEditWatch:
@@ -565,16 +570,21 @@ def ended_in_preempted_step(tail: str) -> bool:
 EVENT_TS = re.compile(rb'^\{"type":"(step_start|step_finish|error)","timestamp":(\d+)', re.M)
 
 
-def preempt_stats(data: bytes, end_s: float | None = None) -> dict:
+def preempt_stats(data: bytes, end_s: float | None = None, until_s: float | None = None) -> dict:
     """A segment's preemptions (its events, `data`): {"preempted": n, "preempt_wait_s": s}, the wait being
     the time from each preemption to the next step's start (its first streamed chunk), or to `end_s` (epoch
-    seconds) when none followed: what the session waited for the endpoint after it was preempted."""
+    seconds) when none followed: what the session waited for the endpoint after it was preempted. With
+    `until_s`: as it stood at that time (later events left out, an open wait counted up to it)."""
     n, wait, since = 0, 0.0, None
+    if until_s is not None:
+        end_s = until_s
     for ln in data.splitlines():
         m = EVENT_TS.match(ln)
         if not m:
             continue
         kind, ts = m.group(1), int(m.group(2)) / 1000.0
+        if until_s is not None and ts > until_s:
+            break
         if kind == b"error" and PREEMPTED.encode() in ln:
             n += 1
             if since is None:
@@ -587,14 +597,28 @@ def preempt_stats(data: bytes, end_s: float | None = None) -> dict:
     return {"preempted": n, "preempt_wait_s": round(wait, 1)}
 
 
-def segment_preempt_wait_s(path: Path, start: int, now: float) -> float:
-    """preempt_stats' wait for the events in `path` from byte `start` (a segment's), up to `now` (epoch s)."""
+def segment_preempt_wait_s(path: Path, start: int, now: float) -> tuple[float, bool]:
+    """preempt_stats' wait for the events in `path` from byte `start` (a segment's), up to `now` (epoch s),
+    and whether that wait is still going on (no step started since the last preemption)."""
     try:
         with open(path, "rb") as fh:
             fh.seek(start)
-            return preempt_stats(fh.read(), now)["preempt_wait_s"]
+            data = fh.read()
     except OSError:
-        return 0.0
+        return 0.0, False
+    wait = preempt_stats(data, now)["preempt_wait_s"]
+    return wait, wait > preempt_stats(data)["preempt_wait_s"]
+
+
+def preempt_waited(segments: list[dict]) -> tuple[float, int]:
+    """What counts against Timing.preempt_wait_cap_s, from the segments' records: the seconds waited after
+    preemptions (each segment's `preempt_wait_s` and the backoff after it, `preempt_pause_s`) and the
+    number of those backoffs, since the last segment that spent the cap (a task given back after that
+    starts a fresh wait)."""
+    i = max((k + 1 for k, sg in enumerate(segments) if sg.get("preempt_wait_exhausted")), default=0)
+    segs = segments[i:]
+    return (sum(sg.get("preempt_wait_s", 0) + sg.get("preempt_pause_s", 0) for sg in segs),
+            sum(1 for sg in segs if "preempt_pause_s" in sg))
 
 
 def checkpoint_diff(raw: Path, git: TreeGit) -> int:
@@ -673,21 +697,26 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
                 model_left_s: float | None = None, nudge: FirstEditWatch | None = None,
                 loop: LoopWatch | None = None, *, timing: Timing = DEFAULT_TIMING,
                 before: Callable[[], object] | None = None, stop: Callable[[], object] | None = None,
-                log: Callable[[str], None] = print) -> dict:
+                preempt_wait_left_s: float | None = None, log: Callable[[str], None] = print) -> dict:
     """Run one opencode invocation (`cmd`), its stdout appended to raw/events.jsonl. `active_left_s` caps
     awake (monotonic) time; `model_left_s` (if given) caps the model's own time in this segment
     (model_time_s), the time cap proper. `nudge` (if given) can stop the segment for the first-edit nudge
     (`first_edit_nudge` in the result), `loop` (if given) for the stuck-loop nudge (`loop_nudge`).
     On a suspend (the wall clock jumps past the monotonic clock) the run is stopped after wake-up so the
     session can be continued; the model's edits in the tree are the checkpoint. `before()` runs first
-    (remove a leftover container); `stop()` stops the container (default: terminate the process)."""
+    (remove a leftover container); `stop()` stops the container (default: terminate the process).
+    With Timing.preempt_wait_cap_s: the wait after a preemption is not awake time for `active_left_s`, the
+    result has `preempted` and `preempt_wait_s` (on the awake clock: a suspend is not a wait) and
+    `preempt_ended` (it ended inside a preempted step), and a segment still waiting after a preemption
+    when its wait reaches `preempt_wait_left_s` (if given) is stopped (`preempt_wait_exhausted`)."""
     if before:
         before()
     m0, w0 = time.monotonic(), time.time()
     mp, wp = m0, w0
     start_size = (raw / "events.jsonl").stat().st_size if (raw / "events.jsonl").exists() else 0
-    suspended = 0.0
+    suspended, suspended_from = 0.0, None      # the jumps of the wall clock, and the poll before the first
     seg = {"timed_out": False, "suspend_interrupted": False}
+    pause = timing.preempt_wait_cap_s > 0
     with open(raw / "events.jsonl", "a") as out, open(raw / "opencode.stderr.log", "a") as err:
         p = subprocess.Popen(cmd, stdout=out, stderr=err)
         while True:
@@ -705,15 +734,21 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
                 break
             mn, wn = time.monotonic(), time.time()
             jump = (wn - wp) - (mn - mp)
-            mp, wp = mn, wn
             if jump > timing.suspend_jump_s:
-                suspended += jump
+                suspended, suspended_from = suspended + jump, wp
+                mp, wp = mn, wn
                 seg["suspend_interrupted"] = True
                 log(f"machine was suspended for {jump / 60:.1f} min; checkpointing and continuing the session")
                 break
-            # a wait after a preemption is a pause, not awake time (as for the ceiling in run_session)
-            if mn - m0 >= active_left_s and (timing.preempt_wait_cap_s <= 0 or mn - m0 - segment_preempt_wait_s(
-                    raw / "events.jsonl", start_size, wn) >= active_left_s):
+            mp, wp = mn, wn
+            # a wait after a preemption is a pause, not awake time (as for the ceiling in run_session); no
+            # suspend so far in this segment, so its wall-clock events measure awake time
+            waited, waiting = segment_preempt_wait_s(raw / "events.jsonl", start_size, wn) if pause else (0.0, False)
+            if waiting and preempt_wait_left_s is not None and waited >= preempt_wait_left_s:
+                seg["preempt_wait_exhausted"] = True
+                log(f"waited {waited / 60:.0f} min after preemptions in this segment: the wait cap is spent")
+                break
+            if mn - m0 - waited >= active_left_s:
                 seg["timed_out"] = True
                 seg["cap"] = "awake ceiling" if model_left_s is not None else "time"
                 break
@@ -746,8 +781,11 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait()
-    end = time.time()
-    seg.update({"exit": p.returncode, "active_s": round(time.monotonic() - m0),
+    end, m_end = time.time(), time.monotonic()
+    jump = (end - wp) - (m_end - mp)        # a suspend that opencode's exit at wake-up left unseen
+    if jump > timing.suspend_jump_s:
+        suspended, suspended_from = suspended + jump, wp if suspended_from is None else suspended_from
+    seg.update({"exit": p.returncode, "active_s": round(m_end - m0),
                 "wall_s": round(end - w0), "suspended_s": round(suspended),
                 "model_s": round(model_time_s(raw / "events.jsonl", start_size, end)),
                 # the step the stop interrupted, without the time the machine slept: the time cap counts it
@@ -758,12 +796,19 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
         tail = fh.read().decode(errors="replace")[-5000:]   # this segment's events only
     if not seg["suspend_interrupted"] and "Session interrupted: inactivity" in tail:
         seg["suspend_interrupted"] = True
-    if gateway_interrupted(seg, tail, preempt_pause=timing.preempt_wait_cap_s > 0):
+    if gateway_interrupted(seg, tail, preempt_pause=pause):
         seg["gateway_interrupted"] = True
-    if timing.preempt_wait_cap_s > 0:
+    if pause:
         with open(raw / "events.jsonl", "rb") as fh:
             fh.seek(start_size)
-            seg.update(preempt_stats(fh.read(), end))
+            data = fh.read()
+        st = preempt_stats(data, end)
+        if suspended:
+            # the event times are the wall clock, and the suspend fell after the poll before it: the wait
+            # since then may hold it, which is not awake time (taken as all of it, at most that wait)
+            since = st["preempt_wait_s"] - preempt_stats(data, until_s=suspended_from)["preempt_wait_s"]
+            st["preempt_wait_s"] = round(max(0.0, st["preempt_wait_s"] - min(suspended, since)), 1)
+        seg.update(st, preempt_ended=ended_in_preempted_step(tail))
     return seg
 
 
@@ -1101,7 +1146,6 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
           f"{T.awake_ceiling * wall_min} min awake) / {steps} steps"
           + (f" (resuming session {sid})" if resume else ""))
     resumes = interruptions(segments) if resume else 0
-    pre_n, pre_slept, pre_exhausted = 0, 0.0, False     # preemption pauses in this run (Timing.preempt_wait_cap_s)
     round_no = (fu_round or 0) + 1
     fired = bool((nudged or {}).get("fired"))
     nudge_at = s.first_edit_step if fu_round is None and (not fired or s.first_edit_again) else None
@@ -1132,8 +1176,9 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         safefs.write_text(home, CONFIG, json.dumps(
             opencode_config(inner_url, inner_key, model, left_steps, s.model_options, ctx, s.provider, s.headers),
             indent=1))
+        round_segs = segments[budget["segment"] if budget else 0:]     # what this round's caps count
         active_used = sum(s_.get("active_s", 0) - s_.get("preempt_wait_s", 0)    # a preemption's wait: a pause
-                          for s_ in segments[budget["segment"] if budget else 0:])
+                          for s_ in round_segs)
         model_left = wall_min * 60 - model_used_s(events, budget["events_offset"] if budget else ev_start, segments)
         left = T.awake_ceiling * wall_min * 60 - active_used
         if left <= 0 or model_left <= 0:
@@ -1171,13 +1216,18 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                                          # if the run dies here, a resume still counts the open step
                                          "open_step_s": round(open_step_s(events, seg_meta["events_offset"],
                                                                           time.time()), 1),
+                                         # and the preemption waits so far (preempt_waited, active_used)
+                                         **(preempt_stats(events.read_bytes()[seg_meta["events_offset"]:],
+                                                          time.time()) if T.preempt_wait_cap_s > 0 else {}),
                                          **seg_meta}]})
                 checkpoint()
             except OSError as e:    # a checkpoint never stops the run
                 s.say(f"checkpoint failed: {e}")
 
         seg = segment(s.command(message, sid), raw, left, on_tick=tick, model_left_s=model_left,
-                      **({"nudge": nudge} if nudge else {}), **({"loop": loop} if loop else {}))
+                      **({"nudge": nudge} if nudge else {}), **({"loop": loop} if loop else {}),
+                      **({"preempt_wait_left_s": T.preempt_wait_cap_s - preempt_waited(round_segs)[0]}
+                         if T.preempt_wait_cap_s > 0 else {}))
         seg.update(seg_meta)
         segments.append(seg)
         write_steps(raw, s.task_id, segs_now, read_lockwait(home), s.say)
@@ -1208,20 +1258,22 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
             s.say(f"the follow-up stopped on the step limit with {left_now} steps left: told to go on")
             message = s.prompts.step_continue.format(left=left_now)
             continue
-        if (T.preempt_wait_cap_s > 0 and seg.get("gateway_interrupted") and seg.get("preempted")
+        if T.preempt_wait_cap_s > 0 and seg.get("preempt_wait_exhausted"):
+            s.say("ending the session for the task to be given back")
+            break
+        if (T.preempt_wait_cap_s > 0 and seg.get("gateway_interrupted") and seg.get("preempt_ended")
                 and not seg["timed_out"] and sid):
             # a preemption is a pause: wait and go on, bounded by the wait cap, not by max_resumes
-            pre_n += 1
-            backoff = min(T.preempt_backoff_max_s, T.preempt_backoff_s * 2 ** (pre_n - 1))
-            waited = sum(s_.get("preempt_wait_s", 0) for s_ in segments) + pre_slept
+            waited, pauses = preempt_waited(segments[budget["segment"] if budget else 0:])
+            backoff = min(T.preempt_backoff_max_s, T.preempt_backoff_s * 2 ** pauses)
             if waited + backoff > T.preempt_wait_cap_s:
-                pre_exhausted = True
+                seg["preempt_wait_exhausted"] = True
                 s.say(f"preempted again after {waited / 60:.0f} min of waiting: the wait cap is spent; ending "
                       "the session for the task to be given back")
                 break
             s.say(f"preempted ({seg['preempted']} in the segment): resuming the session in {backoff:.0f}s")
+            seg["preempt_pause_s"] = backoff        # the next segment's first checkpoint records it
             time.sleep(backoff)
-            pre_slept += backoff
             message = s.prompts.resume_after(True)
             continue
         if ((seg["suspend_interrupted"] or seg.get("gateway_interrupted")) and not seg["timed_out"]
@@ -1272,8 +1324,10 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
                 **({"step_notice": notice} if notice else {}),
                 **({"retry_from": budget} if budget else {}),
                 **({"preempted": sum(s_.get("preempted", 0) for s_ in segments),
-                    "preempt_wait_s": round(sum(s_.get("preempt_wait_s", 0) for s_ in segments) + pre_slept, 1),
-                    "preempt_wait_exhausted": pre_exhausted} if T.preempt_wait_cap_s > 0 else {}),
+                    "preempt_wait_s": round(sum(s_.get("preempt_wait_s", 0) + s_.get("preempt_pause_s", 0)
+                                                for s_ in segments), 1),
+                    "preempt_wait_exhausted": bool(segments and segments[-1].get("preempt_wait_exhausted"))}
+                   if T.preempt_wait_cap_s > 0 else {}),
                 "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     run_meta.update(event_stats(events))
     # tool calls made in this run (since this call started); and for a follow-up round, in the whole round

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aisathome_harness import evidence, rounds
+from aisathome_harness import evidence, rounds, worker
 
 # opencode v2's shape for an endpoint's 503 (from a recorded session; the message is an aisathome
 # gateway's when no server of the model is connected)
@@ -41,6 +41,8 @@ class Rig:
               "steps": spec.get("steps", 6), "round_steps": spec.get("steps", 6), **({"followup_round": fu} if fu else {})}
         if spec.get("partial"):
             rm = {"session": "ses_1", "partial": True}
+        if spec.get("exhausted"):         # it waited for the endpoint as long as it may (preemptions)
+            rm.update(preempt_wait_exhausted=True, preempt_wait_s=7300)
         (self.raw / "run.json").write_text(json.dumps(rm))
 
     def check(self, rm, n):
@@ -190,6 +192,26 @@ class Engine(unittest.TestCase):
         st = rounds.run_rounds(rig.make())
         self.assertEqual([c[0] for c in rig.calls], ["start", "resume"])
         self.assertEqual(len(st["rounds"]), 1)
+
+    def test_a_session_that_spent_its_preemption_wait_is_paused_then_resumed_never_checked(self):
+        """preempt_wait_exhausted: the worker gives the task back (worker.Pause); the next claim resumes the
+        session instead of checking or retrying the unfinished round."""
+        rig = Rig(self.raw, ["proved"], sessions=[{"steps": 2, "exhausted": True}, {"steps": 6}])
+        with self.assertRaises(worker.Pause):
+            rounds.run_rounds(rig.make())
+        self.assertEqual(([c[0] for c in rig.calls], rig.outcomes), (["start"], ["proved"]))   # not checked
+        self.assertEqual(evidence.load_rounds(self.raw)["rounds"], [])
+        st = rounds.run_rounds(rig.make())                  # the next claim of the given-back task
+        self.assertEqual([c[0] for c in rig.calls], ["start", "resume"])
+        self.assertEqual((st["final"]["outcome"], len(st["rounds"])), ("proved", 1))
+
+    def test_a_pause_hook_that_returns_resumes_at_once(self):
+        paused = []
+        rig = Rig(self.raw, ["proved"], sessions=[{"steps": 2, "exhausted": True}, {"steps": 2, "exhausted": True},
+                                                  {"steps": 6}])
+        st = rounds.run_rounds(rig.make(pause=lambda rm: paused.append(rm["preempt_wait_s"])))
+        self.assertEqual([c[0] for c in rig.calls], ["start", "resume", "resume"])
+        self.assertEqual((paused, st["final"]["outcome"]), ([7300, 7300], "proved"))   # each pause given back once
 
     def test_a_record_is_reused_after_a_stop(self):
         """A stop after the check was recorded: the next call does not check the same run again."""
