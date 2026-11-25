@@ -357,6 +357,31 @@ func TestPreflightDryRun(t *testing.T) {
 	}
 }
 
+// A dry run shows node.json without credentials: the user and password of any URL, and the values of
+// credential-like keys. The real install's node.json is untouched by that.
+func TestPreflightDryRunRedacts(t *testing.T) {
+	sup := filepath.Join(t.TempDir(), "sup.json")
+	os.WriteFile(sup, []byte(`{"gateway_url": "`+pfGW+`", "upstream": "http://admin:hunter2@127.0.0.1:8000",
+		"models": [{"name": "m", "api_key": "sk-abc"}], "extra": {"Password": "pw1", "note": "https://u@example.org/x"}}`), 0o600)
+	o := pfCase{args: []string{"-dry-run", "-account", "link", "-node-config", sup}}.run(t)
+	if o.code != 0 {
+		t.Fatalf("exit %d: %s", o.code, o.stderr)
+	}
+	b, _ := json.Marshal(o.nodeJSON)
+	for _, secret := range []string{"hunter2", "admin", "sk-abc", "pw1", "u@"} {
+		if strings.Contains(string(b), secret) {
+			t.Errorf("dry run shows %q: %s", secret, b)
+		}
+	}
+	if o.nodeJSON["upstream"] != "http://REDACTED@127.0.0.1:8000" || o.nodeJSON["gateway_url"] != pfGW {
+		t.Errorf("dry run node.json %s", b)
+	}
+	o = pfCase{args: []string{"-account", "link", "-node-config", sup}}.run(t)
+	if o.code != 0 || o.nodeJSON["upstream"] != "http://admin:hunter2@127.0.0.1:8000" {
+		t.Errorf("the install's node.json was changed: %v", o.nodeJSON)
+	}
+}
+
 // askTokenState: the token goes in the Authorization header of GET /v1/node/self only; 401 is gone, a held
 // node without an account is held, anything else (or no answer, or a redirect) keeps the token.
 func TestPreflightAskTokenState(t *testing.T) {
