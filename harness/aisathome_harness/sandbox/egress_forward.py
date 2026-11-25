@@ -20,10 +20,11 @@ over TLS with the endpoint's certificate checked (or plain HTTP when the endpoin
   of the request (its body) and of the response are passed through as they come (streams stay streams).
 
 With `--hold-preempted`, a preemption is a pause: after a response that carries an aisathome gateway's
-preemption (`"reason":"preempted"`: a person's request took the node), the next requests wait before they are
-sent on, 5 s after the first preemption in a row, doubling up to 60 s (`Hold`); a response without one ends the
-pause. The client's retry then meets a node that has had time to free up instead of being preempted again at
-once. Off by default.
+preemption (a person's request took the node: `"code":"preempted"` in the HTTP 503 body of a request that had
+not started streaming, `"reason":"preempted"` in the error event that ends one that had: PREEMPT_MARKS), the
+next requests wait before they are sent on, 5 s after the first preemption in a row, doubling up to 60 s
+(`Hold`); a response without one ends the pause. The client's retry then meets a node that has had time to
+free up instead of being preempted again at once. Off by default.
 
 The target is resolved again for every connection, so a changed endpoint address is picked up without a
 restart. Only counts go to the log (no addresses of the client's peers, no headers, no data, never the
@@ -58,7 +59,11 @@ VISIBLE = re.compile(r"[\x21-\x7e]+")       # a request target: visible ASCII on
 CTL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")  # control bytes a header value must not hold (TAB may)
 
 
-PREEMPT_MARK = b'"reason":"preempted"'     # in an aisathome gateway's error body or stream event (code 503)
+# An aisathome gateway's preemption (gateway/preempt.go): `"code":"preempted"` in the 503 body of a request that
+# had not started streaming (preemptedError), `"reason":"preempted"` in the error event that ends one that had
+# (relay.preempted). Both are JSON structure: a model's text or tool arguments inside a stream are JSON strings,
+# whose quotes are escaped, so they cannot hold either mark.
+PREEMPT_MARKS = (b'"code":"preempted"', b'"reason":"preempted"')
 
 
 class Hold:
@@ -92,16 +97,17 @@ class Hold:
 
 
 class Watch:
-    """Whether a byte stream holds `mark`, also split across chunks."""
+    """Whether a byte stream holds one of `marks`, also split across chunks."""
 
-    def __init__(self, mark: bytes):
-        self.mark, self.tail, self.seen = mark, b"", False
+    def __init__(self, *marks: bytes):
+        self.marks, self.tail, self.seen = marks, b"", False
+        self.keep = max(len(m) for m in marks) - 1
 
     def feed(self, data: bytes):
         if not self.seen:
             buf = self.tail + data
-            self.seen = self.mark in buf
-            self.tail = buf[-(len(self.mark) - 1):]
+            self.seen = any(m in buf for m in self.marks)
+            self.tail = buf[-self.keep:] if self.keep else b""
 
 
 class Refused(Exception):
@@ -292,7 +298,7 @@ class Forwarder:
                 return
             self.counters["ok"] += 1
             uw.write(out)
-            watch = Watch(PREEMPT_MARK) if self.hold else None
+            watch = Watch(*PREEMPT_MARKS) if self.hold else None
             await asyncio.gather(pipe(cr, uw, stats, "up"), respond(ur, cw, stats, watch))
             if watch and watch.seen:
                 self.hold.preempted()

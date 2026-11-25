@@ -108,7 +108,8 @@ class Timing:
     # `preempt_backoff_max_s`, without counting against `max_resumes`, until the round has waited
     # `preempt_wait_cap_s` in all (the gaps after preemptions inside segments, and these backoffs); then the
     # session ends with `preempt_wait_exhausted` in run.json, for the project to give the task back. The waits
-    # do not count against the awake ceiling (the model's own time never counted them).
+    # do not count against the awake ceiling, neither in run_session nor in run_segment's live timer (the
+    # model's own time never counted them).
     preempt_wait_cap_s: float = 0
     preempt_backoff_s: float = 15
     preempt_backoff_max_s: float = 60
@@ -586,6 +587,16 @@ def preempt_stats(data: bytes, end_s: float | None = None) -> dict:
     return {"preempted": n, "preempt_wait_s": round(wait, 1)}
 
 
+def segment_preempt_wait_s(path: Path, start: int, now: float) -> float:
+    """preempt_stats' wait for the events in `path` from byte `start` (a segment's), up to `now` (epoch s)."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            return preempt_stats(fh.read(), now)["preempt_wait_s"]
+    except OSError:
+        return 0.0
+
+
 def checkpoint_diff(raw: Path, git: TreeGit) -> int:
     """The model's edits so far (against the base, new files included) to raw/model.diff, written
     atomically. Host-side git never uses the tree's own .git (hostgit). Returns the diff's size in
@@ -700,7 +711,9 @@ def run_segment(cmd: list[str], raw: Path, active_left_s: float, on_tick=None,
                 seg["suspend_interrupted"] = True
                 log(f"machine was suspended for {jump / 60:.1f} min; checkpointing and continuing the session")
                 break
-            if mn - m0 >= active_left_s:
+            # a wait after a preemption is a pause, not awake time (as for the ceiling in run_session)
+            if mn - m0 >= active_left_s and (timing.preempt_wait_cap_s <= 0 or mn - m0 - segment_preempt_wait_s(
+                    raw / "events.jsonl", start_size, wn) >= active_left_s):
                 seg["timed_out"] = True
                 seg["cap"] = "awake ceiling" if model_left_s is not None else "time"
                 break
