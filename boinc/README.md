@@ -91,7 +91,7 @@ key. The gateway is the source of truth; the bridge mirrors it into BOINC:
 |---|---|
 | 60 s | **Demand**: as many pilots as the gateway wants. For each, it creates the pilot at the gateway, writes the credential into the download directory as a per-work-unit input file with an unguessable name (`bin/dir_hier_path`, mode 0640) and runs `bin/create_work` with the pilot's id as the work unit's name, the model as a remote sticky file and the credential as file 1. Unsent work units the gateway no longer wants (newest first), and those whose pilot has less than `min_runway_hours` left, are cancelled (`bin/cancel_jobs --name`) and reported `cancelled`. If BOINC sent the work unit while it was being cancelled, the pilot is not ended: it is bound and reported when its result is over. If `create_work` fails, the pilot is ended and its credential removed only when the work unit really is not there (a timed-out `create_work` may have made it) |
 | 10 s | **Binds and ends**: when BOINC sends a work unit, it tells the gateway the BOINC user, host and team (`result.userid`, `hostid`, `teamid`); when the result is over, it reports the outcome (success, error, `expired` for no reply by the deadline, `cancelled`). A pilot with no work unit 5 minutes after its creation is reported `error` (the bridge stopped between the two steps) |
-| 60 s | **Credit**: for each successful result that waits for validation (every page of them, oldest first, so a backlog still in the gateway's hold never keeps later ones out), it asks the gateway for the pilot's credit and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole) and runs the validator (below) on that one work unit, which grants it. A run that failed is tried again on a later pass, at most every 10 minutes. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
+| 60 s | **Credit**: for each successful result that waits for validation (every page of them, oldest first, so a backlog still in the gateway's hold never keeps later ones out), it asks the gateway for the pilot's credit and, once final (a day after the pilot's end), writes it to `credit_dir/<pilot id>` (one number; written whole) and runs the validator (below) on that one work unit, which grants it. Whether a run granted is read from the database, not from its exit status; one that did not is logged with the validator's output and tried again on a later pass, at most every 10 minutes. A result the validator claimed but did not finish (a run killed between its writes) is never run again, since it could grant twice: it is logged ("stuck" in the status line) for a person to check the totals, as is a result another validator pass left inconclusive (BOINC never asks again for those; setting the work unit's `need_validate` to 1 by hand lets the bridge finish it). Validator runs in one pass start within 2 minutes; the rest wait for the next pass, so binds, reports and requests are not held up. Withheld credit is written as 0; `zero_credit` writes 0 for every pilot (a bridge for a test gateway) |
 | 10 s | **People's requests**: "Run on BOINC" calls `create_account.php` with the address, the display name and the person's password hash (or, without one, the hash of a password derived from the request with the connector key, so a retry after a crash finds the same user), then `am_get_info.php` for the user id and the weak (attach-only) key. A claim calls `am_get_info.php` with the account key the person gave. BOINC's refusals become the request's failure reason; a failed call (network, database, a wrong invitation code) is tried again 2 minutes later |
 | 60 s | A status line in its log (open pilots by state, created, cancelled, bound, reported, requests answered, credit files, errors) |
 
@@ -180,6 +180,14 @@ second). Run on one work unit, a run without the file ends and leaves the work u
 the work unit simply keeps waiting with `need_validate` set until the bridge has its credit. Do not
 start the stock validator daemon for the pilot app.
 
+- **At most once.** The framework writes the credit (user, team and host totals), the result and
+  the work unit in separate statements, so a run killed in between, run again, would grant again.
+  `check_set` therefore claims the result first, in one conditional statement (`result.opaque`
+  from 0 to 1; the framework writes the result back with it). A run that finds the result claimed
+  grants nothing and logs it, and the bridge never runs the validator again on a claimed result
+  that still waits: a person checks whether the interrupted run reached the totals. A run killed
+  after writing the result but before the work unit leaves the work unit without its canonical
+  result (the credit is right; the work unit is not assimilated): also for a person.
 - A file holding 0 (withheld, idle) is valid with no credit.
 - A file that is not one non-negative number is an error, logged: the result waits (the bridge's
   to fix) instead of losing its credit.
@@ -199,8 +207,8 @@ BOINC=/path/to/boinc MYSQL_HOST=127.0.0.1 MYSQL_USER=root MYSQL_PASSWORD=... \
 
 CI builds it against server release 1.6.3 (`server_release/1.6/1.6.3`) and runs both: the
 integration test loads BOINC's own schema, runs the validator on one work unit at a time as the
-bridge does, and checks the grant, the cap, the host and user totals, and that a work unit without
-its file is left exactly as it was.
+bridge does, and checks the grant, the cap, the host and user totals, that a work unit without its
+file is left exactly as it was, and that a result an interrupted run claimed is not granted again.
 
 ## Open
 

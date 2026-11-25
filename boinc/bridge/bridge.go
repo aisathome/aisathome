@@ -86,15 +86,19 @@ type Bridge struct {
 	lastCleanup  time.Time
 	creditNext   map[string]time.Time // pilot → when to ask for its credit again
 	validateNext map[string]time.Time // pilot → when to run the validator on it again
-	reqNext      map[string]time.Time // request → when to try it again
-	st           counters
+	// validateBudget: validator runs in one credit pass start only within this much wall-clock time,
+	// so that binds, reports and requests are not held up; the rest wait for the next pass.
+	validateBudget time.Duration
+	passStart      time.Time
+	reqNext        map[string]time.Time // request → when to try it again
+	st             counters
 }
 
 // counters since the last status line.
 type counters struct {
-	created, cancelled, bound, reported, answered, credited, validated, errors int
-	wanted                                                                     int
-	open                                                                       map[string]int
+	created, cancelled, bound, reported, answered, credited, validated, stuck, errors int
+	wanted                                                                            int
+	open                                                                              map[string]int
 }
 
 // New returns a bridge. key is the connector key. The config is checked (and its defaults
@@ -107,7 +111,8 @@ func New(cfg Config, key string, store Store, tools Tools, rpc RPC, log *slog.Lo
 		return nil, errors.New("no connector key")
 	}
 	return &Bridge{cfg: cfg, gw: NewGateway(cfg.Gateway, cfg.Connector, key), store: store, tools: tools, rpc: rpc,
-		log: log, key: []byte(key), Now: time.Now, creditNext: map[string]time.Time{}, validateNext: map[string]time.Time{}, reqNext: map[string]time.Time{}}, nil
+		log: log, key: []byte(key), Now: time.Now, creditNext: map[string]time.Time{}, validateNext: map[string]time.Time{}, validateBudget: 2 * time.Minute,
+		reqNext: map[string]time.Time{}}, nil
 }
 
 // Run steps every poll interval until ctx ends.
@@ -156,7 +161,7 @@ func (b *Bridge) part(ctx context.Context, name string, f func(context.Context) 
 func (b *Bridge) logStatus() {
 	b.log.Info("bridge status", "open", b.st.open, "wanted", b.st.wanted, "created", b.st.created,
 		"cancelled", b.st.cancelled, "bound", b.st.bound, "reported", b.st.reported, "answered", b.st.answered,
-		"credit_files", b.st.credited, "validated", b.st.validated, "errors", b.st.errors)
+		"credit_files", b.st.credited, "validated", b.st.validated, "stuck", b.st.stuck, "errors", b.st.errors)
 	open := b.st.open
 	b.st = counters{open: open}
 }
@@ -356,6 +361,7 @@ func (b *Bridge) Credit(ctx context.Context) error {
 		}
 	}
 	now := b.Now()
+	b.passStart = time.Time{} // validateBudget counts from the pass's first validator run
 	waiting := make(map[string]bool, len(rows))
 	var errs []error
 	for _, row := range rows {
@@ -427,7 +433,14 @@ func (b *Bridge) Credit(ctx context.Context) error {
 }
 
 // validate runs the validator on a work unit whose credit file is written, at most every
-// validateRetry for the same one.
+// validateRetry for the same one and within the pass's validateBudget, and judges the run by the
+// database, not by the validator's exit status (it ends with 0 also when it granted nothing).
+//
+// Never twice for a claimed result: the validator claims a result before it grants (result.opaque,
+// boinc/validator), and the framework writes the totals, the result and the work unit in separate
+// statements. A claimed result that still waits was interrupted in between; running again could
+// grant twice, so it is left to a person, as is a result another validator left inconclusive
+// (BOINC does not ask again for those).
 func (b *Bridge) validate(ctx context.Context, row Awaiting, now time.Time) error {
 	if b.cfg.Validator == "" {
 		return nil
@@ -436,8 +449,41 @@ func (b *Bridge) validate(ctx context.Context, row Awaiting, now time.Time) erro
 		return nil
 	}
 	b.validateNext[row.Name] = now.Add(validateRetry)
-	if err := b.tools.Validate(ctx, row.WorkunitID); err != nil {
-		return fmt.Errorf("validate %s: %w", row.Name, err)
+	switch {
+	case row.Claimed:
+		b.st.stuck++
+		return fmt.Errorf("validate %s: an earlier validator run claimed it and did not finish; not run again (it could "+
+			"grant twice): check by hand whether that run reached the user, team and host totals", row.Name)
+	case row.ValidateState == ValidateStateInconclusive:
+		b.st.stuck++
+		return fmt.Errorf("validate %s: left inconclusive by another validator pass, which BOINC never asks again for; "+
+			"set the work unit's need_validate to 1 by hand", row.Name)
+	}
+	if b.passStart.IsZero() {
+		b.passStart = time.Now()
+	} else if time.Since(b.passStart) > b.validateBudget {
+		delete(b.validateNext, row.Name) // the next pass, first thing
+		return nil
+	}
+	out, err := b.tools.Validate(ctx, row.WorkunitID)
+	jobs, jerr := b.store.Jobs(ctx, []string{row.Name})
+	if jerr != nil {
+		return errors.Join(fmt.Errorf("validate %s: %w", row.Name, jerr), err)
+	}
+	j, ok := jobs[row.Name]
+	if ok && j.awaitingValidation() {
+		why := "the validator left it waiting"
+		if j.Claimed {
+			b.st.stuck++
+			why = "the validator claimed it but did not finish; it is not run again (it could grant twice): check the totals by hand"
+		}
+		if err != nil {
+			why += " (" + err.Error() + ")"
+		}
+		return fmt.Errorf("validate %s: %s: %s", row.Name, why, out)
+	}
+	if err != nil {
+		b.log.Warn("the validator ended with an error, but the result is no longer waiting", "pilot", row.Name, "err", err)
 	}
 	b.st.validated++
 	return nil
@@ -656,7 +702,11 @@ func (b *Bridge) Check(ctx context.Context) error {
 	if _, err := b.gw.Demand(ctx); err != nil {
 		return fmt.Errorf("gateway: %w", err)
 	}
-	for _, p := range []string{"bin/create_work", "bin/cancel_jobs", "bin/dir_hier_path"} {
+	progs := []string{"bin/create_work", "bin/cancel_jobs", "bin/dir_hier_path"}
+	if b.cfg.Validator != "" {
+		progs = append(progs, b.cfg.Validator)
+	}
+	for _, p := range progs {
 		if info, err := os.Stat(filepath.Join(b.cfg.ProjectDir, p)); err != nil || info.Mode()&0o111 == 0 {
 			return fmt.Errorf("project_dir: no program %s", p)
 		}

@@ -43,6 +43,9 @@ type Job struct {
 	ValidateState int
 	// User, Host and Team are BOINC's ids, set when the result is sent (0 before; Team 0: none).
 	User, Host, Team int64
+	// Claimed: the pilot validator claimed the result (result.opaque 1) before granting its credit.
+	// Claimed and still waiting means a run was interrupted between the framework's writes.
+	Claimed bool
 }
 
 // awaitingValidation: the result succeeded and the validator has not decided on it yet.
@@ -103,9 +106,11 @@ type Store interface {
 // Awaiting is a result that waits for its credit: its id (for paging), its work unit's id and
 // name.
 type Awaiting struct {
-	ResultID   int64
-	WorkunitID int64
-	Name       string
+	ResultID      int64
+	WorkunitID    int64
+	Name          string
+	ValidateState int
+	Claimed       bool
 }
 
 // Tools makes and cancels work units with the project's own programs.
@@ -118,8 +123,9 @@ type Tools interface {
 	CreateWork(ctx context.Context, name, credentialFile string) error
 	// Cancel cancels a work unit (its unsent result is not sent).
 	Cancel(ctx context.Context, name string) error
-	// Validate runs the app's validator on one work unit, whose credit file is written.
-	Validate(ctx context.Context, workunitID int64) error
+	// Validate runs the app's validator on one work unit, whose credit file is written. It returns
+	// the end of the validator's output, for the log when the run did not grant.
+	Validate(ctx context.Context, workunitID int64) (string, error)
 }
 
 // Account is what am_get_info.php says about a BOINC user.

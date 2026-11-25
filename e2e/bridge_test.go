@@ -71,7 +71,7 @@ func (s *boincSim) AwaitingCredit(_ context.Context, after int64, _ int) ([]brid
 	for n, j := range s.jobs {
 		if j.ServerState == bridge.ServerStateOver && j.Outcome == bridge.OutcomeSuccess &&
 			(j.ValidateState == bridge.ValidateStateInit || j.ValidateState == bridge.ValidateStateInconclusive) {
-			out = append(out, bridge.Awaiting{ResultID: s.ids[n], WorkunitID: s.ids[n], Name: n})
+			out = append(out, bridge.Awaiting{ResultID: s.ids[n] + 1000, WorkunitID: s.ids[n], Name: n, ValidateState: j.ValidateState})
 		}
 	}
 	return out, nil
@@ -102,18 +102,18 @@ func (s *boincSim) CreateWork(_ context.Context, name, cred string) error {
 
 // Validate marks the work unit valid (the pilot validator, which the bridge runs once the credit
 // file is there).
-func (s *boincSim) Validate(_ context.Context, id int64) error {
+func (s *boincSim) Validate(_ context.Context, id int64) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.valid = append(s.valid, id)
 	for n, i := range s.ids {
 		if i == id {
 			j := s.jobs[n]
-			j.ValidateState = bridge.ValidateStateValid
+			j.ValidateState, j.Claimed = bridge.ValidateStateValid, true
 			s.jobs[n] = j
 		}
 	}
-	return nil
+	return "", nil
 }
 
 func (s *boincSim) Cancel(_ context.Context, name string) error {
@@ -291,9 +291,9 @@ func TestBridgeEndToEnd(t *testing.T) {
 	}
 
 	// BOINC has the result while the gateway still sees the pilot connected: the bridge's report
-	// ends it and drops its connection. The validator's first look, before the credit file exists,
-	// leaves the result inconclusive; the credit is final a day later, and the file the validator
-	// reads then holds exactly the record's credit.
+	// ends it and drops its connection. The credit is final a day later: the file the validator
+	// reads then holds exactly the record's credit, and the bridge runs the validator on that work
+	// unit once.
 	sim.setJob(id, bridge.Job{HasResult: true, ServerState: bridge.ServerStateOver, Outcome: bridge.OutcomeSuccess, User: 5, Host: 11, Team: 3})
 	if err := b.Sync(ctx); err != nil {
 		t.Fatal(err)
@@ -303,8 +303,6 @@ func TestBridgeEndToEnd(t *testing.T) {
 	}
 	waitUntil(t, "the reported pilot to be dropped", func() bool { return a.g.NodeCount() == 0 })
 	ag.Leave("pilot: idle", 2*time.Second)
-	sim.setJob(id, bridge.Job{HasResult: true, ServerState: bridge.ServerStateOver, Outcome: bridge.OutcomeSuccess, User: 5, Host: 11, Team: 3,
-		ValidateState: bridge.ValidateStateInconclusive})
 	if err := b.Credit(ctx); err != nil {
 		t.Fatal(err)
 	}

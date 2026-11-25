@@ -13,9 +13,21 @@
 #include <vector>
 
 #include "boinc_db.h"
+#include "error_numbers.h"
 #include "validate_util2.h"
 
 int validate_handler_init(int argc, char** argv);
+extern int (*claim_result)(DB_ID_TYPE);
+
+// The claim without a database: results claimed so far, by id.
+static std::vector<DB_ID_TYPE> claimed;
+static int fake_claim(DB_ID_TYPE id) {
+    for (DB_ID_TYPE c : claimed) {
+        if (c == id) return ERR_DB_NOT_UNIQUE;
+    }
+    claimed.push_back(id);
+    return 0;
+}
 
 static int failures = 0;
 static std::string dir;
@@ -42,8 +54,10 @@ static void fail(const char* what, const char* name) {
 }
 
 // One result: wait (error, nothing changed) or canonical and valid with the credit.
+static DB_ID_TYPE next_id = 100;
+
 static void check(const char* name, bool wait, double credit) {
-    std::vector<RESULT> rs{result(7, name)};
+    std::vector<RESULT> rs{result(next_id++, name)};
     WORKUNIT wu;
     wu.clear();
     DB_ID_TYPE canonical = 99;
@@ -53,11 +67,12 @@ static void check(const char* name, bool wait, double credit) {
     if (retry) fail("asked for a retry (the framework would mark it inconclusive)", name);
     if (wait) {
         if (ret == 0) fail("no error while waiting", name);
-        if (canonical != 0 || rs[0].validate_state != VALIDATE_STATE_INIT || rs[0].claimed_credit != -1)
+        if (canonical != 0 || rs[0].validate_state != VALIDATE_STATE_INIT || rs[0].claimed_credit != -1 || rs[0].opaque != 0)
             fail("changed the result while waiting", name);
     } else {
         if (ret != 0) fail("an error", name);
-        if (canonical != 7 || rs[0].validate_state != VALIDATE_STATE_VALID || rs[0].claimed_credit != credit) {
+        if (canonical != rs[0].id || rs[0].validate_state != VALIDATE_STATE_VALID || rs[0].claimed_credit != credit ||
+            rs[0].opaque != 1) {
             printf("    canonical %lu, state %d, credit %f (want %f)\n", (unsigned long)canonical,
                 rs[0].validate_state, rs[0].claimed_credit, credit);
             fail("not canonical and valid with the credit", name);
@@ -71,6 +86,7 @@ int main() {
     if (!mkdtemp(tmpl)) return 2;
     dir = tmpl;
 
+    claim_result = fake_claim;
     const char* noarg[] = {"pilot_validator", NULL};
     if (validate_handler_init(1, (char**)noarg) == 0) fail("started without --credit_dir", "init");
     const char* args[] = {"pilot_validator", "--credit_dir", dir.c_str(), NULL};
@@ -97,6 +113,22 @@ int main() {
     check("p-00000000000f_0", true, 0);         // empty
     check("p-test-20261118152746_0", false, 0); // a test work unit made by hand
     check("p-0123456789AB_0", false, 0);        // not a pilot's name
+
+    // A result an earlier, interrupted run claimed: nothing granted, nothing changed.
+    {
+        std::vector<RESULT> rs{result(500, "p-0123456789ab_0")};
+        claimed.push_back(500);
+        WORKUNIT w;
+        w.clear();
+        DB_ID_TYPE c = 0;
+        double d;
+        bool rt;
+        if (check_set(rs, w, c, d, rt) != ERR_DB_NOT_UNIQUE || c != 0 || rs[0].validate_state != VALIDATE_STATE_INIT ||
+            rs[0].claimed_credit != -1)
+            fail("an already claimed result was granted again", "claimed");
+        else
+            printf("ok   claimed by an earlier run\n");
+    }
 
     // Two results (there should never be): the first is canonical, the second invalid.
     std::vector<RESULT> two{result(1, "p-0123456789ab_0"), result(2, "p-0123456789ab_1")};
