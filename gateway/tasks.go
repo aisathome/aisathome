@@ -18,7 +18,7 @@
 //
 // Endpoints, all with the project's own key (401 without one, 403 with another project's):
 //
-//	POST /v1/projects/{id}/tasks                    create (idempotent by the client's task id; replaces a cancelled task that never ran)
+//	POST /v1/projects/{id}/tasks                    create (idempotent by the client's task id; repost_cancelled replaces a cancelled task that never ran)
 //	GET  /v1/projects/{id}/tasks?state=&kind=&role= list (summaries; also an admin's session)
 //	GET  /v1/projects/{id}/tasks/{task}             one task with its spec and result (same)
 //	POST /v1/projects/{id}/tasks/claim              take the next task of the given kinds and a lease (204: none)
@@ -61,13 +61,14 @@
 // the public views read (legacySpecRef). Finished tasks not yet compacted that hold more than
 // maxFullBytes are compacted early, oldest first, so memory stays bounded either way.
 //
-// Re-creating a cancelled task: a create of the id of a cancelled task that never ran (no worker ever
-// claimed it: tries 0, no start, lease, result, interruption, hold, live count or node, and not
-// compacted; cancelledUnrun in tasks_store.go) replaces that task with the new one, whatever its
-// content: queued, a new place in creation order, nothing of the cancel kept, 201 as for a new task
-// (and, for campaign_auto_finish, a new task: it reopens its finished campaign). A project that
-// withdrew queued work can post it again under its own ids, as it was or changed. Any other existing
-// task answers as before: 200 for the same content, 409 for other content.
+// Re-creating a cancelled task: a create with repost_cancelled of the id of a cancelled task that
+// never ran (no worker ever claimed it: tries 0, no start, lease, result, interruption, hold, live
+// count or node, and not compacted; cancelledUnrun in tasks_store.go) replaces that task with the new
+// one, whatever its content: queued, a new place in creation order, nothing of the cancel kept, 201
+// as for a new task (and, for campaign_auto_finish, a new task: it reopens its finished campaign). A
+// project that withdrew queued work can post it again under its own ids, as it was or changed; only
+// on purpose, so a repeated create of withdrawn work never brings it back. Without the flag, and for
+// any other existing task, a create answers as before: 200 for the same content, 409 for other.
 //
 // Private: the spec, the title, prompts, workers, leases, errors and events stay with the project
 // key and the admins. Each task is one file under state_dir/tasks-<project>/, written atomically
@@ -288,6 +289,9 @@ type taskNew struct {
 	Replaces string            `json:"replaces,omitempty"`
 	Labels   map[string]string `json:"labels,omitempty"`
 	HoleID   string            `json:"hole_id,omitempty"`
+	// RepostCancelled: replace a cancelled task of this id that never ran (Re-creating a cancelled
+	// task, above). Not stored.
+	RepostCancelled bool `json:"repost_cancelled,omitempty"`
 }
 
 // taskControl is the body of claim, heartbeat, complete, fail and cancel (the fields each needs).

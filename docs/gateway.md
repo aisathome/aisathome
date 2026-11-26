@@ -182,13 +182,15 @@ shares, all of them public:
 
 **Creating a task again.** `create` is idempotent by the task's id: an existing task with the same
 content answers 200 with `"created": false` and stays as it is, one with other content answers 409.
-One exception: a cancelled task that never ran (no worker ever claimed it: `tries` 0, no
-`started_at`, no lease, no result, no interruptions, and not yet compacted) is replaced by the next
-`create` of its id, with the same content or another: the new task is queued, takes a new place in
-creation order (its `order` counts as for any task), keeps nothing of the cancel (`closed_by`, the
-reason) and answers 201 with `"created": true`, as a new task. A project that withdrew queued work
-can so post it again under its own ids. A task that was cancelled after a worker took it, and every
-queued, leased, done or failed task, answers as above.
+One exception, on request: a `create` with `"repost_cancelled": true` of the id of a cancelled task
+that never ran (no worker ever claimed it: `tries` 0, no `started_at`, no lease, no result, no
+interruptions, and not yet compacted) replaces that task, with the same content or another: the new
+task is queued, takes a new place in creation order (its `order` counts as for any task), keeps
+nothing of the cancel (`closed_by`, the reason) and answers 201 with `"created": true`, as a new
+task. A project that withdrew queued work can so post it again under its own ids. The flag is not
+stored with the task. Without it a create of a cancelled task answers as above, so a tool that
+repeats its creates never brings withdrawn work back; and a task that was cancelled after a worker
+took it, and every queued, leased, done or failed task, answers as above with the flag too.
 
 `closed_by` comes with `complete` or `cancel` when a task ended without work because something else
 closed it: another task's id, or `reuse:<by>`. A claim names the `kinds` its worker runs (none: any).
@@ -338,7 +340,7 @@ between the sweep's read and its write is left for the next sweep.
 A new task whose labels name a `finished` campaign of the project reopens it: `running`, no
 `ended_at`, `started_at` kept (now if it had none); the log says `campaign reopened by a new task`.
 A repeated create of an existing task reopens nothing; a create that replaces a cancelled task that
-never ran (above) is a new task and reopens it. The sweep finishes the campaign again once
+never ran (`repost_cancelled`, above) is a new task and reopens it. The sweep finishes the campaign again once
 that work is over, with the new last end. The sweep and the reopen take turns, so a task created
 while a sweep runs either keeps its campaign open or reopens it right after. A failed reopen is
 logged and the task stands. `PATCH {"status": "finished"}` still finishes a campaign at once, for

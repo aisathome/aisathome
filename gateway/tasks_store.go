@@ -364,9 +364,9 @@ func cancelledUnrun(t *Task) bool {
 	return true
 }
 
-// create adds a task, or returns the existing one with the same id and content (created false). A
-// cancelled task that never ran (cancelledUnrun) is replaced by the new one, as a new task (created
-// true).
+// create adds a task, or returns the existing one with the same id and content (created false). With
+// repost_cancelled, a cancelled task that never ran (cancelledUnrun) is replaced by the new one, as a
+// new task (created true).
 func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -389,7 +389,7 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 		n.Labels = nil
 	}
 	old := p.byID[n.ID]
-	if t := old; t != nil && !cancelledUnrun(t) {
+	if t := old; t != nil && !(n.RepostCancelled && cancelledUnrun(t)) {
 		if !sameNew(t, n, spec, maxTries) {
 			return nil, false, terr(http.StatusConflict, "task %s exists with other content; a new task needs a new id", n.ID)
 		}

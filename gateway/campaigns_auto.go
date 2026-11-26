@@ -19,7 +19,7 @@
 // has read and that changes before the sweep writes is left alone (the write is conditional on
 // updated_at), and a campaign that is preparing is never touched.
 //
-// Reopening: a task created (a new one, or one that replaced a cancelled task that never ran; a
+// Reopening: a task created (a new one, or one that replaced a cancelled task that never ran with repost_cancelled; a
 // repeated create changes nothing) whose labels name a
 // finished campaign of the project puts that campaign back to running and clears its ended_at
 // (started_at stays); the sweep finishes it again once that work is over. The sweep and the reopen
