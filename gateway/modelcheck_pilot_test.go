@@ -133,23 +133,41 @@ func TestModelCheckLeavesIdlePilots(t *testing.T) {
 	}
 }
 
+// pilotIdleLocked: idle from pilot_idle after its last request ended, or after it first connected; a
+// reconnect keeps what the pilot's earlier connections had (its own idle clock runs on); never for a
+// node that is no pilot.
 func TestPilotIdle(t *testing.T) {
+	entry, _ := testMCRef(t, 20)
 	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
-	d := 10 * time.Minute
 	for name, c := range map[string]struct {
 		n    *nodeConn
 		at   time.Duration
 		want bool
 	}{
-		"new pilot":                       {&nodeConn{pilot: "p", since: t0}, 9 * time.Minute, false},
-		"pilot never served":              {&nodeConn{pilot: "p", since: t0}, 10 * time.Minute, true},
-		"pilot, last request ended late":  {&nodeConn{pilot: "p", since: t0, realEnd: t0.Add(5 * time.Minute)}, 14 * time.Minute, false},
-		"pilot, last request ended early": {&nodeConn{pilot: "p", since: t0, realEnd: t0.Add(5 * time.Minute)}, 15 * time.Minute, true},
-		"pilot serving":                   {&nodeConn{pilot: "p", since: t0, realWork: 1}, 5 * time.Hour, false},
-		"no pilot":                        {&nodeConn{since: t0}, 5 * time.Hour, false},
+		"new pilot":                       {&nodeConn{id: "p", pilot: "p", since: t0}, 9 * time.Minute, false},
+		"pilot never served":              {&nodeConn{id: "p", pilot: "p", since: t0}, 10 * time.Minute, true},
+		"pilot, last request ended late":  {&nodeConn{id: "p", pilot: "p", since: t0, realEnd: t0.Add(5 * time.Minute)}, 14 * time.Minute, false},
+		"pilot, last request ended early": {&nodeConn{id: "p", pilot: "p", since: t0, realEnd: t0.Add(5 * time.Minute)}, 15 * time.Minute, true},
+		"pilot serving":                   {&nodeConn{id: "p", pilot: "p", since: t0, realWork: 1}, 5 * time.Hour, false},
+		"no pilot":                        {&nodeConn{id: "n", since: t0}, 5 * time.Hour, false},
 	} {
-		if got := c.n.pilotIdle(t0.Add(c.at), d); got != c.want {
+		mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}}, "")
+		now := t0.Add(c.at)
+		if got := mc.pilotIdleLocked(c.n, c.n.lastRealWork(now), now); got != c.want {
 			t.Errorf("%s: idle %v, want %v", name, got, c.want)
 		}
+	}
+
+	// A lost link: the pilot was idle, and its new connection does not open a new window.
+	mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}}, "")
+	first := &nodeConn{id: "p", pilot: "p", since: t0, realEnd: t0.Add(time.Minute)}
+	mc.pilotIdleLocked(first, first.lastRealWork(t0.Add(5*time.Minute)), t0.Add(5*time.Minute))
+	back := &nodeConn{id: "p", pilot: "p", since: t0.Add(12 * time.Minute)}
+	if now := t0.Add(12 * time.Minute); !mc.pilotIdleLocked(back, back.lastRealWork(now), now) {
+		t.Error("a reconnect opened a new probe window for an idle pilot")
+	}
+	back.realEnd = t0.Add(20 * time.Minute) // a request on the new connection counts
+	if now := t0.Add(25 * time.Minute); mc.pilotIdleLocked(back, back.lastRealWork(now), now) {
+		t.Error("idle 5 minutes after a request")
 	}
 }

@@ -78,7 +78,7 @@ type ModelCheckConfig struct {
 	// node not admitted gets nothing else to do).
 	AdmitSec int `json:"admit_seconds"`
 	// PilotIdleSec: a pilot (connector.go) that has had no request but probes for this long (since its
-	// last one ended, or since it connected) gets no probe prompt until a request comes again. A
+	// last one ended, or since it first connected) gets no probe prompt until a request comes again. A
 	// pilot leaves after 30 minutes without a request (node/pilot) and cannot tell a probe from a
 	// request, so probes alone would keep it on a volunteer's GPU with no work and no credit; with
 	// this, it leaves at most this long (plus one probe's answer) later than 30 minutes after its last
@@ -123,6 +123,9 @@ const (
 	mcMaxAnswer = 4096
 	// mcKeepNodes: a node not seen for this long is forgotten (it holds an operator name).
 	mcKeepNodes = 30 * 24 * time.Hour
+	// mcPilotKeep: a pilot away this long after its last request is forgotten by pilotIdleLocked (back
+	// later, its probe window counts from that connection again).
+	mcPilotKeep = 24 * time.Hour
 	// mcGap: a results file last saved longer ago than this was left by a check that was off.
 	mcGap = 24 * time.Hour
 	// ModelCheckFile is the result file in state_dir.
@@ -257,8 +260,11 @@ type modelChecker struct {
 	next    map[string]time.Time  // node id: when its next probe prompt is due
 	pending map[string][]mcAnswer // node id: answers of its check in progress
 	running map[string]bool       // node id: a probe is in flight
-	dirty   bool
-	rng     *rand.Rand
+	// pilotLast: pilot id: its last request that is no probe (or its first connection), also while
+	// it is away (pilotIdleLocked); forgotten mcPilotKeep after that.
+	pilotLast map[string]time.Time
+	dirty     bool
+	rng       *rand.Rand
 }
 
 func (mc *modelChecker) now() time.Time {
@@ -291,7 +297,7 @@ func newModelChecker(cfg ModelCheckConfig, stateDir string, log *slog.Logger) (*
 	}
 	mc := &modelChecker{cfg: cfg, th: modelcheck.DefaultThresholds, refs: map[string]*mcRef{}, admits: map[string]*mcRef{},
 		cover: defaultCoverShare, log: log,
-		next: map[string]time.Time{}, pending: map[string][]mcAnswer{}, running: map[string]bool{},
+		next: map[string]time.Time{}, pending: map[string][]mcAnswer{}, running: map[string]bool{}, pilotLast: map[string]time.Time{},
 		rng: rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))}
 	if cfg.CoverShare != nil {
 		if *cfg.CoverShare < 0 || *cfg.CoverShare > 1 {
@@ -486,25 +492,37 @@ func (mc *modelChecker) pilotIdleFor() time.Duration {
 	return time.Duration(mc.cfg.PilotIdleSec) * time.Second
 }
 
-// pilotIdle reports whether n is a pilot that has had no request but probes for at least d at now:
-// none in flight, and the last one ended (or, without one yet, it connected) d ago or longer. Only
-// the gateway's own record of the requests it relayed counts; nothing is sent to the pilot. A
-// pilot needs no passed check to get requests (routing.go, allows), so a new pilot that gets none
-// is left alone after d too.
-func (n *nodeConn) pilotIdle(now time.Time, d time.Duration) bool {
-	if n.pilot == "" {
-		return false
-	}
+// lastRealWork is when n last had a request that is no probe, by this connection: now while one is
+// in flight, else when the last one ended (zero: none yet). Only the gateway's own record of the
+// requests it relayed counts.
+func (n *nodeConn) lastRealWork(now time.Time) time.Time {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.realWork > 0 {
+		return now
+	}
+	return n.realEnd
+}
+
+// pilotIdleLocked reports whether n is a pilot that has had no request but probes for pilotIdleFor at
+// now: none in flight, and the last one ended (or, without one yet, it first connected) that long
+// ago or longer. real is its connection's lastRealWork. It is kept per pilot across connections
+// (pilotLast), as the pilot's own idle clock runs on through a lost link: a reconnect opens no new
+// window. A pilot needs no passed check to get requests (routing.go, allows), so a new pilot that
+// gets none is left alone after pilotIdleFor too. Caller holds mc.mu.
+func (mc *modelChecker) pilotIdleLocked(n *nodeConn, real, now time.Time) bool {
+	if n.pilot == "" {
 		return false
 	}
-	last := n.since
-	if n.realEnd.After(last) {
-		last = n.realEnd
+	last, ok := mc.pilotLast[n.id]
+	if !ok {
+		last = n.since
 	}
-	return now.Sub(last) >= d
+	if real.After(last) {
+		last = real
+	}
+	mc.pilotLast[n.id] = last
+	return now.Sub(last) >= mc.pilotIdleFor()
 }
 
 // anonAdmitted reports whether the record s admits a node without an account (anon.go): anonAdmitChecks
@@ -698,9 +716,10 @@ func (g *Gateway) mcTick() {
 		g.mu.Lock()
 		held := n.held
 		g.mu.Unlock()
-		idle := n.pilotIdle(now, mc.pilotIdleFor())
+		real := n.lastRealWork(now)
 		mc.mu.Lock() // never under g.mu: mc.mu is not taken inside g.mu anywhere
 		s := mc.nodeLocked(n, model, now)
+		idle := mc.pilotIdleLocked(n, real, now) // every tick: it notes the pilot's requests
 		next, ok := mc.next[n.id]
 		if !ok { // first sight since it connected: its first prompt comes at a random time
 			mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n)))
@@ -762,6 +781,11 @@ func (g *Gateway) mcTick() {
 		if !live[id] && !mc.running[id] {
 			delete(mc.next, id)
 			delete(mc.pending, id)
+		}
+	}
+	for id, last := range mc.pilotLast {
+		if !live[id] && now.Sub(last) > mcPilotKeep {
+			delete(mc.pilotLast, id)
 		}
 	}
 	mc.mu.Unlock()

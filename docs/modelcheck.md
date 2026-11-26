@@ -74,7 +74,9 @@ above (KL per group of 4 prompts, confident flips, the same limits).
   and cannot tell a probe from one, so probes alone would keep it on a volunteer's GPU with no
   work and no credit. The gateway therefore sends a pilot no probe once it has had no request but
   probes for `pilot_idle_seconds` (600): none in flight, and the last one ended (or, before any,
-  it connected) that long ago, by the gateway's own record of what it relayed. Its next prompt is
+  it first connected) that long ago, by the gateway's own record of what it relayed, kept per
+  pilot across a lost link (a reconnect opens no new window; forgotten a day after its last
+  request). Its next prompt is
   drawn afresh at the time one falls due, so probes resume at a random time once requests come
   again, never at a set delay after the first. A pilot needs no passed check before it gets
   requests, so a new pilot is probed only in its first `pilot_idle_seconds` until work comes. It
