@@ -7,6 +7,25 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+## [0.4.0] - unreleased
+
+### Added
+
+- **A queue worker's slot gate** (`slotgate`), taken out of prove2me's runner (which now uses it, with the same
+  behaviour). `SlotGate` is a `Worker` `gate`: no new task that uses the model while the project's leased model
+  tasks, and the tasks given back and still held for their worker, reach `per_slot` times the model slots online
+  (the gateway's public `/v1/stats` `nodes.slots`; unreadable: no slot limit that time, logged). With idle release
+  (`idle_s`) a leased task holds its slot only while it starts up (no model request ended in its lease, for at most
+  `startup_s`, default 300 s), has a model call in flight (`live.in_flight`) or ended one less than `idle_s` ago
+  (`live.updated_at`); a gateway without `live.in_flight` leaves every leased task counted; a ceiling of
+  `max_per_slot` (default 2, never below `per_slot`) leased tasks per slot stays. An optional memory gate
+  (`MemoryGate`: MemTotal less the memory the page cache cannot have and a reserve must leave room for one more
+  session) holds model tasks too. The gate picks the task to claim, by id (`Picking` wraps the client): the first
+  queued one in the gateway's claim order (requeued first, then `order`, then `seq`) of the worker's kinds, not
+  held for another worker, not skipped by this worker, and one this release can run (`runnable`); while the slots
+  are full only tasks that use no model (`uses_model`) are picked. `spare_capacity` counts the room left alike.
+  Standard library only; the project passes its settings as values.
+
 ## [0.3.0] - 2026-11-25
 
 The first tag since 0.2.0. It holds the entries below, the queue worker (the next section) and the fixes
