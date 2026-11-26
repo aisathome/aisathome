@@ -2,24 +2,26 @@
 // The chart of proofs prove2me accepted, counted up over time (src/data/prove2me-chart.ts), with its legend, a text
 // alternative (the SVG's aria-label) and its numbers in a table. On the home page and on /science/prove2me/. The build
 // draws it at a default width; the page's script mounts it (mountAcceptedChart), which draws it again at its real width
-// and with the gateway's newer records. Extra attributes go on the figure (the home page keeps data-home-p2m-chart).
+// and with the gateway's newer records. With nothing to draw (no proof accepted yet) the figure is there but hidden, so
+// the live records can fill it; a live read with nothing accepted hides it again. Extra attributes go on the figure
+// (the home page keeps data-home-p2m-chart).
 import { acceptedChartSVG, acceptedRowsHTML, type AcceptedSeries } from '../data/prove2me-chart';
 
 interface Props {
-	series: AcceptedSeries;
+	series: AcceptedSeries | null;
 	[attr: string]: unknown;
 }
 const { series, class: cls, ...attrs } = Astro.props;
 ---
 
-<figure class:list={['p2m-chart not-content', cls as string | undefined]} data-p2m-chart data-source="build" {...attrs}>
+<figure class:list={['p2m-chart not-content', cls as string | undefined]} data-p2m-chart data-source="build" hidden={!series} {...attrs}>
 	<figcaption>Proofs accepted by prove2me, counted up</figcaption>
 	<ul class="legend" aria-hidden="true">
 		<li><span class="swatch dot"></span>Proof</li>
 		<li><span class="swatch dot hollow"></span>Closed by reusing a proof</li>
 		<li><span class="swatch dash"></span>A trial starts (its number above)</li>
 	</ul>
-	<div class="p2m-svg" data-p2m-chart-svg set:html={acceptedChartSVG(series)} />
+	<div class="p2m-svg" data-p2m-chart-svg set:html={series ? acceptedChartSVG(series) : ''} />
 	<details class="p2m-chart-table">
 		<summary>The numbers</summary>
 		<div class="p2m-chart-wrap" tabindex="0" role="region" aria-label="Proofs accepted by prove2me, newest first">
@@ -33,7 +35,7 @@ const { series, class: cls, ...attrs } = Astro.props;
 						<th scope="col" class="num">Total</th>
 					</tr>
 				</thead>
-				<tbody data-p2m-chart-rows set:html={acceptedRowsHTML(series)} />
+				<tbody data-p2m-chart-rows set:html={series ? acceptedRowsHTML(series) : ''} />
 			</table>
 		</div>
 	</details>
@@ -48,6 +50,7 @@ const { series, class: cls, ...attrs } = Astro.props;
 		margin: 0;
 		min-width: 0;
 	}
+	.p2m-chart[hidden] { display: none !important; }
 	:global(:root[data-theme='light']) .p2m-chart { --c-line: #1baf7a; }
 	figcaption { margin-bottom: 0.4rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
 	.legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0 0 0.5rem; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }

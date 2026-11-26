@@ -83,8 +83,8 @@ const cards = [
 </StarlightPage>
 
 <script>
-	// prove2me's card, live: the build's history with the gateway's records (prove2me-records.ts); without them the
-	// build's numbers stay.
+	// prove2me's card, live: the build's history with the gateway's records (prove2me-records.ts), on load and every
+	// minute while the page is visible; without them the card keeps what it shows.
 	import { liveSummary, type History } from '../../data/prove2me-records';
 	import { cardNumbersHTML } from '../../data/prove2me-view';
 	import { day, hhmm } from '../../data/prove2me-current';
@@ -102,10 +102,11 @@ const cards = [
 			if (asOf) asOf.textContent = `Live, ${day(v.updated)}, ${hhmm(v.updated)}. `;
 			card.dataset.source = 'live';
 		} catch {
-			// keep the build's numbers
+			// keep what the card shows
 		}
 	};
 	load();
+	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>
 
 <style>

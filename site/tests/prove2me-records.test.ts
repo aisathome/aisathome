@@ -11,9 +11,10 @@ import fixture from './fixtures/prove2me-records-2026-11-18.json';
 import type { Prove2me } from '../src/data/prove2me';
 import { parseCurrent, type CurrentDoc, type PublicTask } from '../src/data/prove2me-current';
 import {
-	builtDetail, builtTaskRows, docFromCampaign, fetchRecords, historyOf, liveSummary, nowDocs, parseCampaigns, parseResults, scienceView, trialDetails,
-	type Campaign, type Records,
+	DECIDING_TASKS_URL, builtDetail, builtTaskRows, docFromCampaign, fetchRecords, historyOf, liveSummary, nowDocs, parseCampaigns, parseResults, scienceView,
+	trialDetails, type Campaign, type Records,
 } from '../src/data/prove2me-records';
+import { provesLeaf } from '../src/data/prove2me-outcomes';
 import { cardNumbers, homeLine, kpisHTML, newestFirst, plainHTML, smallNumbersHTML, submissionRowHTML, submissionRowsHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
 
 const p2m = raw as unknown as Prove2me;
@@ -239,7 +240,7 @@ test('campaigns and results: every page, a bad entry left out, a failed source k
 		seen.push(u);
 		return u.startsWith('/v1/tasks') ? fixture.tasks : get(u);
 	});
-	assert.ok(seen.includes('/v1/tasks?project=prove2me&role=outline,assembly&limit=500'));
+	assert.ok(seen.includes('/v1/tasks?project=prove2me&role=outline,assembly,rest&limit=500'));
 	assert.equal(v!.kpis.accepted, 8);
 	assert.equal(await liveSummary(h, async () => Promise.reject(new Error('down'))), null);
 });
@@ -332,4 +333,42 @@ test('a leaf whose in-place task’s own file passed our full check is proved, w
 	// an in-place task that only filled the holes in (`rest_done`) proves nothing until its assembly passes
 	const filled: Records = { ...live, tasks: { ...live.tasks, tasks: live.tasks.tasks.map((x) => (x.id === 't8-p2m-a5e581-s1-rest' ? { ...x, outcome: 'rest_done' } : x)) } };
 	assert.equal(scienceView(h, filled).kpis.openProved, before.kpis.openProved);
+});
+
+test('the home page’s and /science/’s live query asks for every task that can prove a leaf (the outcome rules’ own)', () => {
+	const roles = new URL(DECIDING_TASKS_URL, 'https://x').searchParams.get('role')!.split(',');
+	// the gateway's roles of a prove2me task (docs/gateway.md): the query asks for exactly those whose `proved` proves the leaf
+	for (const role of ['outline', 'hole', 'rest', 'assembly'])
+		assert.equal(roles.includes(role), provesLeaf({ kind: role, state: 'done', outcome: 'proved' }), role);
+});
+
+test('live on the home page and /science/: a leaf proved by its in-place task counts among the open leaves proved', async () => {
+	// p2m-a5e581's shape (trial 11): an outline with holes in place, its in-place task `proved`, no assembly; the gateway
+	// answers the role filter as it does (tasks_public.go), so a query without `rest` never sees that task
+	const r = records();
+	const item = { id: 'p2m-a5e581', title: 'Alice’s marginal is uniform', url: 'https://prove2.me/theorems/a5e5811e-f6e9-43fa-a118-efc1aa39a5d4', role: 'open', labels: { alias: 'N32', group: 'open', theorem: 'RelativisticZK205.ThreeCol.pr_no_signalling' } };
+	const base = fixture.tasks.tasks.find((x) => x.labels.trial === 't8' && x.role === 'hole' && x.started_at)!;
+	const task = (id: string, role: string, outcome: string) => ({
+		...base, id, role, state: 'done', outcome, parent: role === 'rest' ? 't8-p2m-a5e581-s1' : null, started_at: '2026-11-17T20:48:54Z',
+		labels: { alias: 'N32', group: 'open', leaf: 'p2m-a5e581', outline: '1', scaffold: 'v9', trial: 't8' },
+	});
+	const campaigns = { ...fixture.campaigns, campaigns: fixture.campaigns.campaigns.map((c) => (c.id === 't8' ? { ...c, items: [...c.items, item] } : c)) };
+	const all = [...fixture.tasks.tasks, task('t8-p2m-a5e581-s1', 'outline', 'outline'), task('t8-p2m-a5e581-s1-rest', 'rest', 'proved')];
+	const gateway = async (u: string) => {
+		const url = new URL(u, 'https://x');
+		if (url.pathname === '/v1/projects/prove2me/campaigns') return campaigns;
+		if (url.pathname === '/v1/projects/prove2me/results') return fixture.results;
+		if (url.pathname !== '/v1/tasks') throw new Error(`404 ${u}`);
+		const roles = url.searchParams.get('role')?.split(',');
+		return { ...fixture.tasks, tasks: roles ? all.filter((t) => roles.includes(t.role as string)) : all };
+	};
+	const before = scienceView(h, r).kpis;
+	const v = (await liveSummary(h, gateway))!;
+	assert.deepEqual([v.kpis.openProved, v.kpis.openTried], [before.openProved + 1, before.openTried + 1]);
+	assert.ok(v.kpis.openProvedLeaves.some((l) => l.leaf === 'p2m-a5e581'));
+	// the same count as the prove2me page, which reads every task
+	const page = scienceView(h, (await fetchRecords(gateway))!);
+	assert.deepEqual([v.kpis.openProved, v.kpis.openTried, v.kpis.accepted], [page.kpis.openProved, page.kpis.openTried, page.kpis.accepted]);
+	assert.match(homeLine(v, 'M'), new RegExp(`it proved ${before.openProved + 1} of the ${before.openTried + 1} open lemmas`));
+	assert.equal(cardNumbers(v).find((n) => n.key === 'open')!.value, `${before.openProved + 1} of ${before.openTried + 1}`);
 });

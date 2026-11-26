@@ -171,7 +171,7 @@ const leafCols = [
 	{/* The build's numbers; the browser redoes them from the gateway's records (see the script). */}
 	<dl class="p2m-kpis not-content" data-p2m-kpis data-source="build" style={`--kpis: ${kp.n}`} set:html={kp.html} />
 	<p data-p2m-small set:html={smallNumbersHTML(view, f01?.tasks?.length, idOfAlias)} />
-	{acceptedOverTime && <AcceptedChart series={acceptedOverTime} class="p2m-accepted-chart" />}
+	<AcceptedChart series={acceptedOverTime} class="p2m-accepted-chart" />
 
 	<section class="p2m-live not-content" data-p2m-live hidden aria-labelledby="p2m-live-head">
 		<h3 id="p2m-live-head">prove2me on the network</h3>
@@ -412,8 +412,13 @@ const leafCols = [
 		</li>
 		<li>
 			<strong>These are our own measurements</strong>, from the records of each run, not estimates. The model runs on the AIs@home
-			network, which today is mostly the maintainer’s own GPUs, some of them rented. The data is published as JSON:
-			{' '}<a href="/science/prove2me.json" data-p2m-json><code>/science/prove2me.json</code></a>.
+			network, which today is mostly the maintainer’s own GPUs, some of them rented. The recorded history is published as
+			JSON, as exported on <span data-p2m-json-asof>{day(p2m.generated_at)}</span>, its totals as of that day (the page takes
+			trials 1 to {FROZEN_THROUGH} from it): <a href="/science/prove2me.json" data-p2m-json><code>/science/prove2me.json</code></a>.
+			Everything else comes live from the gateway’s public records, which this page reads every minute:
+			{' '}<a href="/v1/projects/prove2me/campaigns" data-p2m-records-link="campaigns"><code>campaigns</code></a>,
+			{' '}<a href="/v1/projects/prove2me/results" data-p2m-records-link="results"><code>results</code></a> and
+			{' '}<a href="/v1/tasks?project=prove2me" data-p2m-records-link="tasks"><code>tasks</code></a>.
 		</li>
 	</ul>
 

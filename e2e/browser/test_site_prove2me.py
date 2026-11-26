@@ -25,6 +25,7 @@ import re
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import expect
@@ -795,6 +796,99 @@ def test_prove2me_page_chart_of_accepted_proofs(pages, site, records):
     still.goto(site + PAGE)
     expect(still.locator("figure[data-p2m-chart] svg[role=img] circle").first).to_be_attached()
 
+
+
+# ---- the home page and /science/: live, every minute, with the leaves the in-place task proved
+
+def _serve_tasks(page, tasks):
+    """GET /v1/tasks as the gateway answers it (tasks_public.go): a `role` list keeps only the tasks of those roles."""
+    def answer(route):
+        roles = parse_qs(urlparse(route.request.url).query).get("role")
+        keep = set(roles[0].split(",")) if roles else None
+        body = dict(tasks, tasks=[t for t in tasks["tasks"] if keep is None or t.get("role") in keep])
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.unroute("**/v1/tasks?*")
+    page.route("**/v1/tasks?*", answer)
+
+
+def _with_inplace_proof(records):
+    """The records with trial 11's p2m-a5e581 shape added to trial 8: an outline with its holes in place and the in-place
+    task proved (its own file passed the full check), no assembly. Open leaves proved: 7 of 27 instead of 6 of 26."""
+    rec = json.loads(json.dumps(records))
+    t8 = next(c for c in rec["campaigns"]["campaigns"] if c["id"] == "t8")
+    t8["items"].append({"id": "p2m-a5e581", "title": "Alice’s marginal is uniform", "role": "open",
+                        "url": "https://prove2.me/theorems/a5e5811e-f6e9-43fa-a118-efc1aa39a5d4",
+                        "labels": {"alias": "N32", "group": "open", "theorem": "RelativisticZK205.ThreeCol.pr_no_signalling"}})
+    base = next(t for t in rec["tasks"]["tasks"] if t["labels"].get("trial") == "t8" and t.get("role") == "hole" and t.get("started_at"))
+    labels = {"alias": "N32", "group": "open", "leaf": "p2m-a5e581", "outline": "1", "scaffold": "v9", "trial": "t8"}
+    for id_, role, outcome in (("t8-p2m-a5e581-s1", "outline", "outline"), ("t8-p2m-a5e581-s1-rest", "rest", "proved")):
+        rec["tasks"]["tasks"].append(dict(base, id=id_, role=role, state="done", outcome=outcome, closed_by=None,
+                                          parent="t8-p2m-a5e581-s1" if role == "rest" else None, labels=labels))
+    return rec
+
+
+def test_home_and_science_count_a_leaf_its_in_place_task_proved(pages, site, records):
+    """Code review: the home page and /science/ asked the gateway for outline and assembly tasks only, so a leaf proved
+    by its in-place task (outcome `proved` on a `rest` task, as trial 11's p2m-a5e581) dropped out of their count of open
+    leaves proved while the prove2me page counted it. With a gateway that filters by role as the real one does, all three
+    say 7 of 27."""
+    rec = _with_inplace_proof(records)
+    for path, sel, want in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-text]", re.compile(r"it proved 7 of the 27 open lemmas")),
+                            ("/science/", "[data-project=prove2me][data-source=live] [data-number=open] dd", "7 of 27"),
+                            (PAGE, "[data-p2m-kpis][data-source=live] [data-kpi=open] dd", "7")):
+        page = _page(pages, live=(404, rec["tasks"]), records={"campaigns": rec["campaigns"], "results": rec["results"]})
+        _serve_tasks(page, rec["tasks"])
+        page.goto(site + path)
+        expect(page.locator(sel)).to_have_text(want)
+
+
+def _pending(records, n=None):
+    """The results with every verdict (or all but the first n) pending: nothing accepted counts."""
+    res = json.loads(json.dumps(records["results"]))
+    for r in res["results"][n or 0:]:
+        r["state"], r["verdict_at"] = "pending", None
+    return res
+
+
+def test_home_and_science_refresh_every_minute(pages, site, records):
+    """The home page's prove2me line and chart and the /science/ card read the gateway's records again every minute
+    (as the live strip and the prove2me page do): a proof prove2me accepts after the page opened shows without a reload."""
+    for path, sel in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-accepted]"),
+                      ("/science/", "[data-project=prove2me][data-source=live] [data-number=accepted] dd")):
+        page = _page(pages, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": _pending(records, 7)})
+        page.clock.install()
+        page.goto(site + path)
+        expect(page.locator(sel)).to_have_text("7")
+        page.unroute("**/v1/projects/prove2me/results?*")
+        _serve(page, "**/v1/projects/prove2me/results?*", records["results"])
+        page.clock.run_for(60_000)
+        expect(page.locator(sel)).to_have_text("8", timeout=15_000)
+        if path == "/":
+            expect(page.locator("[data-home-p2m-chart] svg[role=img] circle")).to_have_count(8)
+
+
+@pytest.mark.parametrize("path", ("/", PAGE))
+def test_the_chart_hides_when_nothing_is_accepted_and_comes_back(pages, site, records, path):
+    """Code review (low): a live read with no accepted proof dropped the headline to zero while the chart and its table
+    kept the build's proofs. Now the chart hides with the zero, and the next read that has proofs shows it again, drawn
+    and with its table (the path a page built before any acceptance takes)."""
+    head = "[data-home-p2m-accepted]" if path == "/" else "[data-p2m-kpis] [data-kpi=accepted] dd"
+    page = _page(pages, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": _pending(records)})
+    page.clock.install()
+    page.goto(site + path)
+    fig = page.locator("figure[data-p2m-chart]")
+    expect(fig).to_have_attribute("data-source", "live")
+    expect(page.locator(head)).to_have_text("0")
+    expect(fig).to_be_hidden()
+    expect(fig.locator("svg circle, tbody tr")).to_have_count(0)
+    page.unroute("**/v1/projects/prove2me/results?*")
+    _serve(page, "**/v1/projects/prove2me/results?*", records["results"])
+    page.clock.run_for(60_000)
+    expect(page.locator(head)).to_have_text("8", timeout=15_000)
+    expect(fig).to_be_visible()
+    expect(fig.locator("svg[role=img] circle")).to_have_count(8)
+    expect(fig.locator("tbody tr")).to_have_count(8)
+    assert fig.locator("svg").bounding_box()["width"] > 200, "drawn at its real width once shown"
 
 # ---- the status block at the top: the whole queue as one bar in parts per trial, a line per open trial, the numbers
 
