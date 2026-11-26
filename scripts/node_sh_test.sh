@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for site/public/node.sh (the one-line install without an account) against a fake release: it
 # checks the bundle against SHA256SUMS, runs the installer's checks first, asks at the terminal (here a
-# file) and installs with --anonymous only on yes.
+# file) and installs with --anonymous only on yes, with start at boot (--enable-at-boot).
 #
 # SPDX-License-Identifier: Apache-2.0
 set -uo pipefail
@@ -33,14 +33,15 @@ run() {
 
 run y
 [[ $code -eq 0 ]] || fail "yes: exit $code: $out"
-[[ "$calls" == $'install.sh --dry-run --anonymous\ninstall.sh --anonymous' ]] || fail "yes: calls were: $calls"
-for want in "does science work only, never people's chats, and earns no credit" "You must be 18 or older" "https://aisathome.org/about/terms/" "Install? [y/N]" ": OK" "MB downloaded"; do
+[[ "$calls" == $'install.sh --dry-run --anonymous --enable-at-boot\ninstall.sh --anonymous --enable-at-boot' ]] || fail "yes: calls were: $calls"
+for want in "does science work only, never people's chats, and earns no credit" "You must be 18 or older" "https://aisathome.org/about/terms/" "Install? [y/N]" ": OK" "MB downloaded" \
+  "The node starts at boot" "sudo systemctl disable aisathome-llama aisathome-node"; do
   [[ "$out" == *"$want"* ]] || fail "yes: the output lacks '$want'"
 done
 
 for no in n "" maybe; do
   run "$no"
-  [[ $code -eq 0 && "$calls" == "install.sh --dry-run --anonymous" ]] || fail "answer '$no': installed anyway ($calls)"
+  [[ $code -eq 0 && "$calls" == "install.sh --dry-run --anonymous --enable-at-boot" ]] || fail "answer '$no': installed anyway ($calls)"
   [[ "$out" == *"Nothing was installed"* ]] || fail "answer '$no': no message"
 done
 
@@ -62,7 +63,7 @@ cp "$tmp/sums.ok" "$rel/SHA256SUMS"
 
 # Failed checks: no install.
 DRY_FAIL=1 run y
-[[ $code -ne 0 && "$calls" == "install.sh --dry-run --anonymous" ]] || fail "failed checks: exit $code, calls $calls"
+[[ $code -ne 0 && "$calls" == "install.sh --dry-run --anonymous --enable-at-boot" ]] || fail "failed checks: exit $code, calls $calls"
 
 # No terminal to ask on: nothing is downloaded or installed.
 printf '' > "$tmp/calls"
@@ -73,7 +74,7 @@ out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_SUDO=""
 printf 'y\n' > "$tmp/tty"; : > "$tmp/calls"
 out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_GATEWAY_URL=wss://api.staging.example.org/v1/node/connect \
   AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" sh < "$script" 2>&1)"; code=$?
-want=$'install.sh --dry-run --anonymous --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --anonymous --gateway-url wss://api.staging.example.org/v1/node/connect'
+want=$'install.sh --dry-run --anonymous --enable-at-boot --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --anonymous --enable-at-boot --gateway-url wss://api.staging.example.org/v1/node/connect'
 [[ $code -eq 0 && "$(cat "$tmp/calls")" == "$want" ]] || fail "gateway: calls were: $(cat "$tmp/calls")"
 # The two defaults are single lines a test site can replace.
 grep -q '^base="${AISATHOME_RELEASE_BASE:-https://github.com/aisathome/aisathome/releases/latest/download}"$' "$script" || fail "no base line"

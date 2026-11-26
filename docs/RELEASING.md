@@ -70,7 +70,8 @@ fetch the draft's bundle (`gh release download <tag> -p 'aisathome-node-bundle-l
 -p SHA256SUMS -D /tmp/draft`; a draft's files are not public yet) and run the one-liner on it:
 `AISATHOME_RELEASE_BASE=file:///tmp/draft sh site/public/node.sh`, answering y. It must check the
 bundle, pass the dry run and install a node without an account. Reboot (the one-liner unpacks
-into `/tmp`), check that `sudo aisathome-node-uninstall` still works, and remove the node with it.
+into `/tmp`), check that the node started by itself (`aisathome-node status`; the one-liner turns on
+start at boot), that `sudo aisathome-node-uninstall` still works, and remove the node with it.
 An `install.sh` change that breaks the one-liner (a flag, a question, the bundle's layout) shows
 here, before anyone runs it.
 

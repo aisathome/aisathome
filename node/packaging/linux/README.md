@@ -161,11 +161,12 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   and that you must be 18 or older and accept the terms, before it installs. A node that has a
   token keeps it: `--anonymous` refuses to run over one. `curl -fsSL https://aisathome.org/node.sh | sh`
   downloads the latest bundle, checks it against `SHA256SUMS`, runs `--dry-run --anonymous`, asks
-  at the terminal, and then runs `sudo ./install.sh --anonymous`.
+  at the terminal, and then runs `sudo ./install.sh --anonymous --enable-at-boot`.
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
-- The node does not start at boot unless you pass `--enable-at-boot`.
+- The node does not start at boot unless you pass `--enable-at-boot` (the one-line install
+  passes it). `sudo systemctl disable aisathome-llama aisathome-node` turns it off again.
 - `--speculation off|mtp|dflash2`: speculative decoding on 24 GB cards (below); `mtp` by default
   there, `off` (or `none`) turns it off.
 - `--dry-run` runs the checks (bundle, driver, GPU, the tier's free memory, disk), prints the generated `node.json`,
