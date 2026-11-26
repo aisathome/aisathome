@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/gateway"
+	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // The model check leaves a pilot without requests alone (gateway/modelcheck.go, pilot_idle_seconds): a
@@ -30,7 +32,11 @@ func TestModelCheckLeavesAnIdlePilot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	id, cred := a.newPilot(t)
-	a.runPilot(ctx, cred, srv.URL)
+	// Two slots: a probe that falls due while the request holds one is not put off (30 to 90 s).
+	ag := node.New(node.Config{Token: cred, GatewayURL: "ws" + strings.TrimPrefix(a.gw.URL, "http") + "/v1/node/connect",
+		Upstream: srv.URL, HealthInterval: 50 * time.Millisecond,
+		Models: []protocol.ModelInfo{{Name: mcModel, Roles: []string{"deep"}, Slots: 2, Ctx: 32768}}}, quiet())
+	go ag.Run(ctx)
 	a.connector(t, "POST", "/pilots/"+id+"/bind", map[string]any{"user": "5", "host": "11", "team": "3"})
 	waitUntil(t, "the bound pilot to connect", func() bool { return a.g.NodeCount() == 1 })
 	probes := func() int { return len(eng.probeBodies()) }
