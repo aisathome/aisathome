@@ -26,7 +26,20 @@ the token.
 
 ## With the installer (systemd)
 
-Download the new bundle, check it and run its installer:
+The one-line install updates a node that is there already:
+
+```bash
+curl -fsSL https://aisathome.org/node.sh | sh
+```
+
+It finds the installed node, says **Existing node found: updating it, keeping its settings** with the
+installed and the new version, runs the installer's checks and asks before it changes anything. Then
+it runs the new release's installer as an update: the node keeps its token (linked to your account
+or without one), its node id and gateway, the model, the local password, the counters and whether it
+starts at boot; the update never makes it a node without an account by itself. A node installed
+before v0.6.0 is linked again (below): the installer asks at your terminal.
+
+**By hand**, to read each step first: download the new bundle, check it and run its installer:
 
 ```bash
 base=https://github.com/aisathome/aisathome/releases/latest/download

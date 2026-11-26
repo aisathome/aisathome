@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Tests for site/public/node.sh (the one-line install without an account) against a fake release: it
-# checks the bundle against SHA256SUMS, runs the installer's checks first, asks at the terminal (here a
-# file) and installs with --anonymous only on yes, with start at boot (--enable-at-boot).
+# Tests for site/public/node.sh (the one-line install without an account, and the update of a node that
+# is there already) against a fake release: it checks the bundle against SHA256SUMS, runs the installer's
+# checks first, asks at the terminal (here a file) and, only on yes, installs a new node with --anonymous
+# and start at boot (--enable-at-boot), or updates an installed one with no account option, as the
+# installer updates a node at a terminal. What the real installer then does with each kind of installed
+# token (linked, without an account, from before v0.6.0) is tested in node/packaging/linux/handoff_test.sh.
 #
 # SPDX-License-Identifier: Apache-2.0
 set -uo pipefail
@@ -11,24 +14,31 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 fails=0
 fail() { echo "FAIL: $1" >&2; fails=$((fails + 1)); }
 
-# A fake bundle: install.sh records how it was called.
 rel="$tmp/release"; mkdir -p "$rel/b/aisathome-node-bundle-linux-amd64"
+# A fake bundle: install.sh records how it was called and, when it installs, the first line of its
+# stdin (the terminal's answer file, so it reads the terminal); bin/aisathome-node is v0.7.0.
+mkdir -p "$rel/b/aisathome-node-bundle-linux-amd64/bin"
 cat > "$rel/b/aisathome-node-bundle-linux-amd64/install.sh" <<'SH'
 #!/bin/sh
-echo "install.sh $*" >> "$CALLS"
-case "$*" in *--dry-run*) [ -z "${DRY_FAIL:-}" ] || exit 1 ;; esac
+echo "install.sh${*:+ $*}" >> "$CALLS"
+case "$*" in *--dry-run*) [ -z "${DRY_FAIL:-}" ] || exit 1; exit 0 ;; esac
+read -r line || line=""
+echo "stdin: $line" >> "$CALLS.stdin"
 exit 0
 SH
-chmod +x "$rel/b/aisathome-node-bundle-linux-amd64/install.sh"
+printf '#!/bin/sh\n[ "$1" = -version ] && echo "aisathome-node v0.7.0"\n' > "$rel/b/aisathome-node-bundle-linux-amd64/bin/aisathome-node"
+chmod +x "$rel/b/aisathome-node-bundle-linux-amd64/install.sh" "$rel/b/aisathome-node-bundle-linux-amd64/bin/aisathome-node"
 (cd "$rel/b" && tar -cJf "$rel/aisathome-node-bundle-linux-amd64.tar.xz" aisathome-node-bundle-linux-amd64)
 (cd "$rel" && sha256sum aisathome-node-bundle-linux-amd64.tar.xz > SHA256SUMS)
 
-# run <answer>: node.sh piped into sh as the one-liner does, the answer on the "terminal".
+# run <answer>: node.sh piped into sh as the one-liner does, the answer on the "terminal". The machine is
+# $tmp/root (empty: a fresh machine).
+mkdir -p "$tmp/root"
 run() {
-  printf '%s\n' "$1" > "$tmp/tty"; : > "$tmp/calls"
+  printf '%s\n' "$1" > "$tmp/tty"; : > "$tmp/calls"; rm -f "$tmp/calls.stdin"
   out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" \
-    sh < "$script" 2>&1)"; code=$?
-  calls="$(cat "$tmp/calls")"
+    AISATHOME_ROOT="$tmp/root" sh < "$script" 2>&1)"; code=$?
+  calls="$(cat "$tmp/calls")" stdin="$(cat "$tmp/calls.stdin" 2>/dev/null)"
 }
 
 run y
@@ -38,12 +48,48 @@ for want in "does science work only, never people's chats, and earns no credit" 
   "The node starts at boot" "sudo systemctl disable aisathome-llama aisathome-node"; do
   [[ "$out" == *"$want"* ]] || fail "yes: the output lacks '$want'"
 done
+[[ "$stdin" == "stdin: y" ]] || fail "yes: the installer did not read the terminal ($stdin)"
+[[ "$out" != *"Existing node"* ]] || fail "yes: a fresh machine taken for an update"
 
 for no in n "" maybe; do
   run "$no"
   [[ $code -eq 0 && "$calls" == "install.sh --dry-run --anonymous --enable-at-boot" ]] || fail "answer '$no': installed anyway ($calls)"
   [[ "$out" == *"Nothing was installed"* ]] || fail "answer '$no': no message"
 done
+
+# A machine with a node already: an update, with no account option and no --enable-at-boot (the node keeps
+# its token, settings and boot choice; a token from before v0.6.0 gets the installer's link question at
+# the terminal), saying so and naming both versions. Found by its unit or by its program.
+mkdir -p "$tmp/root/etc/systemd/system" "$tmp/root/opt/aisathome-node/bin"
+: > "$tmp/root/etc/systemd/system/aisathome-node.service"
+printf '#!/bin/sh\n[ "$1" = -version ] && echo "aisathome-node v0.6.0"\n' > "$tmp/root/opt/aisathome-node/bin/aisathome-node"
+chmod +x "$tmp/root/opt/aisathome-node/bin/aisathome-node"
+run y
+[[ $code -eq 0 ]] || fail "update: exit $code: $out"
+[[ "$calls" == $'install.sh --dry-run\ninstall.sh' ]] || fail "update: calls were: $calls"
+[[ "$stdin" == "stdin: y" ]] || fail "update: the installer did not read the terminal ($stdin)"
+for want in "Existing node found: updating it, keeping its settings (v0.6.0 -> v0.7.0)" "Update? [y/N]" \
+  "keeps its token (linked to an" "whether it
+starts at boot" "installed before v0.6.0 is linked to your account again"; do
+  [[ "$out" == *"$want"* ]] || fail "update: the output lacks '$want'"
+done
+for not in "Install? [y/N]" "earns no credit" "--anonymous" "--enable-at-boot"; do
+  [[ "$out" != *"$not"* ]] || fail "update: the output has '$not'"
+done
+run n
+[[ $code -eq 0 && "$calls" == "install.sh --dry-run" && "$out" == *"Nothing was installed"* ]] || fail "update, n: installed anyway ($calls)"
+rm "$tmp/root/etc/systemd/system/aisathome-node.service"
+run y
+[[ "$calls" == $'install.sh --dry-run\ninstall.sh' && "$out" == *"(v0.6.0 -> v0.7.0)"* ]] || fail "update, program only: calls $calls"
+: > "$tmp/root/etc/systemd/system/aisathome-node.service"; rm "$tmp/root/opt/aisathome-node/bin/aisathome-node"
+run y
+[[ "$calls" == $'install.sh --dry-run\ninstall.sh' && "$out" == *"(an unknown version -> v0.7.0)"* ]] || fail "update, unit only: calls $calls: $out"
+printf 'y\n' > "$tmp/tty"; : > "$tmp/calls"
+out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_GATEWAY_URL=wss://api.staging.example.org/v1/node/connect \
+  AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" AISATHOME_ROOT="$tmp/root" sh < "$script" 2>&1)"; code=$?
+want=$'install.sh --dry-run --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --gateway-url wss://api.staging.example.org/v1/node/connect'
+[[ $code -eq 0 && "$(cat "$tmp/calls")" == "$want" ]] || fail "update, gateway: calls were: $(cat "$tmp/calls")"
+rm -rf "$tmp/root"; mkdir -p "$tmp/root"
 
 # Piped (no terminal), the download shows plain lines, not curl's bar.
 [[ "$out" != *"#"* && "$out" != *$'\r'* ]] || fail "yes: a progress bar in piped output"
@@ -67,13 +113,13 @@ DRY_FAIL=1 run y
 
 # No terminal to ask on: nothing is downloaded or installed.
 printf '' > "$tmp/calls"
-out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_SUDO="" AISATHOME_TTY="$tmp/none" TMPDIR="$tmp" sh < "$script" 2>&1)"; code=$?
+out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_SUDO="" AISATHOME_TTY="$tmp/none" TMPDIR="$tmp" AISATHOME_ROOT="$tmp/root" sh < "$script" 2>&1)"; code=$?
 [[ $code -ne 0 && ! -s "$tmp/calls" && "$out" == *"needs a terminal"* ]] || fail "no terminal: exit $code: $out"
 
 # A test site's copy names its gateway: both installer runs get it.
 printf 'y\n' > "$tmp/tty"; : > "$tmp/calls"
 out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_GATEWAY_URL=wss://api.staging.example.org/v1/node/connect \
-  AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" sh < "$script" 2>&1)"; code=$?
+  AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" AISATHOME_ROOT="$tmp/root" sh < "$script" 2>&1)"; code=$?
 want=$'install.sh --dry-run --anonymous --enable-at-boot --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --anonymous --enable-at-boot --gateway-url wss://api.staging.example.org/v1/node/connect'
 [[ $code -eq 0 && "$(cat "$tmp/calls")" == "$want" ]] || fail "gateway: calls were: $(cat "$tmp/calls")"
 # The two defaults are single lines a test site can replace.
