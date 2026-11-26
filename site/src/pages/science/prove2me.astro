@@ -1060,8 +1060,8 @@ const leafCols = [
 	.p2m-holes li[data-hole-state='running'] .p2m-htext, .p2m-holes li[data-hole-state='proved'] .p2m-htext { font-weight: 600; color: var(--sl-color-accent-high); }
 	.p2m-holes li:is([data-hole-state='prepass'], [data-hole-state='index'], [data-hole-state='ledger']) .p2m-htext { color: var(--sl-color-accent-high); }
 	.p2m-holes li:is([data-hole-state='not_tried'], [data-hole-state='cancelled'], [data-hole-state='waiting'], [data-hole-state='queued'], [data-hole-state='unknown']) .p2m-htext { color: var(--sl-color-gray-3); }
-	.p2m-holes li[data-hole-state='false'] .p2m-htext { font-weight: 600; color: var(--sl-color-white); }
-	/* a hole's three states (the assembly keeps its own above); its tooltip has the detail */
+	.p2m-holes li:is([data-hole-state='false'], [data-hole-state='failed']) .p2m-htext { font-weight: 600; color: var(--sl-color-white); }
+	/* a hole's states (failed and cancelled share the rules above; the assembly keeps its own); its tooltip has the detail */
 	.p2m-holes li[data-hole-state='solved'] .p2m-htext { font-weight: 600; color: var(--sl-color-accent-high); }
 	.p2m-holes li[data-hole-state='working'] .p2m-htext { color: var(--sl-color-accent-high); }
 	.p2m-holes li[title] { cursor: help; }

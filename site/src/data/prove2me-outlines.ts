@@ -3,12 +3,16 @@
 // the assembly; above them one line for the whole leaf ("Running: outline 2, hole 1"). The task table stays below as
 // the detail.
 //
-// A hole shows one of three states (2026-11-25): Waiting (held back behind another hole, its task not made or not
-// started, its task failed, its outline ended without it, or nothing known), Working (its own task is queued or
-// running, with the try and its steps) or Solved (by any route: the pre-pass, a theorem already known, a proof from
-// earlier, the in-place task once the assembly checked it, its own task). Why it waits and how it was solved go into a
-// tooltip only ("starts when hole 3 is done", "a new outline is being made", "solved automatically: simp", "already
-// known: X", "with the outline", "own task").
+// A hole shows one of these states (2026-11-25; Failed and Cancelled 2026-11-26: a hole whose task had ended without a
+// proof showed Waiting): Waiting (its task has not run: held back behind another hole, not made or not started, its
+// outline ended before it ran, or nothing known), Working (its own task is queued or running, with the try and its
+// steps), Solved (by any route: the pre-pass, a theorem already known, a proof from earlier, the in-place task once the
+// assembly checked it, its own task), Failed with the reason in a few words (its newest try that ran ended without a
+// proof: "Failed: compile error", "Failed: not proved (a sorry left)"; the assembly did not check the holes in place;
+// the hole is false) or Cancelled (its newest try was cancelled while it ran). Why it waits, how it was solved and the
+// earlier tries go into a tooltip only ("starts when hole 3 is done", "a new outline is being made", "solved
+// automatically: simp", "already known: X", "with the outline", "own task"). The public task list has a try's outcome,
+// not the harness's own reason for it (e.g. the model's claim that the hole is false), so the reason is the outcome's.
 //
 // Made from the leaf's tasks (their roles, outlines, holes, tries, states and outcomes, and `closed_by`: GET /v1/tasks
 // or the build's data), the build's outline records (holes, how many in place, what the pre-pass closed) and, when the
@@ -23,7 +27,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { LeafDetail, Outline, TaskRow } from './prove2me-live';
-import { attemptOf, closedByText, inplaceStanding, isStaleCancel, outlineRefusal, provesLeaf, staleCancelReason, tryWord } from './prove2me-outcomes';
+import { attemptOf, closedByText, failWord, inplaceStanding, isStaleCancel, outlineRefusal, provesLeaf, staleCancelReason, tryWord } from './prove2me-outcomes';
 
 export { closedByText, tryWord };
 
@@ -43,19 +47,19 @@ export interface OutlineHoles {
 }
 
 export type HoleState = 'proved' | 'false' | 'prepass' | 'index' | 'ledger' | 'closed' | 'running' | 'queued' | 'waiting' | 'not_tried' | 'cancelled' | 'not_proved' | 'failed' | 'unknown';
-/** What the page shows of a hole: three states only. */
-export type HoleShow = 'waiting' | 'working' | 'solved';
+/** What the page shows of a hole: these states only. */
+export type HoleShow = 'waiting' | 'working' | 'solved' | 'failed' | 'cancelled';
 export interface HoleView {
 	/** The hole's number in the outline; null for the in-place holes' row when their numbers are not known, and for the assembly. */
 	hole: number | null;
 	label: string;
 	kind: 'lemma' | 'inplace' | 'assembly';
-	/** A hole's: waiting, working or solved; the assembly's own state. */
+	/** A hole's: waiting, working, solved, failed or cancelled; the assembly's own state. */
 	state: HoleShow | HoleState;
-	/** "Waiting", "Working (try 1, 14 steps so far)", "Solved"; the assembly's in words. */
+	/** "Waiting", "Working (try 1, 14 steps so far)", "Solved", "Failed: compile error", "Cancelled"; the assembly's in words. */
 	text: string;
-	/** The detail, for a tooltip only: why it waits ("starts when hole 3 is done"), or how it was solved
-	 * ("solved automatically: simp", "already known: X", "with the outline", "own task"). Empty when there is none. */
+	/** The detail, for a tooltip only: why it waits ("starts when hole 3 is done"), how it was solved ("solved
+	 * automatically: simp", "already known: X", "with the outline", "own task"), or its tries. Empty when there is none. */
 	title: string;
 }
 export type OutlineState = 'queued' | 'writing' | 'in_progress' | 'proved' | 'refuted' | 'abandoned' | 'ended' | 'stopped';
@@ -129,6 +133,8 @@ function docHole(e: HoleInfo): { state: HoleState; text: string } | null {
 }
 
 const byTry = (a: TaskRow, b: TaskRow) => a.attempt - b.attempt;
+/** A task that ran: a node took it, or it ended (not one queued, or cancelled before it started). */
+const ran = (r: TaskRow) => r.state !== 'queued' && (r.state !== 'cancelled' || (r.started ?? (r.steps ?? 0) > 0));
 /** The states a hole counts as solved in (by any route). */
 const SOLVED: HoleState[] = ['proved', 'prepass', 'index', 'ledger', 'closed'];
 
@@ -268,11 +274,13 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 		return `${andList(parts)} not proved${tries.length === 1 && tries[0] > 1 && !failed.some((d) => d.kind === 'inplace') ? ` in ${tries[0]} tries` : ''}`;
 	};
 	const cancelled = rows.some((r) => r.role !== 'skeleton' && r.state === 'cancelled');
+	// a newer outline that ran (a task of it taken or ended), not only one queued
+	const newerRan = peers.some((r) => r.gen > gen && ran(r));
 	let state: OutlineState, text = '', reason = '';
 	if (asm && provesLeaf(attemptOf(asm))) [state, text] = ['proved', 'proved (assembled)'];
 	else if (rest.some((r) => provesLeaf(attemptOf(r)))) [state, text] = ['proved', IN_PLACE_PROVED];
 	else if (falseHoles.length) [state, reason] = ['refuted', `${holesText(falseHoles)} ${falseHoles.length > 1 ? 'are' : 'is'} false`];
-	else if (live) [state, text] = ['in_progress', newer ? 'in progress (a newer outline was started)' : asm?.state === 'running' ? 'being assembled' : 'in progress'];
+	else if (live) [state, text] = ['in_progress', newer ? (newerRan ? 'in progress (a newer outline was started)' : 'in progress (a newer outline is queued)') : asm?.state === 'running' ? 'being assembled' : 'in progress'];
 	else if (newer) [state, reason] = ['abandoned', failed.length ? failedText() : cancelled ? 'its tasks were cancelled' : ''];
 	else if (asm && asm.state === 'finished') [state, reason] = ['ended', 'the assembly did not check'];
 	else if (asm && asm.state === 'failed') [state, reason] = ['stopped', 'the assembly stopped by a fault'];
@@ -303,7 +311,7 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 	// what an ended outline's waiting holes wait for: a newer outline
 	const newerLive = peers.some((r) => r.gen > gen && (r.state === 'running' || r.state === 'queued'));
 	const next = !ended || state === 'proved' ? '' : newerLive ? 'a new outline is being made' : newer ? 'a newer outline replaced this one' : '';
-	/** The three states the page shows, and the detail for the tooltip. */
+	/** The state the page shows (HoleShow), and the detail for the tooltip. */
 	const show = (d: Draft, s: { state: HoleState; text: string }, pre = ''): { state: HoleShow; text: string; title: string } => {
 		const tip = (t: string) => (t ? pre + t : pre.replace(/, $/, ''));
 		const last = [...d.ts].sort(byTry).at(-1);
@@ -327,7 +335,18 @@ export function outlineView(gen: number, rows: TaskRow[], o: Outline | undefined
 		}
 		// the holes in place, filled in: the assembly checks them now
 		if (d.kind === 'inplace' && s.state === 'waiting' && d.ts.length) return { state: 'working', text: 'Working (the assembly checks it)', title: tip('') };
-		return { state: 'waiting', text: 'Waiting', title: tip([s.text, next].filter(Boolean).join('; ')) };
+		const detail = (t: string) => tip([t, next].filter(Boolean).join('; '));
+		if (s.state === 'false') return { state: 'failed', text: 'Failed: the hole is false', title: detail(s.text) };
+		// its newest try was cancelled while it ran: not waiting, not failed
+		if (s.state === 'cancelled') return { state: 'cancelled', text: 'Cancelled', title: detail(s.text) };
+		// its newest try that ran ended without a proof (the try after it, if any, never ran)
+		const lastRun = [...d.ts].sort(byTry).filter((t) => t.state === 'finished' || t.state === 'failed').at(-1);
+		if (s.state === 'not_proved' || s.state === 'failed' || (s.state === 'not_tried' && lastRun && lastRun.outcome !== 'proved')) {
+			const cause = !lastRun ? '' : lastRun.state === 'failed' ? 'stopped by a fault' : lastRun.outcome === 'rest_done' ? 'the assembly did not check' : failWord(lastRun.outcome);
+			// one try: the reason says it all; more: each try in the tooltip
+			return { state: 'failed', text: cause ? `Failed: ${cause}` : 'Failed', title: detail(d.ts.length > 1 ? s.text : '') };
+		}
+		return { state: 'waiting', text: 'Waiting', title: detail(s.text) };
 	};
 	const holes: HoleView[] = drafts.map((d, i) => {
 		let s = states[i];
@@ -403,9 +422,10 @@ export function leafSummary(views: OutlineView[], rows: TaskRow[], reuse?: strin
  * `reuse` the proved theorem the leaf's accepted proof imports, when it was closed by reuse. */
 export function leafPlan(d: LeafDetail, doc: OutlineHoles[] = [], reuse?: string): LeafPlan {
 	const gens = [...new Set([...d.rows.map((r) => r.gen)])].sort((a, b) => a - b);
-	const top = gens.at(-1) ?? 0;
+	// a newer outline replaces this one once it is queued or ran; one cancelled before it started replaced nothing
+	const live = gens.filter((g) => d.rows.some((r) => r.gen === g && (r.state === 'queued' || ran(r))));
 	const views = gens.map((g) =>
-		outlineView(g, d.rows.filter((r) => r.gen === g), d.outlines.find((o) => o.gen === g), doc.find((x) => x.outline === g)?.holes, g < top, d.rows),
+		outlineView(g, d.rows.filter((r) => r.gen === g), d.outlines.find((o) => o.gen === g), doc.find((x) => x.outline === g)?.holes, live.some((n) => n > g), d.rows),
 	);
 	return { summary: leafSummary(views, d.rows, reuse), outlines: [...views].reverse() };
 }

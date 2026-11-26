@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	attemptOf, cancelReason, closedByText, inplaceStanding, isStaleCancel, kindOf, provesLeaf, resultLabel, staleCancelReason, taskRef, tryWord, type Attempt,
+	attemptOf, cancelReason, closedByText, failWord, inplaceStanding, isStaleCancel, kindOf, provesLeaf, resultLabel, staleCancelReason, taskRef, tryWord, type Attempt,
 } from '../src/data/prove2me-outcomes';
 import { leafDetail, detailProved, type Outline, type TaskRow } from '../src/data/prove2me-live';
 import { leafPlan, outlineView } from '../src/data/prove2me-outlines';
@@ -54,11 +54,12 @@ const n13 = [
 
 test('a hole cancelled because its outline was abandoned says so, after its earlier try; never "closed by another task"', () => {
 	const holes = holesOf(n13);
+	// a try that ran and failed says Failed, though a later try never ran; one cancelled while it ran says Cancelled
 	assert.deepEqual(holes, [
-		['Hole 1', 'waiting', 'Waiting', 'not proved in 2 tries (did not compile, then a sorry left); a new outline is being made'],
-		['Hole 2', 'waiting', 'Waiting', 'try 1: a sorry left; try 2 cancelled: outline abandoned after hole 1 failed; a new outline is being made'],
-		['Hole 3', 'waiting', 'Waiting', 'try 1: a sorry left; try 2 not tried: outline abandoned after hole 1 failed; a new outline is being made'],
-		['Hole 4', 'waiting', 'Waiting', 'try 1: a sorry left; try 2 not tried: outline abandoned after hole 1 failed; a new outline is being made'],
+		['Hole 1', 'failed', 'Failed: not proved (a sorry left)', 'not proved in 2 tries (did not compile, then a sorry left); a new outline is being made'],
+		['Hole 2', 'cancelled', 'Cancelled', 'try 1: a sorry left; try 2 cancelled: outline abandoned after hole 1 failed; a new outline is being made'],
+		['Hole 3', 'failed', 'Failed: not proved (a sorry left)', 'try 1: a sorry left; try 2 not tried: outline abandoned after hole 1 failed; a new outline is being made'],
+		['Hole 4', 'failed', 'Failed: not proved (a sorry left)', 'try 1: a sorry left; try 2 not tried: outline abandoned after hole 1 failed; a new outline is being made'],
 	]);
 	for (const [, , text] of holes) assert.doesNotMatch(String(text), /closed by another task/);
 	const o1 = leafPlan(leafDetail(n13)).outlines.find((o) => o.gen === 1)!;
@@ -153,7 +154,7 @@ test('the holes in place count when the assembly passes, wait for it before, and
 	assert.equal(leafDetail(failed, [o]).gens[0].proved, 3);
 	assert.equal(leafDetail(rows(null), [o]).gens[0].proved, 3);
 	assert.deepEqual(holesOf(passed, 1, [o]).find(([l]) => l === 'Hole 2'), ['Hole 2', 'solved', 'Solved', 'in place, with the outline']);
-	assert.deepEqual(holesOf(failed, 1, [o]).find(([l]) => l === 'Hole 2'), ['Hole 2', 'waiting', 'Waiting', 'in place, filled in, but the assembly did not check']);
+	assert.deepEqual(holesOf(failed, 1, [o]).find(([l]) => l === 'Hole 2'), ['Hole 2', 'failed', 'Failed: the assembly did not check', 'in place']);
 	assert.deepEqual(holesOf(rows(null), 1, [o]).find(([l]) => l === 'Hole 2'), ['Hole 2', 'working', 'Working (the assembly checks it)', 'in place']);
 	// the table of every task: the in-place task is in "Proved" only once the assembly passed
 	const restOf = (rs: TaskRow[]) => {
@@ -207,7 +208,7 @@ test('a hole disproved refutes its outline; the outline’s other tasks are canc
 	assert.equal(o.text, 'refuted: hole 2 is false');
 	assert.deepEqual(o.holes.map((h) => [h.label, h.state, h.text, h.title]), [
 		['Hole 1', 'solved', 'Solved', 'own task'],
-		['Hole 2', 'waiting', 'Waiting', 'false, disproved by the model'],
+		['Hole 2', 'failed', 'Failed: the hole is false', 'false, disproved by the model'],
 		['Hole 3', 'waiting', 'Waiting', 'not tried (outline refuted)'],
 	]);
 	const t = rows.map(trow);
@@ -237,12 +238,18 @@ test('an outcome in plain words: a sorry left, did not compile, never the raw wo
 	assert.equal(tryWord('compile_error'), 'did not compile');
 	assert.equal(tryWord('some_new_word'), 'some new word');
 	assert.equal(tryWord(null), 'ended');
+	// after "Failed: " on a hole
+	assert.equal(failWord('refused'), 'not proved (a sorry left)');
+	assert.equal(failWord('compile_error'), 'compile error');
+	assert.equal(failWord('timeout'), 'not proved within its budget');
+	assert.equal(failWord('check_error'), 'our check failed');
+	assert.equal(failWord(null), '');
 	assert.equal(resultLabel('finished', 'refused'), 'Not proved: a sorry left');
 	assert.equal(resultLabel('done', 'refused'), 'Not proved: a sorry left');
 	assert.equal(resultLabel('leased', null), 'Running');
 	assert.equal(resultLabel('done', 'new_thing'), 'Ended: new thing');
 	const one = [row('t9-p2m-dddddd-s1', 'skeleton', 'finished', 'outline'), row('t9-p2m-dddddd-s1-h01', 'hole', 'finished', 'refused')];
-	assert.deepEqual(holesOf(one)[0], ['Hole 1', 'waiting', 'Waiting', 'not proved: a sorry left']);
+	assert.deepEqual(holesOf(one)[0], ['Hole 1', 'failed', 'Failed: not proved (a sorry left)', '']);
 	const t = one.map(trow);
 	assert.deepEqual(taskResult(t[1], t), { text: 'A sorry left', show: 'not_proved' });
 });

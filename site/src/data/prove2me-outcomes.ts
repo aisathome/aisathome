@@ -99,6 +99,15 @@ const tryWords: Record<string, string> = {
 /** An outcome in a few words: "a sorry left", "did not compile"; an unknown one with its underscores as spaces. */
 export const tryWord = (o: string | null | undefined) => (o ? tryWords[o] ?? o.replace(/[_-]/g, ' ') : 'ended');
 
+// A failed try's outcome as the reason after "Failed: " (a hole whose task ended without a proof); the rest as tryWord.
+const failWords: Record<string, string> = {
+	refused: 'not proved (a sorry left)',
+	compile_error: 'compile error',
+	timeout: 'not proved within its budget',
+};
+/** Why a try failed, in a few words: "compile error", "not proved (a sorry left)"; empty without an outcome. */
+export const failWord = (o: string | null | undefined) => (o ? failWords[o] ?? tryWord(o) : '');
+
 /** An outline task that ended without an outline because its shape was refused: the reason in words, else undefined. */
 export const outlineRefusal = (o: string | null | undefined): string | undefined =>
 	({ degenerate_outline: 'degenerate (a hole is the leaf’s own claim)', inline_proof: 'an inline proof too long' })[o ?? ''];
