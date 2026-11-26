@@ -662,6 +662,9 @@ func setVersion(t *testing.T, v string) {
 // control for it.
 func TestReleaseNotice(t *testing.T) {
 	setVersion(t, "v0.7.0")
+	was := goos
+	goos = "linux" // the Linux notice, whatever the runner's platform
+	t.Cleanup(func() { goos = was })
 	e := newEnv(t)
 	notice := func() *ReleaseNotice {
 		var st StatusResponse
