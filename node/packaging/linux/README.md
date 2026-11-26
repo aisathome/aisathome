@@ -165,12 +165,18 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   with a node already (its unit in `/etc/systemd/system` or its program in `/opt/aisathome-node`,
   both readable without sudo) it updates it instead: `--dry-run`, then `sudo ./install.sh` with
   no account option at the terminal, so the installer keeps a token recorded for the node's
-  gateway, asks the link question for one from before v0.6.0, and leaves start at boot as it was.
+  gateway (a node without an account whose gateway deleted or holds it registers again), asks
+  the link question for one from before v0.6.0, and leaves start at boot as it was. An update
+  keeps the node's gateway; only `AISATHOME_GATEWAY_URL` given to that run changes it.
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
 - The node does not start at boot unless you pass `--enable-at-boot` (the one-line install
-  passes it). `sudo systemctl disable aisathome-llama aisathome-node` turns it off again.
+  passes it for a new node), and then only once it has its token: a link or registration that
+  did not finish leaves it off. `sudo systemctl disable aisathome-llama aisathome-node` turns
+  it off again.
+- An update keeps the installed node's gateway, node id, engine address (`upstream`) and local UI
+  setting unless `--gateway-url`, `--node-id`, `--node-config` or `UI_PORT` says otherwise.
 - `--speculation off|mtp|dflash2`: speculative decoding on 24 GB cards (below); `mtp` by default
   there, `off` (or `none`) turns it off.
 - `--dry-run` runs the checks (bundle, driver, GPU, the tier's free memory, disk), prints the generated `node.json`,
@@ -323,7 +329,7 @@ changes. To change it, write a new one (12 characters or more) to that file.
 The UI listens on 127.0.0.1 only, so there is no port to open or to close. It answers only
 to `127.0.0.1`, `localhost` or `[::1]` in the address bar, and its controls refuse requests
 from other web pages. `UI_PORT=<port>` at install picks another port, `UI_PORT=off` turns the
-UI off.
+UI off; an update without `UI_PORT` keeps what the node was installed with.
 
 **Headless machines:** open an SSH tunnel from your own computer, then browse to
 http://localhost:7381/ there:

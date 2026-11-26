@@ -105,6 +105,7 @@ case "$1" in
       elif [[ $u = aisathome-node && ! -s /etc/aisathome-node/token.env ]]; then echo inactive > "$st/$u.state"
       else echo active > "$st/$u.state"; fi
     done ;;
+  enable|disable) echo "$*" >> "$st/enable.log" ;;
   is-enabled|is-active) exit 1 ;;
   status) echo "status $2: $(cat "$st/$2.state" 2>/dev/null)" ;;
   *) ;;
@@ -208,6 +209,7 @@ class H(BaseHTTPRequestHandler):
             if mode("link") == "deny": return self.reply(200, {"status": "denied"})
             return self.reply(200, {"status": "approved", "token": "nt-n-0000" + tag + "001." + tag.upper() * 43, "node_id": "n-0000" + tag + "001"})
         if self.path == "/v1/node/register":
+            if mode("register") == "full": return self.reply(503, {"error": {"message": "the network takes no more nodes without an account for now"}})
             return self.reply(200, {"token": "nt-a-0000" + tag + "0a1." + tag.upper() * 43, "node_id": "a-0000" + tag + "0a1"})
         self.reply(404, {})
 HTTPServer(("127.0.0.1", port), H).serve_forever()
@@ -235,7 +237,7 @@ node_bin="$tmp/bin/aisathome-node"
 # fresh: a machine with nothing installed.
 fresh() {
   rm -rf "$conf" /opt/aisathome-node /var/lib/aisathome-node /etc/systemd/system/aisathome-* /usr/local/bin/aisathome-node
-  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held
+  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held "$st"/*.register
   echo 30 > "$st/tps"; : > "$st/systemctl.log"
 }
 # seed <gateway> [<token> [<record>|-]]: an earlier install: node.json for gateway (node id box-1),
@@ -382,6 +384,37 @@ want_code "node.sh update, before v0.6.0" 0; has "node.sh update, before v0.6.0"
 token_is "node.sh update, before v0.6.0" "$toka" "$gwa"; [[ -s "$conf/token.env.unlinked" ]] || fail "node.sh update, before v0.6.0: the old token was not moved aside"
 grep -q "^POST /v1/node/register" "$st/a.log" 2>/dev/null && fail "node.sh update, before v0.6.0: registered without an account"
 # (The linked node, kept without a question, is "upgrade at a terminal" above.)
+# A node without an account that its gateway deleted (not seen for 90 days): its token no longer works, so the
+# update registers it again instead of keeping the token.
+seed "$gwa" "$anona"; echo "$anona" > "$st/a.revoked"
+tty_inst "[Y/n]" $'y\r' --
+want_code "node.sh update, deleted" 0; has "node.sh update, deleted" "registers again without an account"
+grep -q "^POST /v1/node/register" "$st/a.log" 2>/dev/null || fail "node.sh update, deleted: not registered again"
+token_is "node.sh update, deleted" "$anona" "$gwa"; lacks "node.sh update, deleted" "[Y/n]"
+# An update keeps what the node was installed with: the local UI turned off (UI_PORT=off at the install) and an
+# engine address of its own in node.json.
+seed "$gwa" "$toka"
+mkdir -p /etc/systemd/system/aisathome-node.service.d
+printf '[Service]\nEnvironment=AISATHOME_UI_PORT=off\n' > /etc/systemd/system/aisathome-node.service.d/local-ui.conf
+python3 - "$conf/node.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["upstream"] = "http://127.0.0.1:8080"; json.dump(c, open(sys.argv[1], "w"))
+PY
+inst UI_PORT= -- --keep-token
+want_code "update keeps the UI and upstream" 0
+grep -qx "Environment=AISATHOME_UI_PORT=off" /etc/systemd/system/aisathome-node.service.d/local-ui.conf || fail "update keeps the UI and upstream: the local UI came back"
+[[ ! -e /etc/systemd/system/aisathome-node-restart.path ]] || fail "update keeps the UI and upstream: the UI's units were installed"
+[[ "$(json "$conf/node.json" upstream)" = http://127.0.0.1:8080 ]] || fail "update keeps the UI and upstream: upstream $(json "$conf/node.json" upstream)"
+token_is "update keeps the UI and upstream" "$toka" "$gwa"
+# Start at boot (--enable-at-boot, as the one-line install gives a new node): turned on only once the node has
+# its token; a registration that fails leaves it off (the engine would load at every boot for nothing).
+fresh
+inst -- --anonymous --enable-at-boot --gateway-url "$gwa"
+want_code "boot, registered" 0; grep -q "aisathome-gpu-init aisathome-llama aisathome-node" "$st/enable.log" 2>/dev/null || fail "boot, registered: not enabled: $(cat "$st/enable.log" 2>/dev/null)"
+fresh; echo full > "$st/a.register"
+inst -- --anonymous --enable-at-boot --gateway-url "$gwa"
+want_code "boot, registration failed" 1; has "boot, registration failed" "Start at boot: not turned on"
+grep -q "aisathome-llama" "$st/enable.log" 2>/dev/null && fail "boot, registration failed: enabled anyway: $(cat "$st/enable.log")"
 
 # A fresh install at a terminal: "Link this node to your account? [Y/n]". y links in the browser, n runs the
 # node without an account.

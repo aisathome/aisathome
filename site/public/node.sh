@@ -21,7 +21,8 @@
 # https://aisathome.org/node/update/ (an update).
 #
 # AISATHOME_RELEASE_BASE: where the bundle comes from (default: the latest GitHub release);
-# AISATHOME_GATEWAY_URL: the gateway the node connects to (default: the installer's, aisathome.org's).
+# AISATHOME_GATEWAY_URL: the gateway a new node connects to (default: the installer's, aisathome.org's); an
+# installed node keeps its own unless this is given when node.sh runs.
 # A test site serves this same script with these two defaults changed, nothing else.
 # SPDX-License-Identifier: Apache-2.0
 set -eu
@@ -51,9 +52,9 @@ fetch() {
   echo "  $(($(wc -c <"$2") / 1000000)) MB downloaded" >&2
 }
 
-# version <aisathome-node>: the release it says it is ("v0.7.0"), or "an unknown version".
+# version <aisathome-node>: the release it says it is ("v0.7.0", "v0.8.0-rc1"), or "an unknown version".
 version() {
-  v="$("$1" -version 2>/dev/null | sed -n 's/^aisathome-node \(v[0-9][0-9.]*\)$/\1/p' | head -n 1)" || v=""
+  v="$("$1" -version 2>/dev/null | sed -n 's/^aisathome-node \(v[0-9][0-9A-Za-z.+-]*\)$/\1/p' | head -n 1)" || v=""
   echo "${v:-an unknown version}"
 }
 
@@ -79,10 +80,13 @@ main() {
     update=1
     old="$(version "$root/opt/aisathome-node/bin/aisathome-node")"
     set --
+    # The node keeps its own gateway: a test site's built-in default (the line above) is for new nodes,
+    # and only an AISATHOME_GATEWAY_URL given in this run moves an installed node to another gateway.
+    [ -z "${AISATHOME_GATEWAY_URL:-}" ] || set -- --gateway-url "$AISATHOME_GATEWAY_URL"
   else
     set -- --anonymous --enable-at-boot
+    [ -z "$gateway" ] || set -- "$@" --gateway-url "$gateway"
   fi
-  [ -z "$gateway" ] || set -- "$@" --gateway-url "$gateway"
 
   echo
   if [ "$update" = 1 ]; then

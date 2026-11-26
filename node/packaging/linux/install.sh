@@ -604,8 +604,19 @@ fetch_node_release() {
 # ---- Local node UI ---------------------------------------------------------------------
 # aisathome-node serves a status page with pause/resume and engine restart on
 # http://127.0.0.1:$UI_PORT (README.md, "Local UI"). Kept in these functions, apart from the
-# rest of the installer. UI_PORT=off installs no UI.
-ui_port="${UI_PORT:-7381}"
+# rest of the installer. UI_PORT=off installs no UI. Without UI_PORT the installed node's setting stays (an
+# update, by hand or by the one-line install, keeps a port or "off" chosen at the install), else 7381.
+# AISATHOME_TEST_UI_DROPIN: where the installed setting is read from (tests only).
+ui_dropin_installed="${AISATHOME_TEST_UI_DROPIN:-/etc/systemd/system/aisathome-node.service.d/local-ui.conf}"
+installed_ui_port() {
+  local l
+  [[ -r "$ui_dropin_installed" ]] || return 0
+  while IFS= read -r l || [[ -n "$l" ]]; do
+    if [[ "$l" =~ ^Environment=AISATHOME_UI_PORT=([0-9]+|off)$ ]]; then echo "${BASH_REMATCH[1]}"; return 0; fi
+  done < "$ui_dropin_installed"
+}
+ui_port="${UI_PORT:-$(installed_ui_port)}"
+ui_port="${ui_port:-7381}"
 ui_password=/etc/aisathome-node/ui-password
 ui_restart_trigger=/var/lib/aisathome-node/restart-engine
 ui_control_trigger=/var/lib/aisathome-node/node-control
@@ -1129,7 +1140,15 @@ if [[ -n "$model" ]]; then
   check_model_file "$model" 0
 else
   echo "model: $model_url (sha256 $model_sha, $(gb "$model_size") GB) to $target" >&2
-  check_disk "$(dirname "$target")" $(( $(model_missing "$target") + reserve ))
+  # A dry run without root cannot look into an installed node's models folder (the engine's, 0750), so it
+  # cannot tell whether the model is there already: it leaves the disk check to the install, which runs as
+  # root and checks again before it downloads anything. AISATHOME_TEST_MODELS_DIR: tests only.
+  models_seen="${AISATHOME_TEST_MODELS_DIR:-$(dirname "$target")}"
+  if [[ $dry_run = 1 && $EUID -ne 0 && -d "$models_seen" && ! ( -r "$models_seen" && -x "$models_seen" ) ]]; then
+    echo "disk: $models_seen is the installed node's and not readable without sudo, so its model cannot be counted; the install checks the free disk space" >&2
+  else
+    check_disk "$(dirname "$target")" $(( $(model_missing "$target") + reserve ))
+  fi
 fi
 [[ $spec = off ]] || echo "draft model: $draft_url (sha256 $draft_sha, $(gb "$draft_size") GB) to $draft_target" >&2
 [[ -z "$node_config" || -f "$node_config" ]] || die "no node config: $node_config"
@@ -1401,7 +1420,6 @@ node_ui_install
 systemctl daemon-reload
 systemctl enable --now aisathome-node-watchdog.timer
 systemctl enable aisathome-node-sleep.service
-if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
 started="$(date '+%Y-%m-%d %H:%M:%S')"
 # The agent stays stopped until the speed test is done, so no request reaches the node during
 # it (PartOf would otherwise restart a running agent along with llama-server).
@@ -1426,11 +1444,15 @@ if [[ $anonymous = 1 ]] && ! register_node; then
   registered=0
 fi
 if [[ -s /etc/aisathome-node/token.env ]]; then
+  # Start at boot only now that the node has a token (linked, registered or kept): a node whose link or
+  # registration did not finish would load the model at every boot with no agent to use it.
+  if [[ $at_boot = 1 ]]; then systemctl enable aisathome-gpu-init aisathome-llama aisathome-node; fi
   systemctl restart aisathome-node
   sleep 3
   systemctl --no-pager --lines=3 status aisathome-node | tail -3
 else
   systemctl stop aisathome-llama  # no token: free the GPU until the node is linked
+  [[ $at_boot = 0 ]] || echo "Start at boot: not turned on, as the node has no token yet. Once it is linked or registered: sudo systemctl enable aisathome-llama aisathome-node" >&2
 fi
 cat <<MSG
 
