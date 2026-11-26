@@ -346,7 +346,27 @@ func sameNew(t *Task, n *taskNew, spec json.RawMessage, maxTries int) bool {
 		t.HoleID == n.HoleID && maps.Equal(t.Labels, n.Labels)
 }
 
-// create adds a task, or returns the existing one with the same id and content (created false).
+// cancelledUnrun: a cancelled task that no worker ever took, so a create may replace it (tasks.go,
+// Re-creating a cancelled task): no try, no start, no lease, no result, no interruption or hold, no
+// live count or node, no event but created, max_tries and cancelled, and not compacted (a compacted
+// task no longer has its events to show it).
+func cancelledUnrun(t *Task) bool {
+	if t.State != TaskCancelled || t.CompactedAt != nil || t.Tries != 0 || t.StartedAt != nil || t.Lease != nil ||
+		t.Result != nil || t.Interruptions != 0 || t.Interrupted != "" || t.Requeued || t.PreferWorker != "" ||
+		t.PreferUntil != nil || t.Live != nil || len(t.NodeClasses) > 0 {
+		return false
+	}
+	for _, e := range t.Events {
+		if (e.What != "created" && e.What != "max_tries" && e.What != "cancelled") || e.Worker != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// create adds a task, or returns the existing one with the same id and content (created false). A
+// cancelled task that never ran (cancelledUnrun) is replaced by the new one, as a new task (created
+// true).
 func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -368,7 +388,8 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 	if len(n.Labels) == 0 {
 		n.Labels = nil
 	}
-	if t, ok := p.byID[n.ID]; ok {
+	old := p.byID[n.ID]
+	if t := old; t != nil && !cancelledUnrun(t) {
 		if !sameNew(t, n, spec, maxTries) {
 			return nil, false, terr(http.StatusConflict, "task %s exists with other content; a new task needs a new id", n.ID)
 		}
@@ -388,12 +409,18 @@ func (s *taskStore) create(project string, n *taskNew) (*Task, bool, error) {
 			t.Try = prev.Try + 1
 		}
 	}
-	t.event(now, "created", "", n.CreatedBy)
+	note := n.CreatedBy
+	if old != nil {
+		note += "; replaces the cancelled task of this id, which never ran"
+	}
+	t.event(now, "created", "", note)
+	// on a failed save the project goes stale and is read again: the cancelled task, as on disk
 	p.byID[t.ID] = t
 	if err := s.save(t); err != nil {
 		return nil, false, err
 	}
-	s.log.Info("task created", "project", project, "task", t.ID, "kind", t.Kind, "role", t.Role, "by", t.CreatedBy)
+	s.log.Info("task created", "project", project, "task", t.ID, "kind", t.Kind, "role", t.Role, "by", t.CreatedBy,
+		"replaced_cancelled", old != nil)
 	return t.view(true), true, nil
 }
 
