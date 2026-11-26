@@ -49,11 +49,16 @@ type taskStore struct {
 	// workers: when each project's workers last claimed (a task or none) or renewed a lease, in
 	// memory: how many runner workers can feed science now (connector demand).
 	workers map[string]map[string]time.Time
+	// inflight: per project and task, the model calls in flight that named it (tasks_live.go), under
+	// liveMu alone: a request's start never waits for mu.
+	liveMu   sync.Mutex
+	inflight map[liveKey]int64
 }
 
 func newTaskStore(dir string, log *slog.Logger) *taskStore {
 	return &taskStore{dir: dir, now: time.Now, log: log, byPr: map[string]*projectTasks{}, write: writeFileAtomic, maxFull: maxFullBytes,
 		workers:    map[string]map[string]time.Time{},
+		inflight:   map[liveKey]int64{},
 		compactAge: func(string) time.Duration { return defaultCompactDays * 24 * time.Hour }}
 }
 
@@ -702,7 +707,7 @@ func (s *taskStore) get(project, id string) *Task {
 		return nil
 	}
 	if t, ok := p.byID[id]; ok {
-		return t.view(true)
+		return s.withInFlight(t.view(true))
 	}
 	return nil
 }
@@ -743,7 +748,7 @@ func (s *taskStore) list(project string, states, kinds, roles []string, exported
 	out := make([]*Task, 0, len(queued)+len(leased)+len(fin))
 	for _, ts := range [][]*Task{queued, leased, fin} {
 		for _, t := range ts {
-			out = append(out, t.summary())
+			out = append(out, s.withInFlight(t.summary()))
 		}
 	}
 	return out, counts

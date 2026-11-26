@@ -125,11 +125,11 @@ func (t *Task) publicLabels() map[string]string {
 }
 
 // publicV1 copies the public fields of a task (see the top of the file).
-func (t *Task) publicV1() publicTaskV1 {
+func (t *Task) publicV1(inFlight int64) publicTaskV1 {
 	p := publicTaskV1{Project: t.Project, ID: t.ID, Kind: keepPublic(t.Kind, taskKindRe), State: t.State,
 		Parent: strOrNil(t.Parent), Needs: []string{}, RetryOf: strOrNil(t.RetryOf), Replaces: strOrNil(t.Replaces),
 		ClosedBy: strOrNil(t.ClosedBy), Labels: t.publicLabels(), HoleID: strOrNil(t.HoleID),
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, NodeClasses: []string{}, Live: t.publicLive()}
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, NodeClasses: []string{}, Live: t.publicLive(inFlight)}
 	if p.Kind == "" { // an older kind with a character today's pattern refuses
 		p.Kind = kindOther
 	}
@@ -195,7 +195,7 @@ func (s *taskStore) publicTasks(projects []string) ([]publicTaskV1, error) {
 		}
 		for _, t := range p.byID {
 			if pubTaskIDRe.MatchString(t.ID) && t.Project == project {
-				out = append(out, t.publicV1())
+				out = append(out, t.publicV1(s.inFlight(t)))
 			}
 		}
 	}

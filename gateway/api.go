@@ -411,6 +411,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 // output went out, and for preempted science a place behind the people.
 func (g *Gateway) chatExecute(w http.ResponseWriter, r *http.Request, job *chatJob) {
 	rt, req := job.rt, job.req
+	defer g.liveStart(req)() // the named task's call in flight until here, however it ends (tasks_live.go)
 	start := time.Now()
 	deadline := start.Add(time.Duration(job.queueWait) * time.Second)
 	preempted := 0

@@ -16,7 +16,7 @@
 //
 // The task's node_classes (tasks.go): a named task's request notes the class of the node serving
 // it, volunteer or pilot, never which node or whose. Its live count (tasks_live.go): a named
-// task's call that ended ok adds its tokens and time.
+// task's call that ended ok adds its tokens and time, and it counts as in flight until it ends.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway

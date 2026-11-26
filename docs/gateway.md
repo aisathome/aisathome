@@ -230,7 +230,8 @@ answer (streamed or not):
 ```json
 "live": {"requests": 41, "prompt_tokens": 1520330, "cached_tokens": 1398112,
          "completion_tokens": 18227, "uncached_prompt_tokens": 122218, "tokens_computed": 140445,
-         "tokens_with_cache": 1538557, "model_s": 1310.4, "updated_at": "2026-11-15T14:02:11Z"}
+         "tokens_with_cache": 1538557, "model_s": 1310.4, "in_flight": 1,
+         "updated_at": "2026-11-15T14:02:11Z"}
 ```
 
 | Field | What |
@@ -241,13 +242,19 @@ answer (streamed or not):
 | `completion_tokens` | Tokens written. |
 | `uncached_prompt_tokens`, `tokens_computed`, `tokens_with_cache` | As in a finished task's counts (above): `prompt_tokens - cached_tokens`, that plus `completion_tokens`, and `prompt_tokens + completion_tokens`. Unlike a result's, `live.prompt_tokens` includes the cached ones. |
 | `model_s` | Seconds the gateway measured from sending each call to the node to its end (prefill and any wait on the node included). |
-| `updated_at` | When the last counted call ended. |
+| `in_flight` | Calls that named the task and have not ended yet, from the moment the gateway took them (a wait for a node included) to their end, however they end. |
+| `updated_at` | When the last counted call ended; absent before the first. |
 
-`live` is `null` (on the queue view: absent) until a call counted, and again once the task ended:
+`live` is `null` (on the queue view: absent) until a call counted or while none is in flight, and
+again once the task ended:
 then the result's numbers, which the worker reports, are the ones to show. A claim that starts a new
 try starts from zero; one that continues an interrupted try goes on counting. The count is kept with
 the task and saved with its next heartbeat, so a gateway restart loses at most the calls since then.
-Both views are built at most every 15 seconds.
+Both views are built at most every 15 seconds. `in_flight` is kept in memory only (a restart starts
+it from zero) and also shows, for a running task, in the project's own `GET
+/v1/projects/{id}/tasks` and task, as `live.in_flight`, which is there whenever that task has a
+`live`: a worker can tell a task that waits on the model from one working without it (its tools,
+its checks after a session) and size its claims by that.
 
 ### The task queue when the disk fails
 
