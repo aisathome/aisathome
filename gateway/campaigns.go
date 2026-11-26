@@ -36,6 +36,9 @@
 // with a verdict never goes back to pending: a late "pending" write (a retry that arrived after the
 // verdict) changes nothing.
 //
+// A project with campaign_auto_finish also has its running campaigns finished by the gateway once
+// their tasks are idle, and a finished one reopened by a new task (campaigns_auto.go).
+//
 // SPDX-License-Identifier: Apache-2.0
 package gateway
 

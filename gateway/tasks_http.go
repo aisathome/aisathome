@@ -88,6 +88,7 @@ func (g *Gateway) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	code := http.StatusOK
 	if created {
 		code = http.StatusCreated
+		g.campaignTaskCreated(id, t.Labels) // a finished campaign it belongs to is running again
 	}
 	writeJSON(w, code, map[string]any{"created": created, "task": t})
 }

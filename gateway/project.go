@@ -93,6 +93,21 @@ type Project struct {
 	// PublicLinks: the https prefixes ("https://example.org/items/", ending in /) the project's
 	// campaign items and external results may link to (campaigns.go); none: they carry no links.
 	PublicLinks []string `json:"public_links,omitempty"`
+	// CampaignAutoFinish: the gateway finishes the project's running campaigns once their tasks have
+	// been idle a while, and reopens a finished one that gets a new task (campaigns_auto.go). Off
+	// without it.
+	CampaignAutoFinish *CampaignAutoFinish `json:"campaign_auto_finish,omitempty"`
+}
+
+// CampaignAutoFinish is a project's campaign_auto_finish (campaigns_auto.go).
+type CampaignAutoFinish struct {
+	// Labels: the task labels whose value is the id of the campaign a task belongs to ("trial",
+	// "campaign"); 1 to maxAutoFinishLabels names. A task with none of them belongs to no campaign.
+	Labels []string `json:"labels"`
+	// IdleHours: how long none of a campaign's tasks may have been queued or leased (and the campaign
+	// unchanged) before it is finished; more than 0, at most maxAutoFinishIdleHours; 0 =
+	// defaultAutoFinishIdle.
+	IdleHours float64 `json:"idle_hours,omitempty"`
 }
 
 // projectPageRe: a project's page, a site path.
@@ -158,6 +173,14 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 			return nil, fmt.Errorf("project %q: %w", p.ID, err)
 		}
 		p.PublicLinks = slices.Clone(p.PublicLinks)
+		if p.CampaignAutoFinish != nil {
+			af := *p.CampaignAutoFinish
+			if err := af.check(); err != nil {
+				return nil, fmt.Errorf("project %q: campaign_auto_finish: %w", p.ID, err)
+			}
+			af.Labels = slices.Clone(af.Labels)
+			p.CampaignAutoFinish = &af
+		}
 		if p.Page != "" && (!projectPageRe.MatchString(p.Page) || strings.Contains(p.Page, "//")) {
 			return nil, fmt.Errorf("project %q: page must be a site path such as /science/%s/", p.ID, p.ID)
 		}
