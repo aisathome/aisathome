@@ -18,18 +18,27 @@ func (r *taskRig) cancelTask(id string) {
 	}
 }
 
-// repost is the create of id with another spec, title, order, labels and max_tries.
+// reposted is newTask with repost_cancelled.
+func reposted(id, kind string) map[string]any {
+	n := newTask(id, kind)
+	n["repost_cancelled"] = true
+	return n
+}
+
+// repost is the create of id with repost_cancelled and another spec, title, order, labels and
+// max_tries.
 func repost(id string) map[string]any {
-	n := newTask(id, "other")
+	n := reposted(id, "other")
 	n["title"], n["order"], n["max_tries"], n["role"] = "Again "+id, -3, 5, "outline"
 	n["spec"] = map[string]any{"task": id, "scaffold": "v2"}
 	n["labels"] = map[string]string{"trial": "t9"}
 	return n
 }
 
-// A cancelled task that never ran is replaced by the next create of its id: 201 and created, the
-// new content, queued, nothing of the cancel left, a new place in creation order, and claimed by its
-// new order. The same create again is then an ordinary repeat (200).
+// A cancelled task that never ran is replaced by a create of its id with repost_cancelled: 201 and
+// created, the new content, queued, nothing of the cancel left, a new place in creation order, and
+// claimed by its new order. The same create again is then an ordinary repeat (200). Without the flag
+// a create answers as before: 200 for the same content, 409 for other, and the task stays cancelled.
 func TestTaskRepostCancelledUnrun(t *testing.T) {
 	r := newTaskRig(t, "")
 	r.createWith("T-A", "p2m-v7", map[string]any{"order": 5})
@@ -41,6 +50,19 @@ func TestTaskRepostCancelledUnrun(t *testing.T) {
 	r.cancelTask("T-A")
 	before := r.g.tasks.get("lab", "T-A")
 	r.now = r.now.Add(time.Hour)
+	other := repost("T-A")
+	delete(other, "repost_cancelled")
+	if w, _ := r.call("POST", tasksPath, testProjectKey, other); w.Code != http.StatusConflict {
+		t.Fatalf("other content without the flag: HTTP %d %s", w.Code, w.Body)
+	}
+	same := newTask("T-A", "p2m-v7")
+	same["order"], same["max_tries"] = 5, 4
+	if w, out := r.call("POST", tasksPath, testProjectKey, same); w.Code != 200 || out["created"] != false {
+		t.Fatalf("same content without the flag: HTTP %d %s", w.Code, w.Body)
+	}
+	if a := r.g.tasks.get("lab", "T-A"); a.State != TaskCancelled || a.Seq != before.Seq || !a.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("a create without the flag changed the cancelled task: %+v", a)
+	}
 
 	w, out := r.call("POST", tasksPath, testProjectKey, repost("T-A"))
 	if w.Code != http.StatusCreated || out["created"] != true {
@@ -68,7 +90,7 @@ func TestTaskRepostCancelledUnrun(t *testing.T) {
 	// The same content as before the cancel (a bench task posted again as it was) replaces it too.
 	r.create("T-D", "p2m-v7")
 	r.cancelTask("T-D")
-	if w, out := r.call("POST", tasksPath, testProjectKey, newTask("T-D", "p2m-v7")); w.Code != http.StatusCreated || out["created"] != true {
+	if w, out := r.call("POST", tasksPath, testProjectKey, reposted("T-D", "p2m-v7")); w.Code != http.StatusCreated || out["created"] != true {
 		t.Fatalf("repost with the same content: HTTP %d %s", w.Code, w.Body)
 	}
 	if r.state("T-D") != TaskQueued {
@@ -80,9 +102,9 @@ func TestTaskRepostCancelledUnrun(t *testing.T) {
 	}
 }
 
-// Any other existing task stays as it is: a cancelled task that ran (a try, or a lease that was
-// given back or cancelled), and a queued, leased, done or failed one. The same content answers 200
-// (not created), other content 409.
+// Any other existing task stays as it is, with repost_cancelled too: a cancelled task that ran (a
+// try, or a lease that was given back or cancelled), and a queued, leased, done or failed one. The
+// same content answers 200 (not created), other content 409.
 func TestTaskRepostOnlyUnrun(t *testing.T) {
 	r := newTaskRig(t, "")
 	// cancelled after an interruption: tries 1, back in the queue, then cancelled
@@ -108,7 +130,7 @@ func TestTaskRepostOnlyUnrun(t *testing.T) {
 		if w, _ := r.call("POST", tasksPath, testProjectKey, repost(id)); w.Code != http.StatusConflict {
 			t.Errorf("%s (%s), other content: HTTP %d, want 409", id, state, w.Code)
 		}
-		if w, out := r.call("POST", tasksPath, testProjectKey, newTask(id, "p2m-v7")); w.Code != 200 || out["created"] != false {
+		if w, out := r.call("POST", tasksPath, testProjectKey, reposted(id, "p2m-v7")); w.Code != 200 || out["created"] != false {
 			t.Errorf("%s (%s), same content: HTTP %d %s, want 200", id, state, w.Code, w.Body)
 		}
 		after := r.g.tasks.get("lab", id)
@@ -141,7 +163,7 @@ func TestTaskCancelledUnrunStrict(t *testing.T) {
 		"live":          func(t *Task) { t.Live = &taskLive{} },
 		"node_classes":  func(t *Task) { t.NodeClasses = []string{"volunteer"} },
 		"compacted":     func(t *Task) { t.CompactedAt = &at },
-		"claimed event": func(t *Task) { t.Events = append(t.Events, taskEvent{What: "claimed", Worker: "w1"}) },
+		"claimed event": func(t *Task) { t.Events = append(t.Events, taskEvent{What: "claimed"}) },
 		"a worker":      func(t *Task) { t.Events[2].Worker = "w1" },
 	} {
 		tk := base()
@@ -198,7 +220,7 @@ func TestTaskRepostPublicAndCampaign(t *testing.T) {
 
 	r.now = r.now.Add(time.Minute)
 	n := map[string]any{"id": "o1", "kind": "p2m-v7", "title": "o1", "created_by": "owner",
-		"spec": map[string]any{"leaf": "o1", "scaffold": "v2"}, "labels": map[string]string{"trial": "t9"}}
+		"spec": map[string]any{"leaf": "o1", "scaffold": "v2"}, "labels": map[string]string{"trial": "t9"}, "repost_cancelled": true}
 	r.want(201, "POST", "/v1/projects/prove2me/tasks", testProjectKey, n)
 	r.wantStatus("prove2me", "t9", CampaignRunning, nil)
 
