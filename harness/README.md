@@ -76,6 +76,11 @@ trial from this repository alone.
   (SIGTERM or a spot notice) that stops the child, takes its checkpoint and gives the task back with its try,
   a pause after three crashes in a row. The project supplies the child's callbacks (`child_main`: run,
   cleanup, checkpoint).
+- **A slot gate** (`slotgate.py`): when a queue worker may claim another task that uses the model, sized by
+  the model slots the gateway reports online (`/v1/stats` `nodes.slots`), with an optional idle release (a
+  leased task between model calls for a while frees its slot, under a ceiling per slot) and a memory gate;
+  it picks the task to claim, by id, in the gateway's claim order. The project says which tasks use the
+  model and which this release can run.
 - **Checkpoints** (`checkpoint.py`, `aws.py`): a task's state, as the project lays it out (named parts),
   packed and uploaded to a store (a directory, or S3 signed with SigV4 from the standard library) after
   every round and at a give-back, restored on another machine with its hash checked and a fall-back to the
