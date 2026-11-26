@@ -10,11 +10,11 @@ description: "Every AIs@home doc in one place: the chat, the OpenAI-compatible A
 
 ## Run a node
 
-- [Overview](/node/): what you need, how new nodes start, what you are responsible for.
-- [Install on Linux](/node/install/): the prebuilt bundle, or building llama.cpp yourself.
+- [Run a node](/node/): one command on Linux, the Windows installer, what you need.
+- [Install on Linux](/node/install/): step by step: the bundle by hand, or building llama.cpp yourself.
 - [Install on Windows](/node/windows/): one installer, a setup page and a tray icon.
-- [Model settings](/node/presets/): the one setting every node uses.
-- [Day to day](/node/operate/): the local status page, pausing, troubleshooting.
+- [Model settings](/node/presets/): the two tiers by card size, and speculative decoding (MTP).
+- [Day to day](/node/operate/): stopping, starting and removing a node, the local status page, troubleshooting.
 - [Update your node](/node/update/): install a new release, keeping the token and settings.
 - [About the binaries](/node/binaries/): what a release contains, how it is built and checked.
 - [Credit](/node/credit/): how credit is counted, and what it is not.

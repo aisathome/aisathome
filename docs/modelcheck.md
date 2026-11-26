@@ -1,7 +1,7 @@
 # Model-check references
 
 For the maintainer. Operators read "Model check" on the site page "Day to day"
-(`site/src/content/docs/node/operate.md`).
+(`site/src/content/docs/node/operate.mdx`).
 
 `aisathome-node modelcheck` (package `node/modelcheck`) compares a node's greedy answers to 100
 fixed prompts with a **reference**: the same prompts answered on a known llama.cpp build, model

@@ -1,25 +1,39 @@
 ---
 title: Day to day
-description: Pause, resume, logs, troubleshooting and uninstalling an AIs@home node.
+description: Stop, start, update and remove an AIs@home node on Linux or Windows; its local page, logs, the model check and troubleshooting.
 ---
 
-| | |
-|---|---|
-| Status | `aisathome-node status`, or the [local UI](#local-ui) |
-| Pause (model stays loaded) | **Pause** in the [local UI](#local-ui) |
-| Pause and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` |
-| Resume | `sudo systemctl start aisathome-llama aisathome-node` |
-| Logs | `journalctl -u aisathome-node -u aisathome-llama -f` |
-| Check the engine computes correctly | `aisathome-node modelcheck`: see [Model check](#model-check) |
-| Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` |
-| Update | `sudo ./install.sh` from the new release's bundle (a node installed before v0.6.0 is linked again; a later one keeps its token, also with `--keep-token`): see [Update your node](/node/update/) |
-| Remove | `sudo aisathome-node-uninstall` (installers from v0.7.0 on; keeps the model, `--purge` removes it and the `aisathome` user too), or **Uninstall** on the local page. Earlier installs: `sudo ./uninstall.sh` in the unpacked bundle. From a source checkout: `sudo ./node/packaging/linux/uninstall.sh` |
+import { Code } from '@astrojs/starlight/components';
+import { linuxUninstallCommand } from '../../../data/node-release';
+
+## Stop, start, remove
+
+| | Linux | Windows |
+|---|---|---|
+| Status | `aisathome-node status`, or the [node's page](#local-ui) | the node's page, or the tray icon |
+| Pause (the model stays loaded) | **Pause** on the node's page | **Pause** on the node's page |
+| Stop and free the GPU | **Stop and free the GPU** on the node's page, or `sudo systemctl stop aisathome-node aisathome-llama` | **Stop engine** in the tray menu or on the node's page |
+| Start again | `sudo systemctl start aisathome-llama aisathome-node` | **Start engine** |
+| Start at boot | `sudo systemctl enable aisathome-llama aisathome-node` (`disable` turns it off; `systemctl is-enabled aisathome-node` shows which, and so do the installer's last lines) | on |
+| Link to an account | `sudo aisathome-node link` (credit starts then) | **Link to my account** on the node's page |
+| Logs | `journalctl -u aisathome-node -u aisathome-llama -f` | **Collect diagnostics…** in the tray menu |
+| Check the engine computes correctly | `aisathome-node modelcheck`: see [Model check](#model-check) | the same, in PowerShell (below) |
+| Update | [Update your node](/node/update/) | [Update your node](/node/update/#on-windows) |
+| Uninstall | **Uninstall…** on the node's page, or `sudo aisathome-node-uninstall`. Both keep the model unless you ask: the page's box, or `--purge`, removes it and the node's users (`aisathome`, `aisathome-llama`) too | Settings → Apps → **AIs@home node** → Uninstall |
+
+**Installed before v0.7.0?** Such a node has no `aisathome-node-uninstall` yet. Update it, or run the
+bundle's `uninstall.sh` in the folder you installed from (`sudo ./uninstall.sh`, `--purge` to remove
+the model too). If that folder is gone (the one-line install unpacks into `/tmp`, which a restart may
+clear), download and check the bundle again, ending in the uninstaller:
+
+<Code code={linuxUninstallCommand} lang="bash" />
+
+From a source checkout: `sudo ./node/packaging/linux/uninstall.sh`.
 
 ## Local UI
 
-Nodes installed from release `v0.1.0` or later serve a status page on your computer at
-**http://127.0.0.1:7381/**; an older node gets it when you run the new installer (desktops also
-get an "AIs@home node" menu entry). It shows whether the node is connected, paused or
+The node serves a status page on your computer at **http://127.0.0.1:7381/** (desktops also get an
+"AIs@home node" menu entry). It shows whether the node is connected, paused or
 serving, the model, slots in use, the GPU's memory and temperature, requests and tokens
 served today and in total (kept across reinstalls), and recent connections and errors. It never shows prompts
 or answers. **Your nodes** opens your [account page](https://aisathome.org/account), which shows
@@ -27,7 +41,8 @@ each of your nodes' average speed (output tokens a second over its last 50 answe
 measured them, waiting and prompt reading included) and what it serves right now: a chat or API
 request (never what was asked, or by whom) or a science task, linked to its page.
 
-Pause, resume and restarting the engine need the local password the installer created:
+Pause, Resume, **Restart engine**, **Stop and free the GPU** and **Uninstall…** need the local
+password the installer created:
 
 ```bash
 sudo cat /etc/aisathome-node/ui-password
@@ -36,6 +51,11 @@ sudo cat /etc/aisathome-node/ui-password
 Enter it once and the browser remembers it. **Pause** lets requests in flight finish and
 takes no new ones, while the model stays in GPU memory; it lasts until you resume, also
 across restarts. To free the GPU, stop the node instead (table above).
+
+**Stop and free the GPU** stops the node and the engine; the page goes away with them, and
+`sudo systemctl start aisathome-llama aisathome-node` brings both back. **Uninstall…** asks you to
+confirm and has a box to remove the model too. On Windows the page has **Stop engine** and **Start
+engine** instead, and no uninstall (Settings → Apps).
 
 The page is reachable from this computer only. On a machine without a screen, open an SSH
 tunnel from your own computer and browse to http://localhost:7381/ there:
@@ -70,8 +90,8 @@ Then choose **Options → Read config files** in BOINC Manager, or restart the c
   suspends all its GPU work ("an exclusive app is running"); CPU work goes on.
 - The model stays loaded as long as the node runs, also while it is paused in the
   [local UI](#local-ui), so BOINC's GPU work waits all that time. To give the GPU back to
-  BOINC, stop the node (`sudo systemctl stop aisathome-node aisathome-llama`): BOINC resumes
-  within about 15 seconds.
+  BOINC, stop the node (**Stop and free the GPU** on its page, or
+  `sudo systemctl stop aisathome-node aisathome-llama`): BOINC resumes within about 15 seconds.
 - Suspending ends BOINC's running GPU task: it starts again from its last checkpoint, and
   the work since then is lost.
 - On Linux BOINC compares only the first 15 characters of a process name; `llama-server`
@@ -127,6 +147,11 @@ references; `-ref` takes another reference file, or an `https://` address togeth
 
 The prompts are public, so this is a check of your own setup, not a way for the network to check
 nodes.
+
+**Speculative decoding.** On 24 GB cards the Linux installer turns on MTP by default when the card
+has 21,000 MiB free; otherwise the node runs without it, and the install says why. To turn it off,
+run the installer with `--speculation off` (it is remembered on updates). See
+[model settings](/node/presets/#speculative-decoding-mtp).
 
 ## Privacy hardening
 

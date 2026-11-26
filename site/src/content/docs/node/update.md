@@ -6,6 +6,18 @@ description: Install a new release on a running AIs@home node, keeping its setti
 New releases are listed on [GitHub](https://github.com/aisathome/aisathome/releases); each
 one says what changed and whether nodes need it.
 
+**Updating a 24 GB Linux node to v0.7.0 turns MTP on**, also on a node where an earlier installer
+stored `off`: installers before v0.7.0 stored `off` for every node that made no choice, so the new
+installer reads it as no choice. MTP (speculative decoding with the model's multi-token-prediction
+head) makes the node write about 1.7-1.9x faster, adds a 1.4 GB download and needs 21,000 MiB free on
+the card; without the room the node runs without it and the installer says why. To keep it off, run
+the installer with `--speculation off` (or `none`); that choice is remembered on later updates. See
+[model settings](/node/presets/#speculative-decoding-mtp).
+
+Also from v0.7.0 on Linux: the engine (`llama-server`) runs as its own user, `aisathome-llama`, which
+now owns `/var/lib/aisathome-node/models` (scripts of your own that read that folder need to allow
+for it), and the installer puts the uninstaller at `/usr/local/sbin/aisathome-node-uninstall`.
+
 **From v0.6.0, a node token works only with the gateway that issued it.** Every token the node
 gets from v0.6.0 on carries a record of that gateway; a token from an earlier release has none, so
 the agent no longer uses it. A node installed before v0.6.0 is therefore **linked again** on its

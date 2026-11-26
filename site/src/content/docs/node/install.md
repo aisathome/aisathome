@@ -3,15 +3,20 @@ title: Install on Linux
 description: Install an AIs@home node on Linux with systemd, step by step.
 ---
 
-There are two ways to install: the **prebuilt bundle** (no compiler, no CUDA toolkit, only
-the NVIDIA driver) or **building llama.cpp yourself**. Both end with the same services.
+The quickest way is one command, which installs a node without an account (science only; link it
+later with `sudo aisathome-node link`):
+
+```bash
+curl -fsSL https://aisathome.org/node.sh | sh
+```
+
+It does steps 1 and 2 below for you and asks before it installs: see [Run a node](/node/). This page
+is the same install step by step, with the **prebuilt bundle** (no compiler, no CUDA toolkit, only
+the NVIDIA driver), and **building llama.cpp yourself**. Both end with the same services.
 
 ## Prebuilt bundle
 
-You need an RTX 30, 40 or 50 series card with 16 GB or more (on a 16 GB card, at most a light
-desktop: see [what you need](/node/#what-you-need)), the NVIDIA driver 525.60.13 or newer
-(570.26 or newer for an RTX 50), an x86_64 Linux with systemd and glibc 2.35 or newer
-(Ubuntu 22.04, Debian 12 or newer), and about 17 GB of free disk space in `/var/lib`.
+What the machine needs: [what you need](/node/#what-you-need).
 
 ### 1. Download and check
 
@@ -41,9 +46,8 @@ v0.7.0 ask for a node token instead: press **Enter** there.)
 **Without an account (science only):** answer **n**, or run `sudo ./install.sh --anonymous`: the
 node registers with no sign-in instead of step 3. It does science work only, never people's chats, and earns no credit
 until you link it (`sudo aisathome-node link`). You must be 18 or older; running it means you
-accept the [terms](/about/terms/). The one-liner `curl -fsSL https://aisathome.org/node.sh | sh`
-does steps 1 and 2 this way and asks before it installs. The node first answers a few test prompts
-and gets work once they pass ([more](/node/#without-an-account-science-only)).
+accept the [terms](/about/terms/). The one-line install above does steps 1 and 2 this way. The node
+first answers a few test prompts and gets work once they pass ([more](/node/#how-new-nodes-start)).
 
 The installer then:
 
@@ -55,10 +59,13 @@ The installer then:
   to do; it never picks a smaller context;
 - downloads the tier's model file (Qwen3.8 27B: `UD-Q3_K_XL`, 13.1 GB, or `UD-IQ4_XS`,
   14.3 GB) from Hugging Face, pinned to one exact file, and checks its SHA-256. An interrupted
-  download resumes when you run the installer again;
+  download resumes when you run the installer again. On a 24 GB card with 21,000 MiB free it also
+  downloads the 1.4 GB MTP draft model, which makes the node write about 1.7-1.9x faster
+  ([model settings](/node/presets/#speculative-decoding-mtp); `--speculation off` leaves it out);
 - writes `node.json` for the tier and the gateway `wss://api.aisathome.org/v1/node/connect`
   (`--gateway-url` for another);
-- creates the `aisathome` user, the two services, a watchdog that restarts a hung
+- creates the users `aisathome` (the node agent) and `aisathome-llama` (the engine), the two
+  services, the uninstaller `/usr/local/sbin/aisathome-node-uninstall`, a watchdog that restarts a hung
   `llama-server`, and a hook that stops the node around suspend, and waits until the model
   is loaded;
 - runs a **speed test** (a minute or two): a 32,000-token prompt, then it measures how fast

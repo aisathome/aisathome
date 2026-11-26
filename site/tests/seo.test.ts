@@ -1,16 +1,33 @@
-// What search engines and AI answer engines read (seo.ts): the home page's JSON-LD, /robots.txt and
+// What search engines and AI answer engines read (seo.ts): the JSON-LD of the home page and /node/, /robots.txt and
 // /llms.txt, against the checks the built site gets too (scripts/seo-checks.mjs).
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { homeJsonLd, homeTitle, jsonLdScript, llmsTxt, origin, robotsTxt } from '../src/data/seo';
-import { jsonLdProblems, llmsProblems, robotsProblems } from '../scripts/seo-checks.mjs';
+import { homeJsonLd, homeTitle, jsonLdScript, llmsTxt, nodeJsonLd, origin, robotsTxt } from '../src/data/seo';
+import { nodeRelease } from '../src/data/node-release';
+import { jsonLdProblems, llmsProblems, nodeJsonLdProblems, robotsProblems } from '../scripts/seo-checks.mjs';
 
-test('the JSON-LD is an Organization, a WebSite and the node software, on the given domain', () => {
+test('the home JSON-LD is an Organization and a WebSite, on the given domain', () => {
 	assert.deepEqual(jsonLdProblems(homeJsonLd(), origin), []);
 	const staging = 'https://staging.aisathome.org';
 	assert.deepEqual(jsonLdProblems(homeJsonLd(staging), staging), []);
 	assert.deepEqual(JSON.parse(jsonLdScript(homeJsonLd())), homeJsonLd());
+});
+
+test('/node/ describes the node software once: the release, the GitHub download, its publisher by @id', () => {
+	assert.deepEqual(nodeJsonLdProblems(nodeJsonLd(), origin), []);
+	const staging = 'https://staging.aisathome.org';
+	assert.deepEqual(nodeJsonLdProblems(nodeJsonLd(staging), staging), []);
+	const app = nodeJsonLd()['@graph'].find((n) => n['@type'] === 'SoftwareApplication') as Record<string, string>;
+	assert.equal(app.softwareVersion, nodeRelease.version.replace(/^v/, ''));
+	assert.equal(app.releaseNotes, `https://github.com/aisathome/aisathome/releases/tag/${nodeRelease.version}`);
+	assert.ok(!jsonLdProblems(homeJsonLd(), origin).length && !homeJsonLd()['@graph'].some((n) => n['@type'] === 'SoftwareApplication'));
+	const moved = nodeJsonLd();
+	(moved['@graph'][1] as Record<string, unknown>).downloadUrl = `${origin}/node/`;
+	assert.ok(nodeJsonLdProblems(moved, origin).some((p) => p.includes('downloadUrl')));
+	const paid = nodeJsonLd();
+	(paid['@graph'][1] as { offers: { price: string } }).offers.price = '5';
+	assert.ok(nodeJsonLdProblems(paid, origin).some((p) => p.includes('free Offer')));
 });
 
 test('the JSON-LD checks catch a wrong shape', () => {
@@ -20,9 +37,9 @@ test('the JSON-LD checks catch a wrong shape', () => {
 	const person = homeJsonLd();
 	(person['@graph'][0] as Record<string, unknown>).founder = { '@type': 'Person', name: 'Someone' };
 	assert.ok(jsonLdProblems(person, origin).includes('names a person or contact'));
-	const paid = homeJsonLd();
-	(paid['@graph'][2] as { offers: { price: string } }).offers.price = '5';
-	assert.ok(jsonLdProblems(paid, origin).some((p) => p.includes('free Offer')));
+	const both = homeJsonLd();
+	both['@graph'].push(nodeJsonLd()['@graph'][1] as never);
+	assert.ok(jsonLdProblems(both, origin).some((p) => p.includes('SoftwareApplication')));
 });
 
 test('a "</script>" in the JSON-LD cannot close its script element', () => {

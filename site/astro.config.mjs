@@ -43,6 +43,8 @@ export default defineConfig({
 			],
 			// global.css wires Tailwind 4 and Starlight to one theme (fonts, accent, grays).
 			customCss: ['./src/styles/global.css', './src/styles/brand.css'],
+			// /node/'s JSON-LD (src/route-data.ts).
+			routeMiddleware: './src/route-data.ts',
 			components: {
 				SocialIcons: './src/components/HeaderLinks.astro',
 				Footer: './src/components/Footer.astro',

@@ -5,10 +5,10 @@
 // to a question. Science comes before the ask: what the network does, then how small it is, then join it.
 // Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
-import { Code } from '@astrojs/starlight/components';
 import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, nodeBlock, steps } from '../data/home';
-import { anonCommand, installerSize, installerURL, nodeRelease, nodeShSource } from '../data/node-release';
+import NodeStart from '../components/NodeStart.astro';
+import NodePageShot from '../components/NodePageShot.astro';
 import { posts, postURL, shortDate, isoDate } from '../data/devlog';
 import { science } from '../data/science';
 import { p2m } from '../data/prove2me';
@@ -42,9 +42,6 @@ const icons: Record<string, string> = {
 	'Users stay anonymous': 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c1-4 4-6 8-6s7 2 8 6M3 3l18 18',
 	'Open source': 'M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16',
 };
-const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
-const nodeShotAlt =
-	'The node’s own page, with example data: Serving, connected to aisathome.org; without an account, admitted for science work, with the command to link it; one slot in use; model qwen3.8-27b.';
 ---
 
 <StarlightPage
@@ -135,37 +132,7 @@ const nodeShotAlt =
 			<h2 id="b-node">{nodeBlock.title}</h2>
 			<p class="node-intro">{nodeBlock.intro}</p>
 
-			<div class="node-grid">
-				<div class="node-linux">
-					<p class="node-os">Linux: paste in a terminal</p>
-					<Code code={anonCommand} lang="bash" frame="terminal" title="Terminal" wrap />
-					<ol class="node-does">
-						{nodeBlock.does.map((d) => {
-							const [before, after] = d.link ? d.text.split(d.link.words) : [d.text, ''];
-							return <li>{before}{d.link && <a href={d.link.href}>{d.link.words}</a>}{after}</li>;
-						})}
-					</ol>
-					<p class="node-links">
-						<a href={nodeShSource}>Read the script first</a>
-						<span aria-hidden="true">·</span>
-						<a href={links.nodeLinux}>The same steps by hand</a>
-					</p>
-				</div>
-
-				<div class="node-win">
-					<p class="node-os">Windows 10 or 11</p>
-					<a class="dl-btn" href={installerURL} data-dl-windows>
-						<svg viewBox="0 0 24 24" aria-hidden="true"><path d={arrow} /></svg>
-						Download for Windows
-					</a>
-					<p class="node-meta">{nodeRelease.version} · {installerSize} · <a href={`${links.nodeWindows}#check-the-download`}>Check the download</a></p>
-					<p class="node-small">
-						On the setup page, choose <b>Start without an account (science only)</b>, or link it to your account
-						right away. Windows may warn “unknown publisher” (not signed yet): <b>More info</b> → <b>Run anyway</b>.{' '}
-						<a href={links.nodeWindows}>Windows install in detail</a>
-					</p>
-				</div>
-			</div>
+			<NodeStart />
 
 			<div class="node-facts">
 				<div>
@@ -180,12 +147,10 @@ const nodeShotAlt =
 					<h3>Your node’s own page</h3>
 					<p>
 						Once it runs, the node has a page on your computer at <code>http://127.0.0.1:7381/</code> (Windows opens it; on Linux
-						the installer prints it): its status and what it served, <b>Pause</b> and <b>Restart</b> behind a local password,
-						and how to link it to an account. <a href={`${links.node}#stop-remove-link-later`}>Stop, remove or link a node</a>
+						the installer prints it): its status and what it served; <b>Pause</b>, <b>Restart</b>, <b>Stop</b> and, on Linux,{' '}
+						<b>Uninstall</b> behind a local password; and how to link it to an account. <a href={`${links.nodeOperate}#stop-start-remove`}>Stop, remove or link a node</a>
 					</p>
-					<!-- The real local page with made-up data (e2e/browser/node_page_image.py); one image per theme. -->
-					<img class="node-shot node-shot-light" src="/images/home/node-page-light.webp" width="640" height="448" loading="lazy" decoding="async" alt={nodeShotAlt} />
-					<img class="node-shot node-shot-dark" src="/images/home/node-page-dark.webp" width="640" height="448" loading="lazy" decoding="async" alt={nodeShotAlt} />
+					<NodePageShot variant="top" />
 				</div>
 			</div>
 
@@ -494,44 +459,7 @@ const nodeShotAlt =
 	}
 	.node h2 { margin: 0.4rem 0 0.75rem; font-size: clamp(2rem, 4.5vw, 3.2rem); font-weight: 850; text-wrap: balance; }
 	.node-intro { max-width: 46rem; font-size: 1.05rem; line-height: 1.6; }
-	.node-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-		gap: 1.5rem 2.5rem;
-		margin-top: 1.75rem;
-	}
-	.node-os { margin-bottom: 0.6rem !important; font: 800 1.3rem/1.1 var(--font-display); letter-spacing: 0.03em; text-transform: uppercase; color: var(--sl-color-white); }
-	.node-linux :global(.expressive-code) { width: 100%; }
-	/* On a phone the command wraps at its spaces only: the address stays on one line. */
-	@media (max-width: 30rem) { .node-linux :global(.expressive-code) { --ec-codeFontSize: 0.78rem; --ec-codePadInl: 0.75rem; } }
-	.node-does { margin-top: 1rem !important; padding-left: 1.4rem !important; list-style: decimal; font-size: 0.95rem; line-height: 1.55; }
-	.node-does li + li { margin-top: 0.4rem; }
-	.node-does li::marker { font-weight: 800; color: var(--sl-color-accent-high); }
-	.node-links { margin-top: 0.9rem !important; display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; font-size: 0.92rem; }
-	.node a:not(.dl-btn):not(.more) { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
-	.node-win { padding-left: 2.5rem; border-left: 1px solid var(--sl-color-hairline-light); }
-	.node-meta { margin-top: 0.6rem !important; font-size: 0.9rem; font-weight: 600; color: var(--sl-color-white); }
-	.node-meta a { font-weight: 400; }
-	.node-small { margin-top: 0.9rem !important; font-size: 0.9rem; line-height: 1.55; }
-	.node-small b { color: var(--sl-color-white); }
-	.dl-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.65rem;
-		padding: 0.9rem 1.5rem;
-		border-radius: 0.4rem;
-		background: var(--sl-color-accent);
-		color: #1c0d02;
-		font: 800 1.3rem/1 var(--font-display);
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		text-decoration: none;
-		white-space: nowrap;
-		transition: background-color 0.15s;
-	}
-	.dl-btn:hover, .dl-btn:focus-visible { background: var(--sl-color-accent-high); color: #1c0d02; }
-	:global([data-theme='light']) .dl-btn, :global([data-theme='light']) .dl-btn:hover { color: #fff; }
-	.dl-btn svg { width: 1.3rem; flex: none; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+	.node a:not(.more) { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
 	.node-facts {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -545,25 +473,10 @@ const nodeShotAlt =
 	.node-facts h3 { margin-bottom: 0.75rem; font-size: 1.35rem; }
 	.node-facts strong, .node-facts b { color: var(--sl-color-white); }
 	.node-facts a { white-space: nowrap; }
-	.node-shot {
-		display: block;
-		width: 100%;
-		max-width: 26rem;
-		height: auto;
-		margin-top: 1rem;
-		border: 1px solid var(--sl-color-hairline-light);
-		border-radius: 0.5rem;
-	}
-	:global([data-theme='light']) .node-shot-dark, :global([data-theme='dark']) .node-shot-light { display: none; }
 	.node .guar { margin-top: 2.25rem; padding-top: 1.75rem; border-top: 1px solid var(--sl-color-hairline-light); }
 	.node .guar h3 { font-size: 1.35rem; }
 	@media (max-width: 50rem) {
-		.node-grid, .node-facts { grid-template-columns: minmax(0, 1fr); }
-		.node-win { padding-left: 0; padding-top: 1.5rem; border-left: 0; border-top: 1px solid var(--sl-color-hairline-light); }
-		.dl-btn { display: flex; justify-content: center; padding-inline: 1rem; }
-	}
-	@media (max-width: 24rem) {
-		.dl-btn { white-space: normal; text-align: center; }
+		.node-facts { grid-template-columns: minmax(0, 1fr); }
 	}
 	@media (max-width: 40rem) {
 		/* The four promises as a compact list on a phone: the icon beside its heading. */
