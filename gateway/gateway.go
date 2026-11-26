@@ -119,6 +119,8 @@ type Gateway struct {
 	proxies []netip.Prefix
 	// untrustedXFF: an X-Forwarded-For from a peer not in proxies was logged once (clientaddr.go).
 	untrustedXFF atomic.Bool
+	// nrel: the latest node release, for the website (noderelease.go); nil when node_release_url is unset.
+	nrel *nodeReleaseWatch
 }
 
 // New creates a gateway.
@@ -233,6 +235,11 @@ func (g *Gateway) setup(cfg Config) (err error) {
 	if g.proxies, err = parsePrefixes(cfg.TrustedProxies); err != nil {
 		return fmt.Errorf("trusted_proxies: %w", err)
 	}
+	if cfg.NodeReleaseURL != "" {
+		if g.nrel, err = newNodeReleaseWatch(cfg.NodeReleaseURL, log); err != nil {
+			return err
+		}
+	}
 	g.keys.Store(&keyStoreBox{&configKeys{plain: staticKeys(cfg)}})
 	if err := g.loadKeys(cfg); err != nil {
 		return err
@@ -345,6 +352,13 @@ func (g *Gateway) startBackground() {
 	g.every(pressureSampleEvery, func() { g.press.sample(g.pressureNow(), time.Now()) })
 	if g.mc != nil {
 		g.mcStart()
+	}
+	if g.nrel != nil {
+		g.bg.Add(1)
+		go func() {
+			defer g.bg.Done()
+			g.nrel.run(g.stop)
+		}()
 	}
 }
 

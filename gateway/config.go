@@ -101,6 +101,11 @@ type Config struct {
 	// for the per-address node limit, email sign-in's limits and connectors' allow_from. Only a proxy
 	// that sets the header itself belongs here: any other peer could claim any address.
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+	// NodeReleaseURL is GitHub's API address of the node's latest release
+	// (https://api.github.com/repos/aisathome/aisathome/releases/latest): the gateway reads it every
+	// 10 minutes, without a token, and serves it at GET /v1/node/release for the website's download
+	// block (noderelease.go). Empty = off: that endpoint answers 503 and the site shows its own copy.
+	NodeReleaseURL string `json:"node_release_url,omitempty"`
 	// Connectors bring machines as pilots (connector.go): BOINC's bridge is the first. They need
 	// accounts (pilots serve as accounts' nodes) and a state_dir for their records.
 	Connectors []Connector `json:"connectors,omitempty"`

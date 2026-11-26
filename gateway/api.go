@@ -56,6 +56,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", g.handleChat)
 	mux.HandleFunc("GET /v1/models", g.handleModels)
 	mux.HandleFunc("GET /v1/node/connect", g.handleNodeConnect)
+	mux.HandleFunc("GET /v1/node/release", g.handleNodeRelease)
 	mux.HandleFunc("GET /v1/stats", g.handleStats)
 	mux.HandleFunc("GET /v1/stats/credit", g.handleCreditStats)
 	mux.HandleFunc("GET /v1/stats/history", g.handleHistory)

@@ -3,7 +3,8 @@
 // installer. Both stay visible (no OS switching): a visitor on a phone installs later, on another machine.
 // One component for the home page's #run-a-node and for /node/, so the two cannot offer different
 // commands. `framed` draws it as a box of its own, with the other ways to install below (on /node/; the home
-// page's section is the box there). Data: src/data/node-start.ts and node-release.ts.
+// page's section is the box there). Data: src/data/node-start.ts and node-release.ts (in the browser, the version,
+// size and button follow the gateway's latest release).
 // SPDX-License-Identifier: Apache-2.0
 import { Code } from '@astrojs/starlight/components';
 import { anonCommand, installerSize, installerURL, nodeRelease, nodeShSource } from '../data/node-release';
@@ -53,6 +54,13 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 		</p>
 	)}
 </div>
+
+<script>
+	// The version, size and button of the gateway's latest release (node-release.ts; the build's copy until then, or
+	// without it).
+	import { updateRelease } from '../data/node-release';
+	updateRelease();
+</script>
 
 <style>
 	/* The columns follow the block's own width: side by side on the wide home page, stacked in the docs
