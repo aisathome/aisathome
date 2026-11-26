@@ -317,6 +317,9 @@ type ReleaseNotice struct {
 
 // releaseNotice is the notice for this agent, or nil. The Windows node (the agent runs its engine, or the
 // page runs on Windows: the setup's waiting agent runs none) updates with its installer.
+// goos is runtime.GOOS; the tests set it to check both platforms' notices on any runner.
+var goos = runtime.GOOS
+
 func (s *Server) releaseNotice(st node.Status) *ReleaseNotice {
 	if s.opt.Releases == nil {
 		return nil
@@ -327,7 +330,7 @@ func (s *Server) releaseNotice(st node.Status) *ReleaseNotice {
 	}
 	n := &ReleaseNotice{Latest: rel.Version, Current: node.Version, Available: release.Newer(rel.Version, node.Version),
 		URL: rel.URL, Platform: "linux", Command: UpdateCommand, DocsURL: UpdateDocsURL}
-	if runtime.GOOS == "windows" || st.EngineProcess != nil {
+	if goos == "windows" || st.EngineProcess != nil {
 		n.Platform, n.Command, n.DocsURL = "windows", "", WindowsDownloadURL
 	}
 	return n
