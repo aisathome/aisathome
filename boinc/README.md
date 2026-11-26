@@ -16,7 +16,9 @@ BOINC's stock `wrapper` is the app's main program. It reads `job.xml` and runs o
   (`CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM`);
 - connects to the gateway over the node WebSocket with the credential the work unit carries;
 - ends after 4 hours (it pauses, lets requests in flight finish, then exits 0), after 30 minutes
-  with no request routed to it (exit 0), or when the engine keeps failing (exit 1, which BOINC
+  with no request routed to it (exit 0; the gateway's model check sends no probe to a pilot that
+  has had no other request for 10 minutes, `model_check.pilot_idle_seconds`, so probes do not keep
+  an idle pilot running), or when the engine keeps failing (exit 1, which BOINC
   reports as an error; exit 0 once the task has served an answer, in this run or an earlier run
   of the same task, so that BOINC validates the result and the work served earns its credit: a
   file next to the checkpoint, `pilot_checkpoint.served`, records it across runs);

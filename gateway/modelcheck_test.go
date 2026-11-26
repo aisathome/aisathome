@@ -220,6 +220,9 @@ func TestModelCheckConfig(t *testing.T) {
 	if err := ok(func(*ModelCheckConfig) {}); err != nil {
 		t.Fatal(err)
 	}
+	if mc := testChecker(t, ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}}, ""); mc.pilotIdleFor() != 10*time.Minute {
+		t.Errorf("default pilot_idle_seconds: %v", mc.pilotIdleFor())
+	}
 	bad := map[string]func(*ModelCheckConfig){
 		"no references": func(c *ModelCheckConfig) { c.References = nil },
 		"no pin":        func(c *ModelCheckConfig) { c.References[0].SHA256 = "" },
@@ -230,6 +233,7 @@ func TestModelCheckConfig(t *testing.T) {
 		"twice":        func(c *ModelCheckConfig) { c.References = append(c.References, c.References[0]) },
 		"cover share":  func(c *ModelCheckConfig) { v := 1.5; c.CoverShare = &v },
 		"interval":     func(c *ModelCheckConfig) { c.IntervalSec = 5 },
+		"pilot idle":   func(c *ModelCheckConfig) { c.PilotIdleSec = 30 },
 	}
 	for name, mod := range bad {
 		c := ModelCheckConfig{Enabled: true, References: []ModelCheckReference{entry}}
