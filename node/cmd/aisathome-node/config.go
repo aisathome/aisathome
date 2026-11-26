@@ -9,6 +9,7 @@ import (
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/nodeconf"
+	"github.com/aisathome/aisathome/node/release"
 )
 
 // loadConfig reads the config file, then lets the environment override it, then fills what is
@@ -77,4 +78,19 @@ func passwordFile(getenv func(string) string, layout node.Layout) string {
 		return f
 	}
 	return layout.PasswordFile
+}
+
+// releaseCheck is the local page's check for a newer node release (package release): the node's own gateway
+// (GET /v1/node/release at the gateway URL gateway returns), at most once an hour and only while someone
+// looks at the page (or the tray asks for the status). nil when the local UI is off (uiPort 0) or
+// AISATHOME_UPDATE_CHECK is "off".
+func releaseCheck(getenv func(string) string, uiPort int, gateway func() string) *release.Cache {
+	switch strings.TrimSpace(getenv("AISATHOME_UPDATE_CHECK")) {
+	case "off", "0", "false":
+		return nil
+	}
+	if uiPort == 0 {
+		return nil
+	}
+	return release.NewCache(release.Gateway{GatewayURL: gateway, UserAgent: "aisathome-node"}, 0, 0)
 }

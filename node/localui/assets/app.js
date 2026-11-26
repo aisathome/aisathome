@@ -190,6 +190,29 @@
 		$('anon-link-cmd').textContent = s.setup ? 'the setup page: Link to my account' : 'sudo aisathome-node link';
 	}
 
+	// A newer release: what is out, its notes, and how to update (Linux: the one-line install, to copy into a
+	// terminal; Windows: the installer's download page). Links only to the project's own pages.
+	function release(r) {
+		const show = !!r && r.available;
+		$('update-panel').hidden = !show;
+		if (!show) return;
+		$('update-text').textContent = `${r.latest} is out (you run ${r.current}).`;
+		const win = r.platform === 'windows';
+		const cmd = typeof r.command === 'string' ? r.command : ''; // none on Windows
+		$('update-cmd').hidden = !cmd;
+		$('update-cmd-note').hidden = !cmd;
+		if (cmd) $('update-cmd-text').textContent = cmd;
+		const link = $('update-link');
+		const docs = typeof r.docs_url === 'string' && r.docs_url.startsWith('https://aisathome.org/') ? r.docs_url : '';
+		link.hidden = !docs;
+		if (docs) link.href = docs;
+		link.textContent = win ? 'Download the new installer' : 'How to update';
+		const notes = $('update-notes');
+		const url = typeof r.url === 'string' && r.url.startsWith('https://github.com/aisathome/aisathome/releases/') ? r.url : '';
+		notes.hidden = !url;
+		if (url) notes.href = url;
+	}
+
 	function showCommand(cmd, label) {
 		$('restart-cmd-label').textContent = label || 'Restart the engine yourself:';
 		$('restart-cmd-text').textContent = cmd;
@@ -219,6 +242,7 @@
 		events(s.events);
 		controls(s);
 		anon(s.anonymous, s);
+		release(s.release);
 	}
 
 	async function refresh() {
@@ -324,6 +348,15 @@
 		await api('/api/logout', {});
 		message('control-msg', '');
 		refresh();
+	});
+
+	$('update-copy').addEventListener('click', async () => {
+		try {
+			await navigator.clipboard.writeText($('update-cmd-text').textContent);
+			$('update-copy').textContent = 'Copied';
+		} catch {
+			$('update-copy').textContent = 'Select and copy';
+		}
 	});
 
 	$('copy').addEventListener('click', async () => {

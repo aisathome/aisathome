@@ -21,12 +21,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/aisathome/aisathome/node"
 	"github.com/aisathome/aisathome/node/engine"
 	"github.com/aisathome/aisathome/node/localui"
+	"github.com/aisathome/aisathome/node/release"
 	"github.com/aisathome/aisathome/node/setup"
 	"github.com/aisathome/aisathome/node/setupflow"
 )
@@ -119,6 +121,7 @@ func run(ctx context.Context, cfgPath string, layout node.Layout, logw io.Writer
 		engineOut = f
 	}
 	r := &runner{cfgPath: cfgPath, layout: layout, log: log, engineOut: engineOut, uiPort: uiPort, pipe: localui.TrayPipe}
+	r.releases = releaseCheck(os.Getenv, uiPort, r.gatewayURL)
 	r.runNode = r.node
 	if layout.Setup && uiPort != 0 {
 		return r.withSetup(ctx)
@@ -135,8 +138,12 @@ type runner struct {
 	engineOut io.Writer
 	uiPort    int
 	// pipe is the tray's pipe (localui.TrayPipe); "" = none.
-	pipe    string
-	runNode func(ctx context.Context, ui *localui.Server) (int, error) // r.node; tests replace it
+	pipe string
+	// releases: the latest release for the page's notice, kept across configs; nil = no check. It asks the
+	// gateway of the config last read (gateway).
+	releases *release.Cache
+	gateway  atomic.Value                                               // string
+	runNode  func(ctx context.Context, ui *localui.Server) (int, error) // r.node; tests replace it
 }
 
 // errConfig is a config the node cannot run with (the setup page can fix it).
@@ -152,6 +159,7 @@ func (r *runner) node(ctx context.Context, ui *localui.Server) (int, error) {
 		log.Error("config", "err", err)
 		return 1, errConfig{err}
 	}
+	r.gateway.Store(cfg.GatewayURL)
 	agentDir := ""
 	if cfg.Engine != nil {
 		if agentDir, err = ownDir(); err != nil {
@@ -184,7 +192,7 @@ func (r *runner) node(ctx context.Context, ui *localui.Server) (int, error) {
 	if ui != nil {
 		ui.SetAgent(agent)
 	} else if r.uiPort != 0 {
-		ui := localui.New(agent, localui.Options{Port: r.uiPort, PasswordFile: passwordFile(os.Getenv, r.layout), Log: log})
+		ui := localui.New(agent, localui.Options{Port: r.uiPort, PasswordFile: passwordFile(os.Getenv, r.layout), Log: log, Releases: r.uiReleases()})
 		go func() {
 			// The node keeps serving without its UI (e.g. the port is taken).
 			if err := ui.ListenAndServe(ctx); err != nil {
@@ -231,7 +239,7 @@ func (r *runner) withSetup(ctx context.Context) int {
 		Log: log.With("part", "setup"),
 	}, mode)
 	pw := passwordFile(os.Getenv, r.layout)
-	ui := localui.New(r.waiting(), localui.Options{Port: r.uiPort, PasswordFile: pw, Log: log, Setup: flow, Pipe: r.pipe})
+	ui := localui.New(r.waiting(), localui.Options{Port: r.uiPort, PasswordFile: pw, Log: log, Setup: flow, Pipe: r.pipe, Releases: r.uiReleases()})
 	// The UI ends with this function, also when the node fails and the agent must exit for the
 	// service's recovery to restart it.
 	uictx, stopUI := context.WithCancel(ctx)
@@ -285,10 +293,25 @@ func (r *runner) withSetup(ctx context.Context) int {
 	}
 }
 
+// gatewayURL is the gateway URL of the config last read, "" before one.
+func (r *runner) gatewayURL() string {
+	s, _ := r.gateway.Load().(string)
+	return s
+}
+
+// uiReleases is r.releases for the page (a nil *release.Cache is no check, not a broken one).
+func (r *runner) uiReleases() localui.Releases {
+	if r.releases == nil {
+		return nil
+	}
+	return r.releases
+}
+
 // waiting is the agent the page shows while the node waits for its setup: the config as far as
 // it goes (node id, gateway), with the state file's history; it never connects.
 func (r *runner) waiting() *node.Agent {
 	cfg, _ := loadConfig(r.cfgPath, os.Getenv, r.layout)
+	r.gateway.Store(cfg.GatewayURL)
 	cfg.Engine, cfg.EngineControl = nil, nil
 	return node.New(cfg, r.log)
 }

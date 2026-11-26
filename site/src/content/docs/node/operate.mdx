@@ -57,6 +57,17 @@ across restarts. To free the GPU, stop the node instead (table above).
 confirm and has a box to remove the model too. On Windows the page has **Stop engine** and **Start
 engine** instead, and no uninstall (Settings → Apps).
 
+When a newer release is out, the page says so ("v0.8.0 is out (you run v0.7.0)"), links to its
+notes on GitHub and shows how to update: on Linux the one-line install to copy into a terminal
+(`curl -fsSL https://aisathome.org/node.sh | sh`, which updates the installed node and keeps its
+settings) and [Update your node](/node/update/); on Windows the
+[installer's download](/node/windows/). The page itself installs nothing. To know about new
+releases the agent asks the gateway it already connects to (`/v1/node/release`, no token), at most
+once an hour and only while the page is open, so the node contacts no other host for it. To turn
+the check off, set `AISATHOME_UPDATE_CHECK=off` in the agent's environment: on Linux
+`sudo systemctl edit aisathome-node`, then add `[Service]` and
+`Environment=AISATHOME_UPDATE_CHECK=off`.
+
 The page is reachable from this computer only. On a machine without a screen, open an SSH
 tunnel from your own computer and browse to http://localhost:7381/ there:
 

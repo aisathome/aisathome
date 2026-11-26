@@ -103,3 +103,36 @@ func TestTooltipLimit(t *testing.T) {
 		t.Fatalf("clip changed a short text: %q", got)
 	}
 }
+
+// A newer release shows in the tooltip as on the node page, but not over a problem, and not when there is
+// none (or it is not newer).
+func TestFromStatusRelease(t *testing.T) {
+	newer := &localui.ReleaseNotice{Latest: "v0.8.0", Current: "v0.7.0", Available: true}
+	for _, c := range []struct {
+		name string
+		edit func(*localui.StatusResponse)
+		want bool
+	}{
+		{"connected", func(s *localui.StatusResponse) { s.Release = newer }, true},
+		{"paused", func(s *localui.StatusResponse) { s.Release, s.Paused, s.State = newer, true, node.StatePaused }, true},
+		{"problem", func(s *localui.StatusResponse) {
+			s.Release, s.Connected, s.State, s.Rejected = newer, false, node.StateDisconnected, "HTTP 401: unknown node token"
+		}, false},
+		{"up to date", func(s *localui.StatusResponse) {
+			s.Release = &localui.ReleaseNotice{Latest: "v0.7.0", Current: "v0.7.0"}
+		}, false},
+		{"not known", nil, false},
+	} {
+		st := running()
+		if c.edit != nil {
+			c.edit(st)
+		}
+		v := FromStatus(st, nil)
+		if got := strings.Contains(v.Tooltip, " is out "); got != c.want || (got && !strings.Contains(v.Tooltip, "v0.8.0 is out (you run v0.7.0).")) {
+			t.Errorf("%s: tooltip %q", c.name, v.Tooltip)
+		}
+		if n := len(utf16.Encode([]rune(v.Tooltip))); n > maxTooltip {
+			t.Errorf("%s: tooltip of %d units", c.name, n)
+		}
+	}
+}

@@ -163,6 +163,9 @@ input[type='password'], input[type='text'] {
 .link { padding: 0.4rem; border: 0; background: none; color: var(--accent-high); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .msg { min-height: 1.4em; margin-top: 0.75rem; font-weight: 600; color: var(--strong); }
 .msg.bad { color: var(--bad); }
+.update { border-left: 5px solid var(--accent); }
+.update .cmd { margin-top: 0.75rem; }
+.update .row { margin-top: 0.5rem; }
 .cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; padding: 0.6rem 0.8rem; border-radius: 0.4rem; background: var(--bg); }
 
 .events { list-style: none; margin: 0; padding: 0; }

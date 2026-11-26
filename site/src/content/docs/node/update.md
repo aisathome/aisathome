@@ -4,7 +4,8 @@ description: Install a new release on a running AIs@home node, keeping its setti
 ---
 
 New releases are listed on [GitHub](https://github.com/aisathome/aisathome/releases); each
-one says what changed and whether nodes need it.
+one says what changed and whether nodes need it. The node's [local page](/node/operate/#local-ui)
+also says when a newer release is out, with how to update.
 
 **Updating a 24 GB Linux node to v0.7.0 turns MTP on**, also on a node where an earlier installer
 stored `off`: installers before v0.7.0 stored `off` for every node that made no choice, so the new
