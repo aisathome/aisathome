@@ -93,6 +93,10 @@ func FromStatus(st *localui.StatusResponse, err error) View {
 		v.CanStop = ep.State != engine.StateStopped
 		v.CanStart = ep.State == engine.StateStopped
 	}
+	// A newer release, as the node page says it (not over a problem, which needs the volunteer first).
+	if r := st.Release; r != nil && r.Available && v.State != Problem && !strings.HasSuffix(v.Tooltip, "…") {
+		v.Tooltip = clip(v.Tooltip + " " + oneLine(r.Latest+" is out (you run "+r.Current+")."))
+	}
 	return v
 }
 

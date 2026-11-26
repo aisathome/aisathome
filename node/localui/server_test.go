@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/engine"
+	"github.com/aisathome/aisathome/node/release"
 	"github.com/aisathome/aisathome/protocol"
 )
 
@@ -403,7 +405,8 @@ func TestPageIsSelfContained(t *testing.T) {
 		}
 		b, _ := assets.ReadFile(p)
 		for _, m := range ext.FindAllString(string(b), -1) {
-			if m != "https://aisathome.org" && m != "http://www.w3.org" { // the account link (a link, not a load)
+			// Links, not loads: the account and update pages, and a new release's notes (the CSP allows no load).
+			if m != "https://aisathome.org" && m != "http://www.w3.org" && m != "https://github.com" {
 				t.Errorf("%s references %s", p, m)
 			}
 		}
@@ -635,5 +638,94 @@ for (const ms of [0, 1, 400, 999, 1000, 59999, 60000]) console.log(dur(ms));`).C
 	}
 	if got := strings.Fields(string(out)); strings.Join(got, " ") != "0s <1s <1s <1s 1s 59s 1m" {
 		t.Errorf("app.js dur: %q", got)
+	}
+}
+
+// fakeReleases is a release.Cache stand-in.
+type fakeReleases struct {
+	rel release.Release
+	ok  bool
+}
+
+func (f fakeReleases) Known() (release.Release, bool) { return f.rel, f.ok }
+
+// setVersion sets this agent's version for the test.
+func setVersion(t *testing.T, v string) {
+	old := node.Version
+	node.Version = v
+	t.Cleanup(func() { node.Version = old })
+}
+
+// The status tells the page about a newer release and how to update: on Linux the one-line install and the
+// update page, on Windows the installer's download page; nothing while the release is unknown or the check
+// is off, and never "available" for the same, an older, or a development version. The page gets no new
+// control for it.
+func TestReleaseNotice(t *testing.T) {
+	setVersion(t, "v0.7.0")
+	e := newEnv(t)
+	notice := func() *ReleaseNotice {
+		var st StatusResponse
+		json.Unmarshal([]byte(body(e.req(t, "GET", "/api/status?gpu=0", "", nil))), &st)
+		return st.Release
+	}
+	if n := notice(); n != nil {
+		t.Fatalf("no release check: %+v", n)
+	}
+	e.ui.opt.Releases = fakeReleases{}
+	if n := notice(); n != nil {
+		t.Fatalf("release not known yet: %+v", n)
+	}
+	rel := release.Release{Version: "v0.8.0", URL: "https://github.com/aisathome/aisathome/releases/tag/v0.8.0"}
+	e.ui.opt.Releases = fakeReleases{rel, true}
+	if n := notice(); n == nil || *n != (ReleaseNotice{Latest: "v0.8.0", Current: "v0.7.0", Available: true, URL: rel.URL,
+		Platform: "linux", Command: "curl -fsSL https://aisathome.org/node.sh | sh", DocsURL: "https://aisathome.org/node/update/"}) {
+		t.Fatalf("Linux: %+v", n)
+	}
+	e.ui.SetAgent(&engineRunning{e.agent}) // the Windows node's agent runs its engine
+	if n := notice(); n == nil || n.Platform != "windows" || n.Command != "" || n.DocsURL != "https://aisathome.org/node/windows/" || !n.Available {
+		t.Fatalf("Windows: %+v", n)
+	}
+	e.ui.SetAgent(e.agent)
+	for _, v := range []string{"v0.7.0", "v0.6.0"} {
+		e.ui.opt.Releases = fakeReleases{release.Release{Version: v}, true}
+		if n := notice(); n == nil || n.Available {
+			t.Fatalf("latest %s: %+v", v, n)
+		}
+	}
+	setVersion(t, "dev")
+	e.ui.opt.Releases = fakeReleases{rel, true}
+	if n := notice(); n == nil || n.Available {
+		t.Fatalf("a development build: %+v", n)
+	}
+	cookie := e.login(t)
+	for _, path := range []string{"/api/update", "/api/release"} {
+		if resp := e.req(t, "POST", path, `{"confirm":"update"}`, nil, cookie); resp.StatusCode < 400 {
+			t.Fatalf("POST %s: %d, want no such control", path, resp.StatusCode)
+		}
+	}
+}
+
+// engineRunning is an agent that runs its engine, as the Windows node's does.
+type engineRunning struct{ *fakeAgent }
+
+func (a *engineRunning) Status() node.Status {
+	st := a.fakeAgent.Status()
+	st.EngineProcess = &engine.Status{State: engine.StateRunning}
+	return st
+}
+
+// The page has the notice, the command with its copy button, and the links.
+func TestPageReleaseNotice(t *testing.T) {
+	html, _ := assets.ReadFile("assets/index.html")
+	js, _ := assets.ReadFile("assets/app.js")
+	for _, want := range []string{`id="update-panel"`, `id="update-text"`, `id="update-cmd-text"`, `id="update-copy"`, `id="update-link"`, `id="update-notes"`} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("index.html lacks %s", want)
+		}
+	}
+	for _, want := range []string{"release(s.release)", "'https://aisathome.org/'", "'https://github.com/aisathome/aisathome/releases/'"} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("app.js lacks %s", want)
+		}
 	}
 }

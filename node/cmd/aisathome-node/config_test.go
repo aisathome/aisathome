@@ -146,3 +146,32 @@ func TestPasswordFile(t *testing.T) {
 		t.Fatalf("environment: %q", f)
 	}
 }
+
+// The page's release check: on with the local UI, off without it or with AISATHOME_UPDATE_CHECK=off; it asks
+// the gateway of the config last read.
+func TestReleaseCheck(t *testing.T) {
+	gw := func() string { return "wss://api.aisathome.org/v1/node/connect" }
+	if releaseCheck(env(nil), 7381, gw) == nil {
+		t.Fatal("off by default")
+	}
+	if releaseCheck(env(nil), 0, gw) != nil {
+		t.Fatal("on without the local UI")
+	}
+	for _, v := range []string{"off", "0", "false", " off "} {
+		if releaseCheck(env(map[string]string{"AISATHOME_UPDATE_CHECK": v}), 7381, gw) != nil {
+			t.Fatalf("AISATHOME_UPDATE_CHECK=%q: on", v)
+		}
+	}
+	r := &runner{}
+	if r.uiReleases() != nil {
+		t.Fatal("no check is a nil Releases, not a nil *release.Cache in an interface")
+	}
+	if r.gatewayURL() != "" {
+		t.Fatal("a gateway before any config")
+	}
+	r.cfgPath = writeConfig(t, `{"node_id":"n1","gateway_url":"wss://gw.example/v1/node/connect"}`)
+	r.waiting()
+	if r.gatewayURL() != "wss://gw.example/v1/node/connect" {
+		t.Fatalf("gateway after the config: %q", r.gatewayURL())
+	}
+}

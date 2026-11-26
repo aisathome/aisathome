@@ -315,6 +315,12 @@ changes. To change it, write a new one (12 characters or more) to that file.
   word to `/var/lib/aisathome-node/node-control`, and the root-owned `aisathome-node-control.path`
   unit does that and nothing else. Without that unit the page shows the commands instead.
 
+When a newer release is out, the page says so, with a link to its notes and the one-line install to
+copy (`curl -fsSL https://aisathome.org/node.sh | sh`); it installs nothing itself. It learns of
+releases from the node's gateway (`GET /v1/node/release` on the gateway's host, no token, at most once
+an hour, only while the page is open); `Environment=AISATHOME_UPDATE_CHECK=off` in the agent's unit
+turns that off.
+
 The UI listens on 127.0.0.1 only, so there is no port to open or to close. It answers only
 to `127.0.0.1`, `localhost` or `[::1]` in the address bar, and its controls refuse requests
 from other web pages. `UI_PORT=<port>` at install picks another port, `UI_PORT=off` turns the

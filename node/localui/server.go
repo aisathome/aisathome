@@ -1,6 +1,7 @@
 // Package localui serves the node agent's local web UI on 127.0.0.1: status, GPU, counters
 // and recent events for everyone on this computer, and pause, resume and engine restart for
-// whoever knows the local password.
+// whoever knows the local password; and, when the node's gateway knows of a newer release, a notice with
+// how to update (a link and a command to copy: the page itself changes nothing for it).
 //
 // Protections, each covered by a test:
 //   - it listens on 127.0.0.1 only;
@@ -25,12 +26,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aisathome/aisathome/node"
+	"github.com/aisathome/aisathome/node/release"
 	"github.com/aisathome/aisathome/node/setupflow"
 )
 
@@ -39,6 +42,19 @@ const DefaultPort = 7381
 
 // AccountURL is the account page that lists a volunteer's nodes.
 const AccountURL = "https://aisathome.org/account"
+
+// How to update, for the release notice: on Linux the one-line install (it updates an installed node and
+// keeps its settings) and the update page; on Windows the download page of the installer.
+const (
+	UpdateCommand      = "curl -fsSL https://aisathome.org/node.sh | sh"
+	UpdateDocsURL      = "https://aisathome.org/node/update/"
+	WindowsDownloadURL = "https://aisathome.org/node/windows/"
+)
+
+// Releases says which node release is the latest, as far as known (release.Cache); it never waits.
+type Releases interface {
+	Known() (release.Release, bool)
+}
 
 //go:embed assets
 var assets embed.FS
@@ -85,6 +101,8 @@ type Options struct {
 	// Pipe is the named pipe where the tray asks for one-time sign-in links (TrayPipe on
 	// Windows); "" = none.
 	Pipe string
+	// Releases: the latest release, for the "a new release is out" notice; nil = no notice.
+	Releases Releases
 }
 
 // Server is the local UI.
@@ -282,6 +300,37 @@ type StatusResponse struct {
 	Controls   Controls         `json:"controls"`
 	AccountURL string           `json:"account_url"`
 	Setup      *setupflow.State `json:"setup,omitempty"` // the setup's state, on a node with a setup page
+	Release    *ReleaseNotice   `json:"release,omitempty"`
+}
+
+// ReleaseNotice is the latest node release against this agent's version, for the page's notice; nil while
+// the latest release is not known (or the check is off). Command (Linux) updates the node in a terminal.
+type ReleaseNotice struct {
+	Latest    string `json:"latest"`
+	Current   string `json:"current"`
+	Available bool   `json:"available"`     // Latest is newer than Current (never for a development build)
+	URL       string `json:"url,omitempty"` // the release's notes on GitHub
+	Platform  string `json:"platform"`      // linux or windows
+	Command   string `json:"command,omitempty"`
+	DocsURL   string `json:"docs_url"`
+}
+
+// releaseNotice is the notice for this agent, or nil. The Windows node (the agent runs its engine, or the
+// page runs on Windows: the setup's waiting agent runs none) updates with its installer.
+func (s *Server) releaseNotice(st node.Status) *ReleaseNotice {
+	if s.opt.Releases == nil {
+		return nil
+	}
+	rel, ok := s.opt.Releases.Known()
+	if !ok {
+		return nil
+	}
+	n := &ReleaseNotice{Latest: rel.Version, Current: node.Version, Available: release.Newer(rel.Version, node.Version),
+		URL: rel.URL, Platform: "linux", Command: UpdateCommand, DocsURL: UpdateDocsURL}
+	if runtime.GOOS == "windows" || st.EngineProcess != nil {
+		n.Platform, n.Command, n.DocsURL = "windows", "", WindowsDownloadURL
+	}
+	return n
 }
 
 // Controls tells the page which controls it may show, and the platform's commands.
@@ -326,7 +375,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		c.Enabled = true
 		c.SignedIn = s.auth.valid(r)
 	}
-	resp := StatusResponse{Status: st, Controls: c, AccountURL: AccountURL}
+	resp := StatusResponse{Status: st, Controls: c, AccountURL: AccountURL, Release: s.releaseNotice(st)}
 	if r.URL.Query().Get("gpu") != "0" { // the tray polls without it: no nvidia-smi run for it
 		resp.GPU = s.gpu.get(r.Context())
 	}
