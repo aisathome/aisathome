@@ -131,7 +131,9 @@ export function acceptedRowsHTML(s: AcceptedSeries): string {
 }
 
 /** In the browser: draws the chart in a figure of components/AcceptedChart.astro again at its real width (the build's
- * copy is scaled) and on every resize; `update` redraws it and its table from a newer view (the gateway's records). */
+ * copy is scaled) and on every resize; `update` redraws it and its table from a newer view (the gateway's records),
+ * showing a figure the build left hidden (nothing accepted at the build), and hides it when the view has nothing to draw
+ * (so it never keeps proofs the headline no longer counts). */
 export function mountAcceptedChart(fig: HTMLElement | null): { update: (v: ScienceView) => void } {
 	const box = fig?.querySelector<HTMLElement>('[data-p2m-chart-svg]');
 	const rows = fig?.querySelector<HTMLElement>('[data-p2m-chart-rows]');
@@ -152,12 +154,17 @@ export function mountAcceptedChart(fig: HTMLElement | null): { update: (v: Scien
 	});
 	return {
 		update(v) {
-			const s = acceptedSeries(v);
-			if (!fig || !s || !box || !rows) return;
-			series = s;
-			draw();
-			rows.innerHTML = acceptedRowsHTML(s); // every value escaped
+			if (!fig || !box || !rows) return;
+			series = acceptedSeries(v);
 			fig.dataset.source = 'live';
+			fig.hidden = !series;
+			if (!series) {
+				box.innerHTML = '';
+				rows.innerHTML = '';
+				return;
+			}
+			draw(); // after unhiding: a hidden figure has no width
+			rows.innerHTML = acceptedRowsHTML(series); // every value escaped
 		},
 	};
 }

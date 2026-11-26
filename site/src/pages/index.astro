@@ -28,6 +28,7 @@ const latest = (await posts()).slice(0, 3);
 const p2mHistory = historyOf(p2m);
 const p2mView = scienceView(p2mHistory, (await buildRecords()).records);
 // The chart of proofs accepted over time: drawn here at a default width; the browser draws it again at its own width.
+// With nothing accepted yet the figure is there but hidden, so the live records can fill it.
 const p2mSeries = acceptedSeries(p2mView);
 
 // Home GPUs around the gateway: [x, y, scale]. Coordinates in the 560 x 460 viewBox.
@@ -123,7 +124,7 @@ const nodeShotAlt =
 					)}
 					<a class="more" href="/science/" data-home-science-all>All science projects <span aria-hidden="true">→</span></a>
 				</div>
-				{p2mSeries && <AcceptedChart series={p2mSeries} data-home-p2m-chart />}
+				<AcceptedChart series={p2mSeries} data-home-p2m-chart />
 			</div>
 		</section>
 
@@ -256,8 +257,8 @@ const nodeShotAlt =
 </StarlightPage>
 
 <script>
-	// The prove2me line, live: the build's history with the gateway's records (prove2me-records.ts); without them the
-	// build's line stays.
+	// The prove2me line, live: the build's history with the gateway's records (prove2me-records.ts), on load and every
+	// minute while the page is visible (as the live strip); without them the line keeps what it shows.
 	import { liveSummary, type History } from '../data/prove2me-records';
 	import { homeLine } from '../data/prove2me-view';
 	import { mountAcceptedChart } from '../data/prove2me-chart';
@@ -278,10 +279,11 @@ const nodeShotAlt =
 			box.dataset.source = 'live';
 			chart.update(v);
 		} catch {
-			// keep the build's line
+			// keep what the line shows
 		}
 	};
 	load();
+	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>
 
 <style>
@@ -574,6 +576,7 @@ const nodeShotAlt =
 	/* The prove2me chart beside the words (below them on a phone), in the network page's chart style. */
 	.sci-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.5rem 2.5rem; align-items: start; }
 	@media (max-width: 56rem) { .sci-body { grid-template-columns: minmax(0, 1fr); } }
+	.sci-body:has(> .p2m-chart[hidden]) { grid-template-columns: minmax(0, 1fr); }
 	.sci :global(.p2m-chart) { --chart-bg: var(--b-surface); }
 	.sci-past strong { color: var(--sl-color-white); }
 </style>

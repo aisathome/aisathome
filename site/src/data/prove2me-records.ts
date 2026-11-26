@@ -25,8 +25,10 @@ import curatedReuses from './science/prove2me-reuses.json';
 
 export const CAMPAIGNS_URL = '/v1/projects/prove2me/campaigns?limit=200';
 export const RESULTS_URL = '/v1/projects/prove2me/results?limit=500';
-/** The home page and /science/ need only the tasks that decide a leaf (an outline or an assembly) and their starts. */
-export const DECIDING_TASKS_URL = '/v1/tasks?project=prove2me&role=outline,assembly&limit=500';
+/** The home page and /science/ need only the tasks that can decide a leaf, and their starts: an outline (one without
+ * holes proves it), an assembly, and the in-place task, which proves the leaf when its own file passes the full check
+ * (prove2me-outcomes.ts provesLeaf). Hole tasks prove only their hole. */
+export const DECIDING_TASKS_URL = '/v1/tasks?project=prove2me&role=outline,assembly,rest&limit=500';
 
 // ---- the gateway's records (docs/gateway.md, "Campaigns and external results")
 

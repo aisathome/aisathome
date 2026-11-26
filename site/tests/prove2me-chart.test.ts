@@ -8,7 +8,7 @@ import fixture from './fixtures/prove2me-records-2026-11-18.json';
 import type { Prove2me } from '../src/data/prove2me';
 import type { PublicTask } from '../src/data/prove2me-current';
 import { historyOf, parseCampaigns, parseResults, scienceView, type Records } from '../src/data/prove2me-records';
-import { acceptedChartSVG, acceptedRowsHTML, acceptedSeries, acceptedSummary, shortDay } from '../src/data/prove2me-chart';
+import { acceptedChartSVG, acceptedRowsHTML, acceptedSeries, acceptedSummary, mountAcceptedChart, shortDay } from '../src/data/prove2me-chart';
 
 const h = historyOf(raw as unknown as Prove2me);
 const records = (): Records => ({
@@ -60,4 +60,52 @@ test('titles and links are escaped; the table lists newest first with the runnin
 	const totals = [...acceptedRowsHTML(s).matchAll(/<td class="num">(\d+)<\/td><\/tr>/g)].map((m) => Number(m[1]));
 	assert.deepEqual(totals, s.accepted.map((_, i) => s.accepted.length - i));
 	assert.match(acceptedSummary(s), new RegExp(`^${s.accepted.length} proofs accepted by prove2me from `));
+});
+
+/** The figure of components/AcceptedChart.astro as far as mountAcceptedChart touches it: the SVG box, the table body
+ * and the build's series; `hidden` as the build left it. */
+function fakeFigure(series: unknown, hidden: boolean) {
+	const box = { innerHTML: series ? '<svg>build</svg>' : '', clientWidth: 500 };
+	const rows = { innerHTML: series ? '<tr>build</tr>' : '' };
+	const json = { textContent: JSON.stringify(series) };
+	const fig = {
+		hidden,
+		dataset: {} as Record<string, string>,
+		querySelector: (sel: string) => ({ '[data-p2m-chart-svg]': box, '[data-p2m-chart-rows]': rows, '[data-p2m-chart-series]': json })[sel] ?? null,
+	};
+	return { fig, box, rows };
+}
+
+test('live: a read with nothing accepted hides the chart (never the old proofs under a zero); a page built with none fills it', () => {
+	const g = globalThis as unknown as { window?: unknown; requestAnimationFrame?: unknown; cancelAnimationFrame?: unknown };
+	const had = { window: g.window, raf: g.requestAnimationFrame, caf: g.cancelAnimationFrame };
+	g.window = { addEventListener: () => {} };
+	g.requestAnimationFrame = () => 0;
+	g.cancelAnimationFrame = () => {};
+	try {
+		const v = scienceView(h, records());
+		const none = { ...v, submissions: v.submissions.map((x) => ({ ...x, verdict: 'pending' })) };
+		// built with proofs; the gateway then has none accepted: hidden and emptied, not the build's proofs
+		const a = fakeFigure(acceptedSeries(scienceView(h, null)), false);
+		const chartA = mountAcceptedChart(a.fig as unknown as HTMLElement);
+		chartA.update(none);
+		assert.deepEqual([a.fig.hidden, a.box.innerHTML, a.rows.innerHTML, a.fig.dataset.source], [true, '', '', 'live']);
+		// the next read has them again: shown and drawn at the box's width
+		chartA.update(v);
+		assert.equal(a.fig.hidden, false);
+		assert.match(a.box.innerHTML, /^<svg viewBox="0 0 500 200"/);
+		assert.equal((a.box.innerHTML.match(/<circle /g) ?? []).length, v.kpis.accepted);
+		assert.equal((a.rows.innerHTML.match(/<tr>/g) ?? []).length, v.kpis.accepted);
+		// built with nothing accepted: the figure is there, hidden, and the live records fill it
+		const b = fakeFigure(null, true);
+		const chartB = mountAcceptedChart(b.fig as unknown as HTMLElement);
+		assert.equal(b.box.innerHTML, '');
+		chartB.update(v);
+		assert.equal(b.fig.hidden, false);
+		assert.equal((b.box.innerHTML.match(/<circle /g) ?? []).length, v.kpis.accepted);
+	} finally {
+		g.window = had.window;
+		g.requestAnimationFrame = had.raf;
+		g.cancelAnimationFrame = had.caf;
+	}
 });
