@@ -4,8 +4,9 @@
 # /etc/aisathome-node, what the node service was told to do and in which order, which gateway got
 # which token, and that the agent itself accepts what was written. Scenarios: a fresh install that
 # links, a same-gateway upgrade, a gateway change, a token without its issuer record, an interrupted
-# link, the moved-aside token given again, --anonymous over a token, a dry run, and the node binary
-# override (one older than the installer is refused).
+# link, the moved-aside token given again, --anonymous over a token, the update the one-line install runs
+# (no account option, at a terminal) over a linked node, one without an account and one from before
+# v0.6.0, a dry run, and the node binary override (one older than the installer is refused).
 #
 # It runs in a sandbox that cannot touch this machine's node: a user namespace (root inside, this
 # user outside), a private mount namespace (/etc is a copy made of links with its own empty
@@ -364,6 +365,23 @@ agent_accepts "upgrade --keep-token"
 seed "$gwa" "$toka"
 tty_inst "[Y/n]" $'n\r' --
 want_code "upgrade at a terminal" 0; token_is "upgrade at a terminal" "$toka" "$gwa"; lacks "upgrade at a terminal" "[Y/n]"
+
+# The update the one-line install runs on a machine with a node (site/public/node.sh: no account option, at
+# a terminal; scripts/node_sh_test.sh checks that it passes exactly that). A node without an account keeps
+# its token without a question, and is not registered again.
+seed "$gwa" "$anona"
+tty_inst "[Y/n]" $'y\r' --
+want_code "node.sh update, no account" 0; token_is "node.sh update, no account" "$anona" "$gwa"
+lacks "node.sh update, no account" "[Y/n]"; [[ ! -e "$conf/token.env.unlinked" ]] || fail "node.sh update, no account: a token was moved aside"
+grep -q "^POST /v1/node/register" "$st/a.log" 2>/dev/null && fail "node.sh update, no account: registered again"
+# A node from before v0.6.0 (a token without its record): moved aside, never sent, and the installer asks
+# the link question; y links the node again.
+seed "$gwa" "$toka" -
+tty_inst "[Y/n]" $'y\r' --
+want_code "node.sh update, before v0.6.0" 0; has "node.sh update, before v0.6.0" "Link this node to your account? [Y/n]"
+token_is "node.sh update, before v0.6.0" "$toka" "$gwa"; [[ -s "$conf/token.env.unlinked" ]] || fail "node.sh update, before v0.6.0: the old token was not moved aside"
+grep -q "^POST /v1/node/register" "$st/a.log" 2>/dev/null && fail "node.sh update, before v0.6.0: registered without an account"
+# (The linked node, kept without a question, is "upgrade at a terminal" above.)
 
 # A fresh install at a terminal: "Link this node to your account? [Y/n]". y links in the browser, n runs the
 # node without an account.

@@ -161,7 +161,11 @@ sudo ./install.sh --llama-build llama.cpp/build --node-release latest
   and that you must be 18 or older and accept the terms, before it installs. A node that has a
   token keeps it: `--anonymous` refuses to run over one. `curl -fsSL https://aisathome.org/node.sh | sh`
   downloads the latest bundle, checks it against `SHA256SUMS`, runs `--dry-run --anonymous`, asks
-  at the terminal, and then runs `sudo ./install.sh --anonymous --enable-at-boot`.
+  at the terminal, and then runs `sudo ./install.sh --anonymous --enable-at-boot`. On a machine
+  with a node already (its unit in `/etc/systemd/system` or its program in `/opt/aisathome-node`,
+  both readable without sudo) it updates it instead: `--dry-run`, then `sudo ./install.sh` with
+  no account option at the terminal, so the installer keeps a token recorded for the node's
+  gateway, asks the link question for one from before v0.6.0, and leaves start at boot as it was.
 - A file given with `--model` is **moved** to `/var/lib/aisathome-node/models/`.
 - Defaults: the tier for the card (below), a thinking budget of 8,192 tokens, and
   reasoning from earlier turns is not kept in the prompt.
