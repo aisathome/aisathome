@@ -20,6 +20,10 @@
 // cheater (docs/modelcheck.md, "What the gateway's check catches"). The replay of answers (11f)
 // is what catches text the model did not write.
 //
+// A pilot (connector.go) that has had no request but probes for pilot_idle_seconds gets no probe until
+// a request comes again: a pilot leaves after 30 minutes without a request (node/pilot), and probes
+// must not keep it on a volunteer's GPU. Other nodes are probed whatever their load.
+//
 // Probes take only a free slot that no waiting request could use, yield to a person's request like
 // science does (preempt.go), earn no credit, are in no usage record, budget or statistic, and cost
 // nobody anything. A node's result is a rolling window of its last mcWindow checks, shown on
@@ -73,6 +77,14 @@ type ModelCheckConfig struct {
 	// yet (anon.go): its admission takes anonAdmitChecks checks. Default 20 (admitted within minutes; a
 	// node not admitted gets nothing else to do).
 	AdmitSec int `json:"admit_seconds"`
+	// PilotIdleSec: a pilot (connector.go) that has had no request but probes for this long (since its
+	// last one ended, or since it connected) gets no probe prompt until a request comes again. A
+	// pilot leaves after 30 minutes without a request (node/pilot) and cannot tell a probe from a
+	// request, so probes alone would keep it on a volunteer's GPU with no work and no credit; with
+	// this, it leaves at most this long (plus one probe's answer) later than 30 minutes after its last
+	// request. Default 600 (10 min, a third of the pilot's idle exit: the pauses within a project's
+	// work stay probed); at least 60. Other nodes are not affected.
+	PilotIdleSec int `json:"pilot_idle_seconds"`
 	// LegacyIncludeTrusted is the removed "include_trusted" (removed.go): accepted and ignored. The
 	// check is for every node.
 	LegacyIncludeTrusted bool `json:"include_trusted,omitempty"`
@@ -85,11 +97,12 @@ type ModelCheckConfig struct {
 	CoverShare *float64 `json:"cover_share,omitempty"`
 
 	// For tests: the scheduler's tick, the intervals, and the clock.
-	Tick     time.Duration    `json:"-"`
-	Interval time.Duration    `json:"-"`
-	Recheck  time.Duration    `json:"-"`
-	Admit    time.Duration    `json:"-"`
-	Now      func() time.Time `json:"-"`
+	Tick      time.Duration    `json:"-"`
+	Interval  time.Duration    `json:"-"`
+	Recheck   time.Duration    `json:"-"`
+	Admit     time.Duration    `json:"-"`
+	PilotIdle time.Duration    `json:"-"`
+	Now       func() time.Time `json:"-"`
 }
 
 // ModelCheckReference is one secret reference: the model name it checks, its file and pin.
@@ -269,9 +282,12 @@ func newModelChecker(cfg ModelCheckConfig, stateDir string, log *slog.Logger) (*
 	if cfg.AdmitSec == 0 {
 		cfg.AdmitSec = 20
 	}
-	if cfg.IntervalSec < 60 || cfg.RecheckSec < 30 || cfg.AdmitSec < 5 {
-		return nil, fmt.Errorf("model_check: interval_seconds %d (at least 60), recheck_seconds %d (at least 30) and admit_seconds %d (at least 5)",
-			cfg.IntervalSec, cfg.RecheckSec, cfg.AdmitSec)
+	if cfg.PilotIdleSec == 0 {
+		cfg.PilotIdleSec = 600
+	}
+	if cfg.IntervalSec < 60 || cfg.RecheckSec < 30 || cfg.AdmitSec < 5 || cfg.PilotIdleSec < 60 {
+		return nil, fmt.Errorf("model_check: interval_seconds %d (at least 60), recheck_seconds %d (at least 30), admit_seconds %d (at least 5) and pilot_idle_seconds %d (at least 60)",
+			cfg.IntervalSec, cfg.RecheckSec, cfg.AdmitSec, cfg.PilotIdleSec)
 	}
 	mc := &modelChecker{cfg: cfg, th: modelcheck.DefaultThresholds, refs: map[string]*mcRef{}, admits: map[string]*mcRef{},
 		cover: defaultCoverShare, log: log,
@@ -460,6 +476,35 @@ func (mc *modelChecker) admit() time.Duration {
 		return mc.cfg.Admit
 	}
 	return time.Duration(mc.cfg.AdmitSec) * time.Second
+}
+
+// pilotIdleFor is how long a pilot without requests is still probed (PilotIdleSec).
+func (mc *modelChecker) pilotIdleFor() time.Duration {
+	if mc.cfg.PilotIdle > 0 {
+		return mc.cfg.PilotIdle
+	}
+	return time.Duration(mc.cfg.PilotIdleSec) * time.Second
+}
+
+// pilotIdle reports whether n is a pilot that has had no request but probes for at least d at now:
+// none in flight, and the last one ended (or, without one yet, it connected) d ago or longer. Only
+// the gateway's own record of the requests it relayed counts; nothing is sent to the pilot. A
+// pilot needs no passed check to get requests (routing.go, allows), so a new pilot that gets none
+// is left alone after d too.
+func (n *nodeConn) pilotIdle(now time.Time, d time.Duration) bool {
+	if n.pilot == "" {
+		return false
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.realWork > 0 {
+		return false
+	}
+	last := n.since
+	if n.realEnd.After(last) {
+		last = n.realEnd
+	}
+	return now.Sub(last) >= d
 }
 
 // anonAdmitted reports whether the record s admits a node without an account (anon.go): anonAdmitChecks
@@ -653,6 +698,7 @@ func (g *Gateway) mcTick() {
 		g.mu.Lock()
 		held := n.held
 		g.mu.Unlock()
+		idle := n.pilotIdle(now, mc.pilotIdleFor())
 		mc.mu.Lock() // never under g.mu: mc.mu is not taken inside g.mu anywhere
 		s := mc.nodeLocked(n, model, now)
 		next, ok := mc.next[n.id]
@@ -674,6 +720,14 @@ func (g *Gateway) mcTick() {
 			mc.dirty = true
 		}
 		if mc.running[n.id] || now.Before(next) {
+			mc.mu.Unlock()
+			continue
+		}
+		if idle {
+			// A pilot without work: no probe, so that it leaves by its idle rule. Its next prompt
+			// comes at a new random time, drawn as if this one had come later: the waits being
+			// exponential, a probe never follows the first request after an idle spell at a set delay.
+			mc.next[n.id] = now.Add(mc.expDelay(mc.meanLocked(n)))
 			mc.mu.Unlock()
 			continue
 		}

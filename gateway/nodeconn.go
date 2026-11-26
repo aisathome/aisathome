@@ -68,6 +68,11 @@ type nodeConn struct {
 	paused      bool // from the last heartbeat: take no new requests; guarded by mu
 	lastSeen    time.Time
 	closed      chan struct{}
+	// realWork and realEnd: of the requests in flight, those that are not model-check probes, and when
+	// the last of them ended (relay.go). The model check leaves an idle pilot alone by them
+	// (modelcheck.go, pilotIdle). Guarded by mu.
+	realWork int
+	realEnd  time.Time
 	// Pilots (connector.go): id is the pilot id. Set before the node is registered, never changed.
 	pilot     string    // the pilot id; "" for a node
 	connector string    // its connector

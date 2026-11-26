@@ -122,6 +122,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		n.work = map[string]nodeWork{}
 	}
 	n.work[reqID] = nodeWork{class: req.class, project: req.project, task: req.task, since: time.Now()} // for its operator (nodework.go)
+	n.realWork++
 	n.mu.Unlock()
 	if req.task != "" && g.tasks != nil { // the task's public node_classes (tasks.go)
 		cls := nodeClassVolunteer
@@ -144,6 +145,8 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		n.mu.Lock()
 		delete(n.work, reqID)
 		n.inflight--
+		n.realWork--
+		n.realEnd = time.Now()
 		if req.project != "" {
 			n.projects[req.project]--
 		}

@@ -70,6 +70,18 @@ above (KL per group of 4 prompts, confident flips, the same limits).
   request could use, and any request that then waits for the node (a person's or science) stops it.
   A node gets no prompt twice until it has had the whole pool; among those it has not had, the
   ones sent least often over all nodes come first.
+- **Pilots without work.** A pilot (a BOINC task, say) leaves after 30 minutes without a request
+  and cannot tell a probe from one, so probes alone would keep it on a volunteer's GPU with no
+  work and no credit. The gateway therefore sends a pilot no probe once it has had no request but
+  probes for `pilot_idle_seconds` (600): none in flight, and the last one ended (or, before any,
+  it connected) that long ago, by the gateway's own record of what it relayed. Its next prompt is
+  drawn afresh at the time one falls due, so probes resume at a random time once requests come
+  again, never at a set delay after the first. A pilot needs no passed check before it gets
+  requests, so a new pilot is probed only in its first `pilot_idle_seconds` until work comes. It
+  leaves at most `pilot_idle_seconds` (plus one probe's answer) later than 30 minutes after its last
+  request; a pilot serving work is probed as any node, and nodes that are no pilot are not affected.
+  The cost: the first request after such a spell is never a probe, so a modified pilot could answer
+  that one from another model, which the replay of answers is there to catch.
 - **Result.** Each check is pass or fail; an answer without logprobs (a proxy, or an engine that
   is not llama-server) or an error in answer to a probe fails it. A probe the node never answered
   (it left, stalled, or a request took the slot) counts as "no answer", not against it. A node's result is judged on its last 25 checks: **fail** with
@@ -106,7 +118,7 @@ gateway's secrets and pinned):
   "enabled": true,
   "references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-iq4xs.json.gz", "sha256": "<64 hex>"}],
   "admit_references": [{"model": "qwen3.8-27b", "file": "/etc/aisathome/gateway/modelcheck-admit-iq4xs.json.gz", "sha256": "<64 hex>"}],
-  "interval_seconds": 1800, "recheck_seconds": 300, "admit_seconds": 20,
+  "interval_seconds": 1800, "recheck_seconds": 300, "admit_seconds": 20, "pilot_idle_seconds": 600,
   "withhold": false, "cover_share": 0.2
 }
 ```
