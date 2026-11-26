@@ -33,7 +33,7 @@ later and it serves chats too and earns credit (recognition, not money).
 
 **Linux.** [Read the script](site/public/node.sh) first: it downloads the latest release, checks it
 against its `SHA256SUMS`, checks your driver, card and disk, and asks before it installs anything
-(it needs sudo).
+(it needs sudo). The node starts at boot, as the Windows node does.
 
 ```bash
 curl -fsSL https://aisathome.org/node.sh | sh

@@ -5,8 +5,9 @@
 #
 # It downloads the latest prebuilt bundle and its SHA256SUMS from GitHub, checks the bundle, runs the
 # installer's checks (--dry-run), shows what a node without an account means, asks before anything is
-# installed (at the terminal, not through the pipe), then runs `sudo ./install.sh --anonymous`. The
-# same steps by hand, to read before running: https://aisathome.org/node/install/
+# installed (at the terminal, not through the pipe), then runs `sudo ./install.sh --anonymous
+# --enable-at-boot`: the node starts again after a reboot, as the Windows node does. The same steps by
+# hand, to read before running: https://aisathome.org/node/install/
 #
 # AISATHOME_RELEASE_BASE: where the bundle comes from (default: the latest GitHub release);
 # AISATHOME_GATEWAY_URL: the gateway the node connects to (default: the installer's, aisathome.org's).
@@ -56,14 +57,15 @@ main() {
 
   echo
   echo "Checking this machine (nothing is installed yet):"
-  set -- --anonymous
+  set -- --anonymous --enable-at-boot
   [ -z "$gateway" ] || set -- "$@" --gateway-url "$gateway"
   ./install.sh --dry-run "$@" || die "the checks failed (above): nothing was installed"
 
   cat <<'NOTICE'
 
 This installs an AIs@home node: the node agent and llama-server as system services, and the model
-for your card (13-14 GB). It needs sudo.
+for your card (13-14 GB). It needs sudo. The node starts at boot
+(sudo systemctl disable aisathome-llama aisathome-node turns that off).
 Without an account this node does science work only, never people's chats, and earns no credit
 until you link it to an account (aisathome-node link).
 You must be 18 or older; running it means you accept the terms: https://aisathome.org/about/terms/
