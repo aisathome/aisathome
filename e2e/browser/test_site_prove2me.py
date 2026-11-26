@@ -351,7 +351,7 @@ def _outline(li, gen):
 
 
 def _holes(o) -> list[tuple[str, str, str, str]]:
-    """Each hole's name, state (waiting, working, solved; the assembly's own), text and tooltip."""
+    """Each hole's name, state (waiting, working, solved, failed, cancelled; the assembly's own), text and tooltip."""
     return [(h.locator(".p2m-hname").inner_text(), h.get_attribute("data-hole-state"), h.locator(".p2m-htext").inner_text(),
              h.get_attribute("title") or "") for h in o.locator("li[data-hole]").all()]
 
@@ -385,8 +385,9 @@ def test_working_on_now_shows_each_outline_and_hole_in_words(pages, site, data, 
     expect(o1).to_have_attribute("data-outline-state", "refuted")
     expect(o1.locator("[data-outline-text]")).to_have_text("refuted: hole 2 is false")
     expect(o1.locator("[data-outline-cost]")).to_have_text("written in 59 steps · 27.0 min")
-    assert _holes(o1) == [("Hole 1", "waiting", "Waiting", "in place, cancelled (outline refuted); a new outline is being made"),
-                          ("Hole 2", "waiting", "Waiting", f"false, disproved by the model; {REJUDGED}; a new outline is being made")], _holes(o1)
+    assert _holes(o1) == [("Hole 1", "cancelled", "Cancelled", "in place, cancelled (outline refuted); a new outline is being made"),
+                          ("Hole 2", "failed", "Failed: the hole is false",
+                           f"false, disproved by the model; {REJUDGED}; a new outline is being made")], _holes(o1)
     assert "check_error" not in n03.inner_text()
     # the task table stays, collapsed, with every task
     table = n03.locator("details[data-leaf-tasks=N03]")
@@ -417,7 +418,7 @@ def test_working_on_now_shows_each_outline_and_hole_in_words(pages, site, data, 
 def test_without_the_documents_holes_the_outlines_come_from_the_tasks(pages, site, data):
     """A document of schema /1 (no holes, no reuse details): the outlines still come from the tasks, a hole number
     without a task of its own waits, "not known yet" in its tooltip (nothing is guessed), the false hole is not claimed (the task list only
-    knows our check's failure), and the reuse leaf's imported theorem comes from the build when it knows the leaf, else
+    knows our check's failure: the hole failed for that), and the reuse leaf's imported theorem comes from the build when it knows the leaf, else
     the line says a proved theorem."""
     page = _page(pages, live=(_out_doc(data, schema=1), _tasks(_out_tasks())))
     page.goto(site + PAGE)
@@ -427,7 +428,7 @@ def test_without_the_documents_holes_the_outlines_come_from_the_tasks(pages, sit
     expect(n03.locator(".state")).to_have_text("Running: outline 2, hole 1")
     o1 = _outline(n03, 1)
     expect(o1).to_have_attribute("data-outline-state", "abandoned")
-    expect(o1.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Waiting")
+    expect(o1.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Failed: our check failed")
     expect(o1.locator("li[data-hole='2']")).to_have_attribute(
         "title", "try 1: our check failed; try 2 not tried (outline abandoned); a new outline is being made")
     expect(_outline(n03, 2).locator("li[data-hole='2'] .p2m-htext")).to_have_text("Waiting")
@@ -439,8 +440,8 @@ def test_without_the_documents_holes_the_outlines_come_from_the_tasks(pages, sit
 
 def test_every_hole_waits_works_or_is_solved_the_detail_in_a_tooltip(pages, site, data):
     """From 2026-11-25 every task of an outline carries the label `hole_states` (set by the prove2me runner): every
-    hole shows, the ones after the last hole task too, each Waiting, Working or Solved; why it waits and how it was
-    solved only in its tooltip (trial 11's p2m-dabfa9: holes held back behind the riskiest one had been shown as
+    hole shows, the ones after the last hole task too, each Waiting, Working or Solved (or Failed, Cancelled); why it
+    waits and how it was solved only in its tooltip (trial 11's p2m-dabfa9: holes held back behind the riskiest one had been shown as
     "closed before the hole tasks, or left in place", hole 4 not at all)."""
     states = "1=task 2=prepass:simp 3=task 4=task 5=inplace 6=wait:1"
     tasks = [{**x, "labels": {**x["labels"], "hole_states": states}} if x["id"].startswith("t98-p2m-dbd69f-s2-") else x
@@ -485,11 +486,11 @@ def _n03_finished(asm_state="done", asm_outcome="proved"):
 @pytest.mark.parametrize("asm_state,asm_outcome,outline_state,want", (
     ("done", "proved", "proved", ("solved", "Solved", "in place, with the outline")),
     ("queued", None, "in_progress", ("working", "Working (the assembly checks it)", "in place")),
-    ("done", "compile_error", "ended", ("waiting", "Waiting", "in place, filled in, but the assembly did not check")),
+    ("done", "compile_error", "ended", ("failed", "Failed: the assembly did not check", "in place")),
 ))
 def test_a_hole_in_place_is_decided_by_the_assembly(pages, site, data, asm_state, asm_outcome, outline_state, want):
     """Trial 6's N03: the in-place task ends `rest_done` (it fills the holes in, the assembly's full check decides), so
-    its hole is proved when the assembly is, waits for the assembly before, and is not proved when the assembly fails;
+    its hole is proved when the assembly is, waits for the assembly before, and failed when the assembly fails;
     never "not proved: rest done" on a proved leaf."""
     doc_holes, tasks = _n03_finished(asm_state, asm_outcome)
     doc = _out_doc(data)
@@ -518,7 +519,7 @@ def test_a_hole_in_place_keeps_the_documents_verdict(pages, site, data):
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
     holes = _holes(_outline(box.locator("li[data-current-leaf=N03]"), 2))
-    assert ("Hole 2", "waiting", "Waiting", "in place, false, disproved; re-judged") in holes, holes
+    assert ("Hole 2", "failed", "Failed: the hole is false", "in place, false, disproved; re-judged") in holes, holes
 
 
 @pytest.mark.parametrize("broken", ["document 500", "tasks 500", "document not one", "tasks not a list", "document 404"])
@@ -652,7 +653,7 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     expect(d8.locator(":scope > summary")).to_have_text("Trial 8 · since 16 November 2026 · 2 of 6 proved")
     # the wording fix (2026-11-18): trial 8's p2m-03d4b4, outline 1's second tries cancelled when the outline was abandoned
     n13 = d8.locator("[data-trial-leaf=N13] .p2m-outline[data-outline='1']")
-    expect(n13.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Waiting")
+    expect(n13.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Cancelled")
     expect(n13.locator("li[data-hole='2']")).to_have_attribute(
         "title", re.compile(r"^try 1: a sorry left; try 2 cancelled: outline abandoned after hole 1 failed"))
     assert "closed by another task" not in d8.inner_text()
