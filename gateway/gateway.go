@@ -43,6 +43,7 @@ type Gateway struct {
 	speeds   nodeSpeeds       // nodes' recent answer speeds, for their operators (nodework.go)
 	tasks    *taskStore       // projects' task queues (tasks.go)
 	sci      *scienceDB       // campaigns and external results (science_db.go, campaigns.go)
+	campMu   sync.Mutex       // serialises the campaign sweep with a new task's reopen (campaigns_auto.go)
 	recent   recentUse        // the last science requests, to name an attempt's node (ops_http.go)
 	sitestat siteStatsCache   // the site statistics file, for the funnel card (funnel.go)
 	buffered atomic.Int64     // bytes held for non-streaming answers, across all requests
@@ -319,6 +320,7 @@ func (g *Gateway) startBackground() {
 	g.every(taskSweepEvery, g.tasks.sweepAll)        // expired leases go back to the queue without a call
 	g.every(pilotSeenEvery, g.sweepPilots)           // pilots past their deadline end; connected ones are seen
 	g.every(connectorRequestSweep, g.sweepRequests)
+	g.every(campaignSweepEvery, func() { g.sweepCampaigns(g.tasks.now()) }) // campaign_auto_finish
 	if g.cfg.StateDir != "" {
 		g.every(saveEvery, func() {
 			if err := g.budget.save(); err != nil {

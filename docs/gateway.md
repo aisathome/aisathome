@@ -120,7 +120,8 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
   "public_queue": true,
   "page": "/science/prove2me/",
   "page_anchor": "leaf",
-  "public_links": ["https://prove2.me/theorems/"]
+  "public_links": ["https://prove2.me/theorems/"],
+  "campaign_auto_finish": {"labels": ["trial", "campaign"], "idle_hours": 6}
 }]
 ```
 
@@ -139,6 +140,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `page`, `page_anchor` | The project's page on the website (a path such as `/science/prove2me/`), and a label name whose value places a task on it (`leaf`: `#leaf-<value>`). The account page links a node's science work there. Both optional. |
 | `task_compact_days` | Days after a finished task's end until it is compacted (below), 1-3650; default 30. |
 | `public_links` | The https prefixes (each ending in `/`, at most 8) that the project's campaign items and external results may link to (below). None: they carry no links. |
+| `campaign_auto_finish` | Finish the project's campaigns by themselves (below, "Campaigns that finish by themselves"): `{"labels": ["trial", "campaign"], "idle_hours": 6}`. `labels` (1-4 label names) are the task labels whose value is the id of the campaign a task belongs to; `idle_hours` (more than 0, at most 720; default 6) is how long its tasks must be idle. None: off, and campaigns end only when the project finishes them. |
 
 Before the typed task schema the gateway also ran TauCeti's review loop (`auto_rounds`, `review_loop`,
 `max_review_rounds`, and the `review`, `decide` and `continue` calls) and kept TauCeti's public
@@ -162,7 +164,8 @@ optionally, `order`: after tasks that came back from a lease, lower `order` is c
 (default 0), then oldest first. A project that runs a planned sequence sets it, as prove2me's
 trials do (calibration leaves first, then a comparison set, then new leaves). The gateway does
 nothing at a task's end: its worker reports `complete` or `fail` and that is all, and what comes
-next is the project's business.
+next is the project's business (one exception: with `campaign_auto_finish`, the campaign of tasks
+that have all ended finishes by itself later, below).
 
 A task may also carry, written when it is created, the typed fields every project
 shares, all of them public:
@@ -296,6 +299,33 @@ and one that is not finished has no `ended_at` (reopening clears it). A result t
 gets `verdict_at` now unless it has one. A result with a verdict never goes back to `pending`: a late
 retry of the submission changes nothing. A result's `campaign` must exist first. A project keeps at
 most 1000 campaigns and 50,000 results (409 beyond).
+
+**Campaigns that finish by themselves.** For a project with `campaign_auto_finish`, a task belongs
+to a campaign when one of the configured labels has the campaign's id as its value (prove2me:
+`trial` on its proof tasks, `campaign` on its submission tasks); a task without them, or made before
+labels, belongs to none. Every 5 minutes the gateway finishes each `running` campaign of the project
+that:
+
+- has no task `queued` or `leased` (a submission is an ordinary task, so one still waiting keeps its
+  campaign open),
+- has at least one finished task (`done`, `failed` or `cancelled`),
+- whose last task ended at least `idle_hours` ago, and
+- has itself not changed for `idle_hours` (a campaign the project has just put back to `running`,
+  by hand or with a new plan, is not finished under it).
+
+Its `ended_at` is the last task's end (a done task's result `finished_at`, else when the task
+ended), never before its `started_at`; `updated_at` is the time of the sweep. The log says
+`campaign finished by itself`. A campaign that is `preparing` is never touched, and one that changes
+between the sweep's read and its write is left for the next sweep.
+
+A new task whose labels name a `finished` campaign of the project reopens it: `running`, no
+`ended_at`, `started_at` kept (now if it had none); the log says `campaign reopened by a new task`.
+A repeated create of an existing task reopens nothing. The sweep finishes the campaign again once
+that work is over, with the new last end. The sweep and the reopen take turns, so a task created
+while a sweep runs either keeps its campaign open or reopens it right after. A failed reopen is
+logged and the task stands. `PATCH {"status": "finished"}` still finishes a campaign at once, for
+instance with an `ended_at` of the project's choosing: an override the sweep never undoes (only a
+new task reopens it).
 
 Reads take no key for a project with `public_queue` (cached 15 s); another project's need its key:
 
