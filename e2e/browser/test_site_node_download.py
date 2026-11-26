@@ -1,14 +1,18 @@
 """The start of a node in a browser: on the home page and /node/ the same block (site/src/components/NodeStart.astro),
 the Linux one-liner first beside the Windows installer, with or without JavaScript; on /node/windows/ the download block
 (site/src/components/NodeDownload.astro) with the Windows panel only; no sideways scroll on a phone; /node/'s picture of
-the node's own page; the stop and remove table on /node/operate/. The site is the build in site/dist (CI builds it first; locally `cd site && npm ci && npm run build`).
+the node's own page; the stop and remove table on /node/operate/; on all three, the version, size and button of the
+gateway's latest release (GET /v1/node/release, answered by the test), and the build's copy when the gateway fails or
+knows an older one. The site is the build in site/dist (CI builds it first; locally `cd site && npm ci && npm run build`).
 
   cd e2e/browser && uv run --with-requirements requirements.txt pytest -q test_site_node_download.py
 
 SPDX-License-Identifier: Apache-2.0
 """
 import functools
+import json
 import os
+import re
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +25,12 @@ DIST = Path(os.environ.get("SITE_DIST", SRC / "site" / "dist"))
 RELEASES = "https://github.com/aisathome/aisathome/releases/"
 WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 LINUX_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+RELEASE_TS = SRC / "site/src/data/node-release.ts"
+# The build's copy (the page without JavaScript, and whenever the gateway's answer is not shown).
+BUILD_VERSION = re.search(r"\tversion: '(v[0-9.]+)'", RELEASE_TS.read_text()).group(1)
+BUILD_HREF = RELEASES + "latest/download/AIsAtHome-node-setup.exe"
+NEWER = {"version": "v99.1.0", "installerBytes": 400 * 2**20, "bundleBytes": 612_000_000, "versionFreeInstaller": True,
+         "fetched_at": "2026-11-26T12:00:00Z"}
 ANDROID_UA = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
 
 
@@ -45,12 +55,17 @@ def site():
 def open_page(browser, site):
     opened = []
 
-    def make(path="/node/", ua=WINDOWS_UA, js=True, width=1400):
+    def make(path="/node/", ua=WINDOWS_UA, js=True, width=1400, release=None):
+        """release: the gateway's answer to /v1/node/release (a dict, or an HTTP status); every other /v1/ fails."""
         ctx = browser.new_context(viewport={"width": width, "height": 900}, user_agent=ua, java_script_enabled=js)
         ctx.set_default_timeout(15_000)
         opened.append(ctx)
         page = ctx.new_page()
         page.route("**/v1/**", lambda r: r.fulfill(status=500, body="no"))
+        if isinstance(release, dict):
+            page.route("**/v1/node/release", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(release)))
+        elif release is not None:
+            page.route("**/v1/node/release", lambda r: r.fulfill(status=release, body="no"))
         page.goto(site + path)
         return page
 
@@ -199,3 +214,46 @@ def test_home_page_links_say_where_they_go(open_page):
     footer = page.locator(".site-footer")
     expect(footer.get_by_role("link", name="Docs")).to_have_attribute("href", "/docs/")
     expect(footer.locator('a[href*="reddit.com"]')).to_have_count(0)
+
+
+@pytest.mark.parametrize("path", ["/", "/node/", "/node/windows/"])
+def test_the_gateways_newer_release_is_shown(open_page, path):
+    """A release the build does not know yet: once the gateway answers, the version and size are its own, and the
+    button links its file by its tag (no longer the static page's releases/latest/download link)."""
+    page = open_page(path=path, release=NEWER)
+    button = page.locator("[data-dl-windows]")
+    expect(button).to_have_count(1)
+    expect(button).to_have_attribute("href", RELEASES + "download/v99.1.0/AIsAtHome-node-setup.exe")
+    assert BUILD_HREF != RELEASES + "download/v99.1.0/AIsAtHome-node-setup.exe"
+    for el in page.locator('[data-release="version"]').all():
+        expect(el).to_have_text("v99.1.0")
+    expect(page.locator('[data-release="installer-size"]')).to_have_text("400 MB")
+
+
+def test_a_release_without_the_version_free_installer_links_its_own_file(open_page):
+    page = open_page(release={**NEWER, "versionFreeInstaller": False})
+    expect(page.locator("[data-dl-windows]")).to_have_attribute(
+        "href", RELEASES + "download/v99.1.0/AIsAtHome-node-setup-v99.1.0.exe")
+
+
+@pytest.mark.parametrize("release", [503, {**NEWER, "version": "v0.0.1"}, {**NEWER, "version": "v99.1.0-rc1"},
+                                     {**NEWER, "installerBytes": -1}, {"error": {"message": "no"}}])
+@pytest.mark.parametrize("path", ["/", "/node/windows/"])
+def test_the_builds_copy_stays_otherwise(open_page, release, path):
+    """The gateway fails, knows only an older release, or answers something malformed: the build's copy stays."""
+    page = open_page(path=path, release=release)
+    seen = []
+    page.on("response", lambda r: "/v1/node/release" in r.url and seen.append(r.status))
+    page.reload()
+    page.wait_for_function("performance.getEntriesByType('resource').some((e) => e.name.includes('/v1/node/release'))")
+    page.wait_for_timeout(300)  # the answer read and (not) applied
+    assert seen, "the page did not ask the gateway"
+    for el in page.locator('[data-release="version"]').all():
+        expect(el).to_have_text(BUILD_VERSION)
+    expect(page.locator("[data-dl-windows]")).to_have_attribute("href", BUILD_HREF)
+
+
+def test_without_javascript_the_builds_copy(open_page):
+    page = open_page(path="/", js=False, release=NEWER)
+    expect(page.locator('[data-release="version"]')).to_have_text(BUILD_VERSION)
+    expect(page.locator("[data-dl-windows]")).to_have_attribute("href", BUILD_HREF)

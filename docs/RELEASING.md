@@ -74,10 +74,18 @@ into `/tmp`), check that `sudo aisathome-node-uninstall` still works, and remove
 An `install.sh` change that breaks the one-liner (a flag, a question, the bundle's layout) shows
 here, before anyone runs it.
 
-**After publishing:** set the version and the installer's size in bytes in
-`site/src/data/node-release.ts` (the download block on `/node/` shows them) and deploy the site.
-The first time a release carries `AIsAtHome-node-setup.exe`, also set `versionFreeInstaller: true`
-there: the button then links to `releases/latest/download` and needs no change per release.
+**After publishing:** nothing to do for the site. The gateway reads the latest release from GitHub
+every 10 minutes and serves it at `/v1/node/release` (`node_release_url`, [gateway.md](gateway.md),
+"The latest node release"); the Windows download on the home page, `/node/` and `/node/windows/`
+shows it in the browser: the version, the installer's size, and the button linked to that release's
+own file. Check that it does, within
+about 15 minutes (10 for the gateway, 5 for its cache): `curl -s https://aisathome.org/v1/node/release`.
+
+`nodeRelease` in `site/src/data/node-release.ts` is only the build's copy: the page without
+JavaScript, the JSON-LD's `softwareVersion`, and the block while the gateway does not answer (or knows
+only an older release). Refresh it whenever convenient, from the values `/v1/node/release` answers.
+The driver minimums and the disk and model sizes in that file are not in a release and stay
+hand-kept: change them with the change that moves them (a new CUDA build, a new model).
 
 ## Changing what is built
 

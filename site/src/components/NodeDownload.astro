@@ -2,7 +2,8 @@
 // The "run a node" download block: a Windows installer button, or the one Linux command. Without
 // JavaScript it shows the Windows button with a link to the Linux page; with it, a Linux visitor
 // sees the Linux command first, and each panel links to the other. os="windows" shows only the
-// Windows panel (on the Windows page). Version and size: src/data/node-release.ts.
+// Windows panel (on the Windows page). Version, size and the button's link: src/data/node-release.ts at the build,
+// the gateway's latest release in the browser (updateRelease).
 import { Code } from '@astrojs/starlight/components';
 import { installerSize, installerURL, linuxCommand, needs, nodeRelease } from '../data/node-release';
 
@@ -24,7 +25,7 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 				Download for Windows
 			</a>
 			<p class="dl-meta">
-				{nodeRelease.version} · {installerSize}{both && <>{' · '}<a href="/node/install/" data-os-show="linux">Linux</a></>}{' · '}<a href="/node/windows/#check-the-download">Check the download</a>
+				<span data-release="version">{nodeRelease.version}</span> · <span data-release="installer-size">{installerSize}</span>{both && <>{' · '}<a href="/node/install/" data-os-show="linux">Linux</a></>}{' · '}<a href="/node/windows/#check-the-download">Check the download</a>
 			</p>
 		</div>
 		<ol class="dl-steps">
@@ -54,7 +55,7 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 				<p class="dl-kicker">Install on Linux: paste in a terminal</p>
 				<Code code={linuxCommand} lang="bash" />
 				<p class="dl-meta">
-					Prebuilt bundle, {nodeRelease.version} · {needs.bundle}{' · '}<a href="/node/windows/" data-os-show="windows">Windows</a>
+					Prebuilt bundle, <span data-release="version">{nodeRelease.version}</span> · <span data-release="bundle-size">{needs.bundle}</span>{' · '}<a href="/node/windows/" data-os-show="windows">Windows</a>
 				</p>
 			</div>
 			<ol class="dl-steps">
@@ -71,6 +72,11 @@ const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
 </section>
 
 <script>
+	import { updateRelease } from '../data/node-release';
+
+	// The version, size and button of the gateway's latest release (the build's copy until then, or without it).
+	updateRelease();
+
 	// Linux visitors (not Android or ChromeOS) see the Linux panel first; the "On Linux?" and
 	// "On Windows?" links switch panels instead of leaving the page.
 	(() => {

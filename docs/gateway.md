@@ -10,6 +10,7 @@ Config fields beyond the example (`examples/gateway.json`):
 |---|---|
 | `state_dir` | Directory for state that survives restarts (daily token budgets, the credit ledger `credit.json` and the daily history `history.json`, saved every 5 s and on shutdown; the guard log `guard-log.json`, below, saved likewise; the task queues; the science database `science.db`, below). Without it a restart gives every key a fresh day and forgets credit, and the science records live in memory. A corrupt budgets file is logged and ignored; a corrupt ledger is set aside as `credit.json.bad`. |
 | `site_stats_file` | The site statistics file `tools/sitestats` writes on the same host (daily aggregates only), read for the funnel card on `/account/ops`: visitors, views of the node pages (`/node/`, `/node/windows/`, `/node/install/`, `/node/binaries/`) and install starts (fetches of `/node.sh`). Read-only, reread when it changes. Absent or unreadable: the card shows the gateway's own counts and says why the site's are missing. |
+| `node_release_url` | GitHub's API address of the node's latest release, `https://api.github.com/repos/aisathome/aisathome/releases/latest`, served at `GET /v1/node/release` for the website's Windows download ("The latest node release" below). Unauthenticated: no token. Absent: off, and that endpoint answers 503 (the site shows the release it was built with). Read at start. |
 | `tokenizer_file`, `tokenizer_sha256` | The model's `tokenizer.json`, so the gateway counts tokens for credit itself (see [credit.md](credit.md)); the gateway refuses to start if the file does not match the SHA-256. |
 | `model_check` | The gateway's model check of every node and pilot: secret probe prompts at random times, their logprobs compared with a secret reference ([modelcheck.md](modelcheck.md), "The gateway's check"). `enabled`, `references` (`model`, `file`, `sha256`; the gateway refuses to start if a file is missing or does not match), `interval_seconds` (1800), `recheck_seconds` (300), `withhold` (false: observe-only; when true, a failing node is held, and only after 3 days of observing), `cover_share` (0.2). Results in `state_dir/model-check.json`, on `/account/ops` and `aisathome-gateway accounts model-check`. Read at start. |
 | `node_protocol_min`, `node_protocol_max` | The node protocol versions the gateway accepts (`protocol/PROTOCOL.md`, "Protocol versions"). Default: the gateway's own version and the one before it, so nodes of the current and the previous release connect. A node outside the range is refused with close code 4001 and a reason its volunteer sees, logged as `msg="node refused: unsupported protocol version"`. Every connect logs `protocol=<version>`; the account page shows it next to the node's software version. Max cannot exceed the gateway's own version; raise min only on a published retirement date. |
@@ -390,6 +391,41 @@ operators):
   Answers are built at most every 15 s. Kept in `state_dir/pressure.json`, written every minute
   and at shutdown.
 - `GET /v1/stats/credit` and `/stats/`: credit (see [credit.md](credit.md)).
+
+### The latest node release
+
+`GET /v1/node/release`, without authentication: the node release the website's Windows download offers
+(`site/src/data/node-release.ts`, on the home page, `/node/` and `/node/windows/`), so a release shows
+there within minutes of being published, with no change to the site:
+
+```json
+{"version": "v0.7.0", "installerBytes": 390380154, "bundleBytes": 478190808, "versionFreeInstaller": true, "fetched_at": "2026-11-26T12:00:00Z"}
+```
+
+With `node_release_url` set, the gateway reads that release from GitHub's public API at start and
+every 10 minutes, without a token (GitHub allows 60 such requests an hour per address; an unchanged
+release answers 304 to `If-None-Match`, which does not count). It takes a release only when it is one
+the block can offer: a tag `vX.Y.Z` (no pre-release suffix), not a draft or a pre-release, and
+`AIsAtHome-node-setup.exe` (or `AIsAtHome-node-setup-<tag>.exe`; with both, the same size) and
+`aisathome-node-bundle-linux-amd64.tar.xz` fully uploaded. `installerBytes` and `bundleBytes` are
+those files' sizes, `versionFreeInstaller` whether the version-free installer is there (the button
+then links to `releases/latest/download`), `fetched_at` when GitHub last confirmed it. It follows
+`releases/latest`, the release the site's static download link serves (an older release made latest
+by hand is answered too).
+
+A failed read (GitHub down or refusing, a release that fails the checks) keeps the last good release
+and logs `WARN` "reading the latest node release failed; keeping the last good one" with the release
+kept and when it tries again: after 1 minute, doubling with each failure in a row up to an hour, or
+later when GitHub says when (`Retry-After`, or the rate limit's reset; honoured up to a day). A new release logs `INFO`
+"node release". The answer is cached for 5 minutes (`Cache-Control: public, max-age=300`). Before the
+first good read, and without `node_release_url`, it answers 503 (not cached). The release is kept in
+memory only: a restart reads it again at once.
+
+The site reads it in the browser, same origin like `/v1/stats`, and shows it only when it is well
+formed and not older than the release the site was built with; the Windows button then links that
+release's own file by its tag (`releases/download/<tag>/…`), so the version, size and file always
+match. Otherwise, and without JavaScript, it shows the build's copy, whose button links
+`releases/latest/download`. The JSON-LD's `softwareVersion` is the build's.
 
 ### Runner metrics
 
