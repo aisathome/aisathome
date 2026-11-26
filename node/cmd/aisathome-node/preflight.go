@@ -40,9 +40,12 @@ rules what the install does with the node's config and token, and writes the fil
     only to this machine.
   - The token: one is kept or sent only to the gateway its record (AISATHOME_TOKEN_GATEWAY) names;
     any other installed token is moved aside by the installer ("park") and never written again.
+  - The engine address (upstream) of a generated node.json: -upstream, else the installed one's,
+    else http://127.0.0.1:8000.
   - The account (-account): link, anonymous, keep, token (read from stdin), or "": at a terminal
-    an installed token for this gateway is kept, else it asks "Link this node to your account?
-    [Y/n]" (y: link, n: without an account); without a terminal a token is read from stdin.
+    an installed token for this gateway is kept (a node without an account's registers again when
+    its gateway deleted or holds it), else it asks "Link this node to your account? [Y/n]" (y:
+    link, n: without an account); without a terminal a token is read from stdin.
 
 It writes node.json (and token.env when the node gets a token now) into -out, prints what it
 decided as JSON on stdout (-json) and tells the person on stderr. -dry-run reads no token,
@@ -76,6 +79,9 @@ type preflightEnv struct {
 	tokenState  func(token, gw string) string                            // default: preflightEnv.askTokenState
 }
 
+// defaultUpstream is the engine the installer runs (llama-server on this machine's port 8000).
+const defaultUpstream = "http://127.0.0.1:8000"
+
 var reNodeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // usageError is refused input: exit 2.
@@ -106,7 +112,7 @@ func (e preflightEnv) main(args []string, stdout, stderr io.Writer) int {
 	fl.StringVar(&o.model, "model", "", "a generated node.json's model name")
 	fl.IntVar(&o.slots, "slots", 1, "a generated node.json's slots")
 	fl.IntVar(&o.ctx, "ctx", 0, "a generated node.json's context per slot")
-	fl.StringVar(&o.upstream, "upstream", "http://127.0.0.1:8000", "a generated node.json's engine address")
+	fl.StringVar(&o.upstream, "upstream", "", "a generated node.json's engine address (default: the installed one's, else "+defaultUpstream+")")
 	fl.StringVar(&o.out, "out", "", "the folder to write node.json (and token.env) into")
 	fl.BoolVar(&o.dryRun, "dry-run", false, "read no token, ask nothing, send nothing; write node.json only")
 	asJSON := fl.Bool("json", false, "print the decision as JSON on stdout")
@@ -165,12 +171,25 @@ func (e preflightEnv) preflight(o preflightOpts, msg io.Writer) (preflightResult
 	if errors.Is(err, os.ErrPermission) && o.dryRun {
 		installed = map[string]json.RawMessage{}
 		if o.nodeConfig == "" {
-			say("node.json: %s is not readable without sudo; the install keeps its node id and gateway URL", installedPath)
+			say("node.json: %s is not readable without sudo; the install keeps its node id, gateway URL and engine address", installedPath)
 		}
 	} else if err != nil {
 		return r, usagef("node config %v", err)
 	}
 	oldID, oldGW := nodeconf.String(installed, "node_id"), nodeconf.String(installed, "gateway_url")
+	// The engine address of a generated node.json: -upstream, else the installed one's (an update keeps an
+	// address the node was given, by --node-config or by hand), else the installer's own engine.
+	if o.upstream == "" {
+		o.upstream = defaultUpstream
+		if up := nodeconf.String(installed, "upstream"); up != "" && up != defaultUpstream {
+			if u, err := url.Parse(up); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+				o.upstream = up
+				say("node.json: keeps the installed engine address (upstream)")
+			} else {
+				say("node.json: the installed upstream is not an http(s) address; the install uses %s", defaultUpstream)
+			}
+		}
+	}
 
 	// The node.json to install: the supplied one, canonical; or one generated later, once the node id is known.
 	var supplied map[string]any
@@ -322,11 +341,7 @@ func (e preflightEnv) decideToken(o preflightOpts, tokenEnvPath, gw string, r *p
 		// A usable token stays (the node is updated) unless its gateway, which issued it, says it is gone or
 		// a held node without an account's.
 		if old != "" {
-			ask := e.tokenState
-			if ask == nil {
-				ask = e.askTokenState
-			}
-			switch ask(old, gw) {
+			switch e.state(old, gw) {
 			case "gone":
 				r.Park = true
 				say("account: %s no longer knows the installed token (deleted or revoked): it is moved aside (%s.unlinked), and this node registers without an account", gw, tokenEnvPath)
@@ -359,7 +374,15 @@ func (e preflightEnv) decideToken(o preflightOpts, tokenEnvPath, gw string, r *p
 		say("token: keeping the installed one")
 		return old, nil
 	}
-	return e.askToken(o, old, parked, gw, r, say)
+	return e.askToken(o, old, parked, gw, tokenEnvPath, r, say)
+}
+
+// state asks the token's gateway about it (tokenState in tests, else askTokenState).
+func (e preflightEnv) state(token, gw string) string {
+	if e.tokenState != nil {
+		return e.tokenState(token, gw)
+	}
+	return e.askTokenState(token, gw)
 }
 
 // askToken is the account without a flag (or with -account token). At a terminal, an installed token for
@@ -367,8 +390,20 @@ func (e preflightEnv) decideToken(o preflightOpts, tokenEnvPath, gw string, r *p
 // [Y/n]": y links in the browser at the end of the install, n runs the node without an account. A node
 // token (advanced) comes only from stdin: with -account token (pasted, not echoed, at a terminal), or piped
 // by a script that gives no flag.
-func (e preflightEnv) askToken(o preflightOpts, old, parked, gw string, r *preflightResult, say func(string, ...any)) (string, error) {
+func (e preflightEnv) askToken(o preflightOpts, old, parked, gw, tokenEnvPath string, r *preflightResult, say func(string, ...any)) (string, error) {
 	if o.account == "" && e.interactive {
+		// A node without an account whose token its gateway deleted (not seen for 90 days) or holds registers
+		// again, as with --anonymous: an update must not keep a token that no longer works. (A linked node's
+		// token is kept: linking it again is the person's choice, --link.)
+		if old != "" && node.Anonymous(old) {
+			switch e.state(old, gw) {
+			case "gone", "held":
+				r.Park, r.Account = true, "anonymous"
+				say("account: %s no longer takes this node's token (deleted or held): it is moved aside (%s.unlinked), and this node registers again without an account (science only)", gw, tokenEnvPath)
+				say("%s", RegisterNotice)
+				return "", nil
+			}
+		}
 		if old != "" {
 			r.Account = "keep"
 			say("token: keeping the installed one (to link this node to another account instead: --link)")

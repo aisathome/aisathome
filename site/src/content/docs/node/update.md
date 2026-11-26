@@ -65,13 +65,14 @@ then (`--link`).
 
 The installer keeps:
 
-- the gateway and the node id (from `/etc/aisathome-node/node.json`), and the token when it is
-  kept (above); pass `--node-id` or `--gateway-url` to change the first two;
+- the gateway, the node id and the engine address (`upstream`, from `/etc/aisathome-node/node.json`),
+  and the token when it is kept (above); pass `--node-id` or `--gateway-url` to change the first two;
 - the model, which it checks again (about a minute); a release that pins another model
   downloads it (v0.3.0: `UD-IQ4_XS`, 14.3 GB, replaces `UD-Q4_K_M`; v0.4.0: a 16 GB
   card's tier runs `UD-Q3_K_XL`, 13.1 GB, in its place; the old file is replaced once the new
   one is verified, so you need about 16 GB free in `/var/lib` for the update);
-- the local UI's password, the counters and whether the node starts at boot.
+- the local UI's password, its port or `off` (unless you give `UI_PORT`), the counters and whether
+  the node starts at boot.
 
 It checks the card for its [tier](/node/presets/) again (the memory your running node
 holds counts as free), replaces the binaries and the services, then restarts the node and
@@ -80,9 +81,9 @@ few minutes while the model loads again and the speed test runs, and an answer i
 off. To avoid that, **Pause** it in the [local UI](/node/operate/#local-ui) first, wait until
 no request is in flight, update, then **Resume**: a pause lasts across restarts.
 
-Two things are not kept. If you wrote `node.json` yourself, pass `--node-config` again. If
-you installed with settings in the environment (such as `CTX_PER_SLOT=65536`), set them
-again.
+Two things are not kept. If you wrote other settings into `node.json` yourself, pass
+`--node-config` again. If you installed with settings in the environment (such as
+`CTX_PER_SLOT=65536`), set them again.
 
 `aisathome-node -version` prints the installed version. The local UI shows it too, and so
 does **Your nodes** on your [account page](/account) while the node is connected.

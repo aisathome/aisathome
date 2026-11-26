@@ -68,12 +68,15 @@ command -v go >/dev/null || { echo "install_test: needs go (to build aisathome-n
 (cd "$here/../../.." && CGO_ENABLED=0 go build -o "$tmp/aisathome-node" ./node/cmd/aisathome-node) || { echo "install_test: go build failed" >&2; exit 1; }
 nb=(--node-bin "$tmp/aisathome-node")
 
-# run VAR=value... -- args...: runs the installer in a clean environment, sets out and code.
+# run VAR=value... -- args...: runs the installer in a clean environment, sets out and code. What a dry run
+# reads of an installed node (the local UI's drop-in, the models folder) is a missing file here unless a test
+# names one, so a node installed on the machine that runs the tests changes nothing.
 run() {
   local env=()
   while [[ $# -gt 0 && "$1" != "--" ]]; do env+=("$1"); shift; done
   shift
-  out="$(env -i PATH="$PATH" "${env[@]}" bash "$installer" "$@" 2>&1)"; code=$?
+  out="$(env -i PATH="$PATH" AISATHOME_TEST_UI_DROPIN="$tmp/no-dropin" AISATHOME_TEST_MODELS_DIR="$tmp/no-models" "${env[@]}" \
+    bash "$installer" "$@" 2>&1)"; code=$?
 }
 fail() { echo "FAIL: $1"; echo "$out" | sed 's/^/    /'; fails=$((fails + 1)); }
 has() { [[ "$out" == *"$2"* ]] || fail "$1: missing '$2'"; }
@@ -304,6 +307,15 @@ run UI_PORT=8123 FAKE_MEM="$(card 16303 15841)" -- --dry-run
 ok "UI_PORT"; has "UI_PORT" "AISATHOME_UI_PORT=8123"; has "UI_PORT" "AISATHOME_PRESET=standard: 1 x 81920 tokens, KV q4_0"
 run UI_PORT=off -- --dry-run
 ok "UI off"; has "UI off" "AISATHOME_UI_PORT=off"; lacks "UI off" "AISATHOME_CONTROL_TRIGGER"
+# Without UI_PORT, an installed node's setting stays (an update keeps "off" or a port of its own); UI_PORT wins.
+printf '[Service]\nEnvironment=AISATHOME_UI_PORT=off\nEnvironment=AISATHOME_UI_PASSWORD_FILE=/x\n' > "$tmp/dropin-off"
+printf '[Service]\nEnvironment=AISATHOME_UI_PORT=8124\n' > "$tmp/dropin-8124"
+run AISATHOME_TEST_UI_DROPIN="$tmp/dropin-off" -- --dry-run
+ok "UI off, kept"; has "UI off, kept" "local UI: off"; lacks "UI off, kept" "AISATHOME_CONTROL_TRIGGER"
+run AISATHOME_TEST_UI_DROPIN="$tmp/dropin-8124" -- --dry-run
+ok "UI port, kept"; has "UI port, kept" "local UI: 8124"
+run AISATHOME_TEST_UI_DROPIN="$tmp/dropin-off" UI_PORT=7390 -- --dry-run
+ok "UI_PORT over the installed"; has "UI_PORT over the installed" "local UI: 7390"
 for bad in UI_PORT=80 UI_PORT=8000 UI_PORT=70000 UI_PORT=abc "UI_PORT=7381;x" UI_PORT=07381; do
   run "$bad" -- --dry-run
   usage_err "$bad"
@@ -372,6 +384,15 @@ if [[ -n "$comma_locale" ]]; then
 fi
 run FAKE_DF_KB=10000000 -- --dry-run
 [[ $code -eq 1 ]] || fail "no disk space: exit $code, want 1"; has "no disk space" "not enough disk space"
+# A dry run without root cannot see into an installed node's models folder (the model may be there): it leaves
+# the disk check to the install, which runs as root.
+if [[ $EUID -ne 0 ]]; then
+  mkdir -p "$tmp/models-hidden"; chmod 000 "$tmp/models-hidden"
+  run FAKE_DF_KB=10000000 AISATHOME_TEST_MODELS_DIR="$tmp/models-hidden" -- --dry-run
+  ok "models not readable"; has "models not readable" "not readable without sudo, so its model cannot be counted"
+  lacks "models not readable" "not enough disk space"
+  chmod 700 "$tmp/models-hidden"
+fi
 # --model: only the pinned file (checked by size in a dry run, by SHA-256 when installing).
 head -c 4096 /dev/urandom > "$tmp/own-model.gguf"
 osha="$(sha256sum "$tmp/own-model.gguf" | cut -d' ' -f1)"

@@ -89,7 +89,26 @@ out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_GATEWAY
   AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" AISATHOME_ROOT="$tmp/root" sh < "$script" 2>&1)"; code=$?
 want=$'install.sh --dry-run --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --gateway-url wss://api.staging.example.org/v1/node/connect'
 [[ $code -eq 0 && "$(cat "$tmp/calls")" == "$want" ]] || fail "update, gateway: calls were: $(cat "$tmp/calls")"
+# A test site's copy has its gateway as the built-in default: that is for new nodes; an installed node keeps its
+# own gateway (no --gateway-url), while a fresh machine gets the test site's.
+sed 's|^gateway="${AISATHOME_GATEWAY_URL:-}"$|gateway="${AISATHOME_GATEWAY_URL:-wss://api.staging.example.org/v1/node/connect}"|' "$script" > "$tmp/site-node.sh"
+grep -q 'api.staging.example.org' "$tmp/site-node.sh" || fail "the test site's copy was not made"
+site_run() {
+  printf 'y\n' > "$tmp/tty"; : > "$tmp/calls"
+  out="$(CALLS="$tmp/calls" AISATHOME_RELEASE_BASE="file://$rel" AISATHOME_SUDO="" AISATHOME_TTY="$tmp/tty" TMPDIR="$tmp" \
+    AISATHOME_ROOT="$tmp/root" sh < "$tmp/site-node.sh" 2>&1)"; code=$?
+}
+site_run
+[[ $code -eq 0 && "$(cat "$tmp/calls")" == $'install.sh --dry-run\ninstall.sh' ]] || fail "update, a test site's default gateway: calls were: $(cat "$tmp/calls")"
+# A release candidate names itself in full.
+printf '#!/bin/sh\n[ "$1" = -version ] && echo "aisathome-node v0.8.0-rc1"\n' > "$tmp/root/opt/aisathome-node/bin/aisathome-node"
+chmod +x "$tmp/root/opt/aisathome-node/bin/aisathome-node"
+run y
+[[ "$out" == *"(v0.8.0-rc1 -> v0.7.0)"* ]] || fail "update, release candidate: $out"
 rm -rf "$tmp/root"; mkdir -p "$tmp/root"
+site_run
+want=$'install.sh --dry-run --anonymous --enable-at-boot --gateway-url wss://api.staging.example.org/v1/node/connect\ninstall.sh --anonymous --enable-at-boot --gateway-url wss://api.staging.example.org/v1/node/connect'
+[[ $code -eq 0 && "$(cat "$tmp/calls")" == "$want" ]] || fail "fresh, a test site's default gateway: calls were: $(cat "$tmp/calls")"
 
 # Piped (no terminal), the download shows plain lines, not curl's bar.
 [[ "$out" != *"#"* && "$out" != *$'\r'* ]] || fail "yes: a progress bar in piped output"

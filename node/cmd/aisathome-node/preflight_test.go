@@ -441,3 +441,77 @@ func TestPreflightAskTokenState(t *testing.T) {
 		t.Errorf("unexpected requests: %v", bad)
 	}
 }
+
+// An update at a terminal with no account option (how the one-line install updates a node): a node without an
+// account whose token its gateway deleted or holds registers again; one the gateway still knows keeps its token,
+// and so does a linked node, without asking the gateway.
+func TestPreflightUpdateAtTerminal(t *testing.T) {
+	nj := installedJSON(pfGW)
+	for _, tc := range []struct {
+		name, tokenEnv, state string
+		account               string
+		park                  bool
+		token                 string
+		asked                 bool
+		msg                   string
+	}{
+		{"without an account, known", tokenEnv(pfAnon, pfGW), "ok", "keep", false, pfAnon, true, "keeping the installed one"},
+		{"without an account, deleted", tokenEnv(pfAnon, pfGW), "gone", "anonymous", true, "", true, "registers again without an account"},
+		{"without an account, held", tokenEnv(pfAnon, pfGW), "held", "anonymous", true, "", true, "registers again without an account"},
+		{"linked", tokenEnv(pfTok, pfGW), "gone", "keep", false, pfTok, false, "keeping the installed one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := pfCase{nodeJSON: nj, tokenEnv: tc.tokenEnv, state: tc.state, tty: true, stdin: "n\n"}.run(t)
+			if o.code != 0 {
+				t.Fatalf("exit %d: %s", o.code, o.stderr)
+			}
+			if o.res.Account != tc.account || o.res.Park != tc.park {
+				t.Errorf("account %q park %v, want %q %v", o.res.Account, o.res.Park, tc.account, tc.park)
+			}
+			if (len(o.askedGateway) > 0) != tc.asked {
+				t.Errorf("gateways asked: %v", o.askedGateway)
+			}
+			if want := map[bool]string{true: tokenEnv(tc.token, pfGW), false: ""}[tc.token != ""]; o.tokenEnv != want {
+				t.Errorf("token.env %q, want %q", o.tokenEnv, want)
+			}
+			if !strings.Contains(o.stderr, tc.msg) || strings.Contains(o.stderr, "[Y/n]") {
+				t.Errorf("message lacks %q, or asked: %s", tc.msg, o.stderr)
+			}
+		})
+	}
+}
+
+// A generated node.json keeps the installed engine address unless -upstream gives one; one that is not an
+// http(s) address is replaced by the installer's own engine.
+func TestPreflightUpstream(t *testing.T) {
+	inst := func(up string) string {
+		return `{"node_id": "box-1", "gateway_url": "` + pfGW + `", "upstream": "` + up + `"}`
+	}
+	for _, tc := range []struct {
+		name, installed string
+		args            []string
+		want, msg       string
+	}{
+		{"none installed", "", nil, "http://127.0.0.1:8000", ""},
+		{"the default", inst("http://127.0.0.1:8000"), nil, "http://127.0.0.1:8000", ""},
+		{"a custom one", inst("http://127.0.0.1:8080"), nil, "http://127.0.0.1:8080", "keeps the installed engine address"},
+		{"the flag", inst("http://127.0.0.1:8080"), []string{"-upstream", "http://127.0.0.1:9000"}, "http://127.0.0.1:9000", ""},
+		{"not http", inst("unix:///run/x.sock"), nil, "http://127.0.0.1:8000", "not an http(s) address"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := pfCase{nodeJSON: tc.installed, args: append([]string{"-account", "link"}, tc.args...)}.run(t)
+			if o.code != 0 {
+				t.Fatalf("exit %d: %s", o.code, o.stderr)
+			}
+			if o.nodeJSON["upstream"] != tc.want {
+				t.Errorf("upstream %v, want %s", o.nodeJSON["upstream"], tc.want)
+			}
+			if !strings.Contains(o.stderr, tc.msg) {
+				t.Errorf("message lacks %q: %s", tc.msg, o.stderr)
+			}
+			if strings.Contains(o.stderr, "8080") {
+				t.Errorf("the address was printed: %s", o.stderr)
+			}
+		})
+	}
+}
