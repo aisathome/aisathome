@@ -13,9 +13,16 @@ Model slots (`per_slot`): no new model task while the project has as many leased
 the model slots online (`per_slot` None: no limit). A task given back and still held for its worker counts as
 running (that worker resumes it without asking). Tasks that run no model (`uses_model(task)` false: a project's
 own check or submission, say) neither count nor wait: while the slots are full, or the memory gate says no, the
-gate picks the first queued task of that sort instead. /v1/stats unreadable: no slot limit this time (logged),
-as a worker without the gate; the memory gate still applies. The task list unreadable: OSError, which the worker
-logs before claiming as without a gate.
+gate picks the first queued task of that sort instead. /v1/stats unreadable (or cut short): no slot limit this
+time (logged), as a worker without the gate; the memory gate still applies. The task list unreadable: OSError, which
+the worker logs before claiming as without a gate.
+
+No model slots online (`bootstrap`): the gateway asks a connector for a pilot (a GPU node made on demand) only for
+the project's workers it has seen claim or holding a lease, so a gate that waits for a slot before it claims would
+wait for good where pilots are the only GPUs. With `nodes.slots` 0 the gate therefore still lets a model task be
+claimed while the project's leased (and held) model tasks are fewer than `bootstrap` (default 1; 0: none). That
+lease is the demand; the task's first model request waits for the pilot as long as the gateway queues it (the
+project's queue timeout). The memory gate still applies. /v1/stats unreadable is not 0 slots.
 
 Idle release (`idle_s`): a leased model task counts against the slots only while it uses the model
 (`holds_slot`), from the task list's `live` record of its model calls:
@@ -45,6 +52,7 @@ The clock (`clock.time`), the stats (`stats`) and the log are parameters, for te
 """
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import sys
@@ -185,9 +193,12 @@ class SlotGate:
                  worker: str = "", kinds: list[str] | None = None, runnable: Callable[[dict], str | None] | None = None,
                  memory: Callable[[], str | None] | None = None, idle_s: float | None = None,
                  max_per_slot: int = MAX_PER_SLOT, startup_s: float = STARTUP_S,
-                 uses_model: Callable[[dict], bool] | None = None, log: Callable[[str], None] = _stderr):
+                 uses_model: Callable[[dict], bool] | None = None, log: Callable[[str], None] = _stderr,
+                 bootstrap: int = 1):
         if per_slot is not None and per_slot < 1:
             raise ValueError("per_slot: a whole number >= 1")
+        if not isinstance(bootstrap, int) or bootstrap < 0:
+            raise ValueError("bootstrap: a whole number >= 0")
         if idle_s is not None and not idle_s >= 0:
             raise ValueError("idle_s: seconds >= 0")
         if idle_s is not None and max_per_slot < 1:
@@ -200,7 +211,7 @@ class SlotGate:
         self.worker, self.kinds = worker, kinds
         self.runnable = runnable or any_task
         self.uses_model = uses_model or every_task
-        self.memory, self.log = memory, log
+        self.memory, self.log, self.bootstrap = memory, log, bootstrap
         self.pick: str | None = None
         self.skip: dict[str, float] = {}
 
@@ -212,10 +223,10 @@ class SlotGate:
         now = self.clock.time()
         tasks = body.get("tasks") or []
         uses_model = self.uses_model
-        why = None
+        why, boot = None, False
         try:
             st = self.stats() if self.per_slot else None
-        except (OSError, ValueError) as e:     # the slot limit unknown: as without the gate (no limit), not the memory gate
+        except (OSError, ValueError, http.client.HTTPException) as e:  # the slot limit unknown: as without the gate
             st = None
             self.log(f"gate: /v1/stats unreadable ({type(e).__name__}); no slot limit this time")
         if st is not None:
@@ -231,6 +242,7 @@ class SlotGate:
                 why = (f"{busy} task(s) running for {slots} model slot(s) online" if slots
                        else "no model slots online") + f" ({self.per_slot} per slot)" + \
                       (f"; {idle} more leased, idle" if idle else "")
+                boot = not slots and len(held) + len(leased) < self.bootstrap   # the demand for a pilot (see the top)
             elif self.idle_s is not None and busy + idle >= slots * cap:
                 why = f"{busy + idle} model task(s) leased ({idle} idle) for {slots} model slot(s) online (at most {cap} per slot)"
         if why is None and self.memory is not None:
@@ -240,6 +252,11 @@ class SlotGate:
                         and not held_for_other(t, self.worker, now)),
                        key=lambda t: (not t.get("requeued"), int(t.get("order") or 0), int(t.get("seq") or 0)))
         ok = [t for t in queue if t.get("id") not in self.skip and self.runnable(t) is None]
+        if boot and any(uses_model(t) for t in ok):
+            why = self.memory() if self.memory is not None else None
+            if why is None and uses_model(ok[0]):
+                self.log(f"gate: no model slots online; claiming a model task ({ok[0].get('id')}) so the gateway "
+                         f"sees the demand for one")
         if why is not None:
             ok = [t for t in ok if not uses_model(t)]
             if not ok:
@@ -288,7 +305,7 @@ def spare_capacity(client, stats: Callable[[], dict], per_slot: int = 1, idle_s:
             return None
         nodes = (st or {}).get("nodes") or {}
         slots = int(nodes.get("slots") or 0)
-    except (OSError, ValueError, TypeError, AttributeError):
+    except (OSError, ValueError, TypeError, AttributeError, http.client.HTTPException):
         return None
     now = clock.time()
     tasks = [t for t in body.get("tasks") or [] if uses_model(t) and t.get("id") != exclude]

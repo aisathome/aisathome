@@ -33,6 +33,16 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   held for another worker, not skipped by this worker, and one this release can run (`runnable`); while the slots
   are full only tasks that use no model (`uses_model`) are picked. `spare_capacity` counts the room left alike.
   Standard library only; the project passes its settings as values.
+- With no model slots online (`nodes.slots` 0) `SlotGate` still lets a model task be claimed while the project's
+  leased (and held) model tasks are fewer than `bootstrap` (default 1; 0: wait for a slot, as before). The gateway
+  asks a connector for a pilot only for workers it has seen claim or holding a lease, so a project whose GPUs are
+  all pilots would otherwise wait for a slot that is never asked for. The memory gate still applies.
+
+### Fixed
+
+- `SlotGate` and `spare_capacity`: a `/v1/stats` reply cut short (`http.client.IncompleteRead`) counts as stats
+  unreadable (no slot limit that time, logged; the memory gate and the pick still apply) instead of escaping the
+  gate, which left the worker to claim with no gate at all.
 
 ## [0.3.0] - 2026-11-25
 

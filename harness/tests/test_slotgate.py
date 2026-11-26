@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""slotgate: the slot count (leased and held model tasks per model slot), the idle release (start-up, calls in
+"""slotgate: the slot count (leased and held model tasks per model slot), no slots online (one model task for the
+demand), the idle release (start-up, calls in
 flight, the idle window, the ceiling), the memory gate, the pick in the gateway's claim order (held for another
 worker, skipped, not runnable here, tasks without the model while the slots are full), Picking's claim by id, and
 spare_capacity. In process, against a fake task list and fake stats; the clock: 2026-11-14 20:00:00 UTC."""
 from __future__ import annotations
 
 import datetime as dt
+import http.client
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,6 +64,7 @@ def leased(tid, live=None, since="2026-11-14T19:30:00Z", role="work"):
 
 def gate(tasks, slots=1, per_slot=1, code=200, **kw):
     kw.setdefault("uses_model", uses_model)
+    kw.setdefault("log", lambda msg: None)
     return G.SlotGate(FakeList(tasks, code), per_slot, stats=lambda: {"nodes": {"slots": slots}}, clock=Clock(), **kw)
 
 
@@ -118,6 +121,18 @@ class Slots(unittest.TestCase):
         self.assertEqual((g(), g.pick), (None, "b"))
         self.assertEqual(said, ["gate: /v1/stats unreadable (OSError); no slot limit this time"] * 2)
 
+    def test_a_truncated_stats_reply_is_an_outage(self):
+        def cut():
+            raise http.client.IncompleteRead(b'{"nodes": {"slo')
+        said = []
+        g = G.SlotGate(FakeList([task("a", "leased"), task("b", seq=2)]), 1, stats=cut, clock=Clock(),
+                       memory=lambda: "memory: full", log=said.append)
+        self.assertEqual((g(), g.pick), ("memory: full", None))
+        g.memory = None
+        self.assertEqual((g(), g.pick), (None, "b"))
+        self.assertEqual(said, ["gate: /v1/stats unreadable (IncompleteRead); no slot limit this time"] * 2)
+        self.assertIsNone(G.spare_capacity(FakeList([]), cut))
+
     def test_no_slot_limit_still_picks_and_an_empty_queue_says_nothing(self):
         g = gate([], per_slot=None)
         self.assertEqual((g(), g.pick), (None, None))
@@ -131,6 +146,65 @@ class Slots(unittest.TestCase):
         self.addCleanup(setattr, G, "get_json", orig)
         self.assertIsNone(G.SlotGate(FakeList([]), 1, clock=Clock())())
         self.assertEqual(seen, ["http://gw/v1/stats"])
+
+
+class NoSlots(unittest.TestCase):
+    """No model slots online: one model task may be claimed, so the gateway sees a worker and asks for a pilot."""
+    NONE = "no model slots online (1 per slot)"
+
+    def test_one_model_task_is_claimed_then_the_gate_waits(self):
+        said = []
+        g = gate([task("a", seq=1), task("b", seq=2)], slots=0, log=said.append)
+        self.assertEqual((g(), g.pick), (None, "a"))
+        self.assertEqual(said, ["gate: no model slots online; claiming a model task (a) so the gateway sees the demand "
+                                "for one"])
+        g = gate([task("a", "leased", seq=1), task("b", seq=2)], slots=0)
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+        # with idle release alike, an idle lease included
+        g = gate([task("b", seq=2)], slots=0, idle_s=20)
+        self.assertEqual((g(), g.pick), (None, "b"))
+        g = gate([leased("a", {"in_flight": 0, "updated_at": ago(600)}), task("b", seq=2)], slots=0, idle_s=20)
+        self.assertEqual(g(), self.NONE + "; 1 more leased, idle")
+
+    def test_a_task_held_for_its_worker_counts(self):
+        held = task("h", seq=1, prefer_worker="r-2", prefer_until=ago(-300))
+        g = gate([held, task("b", seq=2)], slots=0, worker="r-1")
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+        g = gate([held, task("b", seq=2)], slots=0, worker="r-2")      # r-2 resumes its own
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+
+    def test_bootstrap_sets_how_many_and_0_is_none(self):
+        g = gate([task("a")], slots=0, bootstrap=0)
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+        g = gate([task("x", "leased"), task("a", seq=2)], slots=0, bootstrap=2)
+        self.assertEqual((g(), g.pick), (None, "a"))
+        for bad in (-1, 1.5, None):
+            with self.assertRaises(ValueError):
+                G.SlotGate(FakeList([]), 1, bootstrap=bad)
+
+    def test_the_memory_gate_and_the_pick_still_apply(self):
+        no = lambda: "memory: full"
+        g = gate([task("a")], slots=0, memory=no)
+        self.assertEqual((g(), g.pick), ("memory: full", None))
+        g = gate([task("a", seq=1), task("a-check", role="check", seq=2)], slots=0, memory=no)
+        self.assertEqual((g(), g.pick), (None, "a-check"))
+        g = gate([task("a", release="r2")], slots=0, runnable=runnable)
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+        g = gate([], slots=0)                                          # nothing queued: the reason as before
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+
+    def test_slots_online_are_not_bootstrapped(self):
+        g = gate([task("x", "leased"), task("a", seq=2)], slots=1, bootstrap=5)
+        self.assertEqual((g(), g.pick), ("1 task(s) running for 1 model slot(s) online (1 per slot)", None))
+        idle = lambda tid: leased(tid, {"in_flight": 0, "updated_at": ago(600)})
+        g = gate([idle("x"), idle("y"), task("a", seq=2)], slots=1, idle_s=20, bootstrap=5)
+        self.assertEqual(g(), "2 model task(s) leased (2 idle) for 1 model slot(s) online (at most 2 per slot)")
+
+    def test_unreadable_stats_are_not_no_slots(self):
+        def down():
+            raise OSError("no route")
+        g = G.SlotGate(FakeList([task("x", "leased"), task("a", seq=2)]), 1, stats=down, clock=Clock(), log=[].append)
+        self.assertEqual((g(), g.pick), (None, "a"))                   # no slot limit, as before
 
 
 class Pick(unittest.TestCase):
