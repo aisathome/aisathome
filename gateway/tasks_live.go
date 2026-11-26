@@ -19,10 +19,22 @@
 // The public views show them as `live` while the task runs (tasks_public.go, queue_public.go) and
 // not once it ended: then the result's numbers, which the worker reports, are the ones that count.
 //
+// In flight: the counts change only when a call ends, so a long generation looked like a task doing
+// nothing with the model. The gateway also counts, per project and task, the calls that named the
+// task and have not ended yet (`in_flight`): from the moment the gateway took the request (its wait
+// for a node included) to its end, whatever the outcome (ok, failed, cancelled, preempted, refused).
+// In memory only, never saved, under its own lock so that a request's start never waits for the
+// queue's; an entry goes when its count is back to 0, so the map holds at most the requests in
+// flight. A running task shows it in the public views (also before its first call counted) and in
+// the project's own task list and task (GET /v1/projects/{id}/tasks): a task's worker can tell a
+// task that waits on the model from one that works without it (its tools, its checks after the
+// session), and size its claims by that.
+//
 // SPDX-License-Identifier: Apache-2.0
 package gateway
 
 import (
+	"sync"
 	"time"
 
 	"github.com/aisathome/aisathome/protocol"
@@ -35,7 +47,10 @@ type taskLive struct {
 	CachedTokens     int64     `json:"cached_tokens"` // the part of prompt_tokens read from the cache
 	CompletionTokens int64     `json:"completion_tokens"`
 	ModelMs          int64     `json:"model_ms"`
-	UpdatedAt        time.Time `json:"updated_at"` // the last counted call's end
+	UpdatedAt        time.Time `json:"updated_at,omitzero"` // the last counted call's end; zero before the first
+	// InFlight: the calls naming the task that have not ended (liveBegin), set only on a running
+	// task's copy for a response (withInFlight), never on the task itself, so never saved.
+	InFlight *int64 `json:"in_flight,omitempty"`
 }
 
 // publicLive is a running task's live count in the public views. PromptTokens includes the cached
@@ -50,20 +65,89 @@ type publicLive struct {
 	TokensComputed       int64     `json:"tokens_computed"`
 	TokensWithCache      int64     `json:"tokens_with_cache"`
 	ModelS               float64   `json:"model_s"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	InFlight             int64     `json:"in_flight"`
+	UpdatedAt            time.Time `json:"updated_at,omitzero"` // absent before the first counted call
 }
 
-// publicLive is the task's live count for the public views: nil unless it runs and a call counted.
-func (t *Task) publicLive() *publicLive {
+// publicLive is the task's live count for the public views, with inFlight its calls in flight
+// (taskStore.inFlight): nil unless it runs and a call counted or is in flight.
+func (t *Task) publicLive(inFlight int64) *publicLive {
+	if t.State != TaskLeased {
+		return nil
+	}
 	l := t.Live
-	if t.State != TaskLeased || l == nil || l.Requests <= 0 {
+	if l == nil {
+		l = &taskLive{}
+	}
+	inFlight = max(inFlight, 0)
+	if l.Requests <= 0 && inFlight == 0 {
 		return nil
 	}
 	prompt, compl := max(l.PromptTokens, 0), max(l.CompletionTokens, 0)
 	cached := min(max(l.CachedTokens, 0), prompt)
-	return &publicLive{Requests: l.Requests, PromptTokens: prompt, CachedTokens: cached, CompletionTokens: compl,
+	return &publicLive{Requests: max(l.Requests, 0), PromptTokens: prompt, CachedTokens: cached, CompletionTokens: compl,
 		UncachedPromptTokens: prompt - cached, TokensComputed: prompt - cached + compl, TokensWithCache: prompt + compl,
-		ModelS: float64(max(l.ModelMs, 0)) / 1000, UpdatedAt: l.UpdatedAt}
+		ModelS: float64(max(l.ModelMs, 0)) / 1000, InFlight: inFlight, UpdatedAt: l.UpdatedAt}
+}
+
+// liveKey names a project's task in taskStore.inflight.
+type liveKey struct{ project, task string }
+
+// liveBegin counts one call of a project's task as in flight until end runs (once, however often
+// it is called; the caller defers it, so every way out of the request ends it).
+func (s *taskStore) liveBegin(project, id string) (end func()) {
+	k := liveKey{project, id}
+	s.liveMu.Lock()
+	s.inflight[k]++
+	s.liveMu.Unlock()
+	return sync.OnceFunc(func() {
+		s.liveMu.Lock()
+		defer s.liveMu.Unlock()
+		if s.inflight[k]--; s.inflight[k] <= 0 {
+			delete(s.inflight, k)
+		}
+	})
+}
+
+// inFlight is a project's task's calls in flight, 0 for a task that does not run. Any lock order:
+// liveMu is taken last and alone.
+func (s *taskStore) inFlight(t *Task) int64 {
+	if t.State != TaskLeased {
+		return 0
+	}
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	return s.inflight[liveKey{t.Project, t.ID}]
+}
+
+// withInFlight adds a running task's calls in flight to its copy c for the project's own views: a
+// running task always has `live.in_flight` there once a call counted or while one is in flight, so
+// a worker can tell this gateway from one that does not count them.
+func (s *taskStore) withInFlight(c *Task) *Task {
+	if c.State != TaskLeased {
+		return c
+	}
+	n := s.inFlight(c)
+	if c.Live == nil && n == 0 {
+		return c
+	}
+	if c.Live == nil {
+		c.Live = &taskLive{}
+	}
+	c.Live.InFlight = &n
+	return c
+}
+
+// liveStart counts a relayed request as in flight for the task it names, when its project publishes
+// its queue (as countLive); the returned func ends it.
+func (g *Gateway) liveStart(req *chatReq) (end func()) {
+	if req.task == "" || req.project == "" || g.tasks == nil {
+		return func() {}
+	}
+	if pt := g.projects.Load(); pt == nil || pt.byID[req.project] == nil || !pt.byID[req.project].PublicQueue {
+		return func() {}
+	}
+	return g.tasks.liveBegin(req.project, req.task)
 }
 
 // noteLive adds one model call of a project's running task to its live count (u: the call's metered

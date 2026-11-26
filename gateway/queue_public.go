@@ -180,11 +180,11 @@ func legacySpecRef(spec json.RawMessage) json.RawMessage {
 	return raw
 }
 
-// public copies the public fields of a task (see the top of the file).
-func (t *Task) public() publicTask {
+// public copies the public fields of a task (see the top of the file); inFlight: its calls in flight.
+func (t *Task) public(inFlight int64) publicTask {
 	ref := t.ref()
 	p := publicTask{ID: t.ID, State: t.State, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, Trial: ref.Trial, Leaf: ref.Leaf,
-		Group: ref.Group, Theorem: ref.Theorem, Role: ref.Role, Gen: ref.Gen, Hole: ref.Hole, Live: t.publicLive()}
+		Group: ref.Group, Theorem: ref.Theorem, Role: ref.Role, Gen: ref.Gen, Hole: ref.Hole, Live: t.publicLive(inFlight)}
 	if t.State == TaskLeased && t.Lease != nil {
 		since := t.Lease.Since
 		p.Since = &since
@@ -244,13 +244,13 @@ func (s *taskStore) publicList(project string) ([]publicTask, map[string]int, er
 	sort.Slice(fin, func(i, j int) bool { return fin[i].UpdatedAt.After(fin[j].UpdatedAt) })
 	out := make([]publicTask, 0, len(leased)+len(queued)+min(len(fin), publicQueueFinished))
 	for _, t := range leased {
-		out = append(out, t.public())
+		out = append(out, t.public(s.inFlight(t)))
 	}
 	for _, t := range queued {
-		out = append(out, t.public())
+		out = append(out, t.public(s.inFlight(t)))
 	}
 	for _, t := range fin[:min(len(fin), publicQueueFinished)] {
-		out = append(out, t.public())
+		out = append(out, t.public(s.inFlight(t)))
 	}
 	return out, counts, nil
 }
