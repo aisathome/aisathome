@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
-import { jsonLdProblems, llmsProblems, pngSize, robotsProblems } from './seo-checks.mjs';
+import { jsonLdProblems, llmsProblems, nodeJsonLdProblems, pngSize, robotsProblems } from './seo-checks.mjs';
 
 const dist = new URL('../dist/', import.meta.url).pathname;
 const files = (dir) => readdirSync(dir).flatMap((f) => {
@@ -216,6 +216,22 @@ else {
 		errors.push(`index.html: JSON-LD does not parse: ${e.message}`);
 	}
 }
+
+// /node/: the node software's JSON-LD, once, and the page's own start (the one-liner, the same as the home
+// page's, and the Windows button).
+const nodePage = readFileSync(join(dist, 'node', 'index.html'), 'utf8');
+const nodeLd = [...nodePage.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+if (nodeLd.length !== 1) errors.push(`node/index.html: ${nodeLd.length} JSON-LD scripts (one expected)`);
+else {
+	try {
+		for (const p of nodeJsonLdProblems(JSON.parse(nodeLd[0][1]), origin)) errors.push(`node/index.html: JSON-LD: ${p}`);
+	} catch (e) {
+		errors.push(`node/index.html: JSON-LD does not parse: ${e.message}`);
+	}
+}
+const command = (text) => text.match(/data-node-start-linux[\s\S]*?<pre[\s\S]*?<\/pre>/)?.[0].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ');
+if (!command(nodePage)?.includes('node.sh | sh')) errors.push('node/index.html: the start does not show the one-line install');
+else if (command(nodePage) !== command(home)) errors.push('node/index.html: the one-line install differs from the home page\'s');
 
 if (errors.length) {
 	console.error(errors.join('\n'));

@@ -6,151 +6,120 @@ head:
     content: "Donate your GPU to open AI: run an AIs@home node"
 ---
 
-import NodeDownload from '../../../components/NodeDownload.astro';
-import { Code } from '@astrojs/starlight/components';
-import { anonCommand, linuxUninstallCommand, needs, nodeShSource } from '../../../data/node-release';
+import NodeStart from '../../../components/NodeStart.astro';
+import NodePageShot from '../../../components/NodePageShot.astro';
+import { needs } from '../../../data/node-release';
 
-<NodeDownload />
+<NodeStart framed />
 
-A node is a computer with a strong NVIDIA GPU that serves the model to AIs@home users. It
-runs two services: `llama-server` (the model, on `127.0.0.1` only) and `aisathome-node`, a
-small agent that connects **outward** to the gateway and passes requests through.
+A node is a computer with a strong NVIDIA GPU that runs the network's open-weight model, Qwen3.8 27B.
+It connects outward to the AIs@home gateway and works on what it is sent: science tasks such as
+[prove2me](/science/prove2me/) proofs and, once you link it to an account, people's chats and API
+requests.
 
-Running a node is **voluntary and unpaid**. There is no token and no payment. Your node
-earns [credit](/node/credit/) in BOINC's unit: recognition, not money.
+Running a node is **voluntary and unpaid**: no token, no payment. A linked node earns
+[credit](/node/credit/) in BOINC's unit, which is recognition, not money.
 
 ## What you need
 
-- An NVIDIA GPU with **16 GB or more**. The context depends on the card
-  ([model settings](/node/presets/)):
-  - **16 GB** (RTX 4080, 5070 Ti, 5080 class): 80k context with the 3-bit model file
-    (`UD-Q3_K_XL`), and at most a **light desktop** on that card: about 1.5 GB of GPU memory
-    for the screen and other programs. A heavier desktop needs the screen on the
-    motherboard's graphics;
-  - **24 GB and more** (RTX 3090, 4090, 5090 class): 192k context with the 4-bit file
-    (`UD-IQ4_XS`).
-- A card fast enough on long prompts: the installer measures it and needs at least
-  20 tokens/s after a 32,000-token prompt (slower 16 GB cards such as the RTX 4060 Ti and
-  5060 Ti do not pass).
-- **Linux:** x86_64 with systemd and glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer), and
-  NVIDIA driver {needs.linuxDriver} or newer ({needs.linuxDriverRTX50} for an RTX 50).
-  **Windows:** 10 or 11, 64-bit, and NVIDIA driver {needs.windowsDriver} or newer
-  ({needs.windowsDriverRTX50} for an RTX 50). In both, `nvidia-smi` must work.
-- About {needs.diskGB} GB of disk for the model. With the prebuilt bundle, the install is mostly the
-  {needs.modelGB} GB download; building llama.cpp yourself takes about an hour.
-- **You must be 18 or older.** Running a node means you accept the [terms](/about/terms/)
-  (for a linked node, the [operator terms, §6](/about/terms/#6-requests-your-node-answers)). The
-  installers ask you to confirm both before the node starts.
-- An **account** is optional: sign in on [your account page](/account) with GitHub or Google. A node
-  links to it in your browser (below); up to 10 nodes per account, at most 10 of them connected
-  from one internet address. The network takes 25 nodes for now; when it is full, the approval
-  page says so. Without an account, a node does science only ([below](#without-an-account-science-only)).
+- An NVIDIA GPU with **24 GB or more** (RTX 3090, 4090, 5090 class), or **16 GB** (RTX 4080,
+  5070 Ti, 5080 class) with at most a light desktop on it. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti)
+  fail the installer's speed test.
+- Linux (x86_64, systemd; Ubuntu 22.04, Debian 12 or newer) or Windows 10 or 11, a current NVIDIA
+  driver, and about 18 GB of free disk.
+- You must be 18 or older. Running a node means you accept the [terms](/about/terms/); the
+  installers ask you to confirm.
 
-## Three steps
+<details>
+<summary>All requirements</summary>
 
-1. **Install.** On Windows (new in v0.5.0), one installer sets up the node as a service with a
-   tray icon, and the node's local page walks through the card check, the model download and a
-   speed test: see [Install on Windows](/node/windows/). On Linux, the
-   [prebuilt bundle](/node/install/) installs it with one command.
-2. **Link it to your account.** At the end, the node shows a link and a code: on Windows the
-   **Link to my account** button opens it in your browser; on Linux the installer prints it (and
-   `sudo aisathome-node link` does it again later). Open the link in your browser, sign in, check that the page shows the same code and approve.
-   Approving creates the node on your account, and running it means you accept the
-   [operator terms (§6)](/about/terms/#6-requests-your-node-answers): then your node answers
-   people's chats as well as science. **Science only on my nodes** on the account page turns
-   chats off for all your nodes.
-3. **Confirm and check.** The node starts by itself. **Your nodes** on your account page lists it:
-   press **This is my machine** on it. Until you do, it is not one of your own nodes and gets none
-   of your personal data. On Linux, `aisathome-node status` says `CONNECTED`.
+| | Linux | Windows |
+|---|---|---|
+| GPU | NVIDIA RTX 30, 40 or 50, 16 GB or more | the same |
+| Driver | {needs.linuxDriver} or newer ({needs.linuxDriverRTX50} for an RTX 50) | {needs.windowsDriver} or newer ({needs.windowsDriverRTX50} for an RTX 50) |
+| System | x86_64 with systemd, glibc 2.35 or newer | Windows 10 or 11, 64-bit |
+| Disk | about 17 GB on 16 GB cards, 18 GB on 24 GB cards (the faster mode's 1.4 GB draft model), in `/var/lib` | about 17 GB on the system drive |
+| Speed | at least 20 tokens/s after a 32,000-token prompt (the installer tests it) | the same |
 
-Only approve a code that a machine of yours shows you. A code someone sends you would add
-*their* machine to your account; that is why a linked node gets your personal data only after you
-confirm it.
+`nvidia-smi` must work. On a 16 GB card the desktop and other programs may use about 1.5 GB of its
+memory. Why each one: [requirements and why](/node/binaries/#requirements-and-why). The two model
+settings: [model settings](/node/presets/).
 
-**Advanced: a node token.** You can also create a node on your account page with **Add a node**
-and paste its token: on the Windows setup page under **Advanced: paste a node token**, or at the
-Linux installer with `--token-stdin` (or piped in for scripts: `cat token.txt | sudo ./install.sh --token-stdin`).
-A node run by hand reads it from its config or the `AISATHOME_NODE_TOKEN` environment variable.
+</details>
 
-## Without an account (science only)
+## Your node's own page
 
-Try a node without signing up: it does science work only, never people's chats, and earns no
-credit until you link it to an account. You must be 18 or older; running it means you accept the
-[terms](/about/terms/). On Linux:
+Once it runs, the node has a page on your computer at **http://127.0.0.1:7381/**. Windows opens it.
+On Linux the installer prints the address, and desktops get an "AIs@home node" menu entry. The page
+shows whether the node is serving, its GPU and what it served, never prompts or answers. Behind a
+local password it can pause the node and restart the engine; on Linux also stop the node and free
+the GPU, or uninstall it, and on Windows stop and start the engine.
 
-<Code code={anonCommand} lang="bash" />
+<NodePageShot variant="controls" />
 
-The script (<a href={nodeShSource}>source</a>) downloads the latest bundle, checks it against `SHA256SUMS`, runs the installer's
-checks and asks before it installs anything. To read before you run, use the
-[steps on the install page](/node/install/) with `sudo ./install.sh --anonymous`. On Windows, the
-setup page has **Start without an account (science only)**.
+To stop, update or remove a node: [Day to day](/node/operate/#stop-start-remove).
 
-The node first answers a few test prompts and gets work once they pass; if they fail, its local
-page and `aisathome-node status` say so and what to do. Link it later with
-`sudo aisathome-node link` (credit starts then). A node without an account that is not seen for
-90 days is deleted.
+## Link it to an account
 
-## Tested systems
+A node without an account does science work only, never people's chats, and earns no credit. Linked
+to your account, it answers chats too and earns credit from then on.
 
-| GPU | System | Driver | Install | Result |
-|---|---|---|---|---|
-| RTX 4090 | Ubuntu 22.04.5 (desktop) | 530.30.02 | llama.cpp built by hand | Served as a node 2026-10-09 to 2026-10-13; now the maintainer's development machine |
-| RTX 3090 | Ubuntu 22.04 (rented VM) | 535 | llama.cpp built by hand | Install and one chat through the gateway, 2026-10-10 (about 42 tokens/s) |
-| RTX 3090 | Ubuntu 22.04 (rented VM) | 535.183.01 | prebuilt bundle | Install, download resume, connect, 1 × 128k in 18,302 MiB, about 42 tokens/s (2026-10-11). Needed a build fix: kernels must not be compressed for drivers before 570 |
-| RTX 3090 | Ubuntu 22.04.5 (rented VM) | 575.51.03 | prebuilt bundle | 2026-10-18: the installer's GPU rule did not match this driver, so `llama-server` ran on the CPU and the install stopped. With the rule the installer now adds, set by hand: install, connect, requests and a cancel through the gateway, local UI, uninstall; about 41 tokens/s. The fixed installer itself has not run on this driver yet |
-| RTX 4090, RTX 5090 | rented | 595 | the bundle's `llama-server` in containers, not through the installer | Runs; used for the model-check measurement (2026-10-11) |
-| RTX 4090 | Windows (desktop) | – | a pre-release build of the Windows installer | 2026-11-13: served on the network, 151 requests, none failed, about 40-46 tokens/s |
-| RTX 5070 Ti | rented | – | the 16 GB tier's `llama-server` settings, not through the installer | 2026-10-31: `UD-Q3_K_XL` at 80k ran with 1.5 GB held by other programs, about 30 tokens/s after a 32k prompt. **16 GB tier: not yet run through the installer** |
+- **Linux:** `sudo aisathome-node link`
+- **Windows:** **Link to my account** on the node's page
 
-Other NVIDIA cards with 16 GB or more and other distributions may work; the installer checks what it needs and
-says what is missing. Tell us what worked for you: [contact@aisathome.org](mailto:contact@aisathome.org).
+The node shows a link and a code. Open the link on any device, sign in with GitHub or Google, check
+that the page shows the same code, and approve. Then, under **Your nodes** on your
+[account page](/account), press **This is my machine** on the node. Until you do, it is not one of
+your own nodes and gets none of your personal data.
+
+Only approve a code that a machine of yours shows you. A code someone sends you would add *their*
+machine to your account.
+
+Approving means you accept the [operator terms (§6)](/about/terms/#6-requests-your-node-answers).
+**Science only on my nodes** on the account page turns chats off for all your nodes. An account can
+have up to 10 nodes, at most 10 of them connected from one internet address. The network takes 25
+nodes with an account and 25 without one for now; the installer or the approval page says so when it
+is full. A node without an account that is not seen for 90 days is deleted.
+
+Installing by hand on Linux, you can link at the install instead: see
+[Install on Linux](/node/install/#2-check-then-install).
 
 ## How the node runs
 
 - **No open ports.** The node only dials out; nothing listens on your network.
-- **Sandboxed.** Both services run as the unprivileged user `aisathome`: no access to
-  `/home`, a read-only system, no new privileges.
-- **Fewer traces on disk.** No core dumps, no swap for the services, a bounded prompt cache
-  in RAM, no prompt logging.
+- **Sandboxed.** On Linux the node agent runs as the unprivileged user `aisathome` and the engine
+  (`llama-server`) as its own user, `aisathome-llama`: no access to `/home`, a read-only system, no
+  new privileges. On Windows the node runs as a service of its own.
+- **Fewer traces on disk.** No core dumps, no swap for the services, a bounded prompt cache in RAM,
+  no prompt logging. Hardened, not confidential: see [privacy hardening](/node/operate/#privacy-hardening).
 - **Anonymous requests.** Your node never learns who sent a request.
-- **Stop any time:** see below.
-
-## Stop, remove, link later
-
-**The node's own page.** Once installed, the node has a page on your computer at
-**http://127.0.0.1:7381/** (Windows opens it; on Linux the installer prints the address, and
-desktops get an "AIs@home node" menu entry). It shows the node's status, its GPU and what it
-served, and has **Pause** and **Restart engine** behind a local password
-(`sudo cat /etc/aisathome-node/ui-password` on Linux); on Windows also **Stop engine** and the
-setup page. Details: [Day to day](/node/operate/#local-ui).
-
-| | Linux | Windows |
-|---|---|---|
-| Pause (the model stays loaded) | **Pause** on the node's page | **Pause** on the node's page |
-| Stop and free the GPU | `sudo systemctl stop aisathome-node aisathome-llama` | **Stop engine** in the tray menu or on the node's page |
-| Start again | `sudo systemctl start aisathome-llama aisathome-node` | **Start engine** |
-| Link to an account | `sudo aisathome-node link` (credit starts then) | **Link to my account** on the setup page |
-| Uninstall | `sudo ./uninstall.sh` in the unpacked bundle (below) | Settings → Apps → **AIs@home node** → Uninstall |
-
-**Uninstall on Linux.** `uninstall.sh` comes with the bundle: run `sudo ./uninstall.sh` in the
-folder you installed from. It removes the services, the program and its settings and keeps the
-model; `sudo ./uninstall.sh --purge` removes the model and the `aisathome` user too. The one-line
-start unpacks the bundle in a temporary folder (it prints where, under `/tmp`), which a restart
-may clear. If that folder is gone, download and check the bundle again, ending in the
-uninstaller:
-
-<Code code={linuxUninstallCommand} lang="bash" />
+- **Faster on 24 GB cards with the Linux installer.** After its checks, the installer turns on
+  speculative decoding with the model's own multi-token-prediction head (MTP): the node drafts a few
+  tokens ahead and checks them, which writes about 1.7-1.9x faster with the model's own output (the
+  [model check](/node/operate/#model-check) passes with it). It needs 21,000 MiB free on the card;
+  without the room the node runs without it and the installer says why. The Windows node leaves it
+  off. More: [model settings](/node/presets/#speculative-decoding-mtp).
+- **Starting at boot.** The Windows node starts by itself. On Linux the installer's last lines say
+  whether the node starts at boot; `sudo systemctl enable aisathome-llama aisathome-node` turns it
+  on, and `disable` turns it off.
+- **Removing it.** On Linux, **Uninstall…** on the node's page or `sudo aisathome-node-uninstall`
+  (installed at `/usr/local/sbin/aisathome-node-uninstall`, so it works after the download folder is
+  gone); both keep the model unless you ask. On Windows, Settings → Apps.
+  [Stop, start, remove](/node/operate/#stop-start-remove).
 
 ## How new nodes start
 
-- A new node serves requests from day one. Requests with tools (agents such as opencode)
-  reach it only from users who allow volunteer nodes for agents.
-- Answers are not stopped for looking dangerous: if one looks like it injects a dangerous
-  command, the gateway logs it with a short excerpt for us to look at. The people who run
-  agents approve each command themselves. A node can still be **held** (for example when it
-  fails the model check); the account page shows that.
+- A node first answers a few test prompts and gets work once they pass. Its page and
+  `aisathome-node status` say where it stands.
+- A new node serves requests from day one. Requests with tools (agents such as opencode) reach it
+  only from users who allow volunteer nodes for agents.
+- The gateway checks the tool calls in answers for crude attacks (download and run, credential
+  files, encoded commands, file uploads). From a node without an account such a call is stopped and
+  the node is **held** until we look; from a linked node it is flagged. These are tripwires, not proof
+  that an answer is honest: the people who run agents still approve each command themselves. A node
+  is also held when it fails the model check; its page or the account page shows that.
 - No single volunteer gets more than about a third of the conversations while others are free.
-- Your node earns [credit](/node/credit/), except for requests you send yourself.
+- A linked node earns [credit](/node/credit/), except for requests you send yourself.
 
 ## What you are responsible for
 
@@ -162,4 +131,8 @@ uninstaller:
 - Keeping your node token secret (the node keeps it in a file only administrators can read), and
   telling us if it leaks.
 
-Next: [install on Linux](/node/install/) or [on Windows](/node/windows/).
+What has been tested so far: [About the binaries](/node/binaries/#what-has-been-tested). Tell us what
+worked for you: [contact@aisathome.org](mailto:contact@aisathome.org).
+
+Next: [Day to day](/node/operate/) · [Update your node](/node/update/) · Latest from the
+[dev log](/devlog/)

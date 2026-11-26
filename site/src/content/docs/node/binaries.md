@@ -42,7 +42,9 @@ GitHub Actions from the tagged source, in public, by the workflow
 | GPU | RTX 30, 40 or 50 series with 16 GB or more (16 GB: at most a light desktop on the card) | The model and its context need about 14 GB (`UD-Q3_K_XL`, 80k, 16 GB cards) or 18 GB (`UD-IQ4_XS`, 192k, 24 GB cards); the build targets these three generations |
 | NVIDIA driver | 525.60.13 or newer; **570.26 or newer for RTX 50** | CUDA 12.x programs run on any 12.x driver from 525 on; the RTX 50 series needs CUDA 12.8's driver |
 | Linux | x86_64 with AVX2, systemd, glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or newer) | The build image is Ubuntu 22.04 |
-| Disk | about 17 GB free in `/var/lib` | The model is 13.1 GB (16 GB cards) or 14.3 GB |
+| Windows | Windows 10 or 11, 64-bit; NVIDIA driver 527.41 or newer, **570.65 or newer for RTX 50** | The Windows node runs upstream llama.cpp's Windows CUDA 12.4 build |
+| Disk | about 17 GB free in `/var/lib` (16 GB cards), about 18 GB (24 GB cards) | The model is 13.1 GB (16 GB cards) or 14.3 GB; on 24 GB cards the Linux installer adds MTP's 1.4 GB draft model |
+| MTP (24 GB cards, Linux) | 21,000 MiB free on the card | The draft model's room; without it the node runs without MTP (the model check passes either way). See [model settings](/node/presets/#speculative-decoding-mtp) |
 
 The installer checks all of this before it changes anything (`./install.sh --dry-run`).
 
@@ -61,6 +63,13 @@ tagged source; the installer accepts your own llama.cpp build.
 The model is downloaded by the installer from Hugging Face, pinned to one exact file and
 revision, and checked against its SHA-256 before use.
 
+**The one-line install.** `curl -fsSL https://aisathome.org/node.sh | sh` runs a short script
+served by this site ([source](https://github.com/aisathome/aisathome/blob/main/site/public/node.sh)).
+It downloads the bundle and `SHA256SUMS` from the latest GitHub release, checks the bundle against
+them, runs the installer's checks without changing anything, and asks at your terminal before it
+installs. Piping it to `sh` means trusting this site as well as the release. To read everything
+before it runs, use the [steps by hand](/node/install/#prebuilt-bundle).
+
 ## Licences
 
 | Part | Licence |
@@ -76,18 +85,36 @@ Details are in `THIRD_PARTY_NOTICES.md` inside the bundle.
 
 Releases are tested before we publish them, and we say plainly what was not.
 
+Before the first bundle, llama.cpp built by hand:
+
+- **RTX 4090, Ubuntu 22.04.5 (desktop), driver 530.30.02:** served as a node from 2026-10-09 to
+  2026-10-13.
+- **RTX 3090, Ubuntu 22.04 (rented), driver 535:** install and one chat through the gateway,
+  2026-10-10, about 42 tokens/s.
+
 A test build of the first bundle (2026-10-11):
 
-- **RTX 3090, driver 535, Ubuntu 22.04:** it failed at first: llama.cpp compresses its CUDA
+- **RTX 3090, driver 535.183.01, Ubuntu 22.04:** it failed at first: llama.cpp compresses its CUDA
   kernels by default, and drivers before 570 cannot load them. The build now leaves them
   uncompressed (a larger bundle). With that, the full path worked: install, an interrupted
-  model download resumed, the node connected, 18.3 GB of GPU memory, about 42 tokens/s.
-- **RTX 4090 and RTX 5090, driver 595:** the bundle's `llama-server` ran without problems.
+  model download resumed, the node connected, 1 × 128k in 18,302 MiB, about 42 tokens/s.
+- **RTX 4090 and RTX 5090, driver 595:** the bundle's `llama-server` ran without problems, in
+  containers, not through the installer; it was used for the model-check measurement.
+- **RTX 3090, driver 575.51.03, Ubuntu 22.04.5 (2026-10-18):** the installer's GPU rule did not
+  match this driver, so `llama-server` ran on the CPU and the install stopped. With the rule the
+  installer now adds, set by hand: install, connect, requests and a cancel through the gateway, the
+  local page, uninstall; about 41 tokens/s.
 
 Later releases, each built by GitHub Actions:
 
 - **v0.3.0 (2026-10-24):** the release package on an RTX 3090 (driver 535) and an RTX 4090.
 - **v0.4.0 (2026-11-11):** the 16 GB tier's model file and settings were measured with
-  `llama-server` on an RTX 5070 Ti; the installer has not yet run the 16 GB tier on a real
-  card (see [tested systems](/node/#tested-systems)).
-- **Not tested yet:** drivers between 525 and 535.
+  `llama-server` on an RTX 5070 Ti (2026-10-31: `UD-Q3_K_XL` at 80k ran with 1.5 GB held by other
+  programs, about 30 tokens/s after a 32k prompt); the installer has not yet run the 16 GB tier on
+  a real card.
+- **v0.5.0 (2026-11-14):** the Windows installer (a pre-release build) on an RTX 4090: on the
+  network from 2026-11-13, 151 requests, none failed, about 40-46 tokens/s.
+- **v0.7.0 (2026-11-25):** tested on an RTX 3090 and an RTX 4090; on 24 GB cards the model check
+  passes with MTP on. RTX 50 cards were not tested on a GPU for this release.
+- **Not tested yet:** drivers between 525 and 535; the 16 GB tier through the installer; RTX 30
+  and 50 cards and the 16 GB tier on Windows.

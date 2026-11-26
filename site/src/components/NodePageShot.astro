@@ -1,0 +1,36 @@
+---
+// A picture of the node's own page, one image per theme (the other one is hidden): `top` on the home page,
+// `controls` (down to Pause, Restart engine, Stop and Uninstall) on /node/. The real local page with
+// made-up data, drawn by e2e/browser/node_page_image.py; sizes and alt text: src/data/node-start.ts.
+// SPDX-License-Identifier: Apache-2.0
+import { nodePageShots } from '../data/node-start';
+
+interface Props { variant: keyof typeof nodePageShots; class?: string }
+const shot = nodePageShots[Astro.props.variant];
+---
+
+{(['light', 'dark'] as const).map((theme) => (
+	<img
+		class:list={['node-shot', `node-shot-${theme}`, Astro.props.class]}
+		src={shot.src(theme)}
+		width={shot.width}
+		height={shot.height}
+		loading="lazy"
+		decoding="async"
+		alt={shot.alt}
+		data-node-shot={Astro.props.variant}
+	/>
+))}
+
+<style>
+	.node-shot {
+		display: block;
+		width: 100%;
+		max-width: 26rem;
+		height: auto;
+		margin-top: 1rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 0.5rem;
+	}
+	:global([data-theme='light']) .node-shot-dark, :global([data-theme='dark']) .node-shot-light { display: none; }
+</style>

@@ -3,7 +3,7 @@
 // astro.config.mjs (every page); the image itself is drawn by scripts/share-image.mjs.
 // Facts here must match the pages they summarise. SPDX-License-Identifier: Apache-2.0
 import { domain } from './site';
-import { nodeRelease, repoURL } from './node-release';
+import { anonCommand, needs, nodeRelease, repoURL } from './node-release';
 
 export const origin = `https://${domain}`;
 export const githubOrg = 'https://github.com/aisathome';
@@ -21,7 +21,8 @@ export const homeTitle = `AIs@home: open-weight AI on volunteers’ GPUs`;
 // Served by the gateway, not the static site: kept out of search results.
 export const privatePaths = ['/account', '/v1/', '/stats/', '/__login'];
 
-/** The home page's schema.org graph: the project, its website and the node software. */
+/** The home page's schema.org graph: the project and its website. The node software is described on /node/
+ * (nodeJsonLd), the page about it, once. */
 export function homeJsonLd(base = origin) {
 	const org = `${base}/#organization`;
 	return {
@@ -47,18 +48,33 @@ export function homeJsonLd(base = origin) {
 				inLanguage: 'en',
 				publisher: { '@id': org },
 			},
+		],
+	};
+}
+
+/** /node/'s schema.org graph: the node software (its @id is /node/#software), published by the project
+ * (the Organization, defined on the home page and referred to by its @id). */
+export function nodeJsonLd(base = origin) {
+	const org = `${base}/#organization`;
+	return {
+		'@context': 'https://schema.org',
+		'@graph': [
+			{ '@type': 'Organization', '@id': org, name: 'AIs@home', url: `${base}/` },
 			{
 				'@type': 'SoftwareApplication',
 				'@id': `${base}/node/#software`,
 				name: 'AIs@home node',
+				alternateName: 'aisathome-node',
 				description:
-					'Lets a volunteer’s NVIDIA GPU (16 GB or more) serve the open-weight model Qwen3.8 27B to AIs@home users and science projects. Voluntary and unpaid.',
+					'Lets a volunteer’s NVIDIA GPU (16 GB or more) serve the open-weight model Qwen3.8 27B to AIs@home users and science projects. One command on Linux, an installer on Windows; no account needed to start. Voluntary and unpaid.',
 				url: `${base}/node/`,
-				downloadUrl: `${base}/node/`,
-				operatingSystem: 'Windows, Linux',
+				installUrl: `${base}/node/`,
+				downloadUrl: `${repoURL}/releases/latest`,
+				operatingSystem: 'Linux, Windows 10, Windows 11',
 				applicationCategory: 'UtilitiesApplication',
 				softwareVersion: nodeRelease.version.replace(/^v/, ''),
-				softwareRequirements: 'NVIDIA GPU with 16 GB of memory or more',
+				releaseNotes: `${repoURL}/releases/tag/${nodeRelease.version}`,
+				softwareRequirements: `NVIDIA GPU with 16 GB of memory or more; NVIDIA driver ${needs.linuxDriver} or newer (Linux) or ${needs.windowsDriver} or newer (Windows)`,
 				license: 'https://www.apache.org/licenses/LICENSE-2.0',
 				isAccessibleForFree: true,
 				offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
@@ -123,9 +139,10 @@ ${link('API and opencode', '/use/api/', `an OpenAI-compatible API at ${api}/v1 w
 
 ## Run a node
 
-${link('Run a node', '/node/', 'what a node needs and does, the Windows download and the one-command Linux install; a node can start without an account (science only)')}
+${link('Run a node', '/node/', `what a node needs and does. Linux: \`${anonCommand}\` (no account needed; science only until linked); Windows: one installer`)}
 ${link('Install on Windows', '/node/windows/', 'one installer for Windows 10 or 11, step by step')}
 ${link('Install on Linux', '/node/install/', 'the systemd install, step by step')}
+${link('Day to day', '/node/operate/', 'stop, start, update and remove a node; its local page; troubleshooting')}
 ${link('Credit', '/node/credit/', 'how GPU time is counted in BOINC’s unit, and what credit is not')}
 
 ## Science

@@ -1,0 +1,119 @@
+---
+// The start of a node: the Linux one-liner (site/public/node.sh) and what it does, beside the Windows
+// installer. Both stay visible (no OS switching): a visitor on a phone installs later, on another machine.
+// One component for the home page's #run-a-node and for /node/, so the two cannot offer different
+// commands. `framed` draws it as a box of its own, with the other ways to install below (on /node/; the home
+// page's section is the box there). Data: src/data/node-start.ts and node-release.ts.
+// SPDX-License-Identifier: Apache-2.0
+import { Code } from '@astrojs/starlight/components';
+import { anonCommand, installerSize, installerURL, nodeRelease, nodeShSource } from '../data/node-release';
+import { linuxSteps } from '../data/node-start';
+
+interface Props { framed?: boolean }
+const { framed = false } = Astro.props;
+const arrow = 'M12 4v12M6 10l6 6 6-6M5 20h14';
+---
+
+<div class:list={['node-start', 'not-content', { framed }]} data-node-start>
+	<div class="node-grid">
+		<div class="node-linux" data-node-start-linux>
+			<p class="node-os">Linux: paste in a terminal</p>
+			<Code code={anonCommand} lang="bash" frame="terminal" title="Terminal" wrap />
+			<ol class="node-does">
+				{linuxSteps.map((d) => {
+					const [before, after] = d.link ? d.text.split(d.link.words) : [d.text, ''];
+					return <li>{before}{d.link && <a href={d.link.href}>{d.link.words}</a>}{after}</li>;
+				})}
+			</ol>
+			<p class="node-links">
+				<a href={nodeShSource}>Read the script first</a>
+				<span aria-hidden="true">·</span>
+				<a href="/node/install/">The same steps by hand</a>
+			</p>
+		</div>
+
+		<div class="node-win" data-node-start-windows>
+			<p class="node-os">Windows 10 or 11</p>
+			<a class="dl-btn" href={installerURL} data-dl-windows>
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d={arrow} /></svg>
+				Download for Windows
+			</a>
+			<p class="node-meta">{nodeRelease.version} · {installerSize} · <a href="/node/windows/#check-the-download">Check the download</a></p>
+			<p class="node-small">
+				On the setup page, choose <b>Start without an account (science only)</b>, or link it to your account
+				right away. Windows may warn “unknown publisher” (not signed yet): <b>More info</b> → <b>Run anyway</b>.{' '}
+				<a href="/node/windows/">Windows install in detail</a>
+			</p>
+		</div>
+	</div>
+	{framed && (
+		<p class="node-other">
+			Other ways: <a href="/node/install/#build-it-yourself">build llama.cpp yourself</a> ·{' '}
+			<a href="/node/binaries/">what a release contains</a> · <a href="/node/install/#prebuilt-bundle">the bundle step by step</a>
+		</p>
+	)}
+</div>
+
+<style>
+	/* The columns follow the block's own width: side by side on the wide home page, stacked in the docs
+	   column of /node/ and on a phone, so the command keeps one line where it can. */
+	.node-start { container-type: inline-size; }
+	.node-start p, .node-start ol { margin: 0; }
+	.node-start:not(.framed) { margin-top: 1.75rem; }
+	.framed {
+		margin-block: 1.5rem 2.5rem;
+		padding: clamp(1.25rem, 3vw, 2rem);
+		border-top: 5px solid var(--sl-color-accent);
+		border-radius: 0.5rem;
+		background: var(--b-surface);
+		color: var(--sl-color-gray-2);
+	}
+	.node-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+		gap: 1.5rem 2.5rem;
+	}
+	.node-os { margin-bottom: 0.6rem !important; font: 800 1.3rem/1.1 var(--font-display); letter-spacing: 0.03em; text-transform: uppercase; color: var(--sl-color-white); }
+	.node-linux :global(.expressive-code) { width: 100%; }
+	/* On a phone the command wraps at its spaces only: the address stays on one line. */
+	@media (max-width: 30rem) { .node-linux :global(.expressive-code) { --ec-codeFontSize: 0.78rem; --ec-codePadInl: 0.75rem; } }
+	.node-does { margin-top: 1rem !important; padding-left: 1.4rem !important; list-style: decimal; font-size: 0.95rem; line-height: 1.55; }
+	.node-does li + li { margin-top: 0.4rem; }
+	.node-does li::marker { font-weight: 800; color: var(--sl-color-accent-high); }
+	.node-links { margin-top: 0.9rem !important; display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; font-size: 0.92rem; }
+	.node-start a:not(.dl-btn) { color: var(--sl-color-accent-high); text-underline-offset: 3px; }
+	.node-other { margin-top: 1.5rem !important; padding-top: 1.25rem; border-top: 1px solid var(--sl-color-hairline-light); font-size: 0.92rem; }
+	.node-win { padding-left: 2.5rem; border-left: 1px solid var(--sl-color-hairline-light); }
+	.node-meta { margin-top: 0.6rem !important; font-size: 0.9rem; font-weight: 600; color: var(--sl-color-white); }
+	.node-meta a { font-weight: 400; }
+	.node-small { margin-top: 0.9rem !important; font-size: 0.9rem; line-height: 1.55; }
+	.node-small b { color: var(--sl-color-white); }
+	.dl-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 0.9rem 1.5rem;
+		border-radius: 0.4rem;
+		background: var(--sl-color-accent);
+		color: #1c0d02;
+		font: 800 1.3rem/1 var(--font-display);
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		text-decoration: none;
+		white-space: nowrap;
+		transition: background-color 0.15s;
+	}
+	.dl-btn:hover, .dl-btn:focus-visible { background: var(--sl-color-accent-high); color: #1c0d02; }
+	:global([data-theme='light']) .dl-btn, :global([data-theme='light']) .dl-btn:hover { color: #fff; }
+	.dl-btn svg { width: 1.3rem; flex: none; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+	@container (max-width: 48rem) {
+		.node-grid { grid-template-columns: minmax(0, 1fr); }
+		.node-win { padding-left: 0; padding-top: 1.5rem; border-left: 0; border-top: 1px solid var(--sl-color-hairline-light); }
+	}
+	@container (max-width: 30rem) {
+		.dl-btn { display: flex; justify-content: center; padding-inline: 1rem; }
+	}
+	@container (max-width: 22rem) {
+		.dl-btn { white-space: normal; text-align: center; }
+	}
+</style>

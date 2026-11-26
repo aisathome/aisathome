@@ -10,7 +10,7 @@ picks the tier from your card; there is nothing to choose.
 | Tier | Cards | Model file | Model name in the API | Context | KV cache | What the card needs |
 |---|---|---|---|---|---|---|
 | **Standard** | 16 GB (RTX 4080, 5070 Ti, 5080 class) | `UD-Q3_K_XL` (13.1 GB) | `qwen3.8-27b-q3` | 80k (81,920 tokens) | `q4_0` | 14,300 MiB free: room for a light desktop, about 1.5 GB in all for the screen and other programs |
-| **Big** | 24 GB and more (RTX 3090, 4090, 5090 class) | `UD-IQ4_XS` (14.3 GB) | `qwen3.8-27b` | 192k (196,608 tokens) | `q4_0` | 18,500 MiB free |
+| **Big** | 24 GB and more (RTX 3090, 4090, 5090 class) | `UD-IQ4_XS` (14.3 GB) | `qwen3.8-27b` | 192k (196,608 tokens) | `q4_0` | 18,500 MiB free; 21,000 MiB for [MTP](#speculative-decoding-mtp), on by default with the Linux installer |
 
 Measured by the project with llama.cpp v0.5.0 (the benchmark notes are not public yet):
 
@@ -56,9 +56,27 @@ What this means:
   (KLD 0.0044 vs 0.0020), with no task loss measured, including at 120k. With `UD-IQ4_XS`,
   `q8_0` did not fit 80k in 16 GB.
 
+## Speculative decoding (MTP)
+
+On the Big tier the Linux installer turns on speculative decoding by default: `llama-server` drafts
+two tokens at a time with the model's own multi-token-prediction head (MTP, a 1.4 GB draft file,
+pinned and checked like the model) and checks them in one step of the full model. The output
+distribution stays the model's own, and the [model check](/node/operate/#model-check) passes with
+it; the node writes about 1.7-1.9x faster on our 24 GB nodes.
+
+- It needs 21,000 MiB free on the card (the tier's 18,500 plus 2,500 for the draft model) and
+  llama.cpp b12323 or newer. Without either, the node runs without MTP and the installer says why.
+- The Standard tier (16 GB cards) runs without it: there is no room.
+- `--speculation off` (or `none`) turns it off, and the choice is remembered on updates.
+  `--speculation mtp` asks for it explicitly.
+- The Windows node leaves it off.
+- Updating to v0.7.0 turns it on also where an earlier installer stored `off`: see
+  [Update your node](/node/update/).
+
 Where it is set: the tiers and the speed test in
 [`install.sh`](https://github.com/aisathome/aisathome/blob/main/node/packaging/linux/install.sh)
-(`tier_model`, `tier_alias`, `tier_ctx`, `tier_min_free`, `speed_check`).
+(`tier_model`, `tier_alias`, `tier_ctx`, `tier_min_free`, `speed_check`; speculation: `spec_default`,
+`spec_extra`, `pick_spec`).
 
 For testing only, `SLOTS`, `CTX_PER_SLOT`, `KV_TYPE`, `REASONING_BUDGET` (`-1` =
 unlimited), `CACHE_RAM_MIB`, `MODEL_ALIAS` and `MIN_DECODE_TPS` override the setting, e.g.

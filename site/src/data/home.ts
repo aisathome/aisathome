@@ -1,14 +1,11 @@
 // Copy for the home page (src/pages/index.astro). The node block's command, version, sizes and
 // driver minimums come from node-release.ts, so a release changes them in one place.
 import { chatURL } from './site';
-import { repoURL } from './node-release';
 
 export const links = {
 	chat: chatURL,
 	node: '/node/',
 	nodeAnchor: '#run-a-node',
-	nodeLinux: '/node/install/',
-	nodeWindows: '/node/windows/',
 	nodeOperate: '/node/operate/',
 	network: '/network/',
 	privacy: '/about/privacy/',
@@ -31,21 +28,13 @@ export const hero = {
 	privacyLink: 'How your data is handled',
 };
 
-// The node block: what the one command does, in three steps (site/public/node.sh).
+// The node block's heading and intro. The start itself (the one command and what it does, the Windows
+// installer) is src/components/NodeStart.astro, shared with /node/.
 export const nodeBlock = {
 	kicker: 'Give your GPU',
 	title: 'Run a node',
 	intro:
 		'No account needed to start. A node without an account does science only: it works on prove2me proofs, never on people’s chats. Link it to an account later and it serves chats too and earns credit (recognition, not money).',
-	// A step may link some of its words (`link.words`, found in `text`).
-	does: [
-		{
-			text: 'Downloads the latest release from GitHub and checks it against its SHA-256 sums.',
-			link: { words: 'the latest release', href: `${repoURL}/releases/latest` },
-		},
-		{ text: 'Checks your driver, card and disk, says what it will install, and asks before it changes anything (it needs sudo).' },
-		{ text: 'Installs the node and the model for your card, tests its speed, and starts on science work.' },
-	] as { text: string; link?: { words: string; href: string } }[],
 };
 
 export const steps = [
