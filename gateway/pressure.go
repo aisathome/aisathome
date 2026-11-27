@@ -591,9 +591,9 @@ func (g *Gateway) pressureNow() pressSample {
 		s.Busy += min(max(busy, 0), sl)
 		ups = append(ups, up{n, sl})
 	}
-	// Science: per project, the slots of the nodes its agent requests may use, within its share of
-	// them (the largest nodes: an upper bound); its demand is what of its open tasks those slots could
-	// run. Projects share nodes, so the total is capped by the slots of the nodes the projects with
+	// Science: per project, the slots of the nodes its agent requests may use (with the context it asks
+	// of a node), within its share of them (the largest nodes: an upper bound); its demand is what of
+	// its open tasks those slots could run. Projects share nodes, so the total is capped by the slots of the nodes the projects with
 	// work may use, each node once: a project without work adds no slot to that cap.
 	all, withWork := map[*nodeConn]int{}, map[*nodeConn]int{}
 	capSum, demand := 0, 0
@@ -601,7 +601,7 @@ func (g *Gateway) pressureNow() pressSample {
 		rt := scienceRoute(p, ownOnly)
 		var sl []int
 		for _, u := range ups {
-			if rt.allows(u.n, now) {
+			if rt.allows(u.n, now) && rt.nodeClearsFloor(u.n) { // min_node_ctx: a smaller node never takes its sessions
 				sl = append(sl, u.slots)
 				all[u.n] = u.slots
 				if open[i] > 0 {
