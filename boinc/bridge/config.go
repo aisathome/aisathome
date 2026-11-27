@@ -30,7 +30,7 @@ type Config struct {
 
 	// ProjectDir is the BOINC project's directory (bin/, templates/, download/, config.xml).
 	ProjectDir string `json:"project_dir"`
-	// App is the BOINC app of the pilots (default "pilot").
+	// App is the BOINC app of the pilots (default "pilot"), without Tiers.
 	App string `json:"app,omitempty"`
 	// Batch tags the bridge's work units (create_work --batch) and is how it tells them from
 	// other work units in the same project: a test work unit made by hand, or a second bridge
@@ -40,8 +40,13 @@ type Config struct {
 	// templates/pilot_out).
 	WUTemplate     string `json:"wu_template,omitempty"`
 	ResultTemplate string `json:"result_template,omitempty"`
-	// Model is the pilot's model, a remote sticky file (create_work --remote_file).
+	// Model is the pilot's model, a remote sticky file (create_work --remote_file), without Tiers.
 	Model RemoteFile `json:"model"`
+	// Tiers, if set, replaces App and Model: one entry per pilot tier of the gateway's connector
+	// (its pilot_tiers), each with its own BOINC app (whose plan classes admit only the cards that
+	// hold the tier's model) and model. The bridge creates each tier's pilots in its app, so a work
+	// unit's model always fits the hosts BOINC may send it to.
+	Tiers []Tier `json:"tiers,omitempty"`
 	// TargetHost, if set, assigns every work unit to this BOINC host (create_work --target_host;
 	// the project needs enable_assignment). For a bridge that feeds one test host.
 	TargetHost int64 `json:"target_host,omitempty"`
@@ -86,6 +91,13 @@ type Config struct {
 	DemandSeconds int `json:"demand_seconds,omitempty"`
 }
 
+// Tier is one pilot tier: its name at the gateway, its BOINC app and its model.
+type Tier struct {
+	Name  string     `json:"name"`
+	App   string     `json:"app"`
+	Model RemoteFile `json:"model"`
+}
+
 // RemoteFile is a file clients download from its own URL, with BOINC's size and MD5.
 type RemoteFile struct {
 	URL    string `json:"url"`
@@ -97,6 +109,8 @@ var (
 	connectorIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	md5Re         = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	appNameRe     = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+	// tierNameRe: a tier's name, as the gateway's pilot_tiers allow.
+	tierNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 )
 
 // LoadConfig reads and checks a configuration file.
@@ -137,11 +151,32 @@ func (c *Config) check() error {
 	if !filepath.IsAbs(c.ProjectDir) {
 		bad("project_dir: the BOINC project's directory, an absolute path")
 	}
-	if c.App == "" {
-		c.App = "pilot"
-	}
-	if !appNameRe.MatchString(c.App) {
-		bad("app: a BOINC app name")
+	if len(c.Tiers) > 0 {
+		if c.App != "" || c.Model != (RemoteFile{}) {
+			bad("tiers: replaces app and model; set either tiers or app and model")
+		}
+		names, apps := map[string]bool{}, map[string]bool{}
+		for i, t := range c.Tiers {
+			if !tierNameRe.MatchString(t.Name) {
+				bad("tiers[%d].name: the tier's name at the gateway (lower-case letters, digits, '_' and '-')", i)
+			}
+			if !appNameRe.MatchString(t.App) {
+				bad("tiers[%d].app: a BOINC app name", i)
+			}
+			if names[t.Name] || apps[t.App] {
+				bad("tiers[%d]: every tier has its own name and app", i)
+			}
+			names[t.Name], apps[t.App] = true, true
+			checkModel(fmt.Sprintf("tiers[%d].model", i), t.Model, bad)
+		}
+	} else {
+		if c.App == "" {
+			c.App = "pilot"
+		}
+		if !appNameRe.MatchString(c.App) {
+			bad("app: a BOINC app name")
+		}
+		checkModel("model", c.Model, bad)
 	}
 	if c.Batch < 1 {
 		bad("batch: 1 or more, this bridge's own")
@@ -162,12 +197,6 @@ func (c *Config) check() error {
 		if filepath.IsAbs(t) || strings.HasPrefix(filepath.Clean(t), "..") || strings.HasPrefix(t, "-") {
 			bad("templates and validator: paths relative to project_dir")
 		}
-	}
-	if u, err := url.Parse(c.Model.URL); err != nil || u.Scheme != "https" || u.Host == "" {
-		bad("model.url: https")
-	}
-	if c.Model.NBytes <= 0 || !md5Re.MatchString(c.Model.MD5) {
-		bad("model: nbytes and md5 (32 lower-case hex digits)")
 	}
 	if c.TargetHost < 0 {
 		bad("target_host: a BOINC host id")
@@ -203,6 +232,43 @@ func (c *Config) check() error {
 		bad("poll_seconds 1 or more, demand_seconds at least poll_seconds")
 	}
 	return errors.Join(errs...)
+}
+
+func checkModel(field string, m RemoteFile, bad func(string, ...any)) {
+	if u, err := url.Parse(m.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+		bad("%s.url: https", field)
+	}
+	if m.NBytes <= 0 || !md5Re.MatchString(m.MD5) {
+		bad("%s: nbytes and md5 (32 lower-case hex digits)", field)
+	}
+}
+
+// tiers is the bridge's tiers: Tiers, or without them one unnamed tier of App and Model (a
+// gateway connector without pilot_tiers).
+func (c *Config) tiers() []Tier {
+	if len(c.Tiers) > 0 {
+		return c.Tiers
+	}
+	return []Tier{{App: c.App, Model: c.Model}}
+}
+
+// tierOfApp is the tier whose BOINC app is app.
+func (c *Config) tierOfApp(app string) (Tier, bool) {
+	for _, t := range c.tiers() {
+		if t.App == app {
+			return t, true
+		}
+	}
+	return Tier{}, false
+}
+
+// Apps is the BOINC apps of the bridge's tiers.
+func (c *Config) Apps() []string {
+	var out []string
+	for _, t := range c.tiers() {
+		out = append(out, t.App)
+	}
+	return out
 }
 
 func (c *Config) poll() time.Duration   { return time.Duration(c.PollSeconds) * time.Second }
