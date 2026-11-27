@@ -10,7 +10,7 @@ import type { Prove2me } from '../src/data/prove2me';
 import { historyOf, type Records } from '../src/data/prove2me-records';
 import { loadRecords, recordsOf } from '../src/data/prove2me-build';
 import {
-	CONTRIBUTE, MEDIAN_FROM, SELECTED_FROM, cardOf, ctaHTML, ctaHours, trialBarsSVG, costsHTML, listCardOf, quantile, selectionText, theoremFactsHTML, theoremKpisHTML, theoremRowsHTML, theoremsJSON,
+	CONTRIBUTE, MEDIAN_FROM, SELECTED_FROM, cardOf, headTitle, ctaHTML, ctaHours, trialBarsSVG, costsHTML, listCardOf, quantile, selectionText, theoremFactsHTML, theoremKpisHTML, theoremRowsHTML, theoremsJSON,
 	theoremsView, updatedText,
 } from '../src/data/prove2me-theorems';
 import { theoremCardPNG } from '../src/data/og-card';
@@ -97,6 +97,10 @@ test('every value is escaped; a theorem’s facts, card and JSON', () => {
 	const rows = theoremRowsHTML({ ...v, theorems: [t] }, new Set([t.leaf]));
 	assert.doesNotMatch(rows, /<script>/);
 	assert.match(rows, /A &lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; &quot;x&quot;/);
+	// the page's <title> goes to Starlight's head as raw HTML: escaped here, a title cannot close it
+	const head = headTitle({ ...t, title: 'A </title><script>alert(1)</script>' });
+	assert.doesNotMatch(head, /[<>]/);
+	assert.equal(head, `A &lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt; (${t.leaf}) - prove2me theorem - AIs@home`);
 	assert.match(theoremFactsHTML(t), /data-fact="hours"><dt>GPU-hours<\/dt><dd>\d+\.\d+</);
 	const png = theoremCardPNG(cardOf(t));
 	assert.deepEqual(pngSize(png), { width: 1200, height: 630 });

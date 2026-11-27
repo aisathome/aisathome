@@ -8,7 +8,7 @@ import type { GetStaticPaths } from 'astro';
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../../../data/prove2me';
 import { day } from '../../../../data/prove2me-current';
-import { THEOREMS_PATH, ctaHTML, gpuH, nameOf, theoremFactsHTML, theoremPath, theoremReuseHTML, updatedText, type TheoremRow } from '../../../../data/prove2me-theorems';
+import { THEOREMS_PATH, ctaHTML, gpuH, headTitle, nameOf, shortName, theoremFactsHTML, theoremPath, theoremReuseHTML, updatedText, type TheoremRow } from '../../../../data/prove2me-theorems';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
 import '../../../../styles/theorems.css';
 
@@ -21,7 +21,7 @@ const at = t.verdict_at ?? t.submitted_at;
 const reuse = t.kind === 'reuse';
 const known = { history, pages: pages.map((x) => x.leaf), leaf: t.leaf };
 const image = new URL(`${theoremPath(t.leaf)}og.png`, Astro.site).href;
-const short = name.length > 70 ? `${name.slice(0, 69)}…` : name;
+const short = shortName(t);
 const imageAlt = reuse
 	? `${short}: closed by reuse on prove2me, ${day(at)}.`
 	: `${short}: proved by ${p2m.model}, accepted by prove2me on ${day(at)}, ${gpuH(t.hours)} GPU-hours.`;
@@ -34,7 +34,8 @@ const description = reuse
 	frontmatter={{
 		title: name,
 		head: [
-			{ tag: 'title', content: `${short} (${t.leaf}) - prove2me theorem - AIs@home` },
+			// escaped: Starlight writes a head entry's content as raw HTML (headTitle)
+			{ tag: 'title', content: headTitle(t) },
 			{ tag: 'meta', attrs: { property: 'og:image', content: image } },
 			{ tag: 'meta', attrs: { property: 'og:image:alt', content: imageAlt } },
 			{ tag: 'meta', attrs: { name: 'twitter:image:alt', content: imageAlt } },
