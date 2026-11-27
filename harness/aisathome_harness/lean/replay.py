@@ -19,6 +19,9 @@ scope (a global instance or notation can make it say something else, and `isDefE
 3. The proof's module is read as data (its .olean) and every constant in it is sent to the kernel
    (`Environment.replay`). Only theorems, safe definitions and axioms are accepted (an axiom then fails the axiom
    check); an inductive type, an opaque or unsafe constant, or a name the environment already has is refused.
+   One exception: the partial `<f>._unsafe_rec` that Lean adds for every recursive definition `f` of the module
+   (structural recursion too; the compiler runs it, the logic never uses it) is left out of the replay. A safe
+   constant may not use a partial one, and one left out is unknown to the kernel, so nothing that used it replays.
 4. `decl` must be a theorem of the proof's module whose type is the target constant's type: the same expression
    (`same_expr`), or definitionally equal by the kernel (`Kernel.isDefEq`, which knows no instances, notation
    or unification hints). The universe parameters must match in number.
@@ -84,6 +87,17 @@ def resolvedUnder (trusted : Array System.FilePath) (m : Name) : IO (Option Syst
   let f ← IO.FS.realPath (← findOLean m)
   return if trusted.any (fun t => (t.toString ++ "/").isPrefixOf f.toString) then some f else none
 
+/-- `n` is `<f>._unsafe_rec` for a safe definition `f` of the same module: the compiler's copy of a recursive `f`. -/
+def unsafeRecOf (mod : ModuleData) (n : Name) : Bool := Id.run do
+  let .str f s := n | return false
+  unless s == "_unsafe_rec" do return false
+  for m in mod.constNames, ci in mod.constants do
+    if m == f then
+      if let .defnInfo d := ci then
+        return d.safety matches .safe
+      return false
+  return false
+
 unsafe def check (mark : String) (target decl tgtMod : Name) (olean : System.FilePath) (roots allowed : List Name) :
     IO UInt32 := do
   let fail (reason detail : String) : IO UInt32 := do
@@ -110,6 +124,9 @@ unsafe def check (mark : String) (target decl tgtMod : Name) (olean : System.Fil
     match ci with
     | .thmInfo _ | .axiomInfo _ => pure ()
     | .defnInfo d =>
+      -- Lean compiles every recursive `def` (structural too) through a partial `<f>._unsafe_rec` it adds itself;
+      -- the logic never uses it. It is left out of the replay: a constant that used it would not replay.
+      if d.safety matches .partial && unsafeRecOf mod n then continue
       unless d.safety matches .safe do
         return (← fail "not_allowed" s!"`{n}` is not a safe definition")
     | _ => return (← fail "not_allowed" s!"`{n}` is not a theorem or a definition")

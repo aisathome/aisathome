@@ -7,6 +7,14 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
 
 ## [Unreleased]
 
+### Fixed
+
+- **A proof with its own recursive definition passes the replay check.** Lean compiles every recursive `def`,
+  structural recursion included, through a partial `<f>._unsafe_rec` that it adds itself and the logic never uses;
+  `lean.replay` refused that constant as "not a safe definition", so any proof defining a recursive helper failed.
+  The check now leaves `<f>._unsafe_rec` out of the replay when `f` is a safe definition of the same module. Every
+  other definition must still be safe, and a constant that used the helper does not replay.
+
 ## [0.4.0] - unreleased
 
 ### Added
