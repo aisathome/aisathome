@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -662,5 +663,138 @@ func TestValidateBudget(t *testing.T) {
 	r.b.Credit(ctx)
 	if n := len(r.boinc.validated); n != 2 {
 		t.Errorf("%d runs after the second pass, want 2", n)
+	}
+}
+
+// tiered is a rig whose bridge has two tiers, as the 24 GB and 16 GB apps of the project.
+func tiered(t *testing.T) *rig {
+	return newRig(t, func(c *Config) {
+		c.App, c.Model = "", RemoteFile{}
+		c.Tiers = []Tier{
+			{Name: "big", App: "pilot", Model: RemoteFile{URL: "https://example.org/iq4.gguf", NBytes: 14252845984, MD5: strings.Repeat("a", 32)}},
+			{Name: "standard", App: "pilot_std", Model: RemoteFile{URL: "https://example.org/q3.gguf", NBytes: 13146393504, MD5: strings.Repeat("b", 32)}},
+		}
+	})
+}
+
+func TestTieredDemandCreatesEachTiersPilotsInItsApp(t *testing.T) {
+	r := tiered(t)
+	r.gw.demand = Demand{Wanted: 3, Tiers: map[string]TierDemand{"big": {Wanted: 1}, "standard": {Wanted: 2}}}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	byTier := map[string]int{}
+	for _, id := range r.gw.ids() {
+		p := r.gw.pilots[id]
+		byTier[p.Tier]++
+		app, model := r.boinc.jobs[id].App, r.boinc.models[id]
+		switch p.Tier {
+		case "big":
+			if app != "pilot" || model != "https://example.org/iq4.gguf" {
+				t.Errorf("big pilot %s: app %q, model %q", id, app, model)
+			}
+		case "standard":
+			if app != "pilot_std" || model != "https://example.org/q3.gguf" {
+				t.Errorf("standard pilot %s: app %q, model %q", id, app, model)
+			}
+		default:
+			t.Errorf("pilot %s of tier %q", id, p.Tier)
+		}
+	}
+	if byTier["big"] != 1 || byTier["standard"] != 2 {
+		t.Errorf("pilots by tier: %v", byTier)
+	}
+}
+
+func TestTieredBridgeNeedsTheGatewaysTiers(t *testing.T) {
+	r := tiered(t)
+	// A connector without pilot_tiers: nothing is created, and the bridge says why.
+	r.gw.demand = Demand{Wanted: 2}
+	if err := r.b.Demand(ctx); err == nil || !strings.Contains(err.Error(), "pilot_tiers") {
+		t.Errorf("demand without tiers: %v", err)
+	}
+	if len(r.gw.ids()) != 0 {
+		t.Errorf("created %v without the gateway's tiers", r.gw.ids())
+	}
+	// A tier the bridge does not have: an error, the others still served.
+	r.gw.demand = Demand{Wanted: 2, Tiers: map[string]TierDemand{"huge": {Wanted: 1}, "standard": {Wanted: 1}}}
+	if err := r.b.Demand(ctx); err == nil || !strings.Contains(err.Error(), `"huge"`) {
+		t.Errorf("unknown tier: %v", err)
+	}
+	if ids := r.gw.ids(); len(ids) != 1 || r.gw.pilots[ids[0]].Tier != "standard" {
+		t.Errorf("pilots: %v", ids)
+	}
+}
+
+func TestTieredDemandCancelsPerTier(t *testing.T) {
+	r := tiered(t)
+	r.gw.demand = Demand{Wanted: 4, Tiers: map[string]TierDemand{"big": {Wanted: 2}, "standard": {Wanted: 2}}}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ids := r.gw.ids() // big, big, standard, standard
+	r.clk.add(time.Minute)
+	r.gw.demand = Demand{CancelUnsent: 1, Tiers: map[string]TierDemand{"big": {CancelUnsent: 1}, "standard": {}}}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The newest big one only; the tier comes from the work unit's app.
+	if len(r.boinc.cancelled) != 1 || r.boinc.cancelled[0] != ids[1] {
+		t.Errorf("cancelled %v, want [%s]", r.boinc.cancelled, ids[1])
+	}
+	// Too close to its deadline: cancelled whatever its tier's demand says.
+	r.clk.add(7 * time.Hour)
+	r.gw.demand = Demand{Tiers: map[string]TierDemand{"big": {}, "standard": {}}}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.boinc.cancelled) != 4 {
+		t.Errorf("cancelled %v: every unsent one is past its runway", r.boinc.cancelled)
+	}
+}
+
+func TestTieredCreditRunsEachWorkUnitsValidatorApp(t *testing.T) {
+	r := tiered(t)
+	r.b.cfg.Validator, r.b.cfg.MaxGrantedCredit = "bin/pilot_validator", 150000
+	r.gw.demand = Demand{Wanted: 2, Tiers: map[string]TierDemand{"big": {Wanted: 1}, "standard": {Wanted: 1}}}
+	if err := r.b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	five := 5.0
+	for _, id := range r.gw.ids() {
+		j := r.boinc.jobs[id]
+		j.HasResult, j.ServerState, j.Outcome, j.Host, j.User = true, ServerStateOver, OutcomeSuccess, 3, 4
+		r.boinc.setJob(id, j)
+		r.gw.credits[id] = Credit{Final: true, Credit: &five}
+	}
+	if err := r.b.Credit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	apps := slices.Clone(r.boinc.validatedApps)
+	slices.Sort(apps)
+	if !slices.Equal(apps, []string{"pilot", "pilot_std"}) {
+		t.Errorf("validator apps %v", r.boinc.validatedApps)
+	}
+}
+
+func TestTieredCheckWantsTheGatewaysTiers(t *testing.T) {
+	r := tiered(t)
+	for _, p := range []string{"bin/create_work", "bin/cancel_jobs", "bin/dir_hier_path"} {
+		os.MkdirAll(filepath.Join(r.cfg.ProjectDir, "bin"), 0o755)
+		os.WriteFile(filepath.Join(r.cfg.ProjectDir, p), []byte("#!/bin/sh\n"), 0o755)
+	}
+	for _, c := range []struct {
+		tiers map[string]TierDemand
+		ok    bool
+	}{
+		{nil, false},
+		{map[string]TierDemand{"big": {}}, false},
+		{map[string]TierDemand{"big": {}, "standard": {}, "huge": {}}, false},
+		{map[string]TierDemand{"big": {}, "standard": {}}, true},
+	} {
+		r.gw.demand = Demand{Tiers: c.tiers}
+		if err := r.b.Check(ctx); (err == nil) != c.ok {
+			t.Errorf("gateway tiers %v: %v", c.tiers, err)
+		}
 	}
 }

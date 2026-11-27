@@ -243,12 +243,13 @@ func (b *Bridge) report(ctx context.Context, pid, outcome, why string) error {
 }
 
 // Demand cancels unsent work units the gateway no longer wants (and those whose pilot is too
-// close to its deadline to be run), then creates the pilots it wants.
+// close to its deadline to be run), then creates the pilots it wants, each tier's in its own app.
 func (b *Bridge) Demand(ctx context.Context) error {
 	d, err := b.gw.Demand(ctx)
 	if err != nil {
 		return err
 	}
+	plan, perr := b.tierPlan(d)
 	b.st.wanted = d.Wanted
 	created, err := b.gw.Pilots(ctx, pilotCreated) // newest first: the newest are cancelled first
 	if err != nil {
@@ -260,22 +261,24 @@ func (b *Bridge) Demand(ctx context.Context) error {
 	}
 	now := b.Now()
 	runway := time.Duration(b.cfg.MinRunwayHours) * time.Hour
-	var errs []error
-	cancelled := 0
+	errs := []error{perr}
+	cancelled := map[string]int{} // by tier
 	for _, p := range created {
 		j, ok := jobs[p.ID]
 		if !ok || !j.unsent() {
 			continue
 		}
+		// The work unit's app says its tier, whatever the pilot's record says.
+		t, _ := b.cfg.tierOfApp(j.App)
 		short := p.Deadline.Sub(now) < runway
-		if !short && cancelled >= d.CancelUnsent {
+		if !short && cancelled[t.Name] >= plan[t.Name].CancelUnsent {
 			continue
 		}
 		if err := b.tools.Cancel(ctx, p.ID); err != nil {
 			errs = append(errs, fmt.Errorf("cancel %s: %w", p.ID, err))
 			continue
 		}
-		cancelled++
+		cancelled[t.Name]++
 		b.st.cancelled++
 		// BOINC may have sent it between the look and cancel_jobs, which cancels the work unit
 		// anyway. A host has it then: the pilot is not ended here; Sync binds it, and reports it when
@@ -293,23 +296,63 @@ func (b *Bridge) Demand(ctx context.Context) error {
 		}
 		errs = append(errs, b.report(ctx, p.ID, "cancelled", why))
 	}
-	for i := 0; i < d.Wanted; i++ {
-		if err := b.createPilot(ctx); err != nil {
-			if s := statusOf(err); s == http.StatusConflict || s == http.StatusTooManyRequests {
-				b.log.Info("bridge: no more pilots now", "why", err)
-				break
+create:
+	for _, t := range b.cfg.tiers() {
+		for i := 0; i < plan[t.Name].Wanted; i++ {
+			if err := b.createPilot(ctx, t); err != nil {
+				if s := statusOf(err); s == http.StatusConflict || s == http.StatusTooManyRequests {
+					b.log.Info("bridge: no more pilots now", "why", err)
+				} else {
+					errs = append(errs, err)
+				}
+				break create
 			}
-			errs = append(errs, err)
-			break
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// createPilot creates one pilot and its work unit. A pilot whose work unit could not be made is
-// reported as an error, which ends it (the orphan sweep in Sync would, a few minutes later).
-func (b *Bridge) createPilot(ctx context.Context) error {
-	p, cred, err := b.gw.CreatePilot(ctx, b.Now().Add(time.Duration(b.cfg.DeadlineHours)*time.Hour))
+// tierPlan is what the demand asks of each of the bridge's tiers: pilots to create and unsent ones
+// to cancel. Without tiers in the bridge's config, the totals go to its one tier. With them, the
+// gateway's connector must have the same tiers: a demand without tiers creates and cancels nothing
+// (but pilots too close to their deadline), and a tier the bridge does not have is an error, since
+// its pilots would land in an app whose hosts may not hold its model.
+func (b *Bridge) tierPlan(d Demand) (map[string]TierDemand, error) {
+	if len(b.cfg.Tiers) == 0 {
+		return map[string]TierDemand{"": {Wanted: d.Wanted, CancelUnsent: d.CancelUnsent, Target: d.Target}}, nil
+	}
+	plan := map[string]TierDemand{}
+	if d.Tiers == nil {
+		return plan, errors.New("demand: the gateway's connector has no pilot_tiers, but this bridge has tiers; " +
+			"give the connector the same tiers")
+	}
+	var errs []error
+	for name, td := range d.Tiers {
+		if _, ok := b.tierByName(name); !ok {
+			if td.Wanted > 0 || td.CancelUnsent > 0 {
+				errs = append(errs, fmt.Errorf("demand: the gateway wants pilots of tier %q, which this bridge does not have", name))
+			}
+			continue
+		}
+		plan[name] = TierDemand{Wanted: max(td.Wanted, 0), CancelUnsent: max(td.CancelUnsent, 0), Target: td.Target}
+	}
+	return plan, errors.Join(errs...)
+}
+
+func (b *Bridge) tierByName(name string) (Tier, bool) {
+	for _, t := range b.cfg.tiers() {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return Tier{}, false
+}
+
+// createPilot creates one pilot of tier t and its work unit in t's app. A pilot whose work unit
+// could not be made is reported as an error, which ends it (the orphan sweep in Sync would, a few
+// minutes later).
+func (b *Bridge) createPilot(ctx context.Context, t Tier) error {
+	p, cred, err := b.gw.CreatePilot(ctx, b.Now().Add(time.Duration(b.cfg.DeadlineHours)*time.Hour), t.Name)
 	if err != nil {
 		return err
 	}
@@ -318,7 +361,7 @@ func (b *Bridge) createPilot(ctx context.Context) error {
 	if err := b.tools.Stage(ctx, file, []byte(cred+"\n")); err != nil {
 		return errors.Join(fmt.Errorf("pilot %s: %w", p.ID, err), b.report(ctx, p.ID, "error", "credential not staged"))
 	}
-	if err := b.tools.CreateWork(ctx, p.ID, file); err != nil {
+	if err := b.tools.CreateWork(ctx, p.ID, file, t); err != nil {
 		// create_work may have inserted the work unit before it failed (a timeout, say). Only a work
 		// unit that is not there lets go of the credential and the pilot; if the look fails, the
 		// orphan sweep in Sync decides later.
@@ -335,7 +378,7 @@ func (b *Bridge) createPilot(ctx context.Context) error {
 		return errors.Join(fmt.Errorf("pilot %s: %w", p.ID, err), uerr, b.report(ctx, p.ID, "error", "no work unit made"))
 	}
 	b.st.created++
-	b.log.Info("pilot created", "pilot", p.ID, "deadline", p.Deadline)
+	b.log.Info("pilot created", "pilot", p.ID, "tier", t.Name, "app", t.App, "deadline", p.Deadline)
 	return nil
 }
 
@@ -465,7 +508,11 @@ func (b *Bridge) validate(ctx context.Context, row Awaiting, now time.Time) erro
 		delete(b.validateNext, row.Name) // the next pass, first thing
 		return nil
 	}
-	out, err := b.tools.Validate(ctx, row.WorkunitID)
+	app := row.App
+	if app == "" {
+		app = b.cfg.tiers()[0].App
+	}
+	out, err := b.tools.Validate(ctx, row.WorkunitID, app)
 	jobs, jerr := b.store.Jobs(ctx, []string{row.Name})
 	if jerr != nil {
 		return errors.Join(fmt.Errorf("validate %s: %w", row.Name, jerr), err)
@@ -699,8 +746,25 @@ func randHex(n int) string {
 // Check checks what the bridge needs before it runs: the connector key opens the gateway's demand,
 // BOINC's tools are there, and the credit directory is writable.
 func (b *Bridge) Check(ctx context.Context) error {
-	if _, err := b.gw.Demand(ctx); err != nil {
+	d, err := b.gw.Demand(ctx)
+	if err != nil {
 		return fmt.Errorf("gateway: %w", err)
+	}
+	// With tiers, the gateway's connector must have exactly the bridge's.
+	if len(b.cfg.Tiers) > 0 {
+		if d.Tiers == nil {
+			return errors.New("gateway: the connector has no pilot_tiers, but this bridge has tiers")
+		}
+		for _, t := range b.cfg.Tiers {
+			if _, ok := d.Tiers[t.Name]; !ok {
+				return fmt.Errorf("gateway: the connector has no tier %q", t.Name)
+			}
+		}
+		for name := range d.Tiers {
+			if _, ok := b.tierByName(name); !ok {
+				return fmt.Errorf("gateway: the connector's tier %q is not in this bridge's tiers", name)
+			}
+		}
 	}
 	progs := []string{"bin/create_work", "bin/cancel_jobs", "bin/dir_hier_path"}
 	if b.cfg.Validator != "" {

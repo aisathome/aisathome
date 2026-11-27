@@ -81,7 +81,7 @@ func run(cfgPath string, check bool, log *slog.Logger) error {
 		fmt.Println("ok: config, project database and gateway")
 		return nil
 	}
-	log.Info("aisathome-bridge started", "gateway", cfg.Gateway, "connector", cfg.Connector, "app", cfg.App,
+	log.Info("aisathome-bridge started", "gateway", cfg.Gateway, "connector", cfg.Connector, "apps", cfg.Apps(),
 		"batch", cfg.Batch, "target_host", cfg.TargetHost, "zero_credit", cfg.ZeroCredit)
 	b.Run(ctx)
 	log.Info("aisathome-bridge stopped")

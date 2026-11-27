@@ -62,8 +62,11 @@ func (t *ExecTools) Unstage(ctx context.Context, name string) error {
 	return nil
 }
 
-func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string) error {
-	args := []string{"--appname", t.cfg.App, "--wu_name", name, "--batch", strconv.Itoa(t.cfg.Batch),
+func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string, tier Tier) error {
+	if !appNameRe.MatchString(tier.App) {
+		return fmt.Errorf("create_work: app %q", tier.App)
+	}
+	args := []string{"--appname", tier.App, "--wu_name", name, "--batch", strconv.Itoa(t.cfg.Batch),
 		"--wu_template", t.cfg.WUTemplate, "--result_template", t.cfg.ResultTemplate,
 		// The wrapper refuses options it does not know and hands the task what follows
 		// --passthrough_child (the pilot app's job.xml).
@@ -72,7 +75,7 @@ func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string)
 		args = append(args, "--target_host", strconv.FormatInt(t.cfg.TargetHost, 10))
 	}
 	// Input files in the template's order: 0 the model (remote, sticky), 1 the credential.
-	args = append(args, "--remote_file", t.cfg.Model.URL, strconv.FormatInt(t.cfg.Model.NBytes, 10), t.cfg.Model.MD5,
+	args = append(args, "--remote_file", tier.Model.URL, strconv.FormatInt(tier.Model.NBytes, 10), tier.Model.MD5,
 		credentialFile)
 	_, err := t.run(ctx, "bin/create_work", args...)
 	return err
@@ -80,14 +83,17 @@ func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string)
 
 // Validate runs the validator on one work unit and ends (boinc/validator: --one_pass_N_WU 1 and
 // the id range keep it to that work unit, and it leaves one without its credit file as it was).
-func (t *ExecTools) Validate(ctx context.Context, workunitID int64) (string, error) {
+func (t *ExecTools) Validate(ctx context.Context, workunitID int64, app string) (string, error) {
 	if t.cfg.Validator == "" {
 		return "", errors.New("no validator configured")
+	}
+	if !appNameRe.MatchString(app) {
+		return "", fmt.Errorf("validator: app %q", app)
 	}
 	id := strconv.FormatInt(workunitID, 10)
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, filepath.Join(t.cfg.ProjectDir, t.cfg.Validator), "--app", t.cfg.App,
+	cmd := exec.CommandContext(ctx, filepath.Join(t.cfg.ProjectDir, t.cfg.Validator), "--app", app,
 		"--one_pass", "--one_pass_N_WU", "1", "--min_wu_id", id, "--max_wu_id", id, "--post_assigned_credit",
 		"--max_granted_credit", strconv.FormatFloat(t.cfg.MaxGrantedCredit, 'f', -1, 64),
 		"--credit_dir", t.cfg.CreditDir)

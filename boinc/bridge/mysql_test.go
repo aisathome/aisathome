@@ -63,13 +63,14 @@ func TestMySQLStore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec("INSERT INTO app (id, name) VALUES (1, 'other'), (2, 'pilot')")
+	exec("INSERT INTO app (id, name) VALUES (1, 'other'), (2, 'pilot'), (3, 'pilot_std')")
+	app := 2
 	wu := func(id int, name string, batch, mask int) {
-		exec("INSERT INTO workunit (id, appid, name, error_mask, batch) VALUES (?, 2, ?, ?, ?)", id, name, mask, batch)
+		exec("INSERT INTO workunit (id, appid, name, error_mask, batch) VALUES (?, ?, ?, ?, ?)", id, app, name, mask, batch)
 	}
 	res := func(wuid, state, outcome, vstate, host, user, team int) {
 		exec(`INSERT INTO result (workunitid, server_state, outcome, validate_state, hostid, userid, teamid, appid, name)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 2, CONCAT('r', ?))`, wuid, state, outcome, vstate, host, user, team, wuid)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CONCAT('r', ?))`, wuid, state, outcome, vstate, host, user, team, app, wuid)
 	}
 	wu(1, "p-000000000001", 1, 0) // no result yet
 	wu(2, "p-000000000002", 1, 0)
@@ -89,13 +90,19 @@ func TestMySQLStore(t *testing.T) {
 	wu(9, "p-000000000009", 1, 0) // another validator pass left it inconclusive
 	res(9, ServerStateOver, OutcomeSuccess, ValidateStateInconclusive, 9, 7, 0)
 	exec("UPDATE result SET opaque = 1 WHERE workunitid = 4") // claimed by the pilot validator
+	app = 3                                                   // the 16 GB tier's app
+	wu(10, "p-000000000010", 1, 0)
+	res(10, ServerStateOver, OutcomeSuccess, ValidateStateInit, 9, 7, 0)
+	app = 1 // another app's work unit in the bridge's batch: not the bridge's
+	wu(11, "p-000000000011", 1, 0)
+	res(11, ServerStateOver, OutcomeSuccess, ValidateStateInit, 9, 7, 0)
 
-	s := NewMySQL(db, 1, "pilot")
+	s := NewMySQL(db, 1, "pilot", "pilot_std")
 	if err := s.Ping(ctx); err != nil {
 		t.Fatal(err)
 	}
 	names := []string{"p-000000000001", "p-000000000002", "p-000000000003", "p-000000000004", "p-000000000005",
-		"p-000000000006", "p-test-20261118", "p-000000000099"}
+		"p-000000000006", "p-test-20261118", "p-000000000099", "p-000000000010", "p-000000000011"}
 	// Many names at once (more than one chunk of 200).
 	for i := 100; i < 450; i++ {
 		names = append(names, fmt.Sprintf("p-%012d", i))
@@ -105,11 +112,12 @@ func TestMySQLStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]Job{
-		"p-000000000001": {},
-		"p-000000000002": {HasResult: true, ServerState: ServerStateUnsent},
-		"p-000000000003": {HasResult: true, ServerState: ServerStateInProgress, Host: 9, User: 7, Team: 3},
-		"p-000000000004": {HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, Host: 9, User: 7, Claimed: true},
-		"p-000000000005": {ErrorMask: WUErrorCancelled, HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeDidntNeed},
+		"p-000000000001": {App: "pilot"},
+		"p-000000000002": {App: "pilot", HasResult: true, ServerState: ServerStateUnsent},
+		"p-000000000003": {App: "pilot", HasResult: true, ServerState: ServerStateInProgress, Host: 9, User: 7, Team: 3},
+		"p-000000000004": {App: "pilot", HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, Host: 9, User: 7, Claimed: true},
+		"p-000000000005": {App: "pilot", ErrorMask: WUErrorCancelled, HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeDidntNeed},
+		"p-000000000010": {App: "pilot_std", HasResult: true, ServerState: ServerStateOver, Outcome: OutcomeSuccess, Host: 9, User: 7},
 	}
 	if len(jobs) != len(want) {
 		t.Errorf("jobs: %v", jobs)
@@ -120,9 +128,10 @@ func TestMySQLStore(t *testing.T) {
 		}
 	}
 	got, err := s.AwaitingCredit(ctx, 0, 10)
-	if err != nil || len(got) != 2 || got[0].Name != "p-000000000004" || got[1].Name != "p-000000000009" ||
+	if err != nil || len(got) != 3 || got[0].Name != "p-000000000004" || got[1].Name != "p-000000000009" ||
 		got[0].ResultID >= got[1].ResultID || got[0].WorkunitID != 4 || got[1].WorkunitID != 9 ||
-		!got[0].Claimed || got[1].Claimed || got[1].ValidateState != ValidateStateInconclusive {
+		!got[0].Claimed || got[1].Claimed || got[1].ValidateState != ValidateStateInconclusive ||
+		got[0].App != "pilot" || got[2].Name != "p-000000000010" || got[2].App != "pilot_std" {
 		t.Fatalf("awaiting credit: %v %v", got, err)
 	}
 	// Paging: after the first one's result id, only the second; one per page.
@@ -135,5 +144,8 @@ func TestMySQLStore(t *testing.T) {
 	}
 	if err := NewMySQL(db, 1, "nope").Ping(ctx); err == nil {
 		t.Error("no error for a missing app")
+	}
+	if err := NewMySQL(db, 1, "pilot", "nope").Ping(ctx); err == nil {
+		t.Error("no error for a missing second app")
 	}
 }

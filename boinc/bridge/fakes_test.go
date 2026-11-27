@@ -68,14 +68,23 @@ func newFakeGW(t *testing.T, now func() time.Time) (*fakeGW, string) {
 		}
 		var body struct {
 			Deadline time.Time `json:"deadline"`
+			Tier     string    `json:"tier"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Deadline.IsZero() {
 			jsonErr(w, 400, "deadline")
 			return
 		}
+		if f.demand.Tiers == nil && body.Tier != "" {
+			jsonErr(w, 400, "this connector has no pilot tiers")
+			return
+		}
+		if _, ok := f.demand.Tiers[body.Tier]; f.demand.Tiers != nil && body.Tier != "" && !ok {
+			jsonErr(w, 400, "no such tier")
+			return
+		}
 		f.n++
 		id := fmt.Sprintf("p-%012x", f.n)
-		p := &Pilot{ID: id, State: pilotCreated, Deadline: body.Deadline, Created: f.now()}
+		p := &Pilot{ID: id, State: pilotCreated, Deadline: body.Deadline, Created: f.now(), Tier: body.Tier}
 		f.pilots[id] = p
 		f.order = append(f.order, id)
 		cred := fmt.Sprintf("pc-%012x.secret-%040d", f.n, f.n)
@@ -178,15 +187,17 @@ func (f *fakeGW) ids() []string {
 
 // fakeBOINC is the project: its database (Store), its tools and its web RPCs.
 type fakeBOINC struct {
-	mu        sync.Mutex
-	jobs      map[string]Job
-	staged    map[string][]byte
-	works     map[string]string // work unit → credential file
-	cancelled []string
-	stageErr  error
-	createErr error
-	cancelErr error
-	storeErr  error
+	mu            sync.Mutex
+	jobs          map[string]Job
+	staged        map[string][]byte
+	works         map[string]string // work unit → credential file
+	models        map[string]string // work unit → its model's URL
+	validatedApps []string          // Validate's apps
+	cancelled     []string
+	stageErr      error
+	createErr     error
+	cancelErr     error
+	storeErr      error
 	// sendOnCancel: BOINC sends the work unit to this host while cancel_jobs runs.
 	sendOnCancel int64
 	// createWorkThenFail: create_work inserts the work unit, then fails (a timeout).
@@ -216,7 +227,7 @@ type fakeAccount struct {
 }
 
 func newFakeBOINC() *fakeBOINC {
-	return &fakeBOINC{jobs: map[string]Job{}, staged: map[string][]byte{}, works: map[string]string{},
+	return &fakeBOINC{jobs: map[string]Job{}, staged: map[string][]byte{}, works: map[string]string{}, models: map[string]string{},
 		accounts: map[string]*fakeAccount{}, byEmail: map[string]*fakeAccount{}, nextID: 100, wuIDs: map[string]int64{}}
 }
 
@@ -235,11 +246,12 @@ func (f *fakeBOINC) putJob(name string, j Job) {
 
 // Validate does what the pilot validator does to a work unit (by its work unit id): claimed and
 // valid once its credit file is there, nothing for a claimed result.
-func (f *fakeBOINC) Validate(_ context.Context, id int64) (string, error) {
+func (f *fakeBOINC) Validate(_ context.Context, id int64, app string) (string, error) {
 	time.Sleep(f.validateDelay)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.validated = append(f.validated, id)
+	f.validatedApps = append(f.validatedApps, app)
 	if f.validateErr != nil {
 		return "", f.validateErr
 	}
@@ -294,7 +306,7 @@ func (f *fakeBOINC) AwaitingCredit(_ context.Context, after int64, limit int) ([
 	for _, n := range names {
 		// A result's id differs from its work unit's, as in BOINC: the validator takes the work unit's.
 		if j := f.jobs[n]; f.wuIDs[n]+1000 > after && j.awaitingValidation() && len(out) < limit {
-			out = append(out, Awaiting{ResultID: f.wuIDs[n] + 1000, WorkunitID: f.wuIDs[n], Name: n,
+			out = append(out, Awaiting{ResultID: f.wuIDs[n] + 1000, WorkunitID: f.wuIDs[n], Name: n, App: j.App,
 				ValidateState: j.ValidateState, Claimed: j.Claimed})
 		}
 	}
@@ -318,12 +330,12 @@ func (f *fakeBOINC) Unstage(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string) error {
+func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string, t Tier) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createWorkThenFail {
 		f.works[name] = cred
-		f.putJob(name, Job{})
+		f.putJob(name, Job{App: t.App})
 		return errors.New("create_work: signal: killed")
 	}
 	if f.createErr != nil {
@@ -333,7 +345,8 @@ func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string) error {
 		return errors.New("create_work: input file not staged")
 	}
 	f.works[name] = cred
-	f.putJob(name, Job{}) // the transitioner has not made the result yet
+	f.models[name] = t.Model.URL
+	f.putJob(name, Job{App: t.App}) // the transitioner has not made the result yet
 	return nil
 }
 

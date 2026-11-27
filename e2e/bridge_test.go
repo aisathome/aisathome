@@ -71,7 +71,7 @@ func (s *boincSim) AwaitingCredit(_ context.Context, after int64, _ int) ([]brid
 	for n, j := range s.jobs {
 		if j.ServerState == bridge.ServerStateOver && j.Outcome == bridge.OutcomeSuccess &&
 			(j.ValidateState == bridge.ValidateStateInit || j.ValidateState == bridge.ValidateStateInconclusive) {
-			out = append(out, bridge.Awaiting{ResultID: s.ids[n] + 1000, WorkunitID: s.ids[n], Name: n, ValidateState: j.ValidateState})
+			out = append(out, bridge.Awaiting{ResultID: s.ids[n] + 1000, WorkunitID: s.ids[n], Name: n, App: j.App, ValidateState: j.ValidateState})
 		}
 	}
 	return out, nil
@@ -91,18 +91,18 @@ func (s *boincSim) Unstage(_ context.Context, name string) error {
 	return nil
 }
 
-func (s *boincSim) CreateWork(_ context.Context, name, cred string) error {
+func (s *boincSim) CreateWork(_ context.Context, name, cred string, t bridge.Tier) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.works[name] = cred
 	s.ids[name] = int64(len(s.ids) + 1)
-	s.jobs[name] = bridge.Job{HasResult: true, ServerState: bridge.ServerStateUnsent}
+	s.jobs[name] = bridge.Job{App: t.App, HasResult: true, ServerState: bridge.ServerStateUnsent}
 	return nil
 }
 
 // Validate marks the work unit valid (the pilot validator, which the bridge runs once the credit
 // file is there).
-func (s *boincSim) Validate(_ context.Context, id int64) (string, error) {
+func (s *boincSim) Validate(_ context.Context, id int64, _ string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.valid = append(s.valid, id)
