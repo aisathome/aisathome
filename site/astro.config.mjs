@@ -53,8 +53,11 @@ export default defineConfig({
 				Header: './src/components/Header.astro',
 				Sidebar: './src/components/Sidebar.astro',
 			},
+			// The header's icons (HeaderLinks.astro; the gateway's account pages draw the same, gateway/page.go). Discord goes
+			// to the site's own /discord/ (src/data/discord.ts), so its clicks show in the visitor statistics.
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/aisathome/aisathome' },
+				{ icon: 'discord', label: 'Discord', href: '/discord/' },
 			],
 			editLink: { baseUrl: 'https://github.com/aisathome/aisathome/edit/main/site/' },
 			sidebar: [

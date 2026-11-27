@@ -126,8 +126,8 @@ func newPage(name string, funcs template.FuncMap, body string) *template.Templat
 }
 
 // The header follows the site's (Starlight's header with site/src/components/HeaderLinks.astro):
-// logo and wordmark at the left, then the main navigation, the source code link and the theme
-// control at the right. There is no search box (it needs the site's Pagefind script). Below
+// logo and wordmark at the left, then the main navigation, the source code and Discord links and
+// the theme control at the right. There is no search box (it needs the site's Pagefind script). Below
 // 72rem the navigation moves into a menu, and below 50rem the source link and the theme
 // control too, as in Starlight's mobile menu; the menu is a <details>, so no script.
 var pageShell = `{{define "head"}}<!doctype html>
@@ -136,7 +136,8 @@ var pageShell = `{{define "head"}}<!doctype html>
 <link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
 ` + pageStyle + `{{.Head}}</head>{{end}}
 {{define "navlinks"}}{{range nav .ChatURL}}<a href="{{.Href}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}{{end}}
-{{define "source"}}<a class="head-src" href="https://github.com/aisathome/aisathome"><span class="sr-only">Source code</span>` + iconSource + `</a>{{end}}
+{{define "source"}}<span class="head-icons"><a class="head-src" href="https://github.com/aisathome/aisathome"><span class="sr-only">Source code</span>` + iconSource + `</a>
+<a class="head-src" href="/discord/"><span class="sr-only">Discord</span>` + iconDiscord + `</a></span>{{end}}
 {{define "theme"}}<details class="theme"><summary><span class="sr-only">Select theme: </span>{{if eq .Theme "dark"}}` + iconMoon + `<span>Dark</span>{{else if eq .Theme "light"}}` + iconSun + `<span>Light</span>{{else}}` + iconLaptop + `<span>Auto</span>{{end}}` + iconCaret + `</summary>
 <form class="theme-menu" method="post" action="/account/theme"><input type="hidden" name="back" value="{{.Back}}">
 <button name="theme" value="dark"{{if eq .Theme "dark"}} aria-pressed="true"{{end}}>` + iconMoon + `Dark</button>
@@ -164,16 +165,17 @@ var pageShell = `{{define "head"}}<!doctype html>
 
 // Starlight's icons (@astrojs/starlight 0.42.6, components-internals/Icons.js; MIT), as the
 // site's header draws them. iconSource is Starlight's "github" icon, which the site's header uses
-// for the source code link.
+// for the source code link, and iconDiscord its "discord" icon, for the link to the site's /discord/.
 const (
-	svg24      = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"`
-	iconLaptop = svg24 + ` class="ic"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg>`
-	iconSun    = svg24 + ` class="ic"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg>`
-	iconMoon   = svg24 + ` class="ic"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg>`
-	iconCaret  = svg24 + ` class="caret"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg>`
-	iconBars   = svg24 + ` class="open"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg>`
-	iconClose  = svg24 + ` class="close"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg>`
-	iconSource = svg24 + `><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg>`
+	svg24       = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"`
+	iconLaptop  = svg24 + ` class="ic"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg>`
+	iconSun     = svg24 + ` class="ic"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg>`
+	iconMoon    = svg24 + ` class="ic"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg>`
+	iconCaret   = svg24 + ` class="caret"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg>`
+	iconBars    = svg24 + ` class="open"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg>`
+	iconClose   = svg24 + ` class="close"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg>`
+	iconSource  = svg24 + `><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg>`
+	iconDiscord = svg24 + `><path d="M20.32 4.37a19.8 19.8 0 0 0-4.93-1.51 13.78 13.78 0 0 0-.64 1.28 18.27 18.27 0 0 0-5.5 0 12.64 12.64 0 0 0-.64-1.28h-.05A19.74 19.74 0 0 0 3.64 4.4 20.26 20.26 0 0 0 .11 18.09l.02.02a19.9 19.9 0 0 0 6.04 3.03l.04-.02a14.24 14.24 0 0 0 1.23-2.03.08.08 0 0 0-.05-.07 13.1 13.1 0 0 1-1.9-.92.08.08 0 0 1 .02-.1 10.2 10.2 0 0 0 .41-.31h.04a14.2 14.2 0 0 0 12.1 0l.04.01a9.63 9.63 0 0 0 .4.32.08.08 0 0 1-.03.1 12.29 12.29 0 0 1-1.9.91.08.08 0 0 0-.02.1 15.97 15.97 0 0 0 1.27 2.01h.04a19.84 19.84 0 0 0 6.03-3.05v-.03a20.12 20.12 0 0 0-3.57-13.69ZM8.02 15.33c-1.18 0-2.16-1.08-2.16-2.42 0-1.33.96-2.42 2.16-2.42 1.21 0 2.18 1.1 2.16 2.42 0 1.34-.96 2.42-2.16 2.42Zm7.97 0c-1.18 0-2.15-1.08-2.15-2.42 0-1.33.95-2.42 2.15-2.42 1.22 0 2.18 1.1 2.16 2.42 0 1.34-.94 2.42-2.16 2.42Z"/></svg>`
 )
 
 // logoSVG is site/src/assets/logo.svg.
@@ -326,7 +328,7 @@ font:800 1.6rem/1.75 var(--display);letter-spacing:.01em}
 .head-nav a{color:var(--fg);text-decoration:none;font-size:.875rem;line-height:1.75}
 .head-nav a:hover{color:var(--acc-hi)}.head-nav a[aria-current]{color:var(--head);box-shadow:inset 0 -2px var(--acc)}
 .head-src-wrap{display:flex;align-items:center;gap:1rem}.head-src-wrap::after{content:"";height:2rem;border-inline-end:1px solid var(--line)}
-.head-src{display:flex;padding:.5em;margin:-.5em;color:var(--link)}.head-src:hover{color:var(--head)}.head-src svg{width:1rem;height:1rem}
+.head-icons{display:flex;align-items:center;gap:1rem}.head-src{display:flex;padding:.5em;margin:-.5em;color:var(--link)}.head-src:hover{color:var(--head)}.head-src svg{width:1rem;height:1rem}
 summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
 .theme{position:relative;font-size:.875rem}
 .theme summary{position:relative;width:calc(6.25em + 1rem);margin-inline:-.5rem;padding:.625rem 2rem .625rem 1.625rem;line-height:1.75;color:var(--fg);white-space:nowrap}

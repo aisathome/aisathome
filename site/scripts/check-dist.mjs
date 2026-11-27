@@ -1,7 +1,7 @@
 // Checks the built site (dist/) in CI: internal links resolve, nothing loads from a third
 // party, the live network strip and the leaderboard start hidden (they show themselves
 // only with real data), and every page shares the theme choice with the account pages (the
-// theme script runs before Starlight's). Also the dev log: drafts and the feed (below).
+// theme script runs before Starlight's). Also the dev log: drafts and the feed (below), and the Discord link.
 // And the science data: public fields only, matching the page and the home page. And what search
 // engines read: robots.txt, the sitemap, llms.txt, titles, descriptions, the share image, the JSON-LD.
 // SPDX-License-Identifier: Apache-2.0
@@ -89,6 +89,27 @@ else {
 	// The home page's dev log section shows the newest three (or fewer) of the same posts.
 	const home = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<a href="([^"]+)" data-home-post-link/g)].map((m) => m[1]);
 	if (home.join() !== listed.slice(0, 3).join()) errors.push(`index.html: the dev log section (${home}) is not the newest posts (${listed.slice(0, 3)})`);
+}
+
+// Discord (src/data/discord.ts): every page's header and the home page link to /discord/, never to Discord itself
+// (the visitor statistics count the clicks as views of /discord/), and the page says the server is coming soon or
+// sends visitors on to its invite.
+for (const f of html) {
+	if (relative(dist, f) !== '404.html' && !/<a href="\/discord\/" rel="me"/.test(readFileSync(f, 'utf8'))) errors.push(`${relative(dist, f)}: no Discord link in the header`);
+}
+if (!/<a [^>]*href="\/discord\/"[^>]*data-home-discord/.test(home)) errors.push('index.html: no Discord link');
+const discordFile = join(dist, 'discord', 'index.html');
+if (!existsSync(discordFile)) errors.push('discord/index.html: missing');
+else {
+	const page = readFileSync(discordFile, 'utf8');
+	const to = page.match(/<meta http-equiv="refresh" content="0; url=([^"]*)"/)?.[1];
+	if (/data-discord-soon/.test(page) === Boolean(to)) errors.push('discord/index.html: neither coming soon nor sending on to an invite (or both)');
+	if (to && (!/^https:\/\/discord\.(gg|com\/invite)\//.test(to) || !page.includes(`<a href="${to}">`))) errors.push(`discord/index.html: sends visitors to ${to}`);
+}
+for (const f of html) {
+	if (/\shref="https:\/\/(discord\.(gg|com)|discordapp\.com)\//.test(readFileSync(f, 'utf8')) && relative(dist, f) !== join('discord', 'index.html')) {
+		errors.push(`${relative(dist, f)}: links to Discord itself, not to /discord/`);
+	}
 }
 
 // Science (/science/tauceti/, a finished project): the data the build renders holds public fields

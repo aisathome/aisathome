@@ -1,0 +1,35 @@
+---
+// /discord/: where the header's Discord icon and the home page's Discord link go (src/data/discord.ts). Without an
+// invite it says the server is coming soon and where to talk meanwhile; with one it sends visitors on to it.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { invite, inviteTarget } from '../data/discord';
+import { feed } from '../data/devlog';
+import { links } from '../data/home';
+
+const target = inviteTarget(invite);
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Discord',
+		description: target
+			? 'The AIs@home Discord server: talk with volunteers running nodes and people using the chat and the API.'
+			: 'The AIs@home Discord server is coming soon. Until then, ask and discuss on GitHub Discussions or r/aisathome.',
+		head: target ? [{ tag: 'meta', attrs: { 'http-equiv': 'refresh', content: `0; url=${target}` } }] : [],
+	}}
+>
+	{target ? (
+		<p data-discord-invite>
+			On to the AIs@home Discord server. If nothing happens, <a href={target}>join it here</a>.
+		</p>
+	) : (
+		<div data-discord-soon>
+			<p>The AIs@home Discord server is coming soon. Until then:</p>
+			<ul>
+				<li>Questions, ideas and help: <a href={links.discussions}>GitHub Discussions</a></li>
+				<li>Discuss: <a href={links.reddit}>r/aisathome</a></li>
+				<li>What is new: the <a href="/devlog/">dev log</a> (also as an <a href={feed.path}>RSS feed</a>)</li>
+			</ul>
+		</div>
+	)}
+</StarlightPage>

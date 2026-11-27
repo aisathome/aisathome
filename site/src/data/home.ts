@@ -14,6 +14,7 @@ export const links = {
 	mission: '/about/',
 	github: 'https://github.com/aisathome/aisathome',
 	issues: 'https://github.com/aisathome/aisathome/issues',
+	discussions: 'https://github.com/aisathome/aisathome/discussions',
 	reddit: 'https://www.reddit.com/r/aisathome/',
 	contact: 'contact@aisathome.org',
 };

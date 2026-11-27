@@ -45,6 +45,11 @@ not start with it), `date`, `summary` (one line for the list and the feed) and `
 `src/content/devlog/img/` and are referenced as `![alt](./img/name.svg)`. Posts carry no
 author name.
 
+Discord (`/discord/`): the header's Discord icon and the home page link there, never to Discord
+itself, so the visitor statistics count the clicks as views of `/discord/`. Without an invite the
+page says the server is coming soon; setting `invite` in `src/data/discord.ts` (an invite that never
+expires) makes it send visitors on to the server. `npm run check` checks both.
+
 prove2me (`/science/prove2me/`): built from `src/data/science/prove2me.json` (committed, exported from
 the trial records, public fields only), which stays the history (trials 1 to 5 are frozen there) and
 the fallback. In the browser the headline numbers, the submissions, the trials table and each trial's
