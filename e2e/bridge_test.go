@@ -326,3 +326,81 @@ func TestBridgeEndToEnd(t *testing.T) {
 		t.Errorf("validator runs %v, want once on work unit %d", sim.valid, sim.ids[id])
 	}
 }
+
+// TestBridgeTiersEndToEnd: a connector with pilot tiers and a bridge with the same tiers. A project
+// whose sessions need a large context gets pilots of the big tier, in the big tier's BOINC app with
+// its model; a project without a floor gets the standard tier's; when the demand goes, the unsent
+// work units of each tier are cancelled.
+func TestBridgeTiersEndToEnd(t *testing.T) {
+	clk := &e2eClock{}
+	const longKey, shortKey = "ak-long-project-key-0123456789", "ak-short-project-key-012345678"
+	a := newAcctRigNodes(t, 100, nil, func(c *gateway.Config) {
+		c.Projects = []gateway.Project{
+			{ID: "long", KeySHA256: []string{sha(longKey)}, AgentOK: true, PilotProbationOK: true, MinNodeCtx: 131072},
+			{ID: "short", KeySHA256: []string{sha(shortKey)}, AgentOK: true, PilotProbationOK: true}}
+		c.Connectors = []gateway.Connector{{ID: "boinc", KeySHA256: []string{sha(connectorKey)}, MaxPilots: 5, UnsentBuffer: 4,
+			PilotTiers: []gateway.PilotTier{{Name: "standard", Ctx: 81920}, {Name: "big", Ctx: 196608}}}}
+		c.PilotsNow = clk.now
+	})
+	ctx := context.Background()
+	sim := newBoincSim()
+	big := bridge.RemoteFile{URL: "https://models.test/iq4.gguf", NBytes: 14252845984, MD5: strings.Repeat("a", 32)}
+	std := bridge.RemoteFile{URL: "https://models.test/q3.gguf", NBytes: 13146393504, MD5: strings.Repeat("b", 32)}
+	cfg := bridge.Config{Gateway: a.gw.URL, Connector: "boinc", KeyFile: "unused", Batch: 1,
+		PilotGateway: "ws" + strings.TrimPrefix(a.gw.URL, "http") + "/v1/node/connect", ProjectDir: t.TempDir(),
+		Tiers:  []bridge.Tier{{Name: "big", App: "pilot", Model: big}, {Name: "standard", App: "pilot_std", Model: std}},
+		WebURL: "http://boinc.test/proj/"}
+	b, err := bridge.New(cfg, connectorKey, sim, sim, sim, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Now = clk.now
+	if err := b.Check(ctx); err == nil || !strings.Contains(err.Error(), "program") {
+		t.Fatalf("check: %v (the tiers agree; only BOINC's programs are missing here)", err)
+	}
+	claim := func(project, key string, n int) {
+		for i := 0; i < n; i++ {
+			task := map[string]any{"id": fmt.Sprintf("%s-%d", project, i), "kind": "other", "created_by": "owner", "spec": map[string]any{"task": i}}
+			if code, out := taskCall(t, a, "POST", "/v1/projects/"+project+"/tasks", key, task); code != 201 {
+				t.Fatalf("task: %d %v", code, out)
+			}
+			if code, out := taskCall(t, a, "POST", "/v1/projects/"+project+"/tasks/claim", key, map[string]any{"worker": fmt.Sprintf("%s-w%d", project, i)}); code != 200 {
+				t.Fatalf("claim: %d %v", code, out)
+			}
+		}
+	}
+	// Two sessions of the long project: one big pilot, in the app whose plan classes need 22 GB, with the
+	// 24 GB model. Two of the short project: one standard pilot, in pilot_std with the 16 GB model.
+	claim("long", longKey, 2)
+	claim("short", shortKey, 2)
+	if err := b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	byTier := map[string]string{}
+	for id := range sim.works {
+		p := a.pilotRecord(t, id)
+		tier, _ := p["tier"].(string)
+		byTier[tier] = sim.jobs[id].App
+	}
+	if len(sim.works) != 2 || byTier["big"] != "pilot" || byTier["standard"] != "pilot_std" {
+		t.Fatalf("work units %v, apps by tier %v", sim.works, byTier)
+	}
+	// Both projects' work is done: neither tier wants its unsent pilot.
+	for _, p := range []struct{ project, key string }{{"long", longKey}, {"short", shortKey}} {
+		for i := 0; i < 2; i++ {
+			path := fmt.Sprintf("/v1/projects/%s/tasks/%s-%d/cancel", p.project, p.project, i)
+			if code, out := taskCall(t, a, "POST", path, p.key, map[string]any{"reason": "test over"}); code != 200 {
+				t.Fatalf("cancel %s: %d %v", path, code, out)
+			}
+		}
+	}
+	clk.add(time.Minute)
+	if err := b.Demand(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for id := range sim.works {
+		if p := a.pilotRecord(t, id); p["state"] != gateway.PilotEnded {
+			t.Errorf("pilot %s (%v) not cancelled: %v", id, p["tier"], p["state"])
+		}
+	}
+}
