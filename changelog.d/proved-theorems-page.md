@@ -2,8 +2,9 @@
 section: Added
 ---
 
-- **A page of proved theorems.** `/science/prove2me/theorems/` lists every proof prove2me accepted,
-  with how many submissions and open leaves it came from, the selection of easier leaves from trial 11
+- **A page of proved theorems.** `/science/prove2me/theorems/` leads with the number of the model's
+  proofs prove2me accepted and what it is out of, charts them over time and per trial, asks for GPUs
+  (with who can join today), and lists every proof prove2me accepted, with the selection of easier leaves from trial 11
   on, and three costs (the median GPU-hours per proof, and all-in for recent trials and for every
   trial), all computed from the gateway's records at the build and again every minute in the browser.
   Each accepted leaf has a page of its own with a share card, and the list and each leaf are also JSON.
