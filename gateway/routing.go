@@ -539,25 +539,36 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 }
 
 // pilotsMayServe reports whether a connector of the current config (replaced as a whole on
-// reload) may bring a pilot that could serve rt: one that can create pilots (max_pilots > 0) and
-// lists rt's model or role in its models. Its pilots must be allowed rt's class (chat, agents and
-// API calls only while pilots_chat_enabled), and rt must be one that may reach a pilot at all: a
-// pilot is nobody's own node, so not personal data, the requester's "own nodes only" or the
-// emergency switch, and not tools without consent for volunteer nodes; and not a key held to one
-// operator (only_operator), since a pilot's operator is its account's pseudonym, which no key names
-// ahead. Otherwise nothing could ever serve rt, and waiting for it would only delay the "unknown"
-// answer while holding a queue slot.
+// reload) may bring a pilot that could serve rt: one that can create pilots (max_pilots > 0), lists
+// rt's model or role in its models, and whose pilot, once connected, route.allows lets see rt
+// (pilotProbe). allows is the one place that says who may see a request: through it, a pilot is
+// allowed rt's class only while pilots_chat_enabled (or for science), and never personal data, the
+// requester's "own nodes only", the emergency switch, tools without consent for volunteer nodes or a
+// key held to one operator. Otherwise nothing could ever serve rt, and waiting for it would only
+// delay the "unknown" answer while holding a queue slot.
 func (g *Gateway) pilotsMayServe(rt *route) bool {
 	t := g.connCfgs.Load()
-	if t == nil || rt.pii != "" || rt.onlySelf || rt.ownOnly() || rt.operator != "" || (rt.tools && !rt.consent) {
+	if t == nil {
 		return false
 	}
+	now := time.Now()
 	for _, c := range t.byID {
-		if c.MaxPilots > 0 && c.models[rt.want] && (rt.class == ClassScience || c.PilotsChatEnabled) {
+		if c.MaxPilots > 0 && c.models[rt.want] && rt.allows(c.pilotProbe(now), now) {
 			return true
 		}
 	}
 	return false
+}
+
+// pilotProbe is a pilot c may bring, as route.allows sees one that has connected and registered:
+// before its deadline, serving chat only while c's pilots_chat_enabled, its account past probation and
+// with the operator terms accepted (some account's may be, so a request is not refused for what one
+// pilot's account has not done). It is nobody's own node, and its operator is its account's pseudonym,
+// which no key's only_operator names ahead: left empty, it matches none. Fresh and unshared, it needs
+// no lock, and no request has excluded it.
+func (c *connector) pilotProbe(now time.Time) *nodeConn {
+	return &nodeConn{pilot: "pilot-probe", connector: c.ID, deadline: now.Add(time.Hour),
+		scienceOnly: !c.PilotsChatEnabled, rules: nodeRules{terms: true}}
 }
 
 // servesNow counts connected nodes offering the model or role (held ones included: they
