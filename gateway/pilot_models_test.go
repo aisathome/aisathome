@@ -5,7 +5,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -196,4 +199,84 @@ func TestPilotModelsOnlyWhenAPilotCouldServe(t *testing.T) {
 			t.Fatal("the reload left the request waiting")
 		}
 	})
+}
+
+// The check for a pilot that may connect later (pilotsMayServe) answers as route.allows answers for
+// a pilot that has connected, through every field of route: a restriction added to allows reaches
+// the wait for pilots too. Every field of route must be listed, so a new one is looked at here; its
+// variants are set one at a time on top of each class, with the connector's pilots science only and
+// with chat. A field with no variant does not decide who may see a request, or is decided elsewhere
+// (want: the connector's models).
+func TestPilotCheckMatchesAllows(t *testing.T) {
+	on := new(atomic.Bool)
+	on.Store(true)
+	other := &nodeConn{id: "n-00000009"}
+	variants := map[string][]func(*route){
+		"want":             nil, // the connector's models decide (TestPilotModelsOnlyWhenAPilotCouldServe)
+		"model":            {func(rt *route) { rt.model = "qwen3.8-27b" }},
+		"pii":              {func(rt *route) { rt.pii = piiEmail }},
+		"ownOnlyMode":      {func(rt *route) { rt.ownOnlyMode = true }},
+		"ownOnlyNow":       {func(rt *route) { rt.ownOnlyNow = on }},
+		"operator":         {func(rt *route) { rt.operator = "lab-gpu" }},
+		"self":             {func(rt *route) { rt.self = "pseud-x" }}, // the pilot's operator: still not its own node
+		"acct":             {func(rt *route) { rt.acct = "acct-x" }},
+		"onlySelf":         {func(rt *route) { rt.onlySelf = true }},
+		"preferSelf":       {func(rt *route) { rt.preferSelf = true }},
+		"tools":            {func(rt *route) { rt.tools = true }, func(rt *route) { rt.tools, rt.consent = true, true }},
+		"consent":          {func(rt *route) { rt.consent = true }},
+		"need":             {func(rt *route) { rt.need = 1 << 20 }},
+		"needMin":          {func(rt *route) { rt.needMin = 1 << 20 }},
+		"exclude":          {func(rt *route) { rt.exclude[other] = true }}, // connections that failed it; never a new one
+		"who":              {func(rt *route) { rt.who = "acct-y" }},
+		"conv":             {func(rt *route) { rt.conv = []uint64{1, 2} }},
+		"class":            nil, // every class is the base of each case below
+		"project":          {func(rt *route) { rt.project = "lab" }},
+		"share":            {func(rt *route) { rt.share = 0.5 }},
+		"pilotProbationOK": {func(rt *route) { rt.pilotProbationOK = true }},
+		"rules":            {func(rt *route) { rt.rules = true }},
+	}
+	var missing []string
+	rtType := reflect.TypeFor[route]()
+	for i := range rtType.NumField() {
+		if _, ok := variants[rtType.Field(i).Name]; !ok {
+			missing = append(missing, rtType.Field(i).Name)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("route fields %v are not in this test: add how each may keep a pilot from a request", missing)
+	}
+	fields := make([]string, 0, len(variants))
+	for f := range variants {
+		fields = append(fields, f)
+	}
+	slices.Sort(fields)
+	for _, chat := range []bool{false, true} {
+		g := newStickyRig(t).g
+		setConnector(t, g, func(c *Connector) { c.PilotsChatEnabled = chat })
+		now := time.Now()
+		// A pilot of that connector as it is once connected and registered, its account past probation
+		// and with the operator terms accepted.
+		pilot := &nodeConn{id: "p-000000000001", pilot: "p-000000000001", connector: "boinc", operator: "pseud-x",
+			account: "acct-x", deadline: now.Add(time.Hour), probEnd: now.Add(-time.Hour), scienceOnly: !chat,
+			rules: nodeRules{terms: true}}
+		for _, class := range []string{ClassChat, ClassAgent, ClassScience} {
+			base := func() *route { return &route{want: "deep", class: class, exclude: map[*nodeConn]bool{}} }
+			check := func(name string, rt *route) {
+				g.mu.Lock()
+				want := rt.allows(pilot, now)
+				g.mu.Unlock()
+				if got := g.pilotsMayServe(rt); got != want {
+					t.Errorf("pilots_chat_enabled %v, %s, %s: pilotsMayServe %v, a connected pilot allowed %v", chat, class, name, got, want)
+				}
+			}
+			check("as is", base())
+			for _, f := range fields {
+				for i, mod := range variants[f] {
+					rt := base()
+					mod(rt)
+					check(f+"#"+string(rune('0'+i)), rt)
+				}
+			}
+		}
+	}
 }

@@ -94,7 +94,12 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) demandScience {
 		}
 	}
 	g.mu.Unlock()
-	if gap := d.Sessions - d.SlotsOnline*d.SessionsPerSlot; gap > 0 && !ownOnly { // a pilot is nobody's own node
+	pilotOK := false // a pilot of c may take the agents of some project (not under the emergency switch: it is nobody's own node)
+	probe := c.pilotProbe(now)
+	for _, rt := range routes {
+		pilotOK = pilotOK || rt.allows(probe, now)
+	}
+	if gap := d.Sessions - d.SlotsOnline*d.SessionsPerSlot; gap > 0 && pilotOK {
 		d.Pilots = (gap + d.SessionsPerSlot - 1) / d.SessionsPerSlot
 	}
 	return d
