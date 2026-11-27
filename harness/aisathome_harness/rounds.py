@@ -189,8 +189,11 @@ def run_rounds(r: Rounds) -> dict:
         stuck = paused != ident and {**paused, "run_finished_at": None} == {**ident, "run_finished_at": None}
         if rm.get("preempt_wait_exhausted") and not stuck:
             # a pause, not the round's end: given back once, resumed after that (never checked or retried).
-            # A resume after a pause that added no event made no progress: it is checked as it stands, never
-            # paused again (loop.run_session does not republish an earlier pause; this holds without it too)
+            # A resume after a pause that added no event made no progress: the engine checks it as it stands
+            # and does not pause it again. `check` still gets run.json with preempt_wait_exhausted set, so a
+            # project whose check reads that field and gives the task back itself (the prove2me adapter
+            # does) would pause it again: what prevents that loop is loop.run_session, which sets
+            # preempt_wait_exhausted only from a segment run by the same call, never from an earlier pause
             if paused != ident:
                 st["paused"] = ident
                 evidence.save_rounds(raw, st)

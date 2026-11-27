@@ -303,6 +303,66 @@ class RoundTime(unittest.TestCase):
                              (False, True, "awake ceiling"))
             self.assertTrue(run["segments"][-1]["preempt_wait_exhausted"])     # the history is kept
 
+    def test_a_resume_after_a_give_back_starts_a_fresh_wait(self):
+        """The round spent its wait cap and was given back: the resume's wait budget and backoff start again,
+        the waits before the give-back stay on the record but no longer count against the cap."""
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), self.T)
+            run = rig.run([{"waited": 40}, {"waited": 40, "exhausted": True}])
+            self.assertTrue(run["preempt_wait_exhausted"])
+            self.assertEqual(rig.slept, [15])
+            run = rig.run([{"waited": 40}, {"done": True}], resume=True)
+            self.assertAlmostEqual(rig.kw[2]["preempt_wait_left_s"], 300, delta=1)     # not 300 - (40+15+40)
+            self.assertAlmostEqual(rig.kw[3]["preempt_wait_left_s"], 245, delta=1)     # 300 - (40+15)
+            self.assertEqual(rig.slept, [15, 15])                  # the backoff starts again too
+            self.assertEqual((run["preempt_wait_exhausted"], run["exit"]), (False, 0))
+            self.assertAlmostEqual(run["preempt_wait_s"], 150, delta=1)     # all of the round's waits, on the record
+
+    def test_a_preemption_s_wait_does_not_count_toward_the_awake_ceiling(self):
+        """A segment awake 11000 s, 10500 of them waiting after a preemption: 500 s of the ceiling's 10800
+        (3 x 60 min) are used, so the session goes on instead of ending on the awake ceiling."""
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), {**self.T, "preempt_wait_cap_s": 20000})
+            run = rig.run([{"waited": 10500, "active_s": 11000}, {"done": True}])
+            self.assertEqual(len(rig.kw), 2)                       # the second segment ran
+            self.assertEqual((run["timed_out"], run["cap"], run["exit"]), (False, None, 0))
+
+    def test_the_segment_that_spent_the_wait_does_not_count_against_max_resumes(self):
+        """The give-back after the spent wait is a pause, not an interruption: a resume after it still has
+        all max_resumes (3) for endpoint errors, also across a stop of the worker."""
+        bad = {"err": {"type": "provider.internal", "status": 502, "message": "Bad Gateway"}}
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), self.T)
+            rig.run([{"waited": 40, "exhausted": True}])
+            with self.assertRaises(KeyboardInterrupt):
+                rig.run([bad, bad, {"waited": 5, "stop": True}], resume=True)     # 2 errors, then a stop: 3 used
+            run = rig.run([bad, {"done": True}], resume=True)
+            self.assertEqual((len(rig.kw), run["exit"]), (6, 0))   # the third error was still resumed
+            self.assertEqual(run["resumed"], 4)                     # 2 errors, the stop, the third error
+
+    def test_a_run_json_from_before_the_preemption_pause_resumes(self):
+        """A partial run.json that a harness without the pause wrote (no preemption fields in it or its
+        segments) resumes with the pause on: the round's wait cap is whole, its stop counts as an interruption."""
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), self.T)
+            t0 = int((time.time() - 700) * 1000)
+            (rig.raw / "events.jsonl").write_text(
+                json.dumps({"type": "step_start", "timestamp": t0, "sessionID": "ses_r"}, separators=(",", ":")) + "\n"
+                + json.dumps({"type": "step_finish", "timestamp": t0 + 1000, "sessionID": "ses_r"}, separators=(",", ":")) + "\n")
+            (rig.raw / "run.json").write_text(json.dumps({
+                "task": "t", "model": "m", "base_url": "http://127.0.0.1:9/v1", "session": "ses_r",
+                "wall_cap_min": 60, "step_cap": 100, "events_start": 0, "first_edit_nudge": None,
+                "segments": [{"exit": None, "timed_out": False, "suspend_interrupted": True, "active_s": 600,
+                              "wall_s": 600, "suspended_s": 0, "in_progress": True, "open_step_s": 0,
+                              "events_offset": 0, "started_at": t0 / 1000}],
+                "partial": True}))
+            run = rig.run([{"waited": 40}, {"done": True}], resume=True)
+            self.assertAlmostEqual(rig.kw[0]["preempt_wait_left_s"], 300, delta=1)
+            self.assertEqual(rig.slept, [15])
+            self.assertEqual((run["preempt_wait_exhausted"], run["preempted"], run["resumed"], run["exit"]),
+                             (False, 1, 1, 0))
+            self.assertEqual(len(run["segments"]), 3)
+
     def test_a_segment_stopped_on_the_wait_cap_ends_the_session(self):
         with tempfile.TemporaryDirectory() as d:
             rig = Rig(Path(d), self.T)
