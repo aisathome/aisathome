@@ -11,9 +11,23 @@ BOINC's stock `wrapper` is the app's main program. It reads `job.xml` and runs o
 `aisathome-node pilot` (package `node/pilot`), which:
 
 - unpacks the node's Linux bundle (llama-server and its CUDA libraries) once into the project
-  folder, in Go (no `tar` or `xz` program needed), and starts llama-server itself with the node's
-  standard settings for the big tier, on a free local port and on the GPU the client assigned
-  (`CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM`);
+  folder, in Go (no `tar` or `xz` program needed);
+- picks its tier (`--tier auto` in `job.xml`): the tier whose model file the task brought (each
+  tier has its own file, `node/setup` Tiers: UD-Q3_K_XL for the standard tier, UD-IQ4_XS for the
+  big one), or for any other file the tier of the card;
+- checks the card as the engine sees it: `llama-server --list-devices` with the task's
+  environment, so on the GPU the client assigned (`CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM`). It
+  refuses a card smaller than the tier (the big tier's file on a 16 GB card) or one with less free
+  memory than the tier needs (the installer's numbers: 14,300 MiB for the standard tier, 18,500 for
+  the big one), and exits 1 without connecting;
+- starts llama-server itself with the node's settings for that tier, on a free local port, and
+  answers under the tier's model name and context (`qwen3.8-27b-q3` with 81,920 tokens on the
+  standard tier, `qwen3.8-27b` with 196,608 on the big one);
+- runs the installer's speed test before it connects, since no installer ran on the machine: at
+  least 20 tokens/s after a 32,000-token prompt (`--min-tps`; 0 measures and never refuses). Below
+  that it ends with the reason `slow` and exits 1 without connecting. A pass is remembered for 7
+  days per card, tier and engine bundle in `speed-checks.json` in the engine folder, so a task the
+  client restarts, and the next tasks on the same card, start serving at once;
 - connects to the gateway over the node WebSocket with the credential the work unit carries;
 - ends after 4 hours (it pauses, lets requests in flight finish, then exits 0), after 30 minutes
   with no request routed to it (exit 0; the gateway's model check sends no probe to a pilot that
@@ -25,7 +39,7 @@ BOINC's stock `wrapper` is the app's main program. It reads `job.xml` and runs o
 - on SIGTERM (the client quits or preempts the task; the wrapper kills it 10 s later) pauses,
   gives requests in flight 3 s, closes the connection and stops the engine, within 8 s;
 - closes the connection with its reason (`pilot: time`, `idle`, `sigterm` or `engine`) and writes
-  a small summary as the task's output file;
+  a small summary as the task's output file (with its tier and, when it ran one, the speed test);
 - reports a checkpoint only when it has been idle for 5 minutes past one of the client's
   60-minute rotation boundaries, so a busy pilot keeps the GPU and an idle one lets the client
   run the volunteer's other projects;
@@ -53,7 +67,7 @@ the task with those variables instead of its own environment, so `job.xml` sets 
 
 | File | What |
 |---|---|
-| `job.xml` | the wrapper's job file (part of the app version) |
+| `job.xml` | the wrapper's job file (part of the app version; the same for both apps) |
 | `templates/pilot_in.xml` | input template: file 0 the model, a remote sticky file from its pinned Hugging Face URL (`create_work --remote_file URL NBYTES MD5`, open name `model.gguf`); file 1 the credential (open name `credential`); one result, no quorum, 2-day deadline |
 | `templates/pilot_out.xml` | output template: the summary (`summary.json`, at most 64 KB) |
 | `app-version.sh` | lays out one app version for a project's `apps/` folder, unsigned |
@@ -64,17 +78,28 @@ A work unit's command line is `--passthrough_child --gateway wss://<gateway>/v1/
 The command line goes to the wrapper, which refuses options it does not know; it hands what
 follows `--passthrough_child` to the task (`<append_cmdline_args/>` in `job.xml`).
 
+## Two apps, one set of files
+
+The project has one app per tier, because a work unit brings its model as an input file and its app
+decides which hosts may get it: `pilot` for the big tier (cards with 24 GB, plan classes `cuda_big`
+and `cuda_big_bw`) and `pilot_std` for the standard tier (16 GB cards, `cuda_std` and
+`cuda_std_bw`). A bridge creates each tier's work units in its app, with that tier's model file. BOINC's
+plan classes have a minimum GPU memory but no maximum, so a 24 GB host may also get a `pilot_std`
+task: it then serves the standard tier. Both apps' versions take the same four files (same physical
+names, signed once); the pilot finds its tier in the model file.
+
 ## Making an app version
 
 ```sh
-boinc/app-version.sh --version 1 --plan-class cuda_big --beta \
+boinc/app-version.sh --version 1 --app pilot --plan-class cuda_big --beta \
   --wrapper <BOINC wrapper for x86_64-pc-linux-gnu> \
   --node <aisathome-node built for linux/amd64> \
   --bundle aisathome-node-bundle-linux-amd64.tar.xz \
   --out <dir>
 ```
 
-It writes `<dir>/pilot/1/x86_64-pc-linux-gnu__cuda_big/` with the four files, each named with the
+It writes `<dir>/<app>/1/x86_64-pc-linux-gnu__<plan class>/` (`--app` defaults to `pilot`) with
+the four files, each named with the
 start of its SHA-256 (a physical name in BOINC never changes content), and `version.xml`
 (`is_wrapper`, `needs_network`, optionally `beta`). Every file must then be signed with the
 project's code-signing key on an offline machine (BOINC's `sign_executable`, a `.sig` beside each
@@ -83,7 +108,9 @@ when it has no private key.
 
 The bundle runs on x86_64 Linux with an NVIDIA GPU of compute capability 8.6, 8.9 or 12.0 (RTX 30,
 40 and 50 series) and a driver new enough for its CUDA 12 build; the project's plan class must
-match (`scripts/build-llama.sh`). The big tier needs about 22 GB of GPU memory.
+match (`scripts/build-llama.sh`). The big tier needs a card with about 23 GB of memory (a 24 GB
+card), the standard tier one with 15.5 GB (a 16 GB card); compute capability 12.0 cards (RTX 50)
+need a driver for CUDA 12.8, hence their own plan classes.
 
 ## The bridge (`aisathome-bridge`)
 
@@ -219,6 +246,10 @@ file is left exactly as it was, and that a result an interrupted run claimed is 
 
 - The pilot starts a fresh 4-hour budget when the client restarts a task it quit.
 - The client's RAM accounting with the memory-mapped model and the prompt cache is not measured.
+- A card below the speed floor (an RTX 5060 Ti 16 GB: 13.8 tokens/s at 32k) still gets tasks and
+  downloads the model once: plan classes cannot tell its speed. Each of its tasks then ends with
+  `slow` as an error, and BOINC's per-host quota for failing hosts brings it down to about one task
+  a day.
 - The gateway mints per-pilot credentials (`pc-<hex>.<secret>`, "Connectors and pilots" in
   `docs/gateway.md`): one pilot, one connection at a time, until the pilot ends or its deadline
   passes; the node agent takes its node id from it. The bridge (below) requests them; a test work

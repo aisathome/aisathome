@@ -27,7 +27,7 @@ import (
 func TestMain(m *testing.M) {
 	// With AISATHOME_TEST_PILOT=1 it runs `aisathome-node pilot` (pilot_test.go); the engine
 	// that pilot starts inherits the variable, and is told apart by llama-server's "-m".
-	if os.Getenv("AISATHOME_TEST_PILOT") == "1" && (len(os.Args) < 2 || os.Args[1] != "-m") {
+	if os.Getenv("AISATHOME_TEST_PILOT") == "1" && (len(os.Args) < 2 || (os.Args[1] != "-m" && os.Args[1] != "--list-devices")) {
 		args := os.Args[1:]
 		if len(args) > 0 && args[0] == "pilot" { // as main does
 			args = args[1:]
@@ -42,6 +42,13 @@ func TestMain(m *testing.M) {
 }
 
 func fakeLlamaServer(dir string, args []string) {
+	if len(args) == 1 && args[0] == "--list-devices" { // as llama.cpp prints it, for a 24 GB card
+		fmt.Fprintln(os.Stderr, "ggml_cuda_init: found 1 CUDA devices")
+		fmt.Println("Available devices:\n  CUDA0: NVIDIA GeForce RTX 3090 (24135 MiB, 23800 MiB free)")
+		os.WriteFile(filepath.Join(dir, "list-devices-env"), []byte("CUDA_VISIBLE_DEVICES="+os.Getenv("CUDA_VISIBLE_DEVICES")+
+			"\nLD_LIBRARY_PATH="+os.Getenv("LD_LIBRARY_PATH")), 0o600)
+		os.Exit(0)
+	}
 	os.WriteFile(filepath.Join(dir, "args"), []byte(strings.Join(args, "\n")), 0o600)
 	os.WriteFile(filepath.Join(dir, "pid.tmp"), []byte(strconv.Itoa(os.Getpid())), 0o600)
 	os.Rename(filepath.Join(dir, "pid.tmp"), filepath.Join(dir, "pid"))
@@ -56,6 +63,11 @@ func fakeLlamaServer(dir string, args []string) {
 		}
 	}
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
+	// The speed test's two calls (node/setup SpeedTest), answered at once with 40 tokens/s.
+	http.HandleFunc("/tokenize", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"tokens":[1,2,3,4]}`) })
+	http.HandleFunc("/completion", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"timings":{"prompt_n":32000,"prompt_ms":17000,"predicted_n":256,"predicted_per_second":40}}`)
+	})
 	// A completion that streams until the client goes (the pilot's stop test).
 	http.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

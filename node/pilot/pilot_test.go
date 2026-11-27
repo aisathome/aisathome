@@ -229,6 +229,7 @@ type fakeEngine struct {
 	onExit     func(error, time.Duration)
 	stopped    atomic.Bool
 	stuck      chan struct{} // when set, Run returns only once it is closed: an engine slow to stop
+	loading    atomic.Bool   // /health answers 503, as llama-server does while it loads the model
 }
 
 func (f *fakeEngine) Stop()    {}
@@ -249,6 +250,10 @@ func (f *fakeEngine) Run(ctx context.Context) error {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
+			if f.loading.Load() {
+				http.Error(w, `{"error":"loading model"}`, http.StatusServiceUnavailable)
+				return
+			}
 			fmt.Fprint(w, `{"status":"ok"}`)
 			return
 		case "/slots":
@@ -290,6 +295,11 @@ type rig struct {
 	log  *bytes.Buffer
 	logm sync.Mutex
 	skew atomic.Int64 // added to the pilot's clock (Deps.Now): jump moves it on
+	// The card the pilot sees (Deps.Devices; a 24 GB card), its speed test (40 tokens/s unless
+	// speedHook) and how often that ran.
+	dev       Device
+	speedHook func(ctx context.Context, base string) (setup.Speed, error)
+	speedRuns atomic.Int32
 }
 
 type lockedWriter struct {
@@ -304,7 +314,8 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 }
 
 func newRig(t *testing.T) *rig {
-	r := &rig{t: t, gw: newGateway(t), eng: &fakeEngine{chunks: 2, chunkDelay: 5 * time.Millisecond}, slot: t.TempDir(), log: &bytes.Buffer{}}
+	r := &rig{t: t, gw: newGateway(t), eng: &fakeEngine{chunks: 2, chunkDelay: 5 * time.Millisecond}, slot: t.TempDir(), log: &bytes.Buffer{},
+		dev: Device{Name: "CUDA0", Desc: "NVIDIA GeForce RTX 3090", TotalMiB: 24135, FreeMiB: 23800}}
 	write := func(name, s string) string {
 		p := filepath.Join(r.slot, name)
 		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
@@ -333,6 +344,16 @@ func newRig(t *testing.T) *rig {
 		AgentConfig: func(c *node.Config) {
 			c.HealthInterval = 20 * time.Millisecond
 			c.Heartbeat = 50 * time.Millisecond
+		},
+		Devices: func(context.Context, engine.Command) (Device, error) {
+			return r.dev, nil
+		},
+		SpeedTest: func(ctx context.Context, base string) (setup.Speed, error) {
+			r.speedRuns.Add(1)
+			if r.speedHook != nil {
+				return r.speedHook(ctx, base)
+			}
+			return setup.Speed{TPS: 40, PromptTokens: setup.SpeedPromptTokens, PromptSeconds: 17}, nil
 		},
 	}
 	return r

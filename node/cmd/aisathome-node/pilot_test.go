@@ -144,6 +144,14 @@ func TestPilotProcessSigterm(t *testing.T) {
 		"aisathome-node-bundle-linux-amd64", "bin", "llama-server")); err != nil {
 		t.Errorf("the engine was not unpacked into the project folder: %v", err)
 	}
+	// The card was read as the engine sees it: the GPU the client assigned (job.xml), the bundle's libraries.
+	if env := readFile(t, filepath.Join(fake, "list-devices-env")); !strings.Contains(env, "CUDA_VISIBLE_DEVICES=0\n") ||
+		!strings.Contains(env, "LD_LIBRARY_PATH="+filepath.Join(projectDir, "engine")) {
+		t.Errorf("--list-devices ran with %q", env)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "engine", "speed-checks.json")); err != nil {
+		t.Errorf("the passed speed test was not remembered in the project folder: %v", err)
+	}
 	model := filepath.Join(projectDir, "js_0123456789abcdef")
 	engineArgs := strings.Split(readFile(t, filepath.Join(fake, "args")), "\n")
 	if i := slices.Index(engineArgs, "-m"); i < 0 || i+1 >= len(engineArgs) || engineArgs[i+1] != model {
@@ -163,6 +171,9 @@ func TestPilotProcessSigterm(t *testing.T) {
 		t.Fatalf("still running 10 s after SIGTERM (the wrapper would kill it); log:\n%s", stderr.String())
 	}
 	t.Logf("stop took %s", time.Since(start))
+	if log := stderr.String(); !strings.Contains(log, "chosen_by=card") || !strings.Contains(log, "tps=40") {
+		t.Errorf("no tier or speed test in the log:\n%s", log)
+	}
 	if took := time.Since(start); took > 9*time.Second {
 		t.Errorf("stop took %s", took)
 	}
@@ -217,6 +228,9 @@ func TestPilotUsage(t *testing.T) {
 	if code := runPilot([]string{"--gateway", "wss://x/v1/node/connect", "--credential-file", filepath.Join(dir, "none"),
 		"--engine-log", ""}, &out); code != 1 {
 		t.Errorf("missing credential: %d", code)
+	}
+	if code := runPilot([]string{"--gateway", "wss://x/v1/node/connect", "--min-tps", "-1"}, &out); code != 2 {
+		t.Errorf("negative speed floor: %d", code)
 	}
 }
 

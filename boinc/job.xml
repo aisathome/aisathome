@@ -1,7 +1,7 @@
 <job_desc>
     <task>
         <application>aisathome-node</application>
-        <command_line>pilot --model boinc_resolve(model.gguf) --credential-file credential --summary boinc_resolve(summary.json) --engine-archive boinc_resolve(engine.tar.xz) --engine-dir $PROJECT_DIR/engine --checkpoint pilot_checkpoint --fraction-done pilot_fraction</command_line>
+        <command_line>pilot --model boinc_resolve(model.gguf) --credential-file credential --summary boinc_resolve(summary.json) --engine-archive boinc_resolve(engine.tar.xz) --engine-dir $PROJECT_DIR/engine --checkpoint pilot_checkpoint --fraction-done pilot_fraction --tier auto</command_line>
         <setenv>CUDA_VISIBLE_DEVICES=$GPU_DEVICE_NUM</setenv>
         <setenv>PATH=/usr/local/bin:/usr/bin:/bin</setenv>
         <append_cmdline_args/>
