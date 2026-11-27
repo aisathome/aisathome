@@ -125,7 +125,14 @@ const icons: Record<string, string> = {
 			</div>
 		</section>
 
-		<LiveStats class="live" />
+		<LiveStats class="live">
+			{latest[0] && (
+				<a slot="aside" class="live-log" href={postURL(latest[0])} data-home-live-post>
+					<span class="live-log-label">New in the dev log · <time datetime={isoDate(latest[0].data.date)}>{shortDate(latest[0].data.date)}</time></span>
+					<span class="live-log-title">{latest[0].data.title} <span aria-hidden="true">→</span></span>
+				</a>
+			)}
+		</LiveStats>
 
 		<section class="node" id="run-a-node" aria-labelledby="b-node" data-home-node>
 			<p class="kicker">{nodeBlock.kicker}</p>
@@ -135,21 +142,21 @@ const icons: Record<string, string> = {
 			<NodeStart />
 
 			<div class="node-facts">
-				<div>
+				<div class="node-facts-text">
 					<h3>What you need</h3>
 					<p>
 						An NVIDIA GPU with <strong>24 GB or more</strong> (RTX 3090, 4090, 5090 class), or <strong>16 GB</strong> (RTX 4080,
 						5070 Ti, 5080 class) with at most a light desktop on it. Slower 16 GB cards (RTX 4060 Ti, 5060 Ti) fail the speed
 						test. <a href={`${links.node}#what-you-need`}>Everything it needs</a>
 					</p>
-				</div>
-				<div>
 					<h3>Your node’s own page</h3>
 					<p>
 						Once it runs, the node has a page on your computer at <code>http://127.0.0.1:7381/</code> (Windows opens it; on Linux
 						the installer prints it): its status and what it served; <b>Pause</b>, <b>Restart</b>, <b>Stop</b> and, on Linux,{' '}
 						<b>Uninstall</b> behind a local password; and how to link it to an account. <a href={`${links.nodeOperate}#stop-start-remove`}>Stop, remove or link a node</a>
 					</p>
+				</div>
+				<div class="node-facts-shot">
 					<NodePageShot variant="top" />
 				</div>
 			</div>
@@ -393,8 +400,25 @@ const icons: Record<string, string> = {
 	}
 	.vb :global(.live dt) { margin-top: 0.3rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 	.vb :global(.live .live-updated) { font-size: 0.85rem; color: var(--sl-color-gray-3); align-self: end; }
+	/* The newest dev log post in the strip's free space, the time of the numbers below it. */
+	.vb :global(.live .live-side) {
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		gap: 1rem;
+		align-self: stretch;
+		max-width: 19rem;
+		padding-left: 2rem;
+		border-left: 1px solid var(--sl-color-hairline-light);
+	}
+	.live-log { display: flex; flex-direction: column; gap: 0.35rem; text-decoration: none; }
+	.live-log-label { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sl-color-accent-high); }
+	.live-log-title { font: 700 1.2rem/1.15 var(--font-display); letter-spacing: 0.01em; color: var(--sl-color-white); }
+	.live-log:hover .live-log-title { color: var(--sl-color-accent-high); text-decoration: underline; text-underline-offset: 3px; }
 	@media (max-width: 50rem) {
 		.vb :global(.live) { grid-template-columns: 1fr; }
+		.vb :global(.live .live-side) { max-width: none; padding: 1rem 0 0; border-left: 0; border-top: 1px solid var(--sl-color-hairline-light); }
+		.vb :global(.live .live-side .live-updated) { align-self: start; }
 	}
 
 	/* Sections */
@@ -471,6 +495,9 @@ const icons: Record<string, string> = {
 		line-height: 1.55;
 	}
 	.node-facts h3 { margin-bottom: 0.75rem; font-size: 1.35rem; }
+	/* The words on the left, the picture of the node's page on the right (below them on a phone). */
+	.node-facts-text h3 + p + h3 { margin-top: 1.75rem; }
+	.node-facts-shot :global(.node-shot) { margin-top: 0; max-width: 32rem; }
 	.node-facts strong, .node-facts b { color: var(--sl-color-white); }
 	.node-facts a { white-space: nowrap; }
 	.node .guar { margin-top: 2.25rem; padding-top: 1.75rem; border-top: 1px solid var(--sl-color-hairline-light); }
