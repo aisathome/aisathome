@@ -4,21 +4,23 @@
 // draws it at a default width; the page's script mounts it (mountAcceptedChart), which draws it again at its real width
 // and with the gateway's newer records. With nothing to draw (no proof accepted yet) the figure is there but hidden, so
 // the live records can fill it; a live read with nothing accepted hides it again. Extra attributes go on the figure
-// (the home page keeps data-home-p2m-chart).
+// (the home page keeps data-home-p2m-chart). `proofsOnly`: the series has no reuses (the proved theorems page counts the
+// model's proofs alone), so the caption says so and the legend has no reuse mark.
 import { acceptedChartSVG, acceptedRowsHTML, type AcceptedSeries } from '../data/prove2me-chart';
 
 interface Props {
 	series: AcceptedSeries | null;
+	proofsOnly?: boolean;
 	[attr: string]: unknown;
 }
-const { series, class: cls, ...attrs } = Astro.props;
+const { series, proofsOnly = false, class: cls, ...attrs } = Astro.props;
 ---
 
 <figure class:list={['p2m-chart not-content', cls as string | undefined]} data-p2m-chart data-source="build" hidden={!series} {...attrs}>
-	<figcaption>Proofs accepted by prove2me, counted up</figcaption>
+	<figcaption>{proofsOnly ? 'Proofs by the model accepted by prove2me, counted up' : 'Proofs accepted by prove2me, counted up'}</figcaption>
 	<ul class="legend" aria-hidden="true">
 		<li><span class="swatch dot"></span>Proof</li>
-		<li><span class="swatch dot hollow"></span>Closed by reusing a proof</li>
+		{!proofsOnly && <li><span class="swatch dot hollow"></span>Closed by reusing a proof</li>}
 		<li><span class="swatch dash"></span>A trial starts (its number above)</li>
 	</ul>
 	<div class="p2m-svg" data-p2m-chart-svg set:html={series ? acceptedChartSVG(series) : ''} />

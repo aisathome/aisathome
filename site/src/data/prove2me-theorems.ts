@@ -10,7 +10,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { FROZEN_THROUGH, day, hhmm, theoremURL } from './prove2me-current';
 import { compact } from './prove2me-live';
-import { allRuns, scienceView, type History, type Records, type RunRec, type SubRec } from './prove2me-records';
+import { acceptedSeries, type AcceptedSeries } from './prove2me-chart';
+import { allRuns, scienceView, type History, type Records, type RunRec, type ScienceView, type SubRec } from './prove2me-records';
+import { nice } from './pressure-chart';
 import { plainTitle } from './prove2me-view';
 import type { TheoremCard } from './og-card';
 
@@ -20,6 +22,23 @@ export const SELECTED_FROM = 11;
 export const MEDIAN_FROM = FROZEN_THROUGH + 1;
 export const THEOREMS_PATH = '/science/prove2me/theorems/';
 export const theoremPath = (leaf: string) => `${THEOREMS_PATH}${leaf}/`;
+
+/** Where "Contribute your GPU" leads, and who can join today: one place to change both (the run-a-node page now; the
+ * BOINC join page once that is open). */
+export const CONTRIBUTE = {
+	url: '/node/',
+	label: 'Contribute your GPU →',
+	requirement: 'Needs an NVIDIA GPU with 24 GB of memory, with the Linux installer or the Windows one.',
+} as const;
+
+/** One trial's open leaves tried and its proofs prove2me accepted (the per-trial chart). */
+export interface TrialBar {
+	trial: number;
+	/** Open leaves run in the trial (calibration leaves left out). */
+	tried: number;
+	/** Proofs by the model from the trial that prove2me accepted. */
+	accepted: number;
+}
 
 /** One accepted submission. */
 export interface TheoremRow {
@@ -78,7 +97,15 @@ export interface TheoremsView {
 		overall: CostLine;
 	};
 	lastTrial: number;
+	/** Accepted proofs by the model, counted up over time (prove2me-chart.ts; reuses left out, as in the headline). */
+	series: AcceptedSeries | null;
+	/** Every trial with a run, oldest first. */
+	perTrial: TrialBar[];
 }
+
+/** The view the accepted-proofs chart draws: the prove2me page's view with its accepted reuses left out, so the chart's
+ * count ends at the headline's. */
+export const proofsOnly = (v: ScienceView): ScienceView => ({ ...v, submissions: v.submissions.filter((s) => s.kind !== 'reuse') });
 
 const sum = <T>(xs: T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
 /** The q-quantile of sorted values (linear between neighbours). */
@@ -146,6 +173,10 @@ export function theoremsView(h: History, live: Records | null): TheoremsView {
 			overall: line(firstTrial),
 		},
 		lastTrial,
+		series: acceptedSeries(proofsOnly(v)),
+		perTrial: real
+			.map((t) => ({ trial: t.number, tried: t.open.runs, accepted: proofs.filter((p) => p.trial === t.number).length }))
+			.sort((a, b) => a.trial - b.trial),
 	};
 }
 
@@ -166,11 +197,10 @@ const notAccepted = (c: TheoremsView['counts']) => {
 	return parts.length ? ` (${parts.join(', ')})` : '';
 };
 
-/** The headline numbers (the dl's children); `--kpis` is their number. */
+/** The numbers under the headline (the dl's children; the headline has the model's proofs); `--kpis` is their number. */
 export function theoremKpisHTML(v: TheoremsView): { html: string; n: number } {
 	const c = v.counts;
 	const cells = [
-		`<div data-kpi="proofs"><dt>${c.proofs === 1 ? 'proof' : 'proofs'} by the model accepted by prove2me</dt><dd>${c.proofs}</dd></div>`,
 		`<div data-kpi="submitted"><dt>submissions accepted, of ${c.submitted}${notAccepted(c)}</dt><dd>${c.accepted}</dd></div>`,
 		`<div data-kpi="open"><dt>open leaves proved, of ${c.openTried} tried</dt><dd>${c.openProved}</dd></div>`,
 		c.reused ? `<div data-kpi="reused"><dt>${c.reused === 1 ? 'leaf' : 'leaves'} closed by reuse (not counted as proofs)</dt><dd>${c.reused}</dd></div>` : '',
@@ -253,6 +283,86 @@ export function updatedText(v: TheoremsView, from: 'live' | 'build' | 'saved' = 
 		? `From a saved copy of the gateway’s records of ${at}: the site’s build could not reach the gateway. The page reads the records live when it can.`
 		: `From the gateway’s records at the site’s build, ${at}. The page reads them again every minute.`;
 }
+
+// ---- the headline, the call to action and the per-trial chart
+
+/** The headline: the number, what it is, and the one line under it that says what it is out of. */
+export function headline(v: TheoremsView, model: string): { number: number; what: string; scope: string } {
+	const c = v.counts;
+	return {
+		number: c.proofs,
+		what: `Lean 4 ${c.proofs === 1 ? 'proof' : 'proofs'} written by ${model}, an open-weight model on consumer GPUs, and accepted by prove2me’s machine check.`,
+		scope:
+			`Out of ${c.openTried} open leaves tried and ${c.submitted} submissions` +
+			`${c.reused ? `; ${c.reused} more ${c.reused === 1 ? 'leaf was' : 'leaves were'} closed by reuse and not counted` : ''}. ` +
+			`From trial ${c.selected.from} on, we chose only leaves we judged easy or moderate.`,
+	};
+}
+
+/** The headline as HTML (the block's children): the number, the line under it, and the scope line linked to the detail. */
+export function headlineHTML(v: TheoremsView, model: string): string {
+	const h = headline(v, model);
+	return (
+		`<p class="th-hero-n" data-th-headline-n>${h.number}</p>` +
+		`<p class="th-hero-what">${esc(h.what)}</p>` +
+		`<p class="th-hero-scope" data-th-scope>${esc(h.scope)} <a href="#counts">What the count means →</a></p>`
+	);
+}
+
+/** A proof page's own number for the call to action: "This proof took 1.82 GPU-hours of inference."; null for a reuse
+ * or a proof without a recorded run. */
+export function ctaHours(t: Pick<TheoremRow, 'kind' | 'hours'>): string | null {
+	if (t.kind !== 'proof' || t.hours === null || !Number.isFinite(t.hours)) return null;
+	return `This proof took ${gpuH(t.hours)} GPU-hours of inference.`;
+}
+
+/** The call to action (the block's children): an opening line, the proof's own number on a proof page, the link and
+ * who can join today (CONTRIBUTE). */
+export function ctaHTML(t?: Pick<TheoremRow, 'kind' | 'hours'>): string {
+	const hours = t ? ctaHours(t) : null;
+	return (
+		`<p class="th-cta-head">Your GPU could help prove the next lemma.</p>` +
+		(hours ? `<p class="th-cta-hours" data-th-cta-hours>${esc(hours)}</p>` : '') +
+		`<p class="th-cta-go"><a href="${esc(CONTRIBUTE.url)}" data-th-contribute>${esc(CONTRIBUTE.label)}</a> <span class="th-cta-req">${esc(CONTRIBUTE.requirement)}</span></p>`
+	);
+}
+
+/** What the per-trial chart says, for its aria-label. */
+export function trialBarsSummary(bars: TrialBar[]): string {
+	if (!bars.length) return 'No trial yet.';
+	const tried = bars.reduce((a, b) => a + b.tried, 0), acc = bars.reduce((a, b) => a + b.accepted, 0);
+	return `Per trial, open leaves tried and proofs prove2me accepted, trials ${bars[0].trial} to ${bars[bars.length - 1].trial}: ${acc} accepted of ${tried} open leaves tried in all.`;
+}
+
+/** The per-trial chart as SVG, `W` pixels wide: a bar of the open leaves tried per trial, the accepted proofs over it,
+ * a dashed line where the easy and moderate leaves begin (SELECTED_FROM). In the look of the site's other charts. */
+export function trialBarsSVG(bars: TrialBar[], W = 640, from = SELECTED_FROM): string {
+	W = Math.max(Math.round(W), 240);
+	const H = 170, L = 30, R = 8, T = 18, B = 22;
+	const top = nice(Math.max(1, ...bars.map((b) => b.tried)));
+	const y = (v: number) => T + (H - T - B) * (1 - v / top);
+	const slot = (W - L - R) / Math.max(1, bars.length);
+	const bw = Math.max(4, Math.min(28, slot * 0.7));
+	const out: string[] = [];
+	for (const f of [0, 0.5, 1]) {
+		const yy = y(top * f);
+		out.push(`<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="${f ? 'grid' : 'base'}"/>`, `<text x="${L - 6}" y="${yy + 4}" class="tick" text-anchor="end">${Math.round(top * f)}</text>`);
+	}
+	const every = Math.ceil(bars.length / Math.max(1, Math.floor((W - L - R) / 22)));
+	bars.forEach((b, i) => {
+		const cx = L + slot * (i + 0.5), x0 = (cx - bw / 2).toFixed(1);
+		if (b.trial === from && i > 0) out.push(`<line x1="${(cx - slot / 2).toFixed(1)}" x2="${(cx - slot / 2).toFixed(1)}" y1="${T - 12}" y2="${H - B}" class="trial"/>`, `<text x="${(cx - slot / 2 + 4).toFixed(1)}" y="${T - 4}" class="tick">easy and moderate leaves from here</text>`);
+		const title = `<title>${esc(`Trial ${b.trial}: ${b.accepted} accepted of ${b.tried} open leaves tried`)}</title>`;
+		out.push(`<rect x="${x0}" y="${y(b.tried).toFixed(1)}" width="${bw.toFixed(1)}" height="${(y(0) - y(b.tried)).toFixed(1)}" class="bar-tried">${title}</rect>`);
+		if (b.accepted) out.push(`<rect x="${x0}" y="${y(b.accepted).toFixed(1)}" width="${bw.toFixed(1)}" height="${(y(0) - y(b.accepted)).toFixed(1)}" class="bar-acc">${title}</rect>`);
+		if (i % every === 0 || i === bars.length - 1) out.push(`<text x="${cx.toFixed(1)}" y="${H - 6}" class="tick" text-anchor="middle">${b.trial}</text>`);
+	});
+	return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(trialBarsSummary(bars))}" xmlns="http://www.w3.org/2000/svg">${out.join('')}</svg>`;
+}
+
+/** The per-trial chart's numbers as table rows, oldest first. */
+export const trialBarRowsHTML = (bars: TrialBar[]) =>
+	bars.map((b) => `<tr><td class="num">${b.trial}</td><td class="num">${b.tried}</td><td class="num">${b.accepted}</td></tr>`).join('');
 
 // ---- one theorem's page
 

@@ -50,3 +50,45 @@ main .th-note { font-size: 0.85rem; }
 }
 .th-table .when { min-width: 6.5rem; }
 .th-statement a { color: var(--sl-color-accent-high); }
+
+/* The headline: the number first, what it is, and the line that says what it is out of. */
+.th-hero { margin: 0 0 1rem; padding: 1.1rem 1.25rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+.th-hero p { margin: 0; }
+.th-hero-n { font: 900 4.5rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+.th-hero-what { margin-top: 0.4rem !important; font-size: 1.15rem; font-weight: 600; line-height: 1.35; color: var(--sl-color-white); }
+.th-hero-scope { margin-top: 0.6rem !important; font-size: 0.9rem; color: var(--sl-color-gray-2); }
+.th-hero a { color: var(--sl-color-accent-high); }
+
+/* The call to action: one line, the proof's own number on a proof page, the link and who can join today. */
+.th-cta { margin: 1rem 0; padding: 0.8rem 1.1rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--sl-color-accent-low); }
+.th-cta p { margin: 0; }
+.th-cta-head { font-weight: 700; color: var(--sl-color-white); }
+.th-cta-hours { margin-top: 0.2rem !important; color: var(--sl-color-gray-2); }
+.th-cta-go { margin-top: 0.45rem !important; }
+.th-cta-go a { font-weight: 700; color: var(--sl-color-accent-high); }
+.th-cta-req { display: block; margin-top: 0.15rem; font-size: 0.82rem; color: var(--sl-color-gray-2); }
+
+/* The charts: the accepted-proofs chart (components/AcceptedChart.astro) and the per-trial bars, in its style. */
+.th-accepted-chart { max-width: 46rem; margin-block: 1rem 1.5rem !important; }
+.th-bars { --c-line: #199e70; max-width: 46rem; margin: 0 0 1.5rem; min-width: 0; }
+:root[data-theme='light'] .th-bars { --c-line: #1baf7a; }
+.th-bars[hidden] { display: none !important; }
+.th-bars figcaption { margin-bottom: 0.4rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+.th-bars .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0 0 0.5rem; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+.th-bars .legend li { display: flex; align-items: center; gap: 0.4rem; margin: 0; }
+.th-bars .swatch { width: 0.8rem; height: 0.8rem; border-radius: 0.15rem; }
+.th-bars .swatch.tried { background: var(--sl-color-gray-5); }
+.th-bars .swatch.acc { background: var(--c-line); }
+.th-bars-svg svg { display: block; width: 100%; height: auto; overflow: visible; }
+.th-bars-svg .grid { stroke: var(--sl-color-gray-5); stroke-width: 1; }
+.th-bars-svg .base { stroke: var(--sl-color-gray-4); stroke-width: 1; }
+.th-bars-svg .tick { fill: var(--sl-color-gray-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.th-bars-svg .trial { stroke: var(--sl-color-gray-3); stroke-width: 1; stroke-dasharray: 3 3; }
+.th-bars-svg .bar-tried { fill: var(--sl-color-gray-5); }
+.th-bars-svg .bar-acc { fill: var(--c-line); }
+.th-bars-table { margin-top: 0.5rem; }
+.th-bars-table summary { cursor: pointer; font-size: 0.9rem; color: var(--sl-color-gray-2); }
+.th-bars-table table { margin-top: 0.5rem; border-collapse: collapse; font-size: 0.85rem; }
+.th-bars-table :is(th, td) { padding: 0.25rem 1rem 0.25rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: right; font-variant-numeric: tabular-nums; }
+.th-bars-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+@media (max-width: 40rem) { .th-hero-n { font-size: 3.5rem; } }

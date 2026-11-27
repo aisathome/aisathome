@@ -7,14 +7,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../../../data/prove2me';
-import { THEOREMS_PATH, costsHTML, selectionText, theoremKpisHTML, theoremRowsHTML, updatedText } from '../../../../data/prove2me-theorems';
+import {
+	THEOREMS_PATH, costsHTML, ctaHTML, headlineHTML, selectionText, theoremKpisHTML, theoremRowsHTML, trialBarRowsHTML, trialBarsSVG, updatedText,
+} from '../../../../data/prove2me-theorems';
+import AcceptedChart from '../../../../components/AcceptedChart.astro';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
 import '../../../../styles/theorems.css';
 
 const { history, view, from, pages } = await buildTheorems();
 const leaves = pages.map((t) => t.leaf);
 const kp = theoremKpisHTML(view);
-const known = { history, pages: leaves };
+const known = { history, pages: leaves, model: p2m.model };
 const image = new URL(`${THEOREMS_PATH}og.png`, Astro.site).href;
 const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by prove2me, and what each cost in GPU-hours.`;
 ---
@@ -31,22 +34,43 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 		description: `Every leaf of prove2me, research theorems stated in Lean 4, that ${p2m.model}, an open model on the AIs@home network, proved and prove2me accepted: how many were tried, and what a proof costs in GPU-hours.`,
 	}}
 	headings={[
+		{ depth: 2, slug: 'progress', text: 'Progress' },
 		{ depth: 2, slug: 'counts', text: 'What the count means' },
 		{ depth: 2, slug: 'cost', text: 'What a proof costs' },
 		{ depth: 2, slug: 'theorems', text: 'Every accepted leaf' },
+		{ depth: 2, slug: 'how', text: 'How these proofs are made' },
 		{ depth: 2, slug: 'data', text: 'The data' },
 	]}
 >
+	{/* The headline: the model's accepted proofs, what they are, and at once what they are out of (live, see the script). */}
+	<section class="th-hero not-content" data-th-headline data-source="build" set:html={headlineHTML(view, p2m.model)} />
 	<p>
-		<a href="https://prove2.me/">prove2me</a> collects theorems from mathematical research papers, stated in Lean 4 by its users and split into
-		small pieces called leaves. A leaf is one step toward a paper’s result, not the result itself. {p2m.model}, an open-weight model
-		on the AIs@home network, works on open leaves as an agent; Lean’s kernel checks each proof, and prove2me’s own check decides
-		whether to accept it. These are the leaves it accepted. More on how the trials run is on the <a href="/science/prove2me/">prove2me page</a>.
+		Each is a proof of a leaf of <a href="https://prove2.me/">prove2me</a>: one small piece of a theorem from a research paper, stated
+		in Lean 4 by a prove2me user. Lean’s kernel checks every proof, and prove2me’s own check decides whether to accept it.
 	</p>
 	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
 	<script is:inline type="application/json" data-th-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
 
 	<dl class="th-kpis not-content" data-th-kpis data-source="build" style={`--kpis: ${kp.n}`} set:html={kp.html} />
+	<aside class="th-cta not-content" data-th-cta set:html={ctaHTML()} />
+
+	<h2 id="progress">Progress</h2>
+	<AcceptedChart series={view.series} proofsOnly class="th-accepted-chart" />
+	<figure class="th-bars not-content" data-th-bars data-source="build" hidden={!view.perTrial.length}>
+		<figcaption>Each trial: open leaves tried, and proofs prove2me accepted</figcaption>
+		<ul class="legend" aria-hidden="true">
+			<li><span class="swatch tried"></span>Open leaves tried</li>
+			<li><span class="swatch acc"></span>Accepted proofs</li>
+		</ul>
+		<div class="th-bars-svg" data-th-bars-svg set:html={trialBarsSVG(view.perTrial)} />
+		<details class="th-bars-table">
+			<summary>The numbers</summary>
+			<table>
+				<thead><tr><th scope="col" class="num">Trial</th><th scope="col" class="num">Open leaves tried</th><th scope="col" class="num">Accepted</th></tr></thead>
+				<tbody data-th-bars-rows set:html={trialBarRowsHTML(view.perTrial)} />
+			</table>
+		</details>
+	</figure>
 
 	<h2 id="counts">What the count means</h2>
 	<p data-th-selection>{selectionText(view)}</p>
@@ -84,6 +108,17 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 		GPU-hours and tokens of a leaf are those of its own tasks in the trial that proved it; earlier failed tries of the same leaf count in
 		the all-in costs above, not here.
 	</p>
+
+	<h2 id="how">How these proofs are made</h2>
+	<p>
+		prove2me collects theorems from mathematical research papers, stated in Lean 4 by its users and split into small pieces called
+		leaves. A leaf is one step toward a paper’s result, not the result itself. {p2m.model}, an open-weight model on the AIs@home
+		network, works on open leaves as an agent: it writes an outline of the proof, proves each step in its own task, and puts them
+		together. Our own full check passes a proof only when it builds, states exactly the leaf’s theorem, and uses no
+		{' '}<code>sorry</code> and no axiom beyond Lean’s standard three; only those are submitted, and prove2me’s check decides. The
+		trials, every leaf tried and every task are on the <a href="/science/prove2me/">prove2me page</a>.
+	</p>
+	<aside class="th-cta not-content" set:html={ctaHTML()} />
 
 	<h2 id="data">The data</h2>
 	<ul>
