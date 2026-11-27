@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -74,36 +75,37 @@ func parseDevices(out []byte) (Device, error) {
 // listDevicesWait bounds `llama-server --list-devices` (it initialises CUDA, a few seconds).
 const listDevicesWait = time.Minute
 
-// listDevices runs the engine with --list-devices in the engine's own environment.
-func listDevices(ctx context.Context, cmd engine.Command) (Device, error) {
+// listDevices runs the engine with --list-devices in the engine's own environment. Its own
+// messages go to out (the engine's log, which stays on the machine), never into the error: the
+// pilot's log is shown on the project's public result page, and a loader error names local paths.
+func listDevices(ctx context.Context, cmd engine.Command, out io.Writer) (Device, error) {
 	ctx, cancel := context.WithTimeout(ctx, listDevicesWait)
 	defer cancel()
 	c := exec.CommandContext(ctx, cmd.Path, "--list-devices")
 	c.Env = append(os.Environ(), cmd.Env...)
 	c.Dir = cmd.Dir
-	var stdout, stderr bytes.Buffer
-	c.Stdout, c.Stderr = &stdout, &stderr
+	var stdout bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, io.Discard
+	if out != nil {
+		c.Stderr = out
+	}
 	err := c.Run()
+	if out != nil {
+		out.Write(stdout.Bytes())
+	}
 	if d, perr := parseDevices(stdout.Bytes()); perr == nil {
 		return d, nil
 	} else if err == nil {
 		return Device{}, perr
 	}
-	msg := lastLine(stderr.String())
-	if msg == "" {
-		msg = err.Error()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return Device{}, fmt.Errorf("the engine could not list the GPUs (%s; its messages are in engine.log)", ee.ProcessState)
 	}
-	return Device{}, fmt.Errorf("the engine could not list the GPUs: %s", msg)
-}
-
-// lastLine is the last non-empty line of s, at most 200 bytes.
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	l := strings.TrimSpace(lines[len(lines)-1])
-	if len(l) > 200 {
-		l = l[:200]
+	if ctx.Err() != nil {
+		return Device{}, fmt.Errorf("the engine could not list the GPUs within %s", listDevicesWait)
 	}
-	return l
+	return Device{}, errors.New("the engine could not be started to list the GPUs")
 }
 
 // pickTier chooses the tier: the one named, or with TierAuto the tier whose model file has the
@@ -206,7 +208,7 @@ func readSpeedCache(dir string) map[string]speedPass {
 		return m
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, speedCacheFile)); err == nil {
-		if json.Unmarshal(b, &m) != nil {
+		if json.Unmarshal(b, &m) != nil || m == nil { // junk, or "null"
 			m = map[string]speedPass{}
 		}
 	}

@@ -83,7 +83,9 @@ follows `--passthrough_child` to the task (`<append_cmdline_args/>` in `job.xml`
 The project has one app per tier, because a work unit brings its model as an input file and its app
 decides which hosts may get it: `pilot` for the big tier (cards with 24 GB, plan classes `cuda_big`
 and `cuda_big_bw`) and `pilot_std` for the standard tier (16 GB cards, `cuda_std` and
-`cuda_std_bw`). A bridge creates each tier's work units in its app, with that tier's model file. BOINC's
+`cuda_std_bw`). One bridge serves both apps, on one connector and one batch: it creates each tier's
+work units in that tier's app, with that tier's model file. Never run one bridge per app on the same
+connector: a bridge reconciles every pilot of its connector and would end the other's. BOINC's
 plan classes have a minimum GPU memory but no maximum, so a 24 GB host may also get a `pilot_std`
 task: it then serves the standard tier. Both apps' versions take the same four files (same physical
 names, signed once); the pilot finds its tier in the model file.

@@ -181,13 +181,17 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 		d.Now = time.Now
 	}
 	if d.Devices == nil {
-		d.Devices = listDevices
+		out := d.EngineOutput
+		d.Devices = func(ctx context.Context, cmd engine.Command) (Device, error) { return listDevices(ctx, cmd, out) }
 	}
 	if d.SpeedTest == nil {
 		d.SpeedTest = speedTest
 	}
 	log := d.Log
 	start := d.Now()
+	// The wrapper, as it was when the pilot started: if it goes away during the checks below, the
+	// pilot must not take its new parent for it.
+	parent := d.Parent()
 	fail := func(err error) Result {
 		log.Error("pilot cannot start", "err", err)
 		writeSummary(o.Summary, Summary{Agent: node.AgentVersion(), Reason: ReasonEngine, Error: err.Error()}, log)
@@ -310,7 +314,6 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 		defer close(engineDone)
 		eng.Run(ectx)
 	}()
-	parent := d.Parent()
 
 	// Before it connects: the engine loads the model, then the speed floor (or a recent pass on
 	// this card, tier and engine). The engine is stopped again on a refusal or SIGTERM.
@@ -467,17 +470,33 @@ func ready(ctx context.Context, o Options, d Deps, s setup.EngineSettings, tier 
 		return ended()
 	}
 	key := speedKey(dev, tier.Name, engine)
-	if p, ok := cachedPass(o.EngineDir, key, d.Now()); ok {
+	// A pass counts only under the floor in force now; with no floor the test always runs.
+	if p, ok := cachedPass(o.EngineDir, key, d.Now()); ok && o.MinTPS > 0 && p.TPS >= o.MinTPS {
 		log.Info("speed floor passed recently; no test", "tps", p.TPS, "at", p.At.UTC().Format(time.RFC3339))
 		return 0, "", nil
 	}
 	log.Info("speed test", "prompt_tokens", setup.SpeedPromptTokens, "min_tps", max(o.MinTPS, 0))
-	sp, err := d.SpeedTest(pctx, s.Upstream())
-	if err != nil {
+	// The engine supervisor restarts a crashed engine: test again once it answers, until the engine
+	// has failed for good (engineDown ends pctx) or the test failed engineFailures times.
+	var sp setup.Speed
+	for try := 1; ; try++ {
+		var err error
+		if sp, err = d.SpeedTest(pctx, s.Upstream()); err == nil {
+			break
+		}
 		if pctx.Err() != nil {
 			return ended()
 		}
-		return 0, ReasonEngine, fmt.Errorf("speed test: %w", err)
+		if try == engineFailures {
+			return 0, ReasonEngine, fmt.Errorf("speed test: %w", err)
+		}
+		log.Warn("speed test failed; trying again once the engine answers", "err", err, "try", try)
+		if err := waitHealthy(pctx, s.Upstream(), o.EngineWait, min(250*time.Millisecond, d.Tick*25)); err != nil {
+			if pctx.Err() == nil {
+				return 0, ReasonEngine, fmt.Errorf("the engine did not come back within %s", o.EngineWait)
+			}
+			return ended()
+		}
 	}
 	log.Info("speed test done", "tps", sp.TPS, "prompt_tokens", sp.PromptTokens, "prompt_s", sp.PromptSeconds)
 	if o.MinTPS > 0 && sp.TPS < o.MinTPS {

@@ -2,12 +2,15 @@
 package pilot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -355,5 +358,134 @@ func TestEngineNeverLoads(t *testing.T) {
 	refused(t, r, ReasonEngine, "did not load the model")
 	if r.speedRuns.Load() != 0 {
 		t.Error("a speed test ran")
+	}
+}
+
+// A pass counts only under the floor in force now, and never when the floor is off (measure).
+func TestSpeedCacheUnderAnotherFloor(t *testing.T) {
+	r := newRig(t)
+	r.o.EngineDir = filepath.Join(r.slot, "engine")
+	os.MkdirAll(r.o.EngineDir, 0o755)
+	r.o.IdleExit = 200 * time.Millisecond
+	r.speedHook = func(context.Context, string) (setup.Speed, error) {
+		return setup.Speed{TPS: 15, PromptTokens: 32000}, nil
+	}
+	r.o.MinTPS = 10
+	if res := wait(t, r.run(context.Background()), 10*time.Second); res.Reason != ReasonIdle {
+		t.Fatalf("floor 10: %+v", res)
+	}
+	r.o.MinTPS = 20
+	r.gw = newGateway(t)
+	r.o.Gateway = r.gw.url()
+	if res := wait(t, r.run(context.Background()), 10*time.Second); res.Reason != ReasonSlow {
+		t.Errorf("floor 20 after a pass at 15 under 10: %+v", res)
+	}
+	r.o.MinTPS = -1
+	r.gw = newGateway(t)
+	r.o.Gateway = r.gw.url()
+	wait(t, r.run(context.Background()), 10*time.Second)
+	if n := r.speedRuns.Load(); n != 3 {
+		t.Errorf("%d speed tests, want 3", n)
+	}
+}
+
+// A speed test that fails while the engine restarts is tried again; three failures end the pilot.
+func TestSpeedTestRetried(t *testing.T) {
+	r := newRig(t)
+	r.o.IdleExit = 200 * time.Millisecond
+	fails := atomic.Int32{}
+	fails.Store(1)
+	r.speedHook = func(context.Context, string) (setup.Speed, error) {
+		if fails.Add(-1) >= 0 {
+			return setup.Speed{}, errors.New("connection reset")
+		}
+		return setup.Speed{TPS: 40, PromptTokens: 32000}, nil
+	}
+	if res := wait(t, r.run(context.Background()), 10*time.Second); res.Reason != ReasonIdle {
+		t.Fatalf("one failure: %+v", res)
+	}
+	r2 := newRig(t)
+	r2.speedHook = func(context.Context, string) (setup.Speed, error) {
+		return setup.Speed{}, errors.New("connection reset")
+	}
+	refused(t, r2, ReasonEngine, "connection reset")
+	if n := r2.speedRuns.Load(); n != engineFailures {
+		t.Errorf("%d tries, want %d", n, engineFailures)
+	}
+}
+
+// The wrapper going away during the card check is noticed: the pilot never serves as an orphan.
+func TestParentGoneDuringChecks(t *testing.T) {
+	r := newRig(t)
+	gone := atomic.Bool{}
+	r.d.Parent = func() int {
+		if gone.Load() {
+			return 1
+		}
+		return 4242
+	}
+	dev := r.d.Devices
+	r.d.Devices = func(ctx context.Context, c engine.Command) (Device, error) {
+		gone.Store(true)
+		return dev(ctx, c)
+	}
+	res := wait(t, r.run(context.Background()), 10*time.Second)
+	if res.Reason != ReasonSigterm {
+		t.Fatalf("result %+v", res)
+	}
+	select {
+	case <-r.gw.ready:
+		t.Error("the pilot connected")
+	default:
+	}
+}
+
+func TestSpeedCacheNull(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, speedCacheFile), []byte("null\n"), 0o644)
+	if err := rememberPass(dir, "k", speedPass{TPS: 30, At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cachedPass(dir, "k", time.Now()); !ok {
+		t.Error("no pass after a null file")
+	}
+}
+
+// The real --list-devices call: the list from stdout; a failing engine's messages (which may name
+// local paths) go to the engine's log, not into the error the public log shows.
+func TestListDevices(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts")
+	}
+	dir := t.TempDir()
+	script := func(name, body string) engine.Command {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755)
+		return engine.Command{Path: p, Env: []string{"CUDA_VISIBLE_DEVICES=1"}, Dir: dir}
+	}
+	var out bytes.Buffer
+	ok := script("ok", `[ "$1" = --list-devices ] && [ "$CUDA_VISIBLE_DEVICES" = 1 ] || exit 3
+echo "ggml_cuda_init: found 1 CUDA devices" >&2
+printf 'Available devices:\n  CUDA0: NVIDIA GeForce RTX 4080 (16375 MiB, 15800 MiB free)\n'
+`)
+	if d, err := listDevices(context.Background(), ok, &out); err != nil || d != card4080 {
+		t.Fatalf("%+v %v", d, err)
+	}
+	if !strings.Contains(out.String(), "found 1 CUDA devices") {
+		t.Errorf("engine log %q", out.String())
+	}
+	out.Reset()
+	bad := script("bad", `echo "/home/alice/boinc/projects/x/llama-server: error while loading shared libraries" >&2; exit 127
+`)
+	_, err := listDevices(context.Background(), bad, &out)
+	if err == nil || strings.Contains(err.Error(), "alice") || !strings.Contains(out.String(), "alice") {
+		t.Errorf("err %v, log %q", err, out.String())
+	}
+	if _, err := listDevices(context.Background(), engine.Command{Path: filepath.Join(dir, "none")}, nil); err == nil || strings.Contains(err.Error(), dir) {
+		t.Errorf("missing program: %v", err)
+	}
+	none := script("none", "echo 'Available devices:'\n")
+	if _, err := listDevices(context.Background(), none, nil); err == nil {
+		t.Error("no device listed, no error")
 	}
 }
