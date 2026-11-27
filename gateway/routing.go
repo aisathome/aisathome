@@ -83,6 +83,21 @@ type route struct {
 	rules bool
 }
 
+// forProject makes rt a request of project p: science, within p's share of the nodes, and on pilots
+// in probation if p lets its agents use them. Placement (api.go) and every count of the nodes that
+// may run p's work (scienceRoute) take p's rules from here.
+func (rt *route) forProject(p *Project) *route {
+	rt.class, rt.project, rt.share, rt.pilotProbationOK = ClassScience, p.ID, p.MaxNodeShare, p.PilotProbationOK
+	return rt
+}
+
+// scienceRoute is the route of one of p's agent requests (with tools), as the counts of the nodes
+// that may run its work see it (pressureNow, scienceDemand): volunteer nodes only with p's agent_ok,
+// and ownOnly the emergency switch. Each caller keeps its own counting rules.
+func scienceRoute(p *Project, ownOnly bool) *route {
+	return (&route{tools: true, consent: p.AgentOK, ownOnlyMode: ownOnly}).forProject(p)
+}
+
 // usable reports whether n could serve rt now if it had a free slot: allowed, not paused,
 // offering the model with at least threshold context (needMin: the request's smallest; the
 // placement uses thresholdLocked). Caller holds g.mu.

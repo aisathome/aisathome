@@ -71,8 +71,7 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) demandScience {
 			d.OpenTasks += open
 			d.Workers += workers
 			d.Sessions += min(open, workers)
-			routes = append(routes, &route{tools: true, consent: true, class: ClassScience, ownOnlyMode: ownOnly,
-				pilotProbationOK: p.PilotProbationOK})
+			routes = append(routes, scienceRoute(p, ownOnly))
 		}
 	}
 	g.mu.Lock()
