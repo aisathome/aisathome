@@ -4,14 +4,16 @@
 // theorems (pages/science/prove2me/theorems/), whose cards carry each theorem's own title and numbers. The site-wide
 // card (public/og.png) is still drawn by scripts/share-image.mjs.
 //
-// Build-only: it reads files from node_modules. No kerning or shaping: Latin text, as the cards' copy is; a character
-// none of the fonts has is drawn as '?'.
+// Build-only: it reads files from node_modules. No kerning or shaping: Latin text, as the cards' copy is. A Greek letter
+// the font lacks is drawn from the monospace font's Greek file; a maths symbol none of the fonts has, as its ASCII
+// (tex-text.ts: '≤' as '<='); anything else as '?'.
 //
 // SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { deflateSync } from 'node:zlib';
 import { create, type Font } from 'fontkitten';
+import { asciiFallback } from './tex-text';
 
 export const CARD_W = 1200;
 export const CARD_H = 630;
@@ -28,17 +30,21 @@ export const colors = { bg: hex('#15110e'), glow: hex('#22180f'), text: hex('#ff
 const require = createRequire(import.meta.url);
 const families = { display: 'big-shoulders-display', sans: 'public-sans', mono: 'jetbrains-mono' } as const;
 const cache = new Map<string, Font>();
-/** A font of the site at a weight (100 to 800 in steps of 100). */
-export function font(kind: keyof typeof families, weight: number): Font {
-	const key = `${kind}:${weight}`;
+const weights = new WeakMap<Font, number>();
+/** A font of the site at a weight (100 to 800 in steps of 100), its Latin file or another of its package's subsets. */
+export function font(kind: keyof typeof families, weight: number, subset = 'latin'): Font {
+	const key = `${kind}:${weight}:${subset}`;
 	let f = cache.get(key);
 	if (!f) {
 		const name = families[kind];
-		f = create(readFileSync(require.resolve(`@fontsource/${name}/files/${name}-latin-${weight}-normal.woff2`))) as Font;
+		f = create(readFileSync(require.resolve(`@fontsource/${name}/files/${name}-${subset}-${weight}-normal.woff2`))) as Font;
 		cache.set(key, f);
+		weights.set(f, weight);
 	}
 	return f;
 }
+/** The Greek letters for a font of the site: the monospace font's Greek file at the same weight (the others have none). */
+const greekOf = (f: Font) => font('mono', weights.get(f) ?? 700, 'greek');
 
 // ---- the canvas
 
@@ -107,7 +113,7 @@ export class Card {
 	/** Text on a baseline; returns its width. */
 	text(str: string, f: Font, size: number, x: number, baseline: number, c: RGB, spacing = 0): number {
 		const polys: number[][] = [];
-		const w = layout(str, f, size, spacing, (g, gx) => polys.push(...outline(g.path.commands, gx + x, baseline, size / f.unitsPerEm)));
+		const w = layout(str, f, size, spacing, (g, gx, k) => polys.push(...outline(g.path.commands, gx + x, baseline, k)));
 		this.fill(polys, c);
 		return w;
 	}
@@ -193,15 +199,29 @@ function outline(cmds: { command: string; args: number[] }[], ox: number, oy: nu
 	return polys;
 }
 
-/** Walk a string's glyphs (a missing character as '?'); returns the width at `size`. */
-function layout(str: string, f: Font, size: number, spacing: number, each?: (g: ReturnType<Font['glyphForCodePoint']>, x: number) => void): number {
-	const k = size / f.unitsPerEm;
+type Glyph = ReturnType<Font['glyphForCodePoint']>;
+/** Walk a string's glyphs (a missing character from the Greek file, as its ASCII, or as '?'); returns the width at `size`.
+ * `each` gets a glyph, its x and the scale of its font's units. */
+function layout(str: string, f: Font, size: number, spacing: number, each?: (g: Glyph, x: number, k: number) => void): number {
 	let x = 0;
+	const put = (g: Glyph, from: Font) => {
+		const k = size / from.unitsPerEm;
+		each?.(g, x, k);
+		x += g.advanceWidth * k + spacing;
+	};
 	for (const ch of str) {
 		const cp = ch.codePointAt(0)!;
-		const g = f.glyphForCodePoint(f.hasGlyphForCodePoint(cp) ? cp : 0x3f);
-		each?.(g, x);
-		x += g.advanceWidth * k + spacing;
+		if (f.hasGlyphForCodePoint(cp)) {
+			put(f.glyphForCodePoint(cp), f);
+			continue;
+		}
+		const greek = cp >= 0x370 && cp <= 0x3ff ? greekOf(f) : null;
+		if (greek?.hasGlyphForCodePoint(cp)) {
+			put(greek.glyphForCodePoint(cp), greek);
+			continue;
+		}
+		const ascii = asciiFallback(ch);
+		for (const c of ascii ?? '?') put(f.glyphForCodePoint(f.hasGlyphForCodePoint(c.codePointAt(0)!) ? c.codePointAt(0)! : 0x3f), f);
 	}
 	return x;
 }
@@ -213,11 +233,12 @@ export const measure = (str: string, f: Font, size: number, spacing = 0) => layo
  * longer than a line (a Lean name) is broken at '.' or '_' where it can, else anywhere. */
 export function wrap(str: string, f: Font, size: number, width: number, lines: number): string[] {
 	const fits = (s: string) => measure(s, f, size) <= width;
-	const words = str.split(/\s+/).filter(Boolean).flatMap((w) => (fits(w) ? [w] : w.split(/(?<=[._])/)));
+	// a word too long for a line is split after its '.' and '_'; its pieces join without a space
+	const words = str.split(/\s+/).filter(Boolean).flatMap((w) => (fits(w) ? [{ w, cont: false }] : w.split(/(?<=[._])/).map((p, i) => ({ w: p, cont: i > 0 }))));
 	const out: string[] = [];
 	let line = '';
-	for (const w of words) {
-		const glue = line && !/[._]$/.test(line) ? ' ' : '';
+	for (const { w, cont } of words) {
+		const glue = line && !cont ? ' ' : '';
 		if (!line || fits(line + glue + w)) {
 			line = line + (line ? glue : '') + w;
 			while (!fits(line)) {
