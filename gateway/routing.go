@@ -103,16 +103,18 @@ func (rt *route) clearsFloor(m protocol.ModelInfo) bool {
 
 // nodeClearsFloor reports whether any of n's models has the context rt's project asks of a node, for
 // the counts of the nodes that may run its work (they ask for no model). Caller holds g.mu.
-func (rt *route) nodeClearsFloor(n *nodeConn) bool {
-	if rt.minCtx <= 0 {
-		return true
-	}
+func (rt *route) nodeClearsFloor(n *nodeConn) bool { return rt.floorSlots(n) > 0 }
+
+// floorSlots is how many of rt's project's requests n can run at once: the most slots of a model of n
+// with the context the project asks of a node (nodeSlots without a floor). Caller holds g.mu.
+func (rt *route) floorSlots(n *nodeConn) int {
+	s := 0
 	for _, m := range n.models {
 		if rt.clearsFloor(m) {
-			return true
+			s = max(s, m.Slots)
 		}
 	}
-	return false
+	return s
 }
 
 // scienceRoute is the route of one of p's agent requests (with tools), as the counts of the nodes

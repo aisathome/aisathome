@@ -429,4 +429,66 @@ func TestPressureNowMinNodeCtx(t *testing.T) {
 	if s := g.pressureNow(); s.Slots != 2 || s.ScienceSlots != 1 {
 		t.Fatalf("slots %d, science slots %d: want 2 and 1", s.Slots, s.ScienceSlots)
 	}
+	// A node's slots count only as far as its model with the context has them.
+	g.mu.Lock()
+	g.node["big"].models = append(g.node["big"].models, protocol.ModelInfo{Name: "m-q3", Roles: []string{"agent"}, Slots: 8, Ctx: 81920})
+	g.mu.Unlock()
+	if s := g.pressureNow(); s.Slots != 9 || s.ScienceSlots != 1 {
+		t.Fatalf("with an 8-slot small model beside: slots %d, science slots %d: want 9 and 1", s.Slots, s.ScienceSlots)
+	}
+}
+
+// A node's slots count for a project with a floor only as far as its models with that context have
+// them (a node's models share its slots).
+func TestPilotDemandFloorSlotsPerModel(t *testing.T) {
+	r := pilotTierRig(t, func(c *Config) {
+		c.NodeTokens = map[string]NodeToken{"home-token": {Operator: "owner"}}
+		c.Projects[0].AgentOK = false // short off: lab alone
+	})
+	r.g.mu.Lock()
+	r.g.node["home"] = &nodeConn{id: "home", token: "home-token", operator: "owner", models: []protocol.ModelInfo{
+		{Name: "qwen3.8-27b", Roles: []string{"agent"}, Slots: 1, Ctx: 196608},
+		{Name: "qwen3.8-27b-q3", Roles: []string{"agent"}, Slots: 8, Ctx: 81920}}}
+	r.g.mu.Unlock()
+	r.sessions("lab", testProjectKey, "p2m-v7", 6) // the node's one big slot holds 2; 4 left: 2 big pilots
+	d := r.demandNow()
+	if dnum(d["science"].(map[string]any), "slots_online") != 1 || tierNum(t, d, "big", "target") != 2 {
+		t.Fatalf("%v", d)
+	}
+}
+
+// A connector that names no tier (from before tiers) gets largest-tier pilots for every tier's need,
+// and its cancels are only largest-tier surplus: a standard need never cancels a big pilot it needs.
+func TestPilotDemandTierlessConnector(t *testing.T) {
+	r := pilotTierRig(t, nil)
+	r.sessions("lab", testProjectKey, "p2m-v7", 2)
+	r.sessions("short", shortProjectKey, "other", 2)
+	d := r.demandNow()
+	if dnum(d, "pilots_wanted") != 2 {
+		t.Fatalf("%v", d)
+	}
+	r.createTier("-")
+	r.createTier("-")
+	r.createTier("-") // one more than wanted
+	d = r.demandNow()
+	if dnum(d, "pilots_wanted") != 0 || dnum(d, "cancel_unsent") != 1 || tierNum(t, d, "big", "cancel_unsent") != 1 || tierNum(t, d, "big", "outstanding") != 3 {
+		t.Fatalf("three tierless pilots for one big and one standard need: %v", d)
+	}
+	checkSums(t, d)
+}
+
+// With three tiers, a big surplus covers the middle tier's need before the smallest's: a standard
+// pilot can serve the smallest need, never the middle one.
+func TestPilotDemandSurplusToLargerNeedFirst(t *testing.T) {
+	r := pilotTierRig(t, func(c *Config) {
+		c.Connectors[0].PilotTiers = []PilotTier{{"standard", 81920}, {"mid", 131072}, {"big", 196608}}
+		c.Projects[1].MinNodeCtx = 100000 // lab: mid
+	})
+	r.sessions("lab", testProjectKey, "p2m-v7", 2)
+	r.sessions("short", shortProjectKey, "other", 2)
+	r.createTier("big")
+	d := r.demandNow()
+	if tierNum(t, d, "mid", "pilots_wanted") != 0 || tierNum(t, d, "standard", "pilots_wanted") != 1 {
+		t.Fatalf("%v", d)
+	}
 }
