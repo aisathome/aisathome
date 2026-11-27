@@ -8,7 +8,7 @@ import type { GetStaticPaths } from 'astro';
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../../../data/prove2me';
 import { day } from '../../../../data/prove2me-current';
-import { THEOREMS_PATH, gpuH, nameOf, theoremFactsHTML, theoremPath, theoremReuseHTML, updatedText, type TheoremRow } from '../../../../data/prove2me-theorems';
+import { THEOREMS_PATH, ctaHTML, gpuH, nameOf, theoremFactsHTML, theoremPath, theoremReuseHTML, updatedText, type TheoremRow } from '../../../../data/prove2me-theorems';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
 import '../../../../styles/theorems.css';
 
@@ -47,6 +47,7 @@ const description = reuse
 	]}
 >
 	<p class="th-kicker">{reuse ? 'Closed by reuse' : 'Accepted by prove2me'} · {day(at)}</p>
+	<aside class="th-cta not-content" data-th-cta data-source="build" set:html={ctaHTML(t)} />
 	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
 	<script is:inline type="application/json" data-th-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
 
