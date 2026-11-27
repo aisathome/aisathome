@@ -5,11 +5,13 @@
 // to a question. Science comes before the ask: what the network does, then how small it is, then join it.
 // Its theme tokens live in styles/global.css and brand.css for the whole site.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Icon } from '@astrojs/starlight/components';
 import LiveStats from '../components/LiveStats.astro';
 import { cards, guarantees, hero, links, nodeBlock, steps } from '../data/home';
 import NodeStart from '../components/NodeStart.astro';
 import NodePageShot from '../components/NodePageShot.astro';
 import { posts, postURL, shortDate, isoDate } from '../data/devlog';
+import { discordPath } from '../data/discord';
 import { science } from '../data/science';
 import { p2m } from '../data/prove2me';
 import { historyOf, scienceView } from '../data/prove2me-records';
@@ -190,7 +192,10 @@ const icons: Record<string, string> = {
 						</li>
 					))}
 				</ol>
-				<a class="log-c-all" href="/devlog/">All dev log posts <span aria-hidden="true">→</span></a>
+				<p class="log-c-links">
+					<a class="log-c-all" href="/devlog/">All dev log posts <span aria-hidden="true">→</span></a>
+					<a class="log-c-all" href={discordPath} data-home-discord><Icon name="discord" size="1.15em" /> Join us on Discord <span aria-hidden="true">→</span></a>
+				</p>
 			</section>
 		)}
 
@@ -351,7 +356,8 @@ const icons: Record<string, string> = {
 	.log-c li a { font: 700 1.25rem/1.2 var(--font-display); letter-spacing: 0.01em; color: var(--sl-color-white); text-decoration: none; }
 	.log-c li a:hover { color: var(--sl-color-accent-high); text-decoration: underline; text-underline-offset: 3px; }
 	.log-c li p { margin-top: 0.2rem !important; font-size: 0.9rem; line-height: 1.5; color: var(--sl-color-gray-3); }
-	.log-c-all { display: inline-block; margin-top: 0.75rem; font-weight: 600; color: var(--sl-color-gray-2); }
+	.log-c-links { display: flex; flex-wrap: wrap; gap: 0 1.75rem; margin-top: 0.75rem !important; }
+	.log-c-all { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 600; color: var(--sl-color-gray-2); }
 	@media (max-width: 40rem) {
 		.log-c li { grid-template-columns: 2.25rem 1fr; }
 		.log-c li div { grid-column: 1 / -1; }
