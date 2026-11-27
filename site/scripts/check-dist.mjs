@@ -204,7 +204,8 @@ else {
 	for (const p of llmsProblems(llms, origin)) errors.push(`llms.txt: ${p}`);
 	for (const [, u] of llms.matchAll(/\]\((https:\/\/[^)\s]+)\)/g)) if (u.startsWith(`${origin}/`) && !exists(u)) errors.push(`llms.txt: broken link ${u}`);
 }
-// The share image: on every page, with its true size, and a description of its own on each page.
+// The share image: on every page (the site's, or a proved theorem's own card), with its true size, and a description of
+// its own on each page.
 const meta = (text, key) => text.match(new RegExp(`<meta (?:name|property)="${key.replace(/[.:]/g, '\\$&')}" content="([^"]*)"`))?.[1];
 const ogFile = join(dist, 'og.png');
 const og = existsSync(ogFile) ? pngSize(readFileSync(ogFile)) : null;
@@ -216,8 +217,15 @@ for (const f of html) {
 	const page = relative(dist, f);
 	if (page === '404.html') continue;
 	const text = readFileSync(f, 'utf8');
-	if (meta(text, 'og:image') !== `${origin}/og.png`) errors.push(`${page}: og:image is ${meta(text, 'og:image')}`);
-	if (og && (meta(text, 'og:image:width') !== String(og.width) || meta(text, 'og:image:height') !== String(og.height))) errors.push(`${page}: og:image size is not the PNG's ${og.width}x${og.height}`);
+	// the site's card, or a card of the page's own that the build drew (a proved theorem's: og-card.ts) at the same size
+	const image = meta(text, 'og:image') ?? '';
+	const own = image !== `${origin}/og.png` && /^\/science\/prove2me\/theorems\/([a-z0-9-]+\/)?og\.png$/.test(image.slice(origin.length)) && image.startsWith(`${origin}/`);
+	const ownFile = own ? join(dist, image.slice(origin.length)) : '';
+	const size = own ? (existsSync(ownFile) ? pngSize(readFileSync(ownFile)) : null) : og;
+	if (image !== `${origin}/og.png` && !own) errors.push(`${page}: og:image is ${image}`);
+	if (own && !size) errors.push(`${page}: og:image ${image} is not a PNG in the build`);
+	if (size && (meta(text, 'og:image:width') !== String(size.width) || meta(text, 'og:image:height') !== String(size.height))) errors.push(`${page}: og:image size is not the PNG's ${size.width}x${size.height}`);
+	if (own && size && statSync(ownFile).size > 1_000_000) errors.push(`${page}: og:image ${image} is over 1 MB`);
 	if (!meta(text, 'og:image:alt')) errors.push(`${page}: no og:image:alt`);
 	const title = text.match(/<title>([^<]*)<\/title>/)?.[1] ?? '';
 	if ((title.match(/AIs@home/g) ?? []).length > 1 && page !== 'index.html') errors.push(`${page}: the title names the brand twice: ${title}`);

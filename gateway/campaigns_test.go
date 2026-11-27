@@ -498,3 +498,96 @@ func TestScienceErrorsAreLogged(t *testing.T) {
 		}
 	}
 }
+
+// A result reached by reusing someone else's work records what it reused when it is written; a later
+// write without it (a retry, a verdict from a writer that does not know the field) keeps it; a PATCH by
+// the public id sets it on a result recorded before the field (a backfill), changes the labels, or
+// clears it. The reads show it, null for the project's own work.
+func TestResultReuse(t *testing.T) {
+	r := sciRig(t, t.TempDir())
+	r.want(201, "PUT", campPath+"/t8", testProjectKey, trialBody())
+	reuse := map[string]any{"name": "NestedSeatAlloc.IntPolicy.eq27_er1_clbi", "url": itemLink + "21543cdb", "author": "mikedeng1", "relation": "part"}
+
+	// recorded at submit time
+	b := resultBody("accepted")
+	b["labels"] = map[string]string{"kind": "reuse", "alias": "N05"}
+	b["reuse"] = reuse
+	res := r.want(201, "POST", resPath, testProjectKey, b)["result"].(map[string]any)
+	got, _ := res["reuse"].(map[string]any)
+	if got["name"] != reuse["name"] || got["url"] != reuse["url"] || got["author"] != "mikedeng1" || got["relation"] != "part" {
+		t.Fatalf("reuse at submit: %v", res)
+	}
+	id, updated := res["id"].(string), res["updated_at"]
+	// a writer that does not send it keeps it (its labels are its own)
+	b2 := resultBody("accepted")
+	b2["labels"] = map[string]string{"kind": "reuse", "alias": "N05"}
+	time.Sleep(1100 * time.Millisecond)
+	if out := r.want(200, "POST", resPath, testProjectKey, b2); out["result"].(map[string]any)["reuse"] == nil || out["result"].(map[string]any)["updated_at"] != updated {
+		t.Fatalf("a write without reuse dropped it or wrote: %v", out)
+	}
+
+	// a result of the project's own work, recorded before the field: null in the reads
+	own := resultBody("accepted")
+	own["external_id"], own["item"], own["submitted_at"] = "x-own", "p2m-3ad60f", "2026-11-17T13:00:00Z"
+	own["labels"] = map[string]string{"kind": "proof", "alias": "N18"}
+	ownID := r.want(201, "POST", resPath, testProjectKey, own)["result"].(map[string]any)["id"].(string)
+	out := r.want(200, "GET", resPath+"?item=p2m-3ad60f", "", nil)
+	if rs := out["results"].([]any); len(rs) != 1 || rs[0].(map[string]any)["reuse"] != nil {
+		t.Fatalf("own work reads with a reuse: %v", out)
+	}
+	if w, _ := r.call("GET", resPath, "", nil); !strings.Contains(w.Body.String(), `"reuse":null`) {
+		t.Errorf("no reuse is not null: %s", w.Body)
+	}
+
+	// the backfill: by the public id, with the project's key only
+	fix := map[string]any{"reuse": map[string]any{"name": "WilliamsonShmoys.edge_count_upper", "url": itemLink + "896d696c", "author": "Eyal1990", "relation": "import"},
+		"labels": map[string]string{"kind": "reuse", "alias": "N18", "trial": "t9"}}
+	r.want(401, "PATCH", resPath+"/"+ownID, "", fix)
+	r.want(403, "PATCH", resPath+"/"+ownID, otherProjectKey, fix)
+	r.want(404, "PATCH", resPath+"/r-0000000000000000", testProjectKey, fix)
+	r.want(404, "PATCH", resPath+"/nope", testProjectKey, fix)
+	for _, bad := range []map[string]any{
+		{},
+		{"state": "rejected"},
+		{"reuse": map[string]any{"url": itemLink + "896d696c"}},
+		{"reuse": map[string]any{"name": "x", "url": "https://elsewhere.example/896d696c"}},
+		{"reuse": map[string]any{"name": "x", "author": "two words"}},
+		{"reuse": map[string]any{"name": "x", "relation": "Not A Kind"}},
+		{"reuse": map[string]any{"name": "x", "extra": "y"}},
+		{"reuse": "x"},
+		{"labels": map[string]string{"Bad Key": "x"}},
+	} {
+		r.want(400, "PATCH", resPath+"/"+ownID, testProjectKey, bad)
+	}
+	out = r.want(200, "PATCH", resPath+"/"+ownID, testProjectKey, fix)
+	res = out["result"].(map[string]any)
+	if out["changed"] != true || res["reuse"].(map[string]any)["author"] != "Eyal1990" || res["labels"].(map[string]any)["kind"] != "reuse" ||
+		res["labels"].(map[string]any)["trial"] != "t9" || res["state"] != "accepted" || res["external_id"] != nil {
+		t.Fatalf("backfill: %v", out)
+	}
+	updated = res["updated_at"]
+	time.Sleep(1100 * time.Millisecond)
+	// again: nothing changes (a backfill can run twice)
+	if out := r.want(200, "PATCH", resPath+"/"+ownID, testProjectKey, fix); out["changed"] != false || out["result"].(map[string]any)["updated_at"] != updated {
+		t.Fatalf("a repeated backfill wrote: %v", out)
+	}
+	// the writer's later retry with its old labels keeps the reuse
+	if res := r.want(200, "POST", resPath, testProjectKey, own)["result"].(map[string]any); res["reuse"] == nil || res["labels"].(map[string]any)["kind"] != "proof" {
+		t.Fatalf("a retry after the backfill: %v", res)
+	}
+	// reuse alone, labels untouched; then null clears it
+	if res := r.want(200, "PATCH", resPath+"/"+ownID, testProjectKey, map[string]any{"reuse": nil})["result"].(map[string]any); res["reuse"] != nil || res["labels"].(map[string]any)["alias"] != "N18" {
+		t.Fatalf("cleared: %v", res)
+	}
+	// labels only: the reuse of the first result stays
+	if res := r.want(200, "PATCH", resPath+"/"+id, testProjectKey, map[string]any{"labels": map[string]string{"kind": "reuse"}})["result"].(map[string]any); res["reuse"] == nil || len(res["labels"].(map[string]any)) != 1 {
+		t.Fatalf("labels only: %v", res)
+	}
+
+	// a reuse that breaks the rules is refused at submit time too
+	for _, bad := range []map[string]any{{"name": ""}, {"name": "x", "url": "http://items.example/theorems/1"}, {"name": strings.Repeat("x", 201)}} {
+		b := resultBody("accepted")
+		b["reuse"] = bad
+		r.want(400, "POST", resPath, testProjectKey, b)
+	}
+}

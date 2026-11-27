@@ -299,7 +299,15 @@ kept in the science database. What they mean for a project stays in its labels a
   verdict on a submitted proof): `source` (`prove2me`), `external_id` (the service's own id),
   `campaign`, `item`, `task` (the gateway task that produced it; all three optional), `url`, `state`
   (`pending`, `accepted`, `rejected`, `error`), `verdict` (the service's text, at most 1000 bytes),
-  `labels`, `submitted_at` and `verdict_at`.
+  `labels`, `reuse`, `submitted_at` and `verdict_at`.
+- A result's **`reuse`** says it was reached by reusing someone else's work, not the project's own
+  (prove2me: an accepted submission whose proof is a theorem another user had already proved). It
+  is `null` for the project's own work, else `{name, url, author, relation}`: the reused thing's name
+  (at most 200 bytes, required), its page (under the project's `public_links`), its author (a public
+  username on the outside service, 1-64 letters, digits, `.`, `_`, `-`) and how the result relates to
+  it (a lower-case kind such as `same`, `part` or `import`). The writer sends it with the result. A
+  later write without it keeps it, so a retry or a verdict from a writer that does not know the field
+  never clears it; a `PATCH` sets, changes or clears it (`"reuse": null`).
 
 Writes take the project's own key (401 without one, 403 with another project's):
 
@@ -308,11 +316,17 @@ PUT    /v1/projects/{id}/campaigns/{campaign}   create or replace the whole camp
 PATCH  /v1/projects/{id}/campaigns/{campaign}   change the fields given; finish: {"status": "finished"}
 DELETE /v1/projects/{id}/campaigns/{campaign}   remove it (409 while results refer to it)
 POST   /v1/projects/{id}/results                create or update, by (source, external_id): 201, or 200
+PATCH  /v1/projects/{id}/results/{result}       change its reuse or labels, by its public id: 200
 DELETE /v1/projects/{id}/results/{result}       remove it
 ```
 
-Both writes are idempotent: the same body again answers 200 with `"created": false` and changes
-nothing (not even `updated_at`). The rules for times: a campaign that becomes `running` gets
+A result's `PATCH` takes `reuse` (an object, or `null`) and `labels` (the whole set), either or both;
+its answer is `{"changed": ..., "result": ...}` without the external id. It corrects a result, or
+backfills `reuse` on results recorded before the field, without the service's id, which only the
+writer has.
+
+The writes are idempotent: the same body again answers 200 with `"created": false` (a result's
+`PATCH`: `"changed": false`) and changes nothing (not even `updated_at`). The rules for times: a campaign that becomes `running` gets
 `started_at` now unless it has one, one that becomes `finished` gets `ended_at` now unless it has one,
 and one that is not finished has no `ended_at` (reopening clears it). A result that is not `pending`
 gets `verdict_at` now unless it has one. A result with a verdict never goes back to `pending`: a late
