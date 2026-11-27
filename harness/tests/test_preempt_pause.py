@@ -355,6 +355,19 @@ class RoundTime(unittest.TestCase):
             self.assertEqual((len(rig.kw), run["exit"]), (5, 1))   # the error after the stop is not resumed
             self.assertEqual(run["resumed"], 3)                     # 2 errors and the stop
 
+    def test_the_resume_after_a_give_back_counts_the_error_resumes_before_it(self):
+        """The give-back's segment makes the resume after it free, but nothing comes after it in its own
+        run.json: two endpoint errors and the give-back have used two of max_resumes (3), so the resume has one
+        left for a third error and ends on a fourth (it once had two, and run.json said resumed: 1)."""
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), self.T)
+            run = rig.run([self.BAD, self.BAD, {"waited": 40, "exhausted": True}])
+            self.assertEqual((run["resumed"], run["preempt_wait_exhausted"]), (2, True))   # the two errors
+            run = rig.run([self.BAD, self.BAD, {"done": True}], resume=True)
+            self.assertEqual((len(rig.kw), run["exit"]), (5, 1))   # the third error resumed, the fourth not
+            self.assertEqual(run["resumed"], 3)                     # 3 errors, not the give-back
+            self.assertEqual(rig.slept, [loop.Timing.gateway_backoff_s * k for k in (1, 2, 3)])
+
     def test_a_run_json_from_before_the_preemption_pause_resumes(self):
         """A partial run.json that a harness without the pause wrote (no preemption fields in it or its
         segments) resumes with the pause on: the round's wait cap is whole, its stop counts as an interruption."""

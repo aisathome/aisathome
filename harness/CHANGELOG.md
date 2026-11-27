@@ -20,6 +20,14 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   now includes it. The record's format is unchanged: a partial run.json written by an earlier harness resumes with
   one resume fewer left than before, as it should have had. A later endpoint-error resume's backoff
   (`gateway_backoff_s` times the resumes so far) grows by one step accordingly.
+- **A resume after a give-back counts the resumes before it.** The segment that ends on a give-back (the
+  preemption wait cap spent) frees the resume after it from `max_resumes`, but the count subtracted it even when
+  nothing came after it yet. A finished run.json that ended on a give-back said one resume fewer than were used,
+  and the session's resume after the give-back allowed one endpoint-error (or suspend) resume more than
+  `max_resumes`. The same held for a round that ended with its budget spent right after a nudge. A mark now frees
+  only a segment that follows it. The record's format is unchanged: a run.json that ended on a give-back after
+  N > 0 resumes, written by an earlier harness, now resumes with `max_resumes - N` resumes left instead of one
+  more, and a later endpoint-error resume's backoff grows by one step accordingly.
 
 ## [0.4.0] - unreleased
 
