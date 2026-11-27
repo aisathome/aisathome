@@ -19,10 +19,10 @@ import (
 type MySQL struct {
 	db    *sql.DB
 	batch int
-	app   string
+	apps  []string // the bridge's BOINC apps, one per tier
 
-	mu    sync.Mutex
-	appID int64
+	mu     sync.Mutex
+	appIDs map[int64]string // app id → name, once all are found
 }
 
 // OpenMySQL opens the project's database: with the DSN in cfg.DBDSNFile, or else with the
@@ -52,17 +52,17 @@ func OpenMySQL(cfg Config) (*MySQL, error) {
 	}
 	db.SetMaxOpenConns(2)
 	db.SetConnMaxLifetime(10 * time.Minute)
-	return &MySQL{db: db, batch: cfg.Batch, app: cfg.App}, nil
+	return &MySQL{db: db, batch: cfg.Batch, apps: cfg.Apps()}, nil
 }
 
 // NewMySQL wraps an open database (tests).
-func NewMySQL(db *sql.DB, batch int, app string) *MySQL {
-	return &MySQL{db: db, batch: batch, app: app}
+func NewMySQL(db *sql.DB, batch int, apps ...string) *MySQL {
+	return &MySQL{db: db, batch: batch, apps: apps}
 }
 
 func (m *MySQL) Close() error { return m.db.Close() }
 
-// Ping checks the connection and that the app exists.
+// Ping checks the connection and that every app exists.
 func (m *MySQL) Ping(ctx context.Context) error {
 	if err := m.db.PingContext(ctx); err != nil {
 		return err
@@ -71,20 +71,37 @@ func (m *MySQL) Ping(ctx context.Context) error {
 	return err
 }
 
-func (m *MySQL) appIDFor(ctx context.Context) (int64, error) {
+// appIDFor returns the bridge's apps by id; an app missing from the project is an error.
+func (m *MySQL) appIDFor(ctx context.Context) (map[int64]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.appID != 0 {
-		return m.appID, nil
+	if m.appIDs != nil {
+		return m.appIDs, nil
 	}
-	err := m.db.QueryRowContext(ctx, "SELECT id FROM app WHERE name = ?", m.app).Scan(&m.appID)
-	if err == sql.ErrNoRows {
-		return 0, fmt.Errorf("no BOINC app %q", m.app)
+	if len(m.apps) == 0 {
+		return nil, fmt.Errorf("no BOINC app configured")
 	}
-	return m.appID, err
+	ids := map[int64]string{}
+	for _, name := range m.apps {
+		var id int64
+		err := m.db.QueryRowContext(ctx, "SELECT id FROM app WHERE name = ?", name).Scan(&id)
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no BOINC app %q", name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		ids[id] = name
+	}
+	m.appIDs = ids
+	return ids, nil
 }
 
 func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error) {
+	apps, err := m.appIDFor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]Job, len(names))
 	for len(names) > 0 {
 		n := min(len(names), 200)
@@ -97,7 +114,7 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 		}
 		// The work unit's one result, if the transitioner made it; ordered so that a later result
 		// (there should be none) wins.
-		rows, err := m.db.QueryContext(ctx, `SELECT w.name, w.error_mask, r.id, r.server_state, r.outcome,
+		rows, err := m.db.QueryContext(ctx, `SELECT w.name, w.appid, w.error_mask, r.id, r.server_state, r.outcome,
 				r.validate_state, r.userid, r.hostid, r.teamid, r.opaque
 			FROM workunit w LEFT JOIN result r ON r.workunitid = w.id
 			WHERE w.batch = ? AND w.name IN (?`+strings.Repeat(",?", n-1)+`)
@@ -107,10 +124,11 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 		}
 		for rows.Next() {
 			var name string
+			var appID int64
 			var j Job
 			var rid, state, outcome, vstate, user, host, team sql.NullInt64
 			var opaque sql.NullFloat64
-			if err := rows.Scan(&name, &j.ErrorMask, &rid, &state, &outcome, &vstate, &user, &host, &team, &opaque); err != nil {
+			if err := rows.Scan(&name, &appID, &j.ErrorMask, &rid, &state, &outcome, &vstate, &user, &host, &team, &opaque); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -120,6 +138,11 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 				j.User, j.Host, j.Team = user.Int64, host.Int64, team.Int64
 				j.Claimed = opaque.Float64 != 0
 			}
+			app, ok := apps[appID]
+			if !ok {
+				continue // another app's work unit with this name: not the bridge's
+			}
+			j.App = app
 			out[name] = j
 		}
 		if err := rows.Close(); err != nil {
@@ -133,19 +156,23 @@ func (m *MySQL) Jobs(ctx context.Context, names []string) (map[string]Job, error
 }
 
 func (m *MySQL) AwaitingCredit(ctx context.Context, afterID int64, limit int) ([]Awaiting, error) {
-	app, err := m.appIDFor(ctx)
+	apps, err := m.appIDFor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// result's (appid, server_state) index narrows it to the app's finished results. Inconclusive
+	ids := make([]any, 0, len(apps))
+	for id := range apps {
+		ids = append(ids, id)
+	}
+	// result's (appid, server_state) index narrows it to the apps' finished results. Inconclusive
 	// too, so that the bridge can report it: the pilot validator never leaves a result there (the
 	// bridge runs it only once the file is written), but a pass of another validator would, and
 	// BOINC does not ask again for an inconclusive result.
-	rows, err := m.db.QueryContext(ctx, `SELECT r.id, w.id, w.name, r.validate_state, r.opaque FROM result r JOIN workunit w ON w.id = r.workunitid
-		WHERE r.appid = ? AND r.server_state = ? AND r.outcome = ? AND r.validate_state IN (?, ?) AND w.batch = ?
+	args := append(ids, ServerStateOver, OutcomeSuccess, ValidateStateInit, ValidateStateInconclusive, m.batch, afterID, limit)
+	rows, err := m.db.QueryContext(ctx, `SELECT r.id, w.id, w.name, r.appid, r.validate_state, r.opaque FROM result r JOIN workunit w ON w.id = r.workunitid
+		WHERE r.appid IN (?`+strings.Repeat(",?", len(ids)-1)+`) AND r.server_state = ? AND r.outcome = ? AND r.validate_state IN (?, ?) AND w.batch = ?
 			AND r.id > ?
-		ORDER BY r.id LIMIT ?`, app, ServerStateOver, OutcomeSuccess, ValidateStateInit, ValidateStateInconclusive,
-		m.batch, afterID, limit)
+		ORDER BY r.id LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +180,12 @@ func (m *MySQL) AwaitingCredit(ctx context.Context, afterID int64, limit int) ([
 	var out []Awaiting
 	for rows.Next() {
 		var a Awaiting
+		var appID int64
 		var opaque float64
-		if err := rows.Scan(&a.ResultID, &a.WorkunitID, &a.Name, &a.ValidateState, &opaque); err != nil {
+		if err := rows.Scan(&a.ResultID, &a.WorkunitID, &a.Name, &appID, &a.ValidateState, &opaque); err != nil {
 			return nil, err
 		}
+		a.App = apps[appID]
 		a.Claimed = opaque != 0
 		out = append(out, a)
 	}

@@ -55,7 +55,7 @@ func TestExecToolsCreateWork(t *testing.T) {
 	if err := tl.Stage(ctx, "pc-p-0123456789ab-ff", []byte("x")); err == nil {
 		t.Error("staged over an existing file")
 	}
-	if err := tl.CreateWork(ctx, "p-0123456789ab", "pc-p-0123456789ab-ff"); err != nil {
+	if err := tl.CreateWork(ctx, "p-0123456789ab", "pc-p-0123456789ab-ff", cfg.tiers()[0]); err != nil {
 		t.Fatal(err)
 	}
 	want := strings.Join([]string{"--appname", "pilot", "--wu_name", "p-0123456789ab", "--batch", "2",
@@ -80,6 +80,22 @@ func TestExecToolsCreateWork(t *testing.T) {
 	}
 }
 
+func TestExecToolsCreateWorkInTheTiersApp(t *testing.T) {
+	cfg := fakeProject(t, "")
+	tier := Tier{Name: "standard", App: "pilot_std", Model: RemoteFile{URL: "https://example.org/q3.gguf", NBytes: 13146393504, MD5: strings.Repeat("b", 32)}}
+	if err := NewExecTools(cfg).CreateWork(ctx, "p-0123456789ab", "pc-p-0123456789ab-ff", tier); err != nil {
+		t.Fatal(err)
+	}
+	got := argsLog(t, cfg)
+	if !strings.HasPrefix(got, "--appname\npilot_std\n") ||
+		!strings.Contains(got, "--remote_file\nhttps://example.org/q3.gguf\n13146393504\n"+strings.Repeat("b", 32)+"\npc-p-0123456789ab-ff\n") {
+		t.Errorf("create_work args for the standard tier:\n%s", got)
+	}
+	if err := NewExecTools(cfg).CreateWork(ctx, "p-0123456789ab", "f", Tier{App: "-x"}); err == nil {
+		t.Error("create_work with an odd app name")
+	}
+}
+
 func TestExecToolsRefusesOddPaths(t *testing.T) {
 	cfg := fakeProject(t, `echo /etc/$1`)
 	if err := NewExecTools(cfg).Stage(ctx, "pc-x", []byte("x")); err == nil {
@@ -93,7 +109,7 @@ func TestExecToolsRefusesOddPaths(t *testing.T) {
 	}
 	// A failing program: its output is in the error, shortened.
 	os.WriteFile(filepath.Join(cfg.ProjectDir, "bin", "create_work"), []byte("#!/bin/sh\necho 'no such template' >&2\nexit 1\n"), 0o755)
-	err := NewExecTools(cfg).CreateWork(ctx, "p-0123456789ab", "f")
+	err := NewExecTools(cfg).CreateWork(ctx, "p-0123456789ab", "f", cfg.tiers()[0])
 	if err == nil || !strings.Contains(err.Error(), "no such template") {
 		t.Errorf("create_work failure: %v", err)
 	}
@@ -132,7 +148,7 @@ func TestCheckNotListed(t *testing.T) {
 func TestExecToolsValidate(t *testing.T) {
 	cfg := fakeProject(t, "")
 	cfg.Validator, cfg.MaxGrantedCredit = "bin/pilot_validator", 150000
-	if _, err := NewExecTools(cfg).Validate(ctx, 4321); err != nil {
+	if _, err := NewExecTools(cfg).Validate(ctx, 4321, "pilot"); err != nil {
 		t.Fatal(err)
 	}
 	want := strings.Join([]string{"--app", "pilot", "--one_pass", "--one_pass_N_WU", "1", "--min_wu_id", "4321",
@@ -141,8 +157,18 @@ func TestExecToolsValidate(t *testing.T) {
 	if got := argsLog(t, cfg); got != want {
 		t.Errorf("validator args:\n%s\nwant:\n%s", got, want)
 	}
+	// Another tier's app: its validator run names that app.
+	if _, err := NewExecTools(cfg).Validate(ctx, 7, "pilot_std"); err != nil {
+		t.Fatal(err)
+	}
+	if got := argsLog(t, cfg); !strings.Contains(got, "--\n--app\npilot_std\n--one_pass\n") {
+		t.Errorf("validator args for pilot_std: %q", got)
+	}
+	if _, err := NewExecTools(cfg).Validate(ctx, 7, "-x"); err == nil {
+		t.Error("ran the validator with an odd app name")
+	}
 	cfg.Validator = ""
-	if _, err := NewExecTools(cfg).Validate(ctx, 1); err == nil {
+	if _, err := NewExecTools(cfg).Validate(ctx, 1, "pilot"); err == nil {
 		t.Error("ran without a validator")
 	}
 }

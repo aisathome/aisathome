@@ -35,6 +35,8 @@ const (
 // Job is what BOINC holds for one pilot's work unit. A pilot's work unit has exactly one result
 // (max_total_results 1 in its input template), so a job is the work unit and that result.
 type Job struct {
+	// App is the work unit's BOINC app (its tier's).
+	App       string
 	ErrorMask int
 	// HasResult: the transitioner has made the result (it does so shortly after create_work).
 	HasResult     bool
@@ -95,7 +97,7 @@ func (j Job) reported() (string, bool) {
 // through BOINC's tools, and credit reaches BOINC through the validator.
 type Store interface {
 	// Jobs returns the bridge's work units among names (pilot ids), by name. A name with no work
-	// unit of the bridge's batch is missing from the map.
+	// unit of the bridge's batch in one of its apps is missing from the map.
 	Jobs(ctx context.Context, names []string) (map[string]Job, error)
 	// AwaitingCredit returns up to limit of the bridge's work units whose result succeeded and
 	// waits for the validator (not validated yet, or inconclusive), in result id order, after the
@@ -109,6 +111,7 @@ type Awaiting struct {
 	ResultID      int64
 	WorkunitID    int64
 	Name          string
+	App           string // the work unit's BOINC app, whose validator grants it
 	ValidateState int
 	Claimed       bool
 }
@@ -119,13 +122,14 @@ type Tools interface {
 	Stage(ctx context.Context, name string, content []byte) error
 	// Unstage removes a staged input file that no work unit uses.
 	Unstage(ctx context.Context, name string) error
-	// CreateWork makes a pilot's work unit, named after the pilot, with the staged credential file.
-	CreateWork(ctx context.Context, name, credentialFile string) error
+	// CreateWork makes a pilot's work unit, named after the pilot, in the tier's app with its model
+	// and the staged credential file.
+	CreateWork(ctx context.Context, name, credentialFile string, tier Tier) error
 	// Cancel cancels a work unit (its unsent result is not sent).
 	Cancel(ctx context.Context, name string) error
-	// Validate runs the app's validator on one work unit, whose credit file is written. It returns
-	// the end of the validator's output, for the log when the run did not grant.
-	Validate(ctx context.Context, workunitID int64) (string, error)
+	// Validate runs the validator for app on one of its work units, whose credit file is written.
+	// It returns the end of the validator's output, for the log when the run did not grant.
+	Validate(ctx context.Context, workunitID int64, app string) (string, error)
 }
 
 // Account is what am_get_info.php says about a BOINC user.

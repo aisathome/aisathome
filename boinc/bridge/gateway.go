@@ -52,6 +52,18 @@ type Demand struct {
 	CancelUnsent int            `json:"cancel_unsent"`
 	Target       int            `json:"target"`
 	Pilots       map[string]int `json:"pilots"`
+	// Tiers is the demand per pilot tier, when the connector has pilot_tiers (the totals above are
+	// their sums).
+	Tiers map[string]TierDemand `json:"tiers,omitempty"`
+}
+
+// TierDemand is one tier's part of the demand.
+type TierDemand struct {
+	Target       int `json:"target"`
+	Wanted       int `json:"pilots_wanted"`
+	CancelUnsent int `json:"cancel_unsent"`
+	Outstanding  int `json:"outstanding"`
+	Unsent       int `json:"unsent"`
 }
 
 // Pilot is a pilot's record (the fields the bridge uses).
@@ -63,6 +75,7 @@ type Pilot struct {
 	Host     string    `json:"host"`
 	Team     string    `json:"team"`
 	Created  time.Time `json:"created_at"`
+	Tier     string    `json:"tier"`
 }
 
 // Pilot states at the gateway.
@@ -109,13 +122,18 @@ func (g *Gateway) Demand(ctx context.Context) (Demand, error) {
 	return d, g.call(ctx, "GET", "/demand", nil, &d)
 }
 
-// CreatePilot creates a pilot; the credential is in the answer only.
-func (g *Gateway) CreatePilot(ctx context.Context, deadline time.Time) (Pilot, string, error) {
+// CreatePilot creates a pilot of tier ("" for a connector without pilot_tiers); the credential
+// is in the answer only.
+func (g *Gateway) CreatePilot(ctx context.Context, deadline time.Time, tier string) (Pilot, string, error) {
 	var out struct {
 		Pilot      Pilot  `json:"pilot"`
 		Credential string `json:"credential"`
 	}
-	err := g.call(ctx, "POST", "/pilots", map[string]any{"deadline": deadline.UTC().Format(time.RFC3339)}, &out)
+	body := map[string]any{"deadline": deadline.UTC().Format(time.RFC3339)}
+	if tier != "" {
+		body["tier"] = tier
+	}
+	err := g.call(ctx, "POST", "/pilots", body, &out)
 	if err == nil && (out.Pilot.ID == "" || out.Credential == "") {
 		err = errors.New("gateway: a pilot without id or credential")
 	}
