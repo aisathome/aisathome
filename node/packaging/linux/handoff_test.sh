@@ -96,6 +96,10 @@ case "$1" in
     esac ;;
   stop|start|restart)
     verb="$1"; shift
+    # $st/start-fails: systemd refuses a start of the node (its start limit, say).
+    if [[ $verb = start && " $* " == *" aisathome-node "* && -e "$st/start-fails" ]]; then
+      echo "start refused aisathome-node" >> "$st/systemctl.log"; exit 1
+    fi
     for u in "$@"; do
       u="${u%.service}"
       case "$u" in aisathome-node|aisathome-llama) ;; *) continue ;; esac
@@ -135,6 +139,9 @@ esac
 SH
 # journalctl: llama-server's log as $st/journal has it (none: a clean start).
 printf '#!/bin/sh\ncat "$HANDOFF_STATE/journal" 2>/dev/null\nexit 0\n' > "$tmp/stubs/journalctl"
+# sleep: none while $st/fast-sleep is there (the installer's 3-minute wait for an engine that never answers
+# /health), the real one otherwise.
+printf '#!/bin/sh\n[ -e "$HANDOFF_STATE/fast-sleep" ] && exit 0\nexec /bin/sleep "$@"\n' > "$tmp/stubs/sleep"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/useradd"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/userdel"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/chown"
@@ -175,11 +182,17 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def reply(self, obj):
         b = json.dumps(obj).encode(); self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
-    def do_GET(self): self.reply({"status": "ok"})
+    def do_GET(self):
+        # $st/health: "bad" answers 503 (an engine that never comes up).
+        try: bad = open(os.path.join(sys.argv[1], "health")).read().strip() == "bad"
+        except OSError: bad = False
+        if bad: self.send_response(503); self.end_headers(); return
+        self.reply({"status": "ok"})
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if self.path == "/tokenize": return self.reply({"tokens": list(range(len(body["content"].split())))})
         tps = float(open(os.path.join(sys.argv[1], "tps")).read())
+        if tps < 0: self.send_response(500); self.end_headers(); return  # a generation that fails
         self.reply({"timings": {"prompt_n": len(body["prompt"]), "prompt_ms": 1000.0, "predicted_per_second": tps}})
 HTTPServer(("127.0.0.1", 8000), H).serve_forever()
 PY
@@ -251,7 +264,7 @@ node_bin="$tmp/bin/aisathome-node"
 # fresh: a machine with nothing installed.
 fresh() {
   rm -rf "$conf" /opt/aisathome-node /var/lib/aisathome-node /etc/systemd/system/aisathome-* /usr/local/bin/aisathome-node
-  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held "$st"/*.register "$st/journal"
+  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held "$st"/*.register "$st/journal" "$st/health" "$st/start-fails" "$st/fast-sleep"
   echo 30 > "$st/tps"; : > "$st/systemctl.log"
 }
 # seed <gateway> [<token> [<record>|-]]: an earlier install: node.json for gateway (node id box-1),
@@ -729,6 +742,40 @@ want_code "gateway change, no GPU: token back, stopped and disabled" 1
 unbooted "gateway change, no GPU: token back, stopped and disabled"; token_is "gateway change, no GPU: token back, stopped and disabled" "$toka" "$gwa"
 grep -q "^start aisathome-node" "$st/systemctl.log" && fail "gateway change, no GPU: token back, stopped and disabled: started: $(cat "$st/systemctl.log")"
 rm -f "$st/journal"
+
+# A speed test that failed (HTTP 500 on a generation while /health answers) on an update: stopped and
+# disabled, as on a first install, never back in front of the gateway.
+seed "$gwa" "$toka"; echo -1 > "$st/tps"
+inst -- --keep-token
+want_code "update, speed test failed: stopped and disabled" 1; has "update, speed test failed: stopped and disabled" "the speed test failed"
+unbooted "update, speed test failed: stopped and disabled"; token_is "update, speed test failed: stopped and disabled" "$toka" "$gwa"
+grep -q "^start aisathome-node" "$st/systemctl.log" && fail "update, speed test failed: stopped and disabled: started: $(cat "$st/systemctl.log")"
+
+# An update whose slow speed test is followed by a start that systemd refuses: it says so, not "runs again".
+seed "$gwa" "$toka"; slow; touch "$st/start-fails"
+inst -- --keep-token
+want_code "update, slow, start refused: says it did not start" 1
+has "update, slow, start refused: says it did not start" "the node did not start again: sudo systemctl start aisathome-node"
+lacks "update, slow, start refused: says it did not start" "runs again"; booted "update, slow, start refused: says it did not start"
+
+# An engine that never answers /health (no wait: fast-sleep). Out of GPU memory on an update: stopped, start at
+# boot unchanged. On a first install: stopped and disabled. llama-server that fell back to the CPU and then
+# could not allocate: stopped and disabled on an update too (the no-GPU case, not out of GPU memory).
+seed "$gwa" "$toka"; touch "$st/fast-sleep"; echo bad > "$st/health"
+echo "cudaMalloc failed: out of memory" > "$st/journal"
+inst -- --keep-token
+want_code "update, out of GPU memory: stopped, boot unchanged" 1; has "update, out of GPU memory: stopped, boot unchanged" "ran out of GPU memory"
+booted "update, out of GPU memory: stopped, boot unchanged"; states "update, out of GPU memory: stopped, boot unchanged" inactive inactive
+fresh; touch "$st/fast-sleep"; echo bad > "$st/health"; echo "cudaMalloc failed: out of memory" > "$st/journal"
+inst -- --anonymous --enable-at-boot --gateway-url "$gwa"
+want_code "first install, out of GPU memory: stopped and disabled" 1; unbooted "first install, out of GPU memory: stopped and disabled"
+seed "$gwa" "$toka"; touch "$st/fast-sleep"; echo bad > "$st/health"
+printf '%s\n' "warning: no usable GPU found, --gpu-layers option will be ignored" "llama_model_load: error loading model: unable to allocate CPU buffer" > "$st/journal"
+inst -- --keep-token
+want_code "update, CPU fallback then out of memory: stopped and disabled" 1
+has "update, CPU fallback then out of memory: stopped and disabled" "ran on the CPU, so the installer stopped it"
+unbooted "update, CPU fallback then out of memory: stopped and disabled"
+rm -f "$st/journal" "$st/health" "$st/fast-sleep"; echo 30 > "$st/tps"
 
 if [[ $fails -gt 0 ]]; then echo "handoff: $fails failure(s)"; exit 1; fi
 echo "handoff: all tests passed"

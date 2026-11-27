@@ -814,7 +814,8 @@ eval "$(sed -n '/^speed_probe() {/,/^}/p;/^speed_check() {/,/^}/p;/^after_failed
 die() { echo "$1"; return 1; }
 speed() {  # speed <tokens/s the fake reports> [min]: runs speed_check, sets out and code (UPD: "updating node_on_before llama_on_before")
   echo "$1" > "$fs/tps"; : > "$e/systemctl.log"
-  out="$(export PATH="$e:$PATH"; read -r updating node_on_before llama_on_before <<<"${UPD:-0 0 0}"; engine_url="http://127.0.0.1:$(cat "$fs/port")" speed_ctx=32000 min_tps="${2:-20}" \
+  # die ends the run here, as in the installer (the "return 1" stand-in would run on past a failed probe).
+  out="$(die() { echo "$1"; exit 1; }; export PATH="$e:$PATH"; read -r updating node_on_before llama_on_before <<<"${UPD:-0 0 0}"; engine_url="http://127.0.0.1:$(cat "$fs/port")" speed_ctx=32000 min_tps="${2:-20}" \
     gpu_idx=0 gpu_name="NVIDIA GeForce RTX 5060 Ti" speed_check 2>&1)"; code=$?
   out+=$'\n'"$(cat "$e/systemctl.log")"
 }
@@ -841,8 +842,12 @@ has "update, speed too slow" "systemctl start aisathome-node"; lacks "update, sp
 UPD="1 0 0" speed 13.8
 has "update of a stopped node, speed too slow" "the node is stopped as it was before it"
 has "update of a stopped node, speed too slow" "systemctl stop aisathome-node"$'\n'"systemctl stop aisathome-llama"; lacks "update of a stopped node, speed too slow" "disable"
+# A speed test that failed (the engine answers /health but not a generation): stopped and disabled on an
+# update too, never put back in front of the gateway.
 UPD="1 1 1" speed -1
-has "update, speed test error" "the speed test failed (HTTPError"; has "update, speed test error" "systemctl start aisathome-node"; lacks "update, speed test error" "disable"
+[[ $code -eq 1 ]] || fail "update, speed test error: exit $code, want 1"
+has "update, speed test error" "the speed test failed (HTTPError"; has "update, speed test error" "so the installer stopped the node"
+has "update, speed test error" "systemctl disable --now aisathome-node aisathome-llama"; lacks "update, speed test error" "systemctl start"
 kill "$fspid" 2>/dev/null; wait "$fspid" 2>/dev/null
 unset -f speed_probe speed_check speed die after_failed_check
 
