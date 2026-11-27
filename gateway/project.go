@@ -66,6 +66,12 @@ type Project struct {
 	// PilotProbationOK lets the project's agents (with AgentOK) use connector pilots whose account is
 	// still in probation (science only: Lean checks every proof).
 	PilotProbationOK bool `json:"pilot_probation_ok,omitempty"`
+	// MinNodeCtx keeps the project's sessions off nodes with a small context: its requests for a role
+	// ("agent") reach only models that announce at least this many tokens of context (or none), and the
+	// pilots its demand asks for come from a tier that large (connector.go, pilot_tiers). A session can
+	// grow long, and one started on a small node fails there once it outgrows it. A request that names
+	// a model itself is not held to it (it chose that model). 0 = no floor.
+	MinNodeCtx int `json:"min_node_ctx,omitempty"`
 	// LegacyMinTrust is the removed "min_trust" (removed.go): accepted and ignored.
 	LegacyMinTrust string `json:"min_trust,omitempty"`
 	// RPM and Concurrent limit the project's requests (all keys together); 0 = unlimited.
@@ -151,7 +157,7 @@ func newProjectTable(ps []Project) (*projectTable, error) {
 		if t.byID[p.ID] != nil {
 			return nil, fmt.Errorf("project %q is defined twice", p.ID)
 		}
-		if p.DailyTokens < 0 || p.RPM < 0 || p.Concurrent < 0 || p.QueueTimeoutSec < 0 {
+		if p.DailyTokens < 0 || p.RPM < 0 || p.Concurrent < 0 || p.QueueTimeoutSec < 0 || p.MinNodeCtx < 0 {
 			return nil, fmt.Errorf("project %q: limits must not be negative", p.ID)
 		}
 		if math.IsNaN(p.MaxNodeShare) || p.MaxNodeShare < 0 || p.MaxNodeShare > 1 {

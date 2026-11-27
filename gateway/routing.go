@@ -81,6 +81,9 @@ type route struct {
 	pilotProbationOK bool
 	// rules: the chat rules apply to this gateway (chatrules.go).
 	rules bool
+	// minCtx: the project's min_node_ctx. A request for a role reaches only models with at least this
+	// context (or none announced); one that names the model itself is not held to it. 0 = no floor.
+	minCtx int
 }
 
 // forProject makes rt a request of project p: science, within p's share of the nodes, and on pilots
@@ -88,7 +91,28 @@ type route struct {
 // may run p's work (scienceRoute) take p's rules from here.
 func (rt *route) forProject(p *Project) *route {
 	rt.class, rt.project, rt.share, rt.pilotProbationOK = ClassScience, p.ID, p.MaxNodeShare, p.PilotProbationOK
+	rt.minCtx = p.MinNodeCtx
 	return rt
+}
+
+// clearsFloor reports whether model m has the context rt's project asks of a node (min_node_ctx): a
+// model that announces none is assumed to, as in fits.
+func (rt *route) clearsFloor(m protocol.ModelInfo) bool {
+	return rt.minCtx <= 0 || m.Ctx == 0 || m.Ctx >= rt.minCtx
+}
+
+// nodeClearsFloor reports whether any of n's models has the context rt's project asks of a node, for
+// the counts of the nodes that may run its work (they ask for no model). Caller holds g.mu.
+func (rt *route) nodeClearsFloor(n *nodeConn) bool {
+	if rt.minCtx <= 0 {
+		return true
+	}
+	for _, m := range n.models {
+		if rt.clearsFloor(m) {
+			return true
+		}
+	}
+	return false
 }
 
 // scienceRoute is the route of one of p's agent requests (with tools), as the counts of the nodes
@@ -269,10 +293,11 @@ func fits(m protocol.ModelInfo, threshold int) bool {
 // serves reports whether m offers the model or role want.
 func serves(m protocol.ModelInfo, want string) bool { return m.Name == want || contains(m.Roles, want) }
 
-// offers reports whether m may serve rt: it offers the model or role asked for, and it is the
-// session's model if the request continues a session.
+// offers reports whether m may serve rt: it offers the model or role asked for, it is the
+// session's model if the request continues a session, and for a role it has the context the
+// request's project asks of a node (min_node_ctx). A request that names m itself chose it.
 func (rt *route) offers(m protocol.ModelInfo) bool {
-	return serves(m, rt.want) && (rt.model == "" || m.Name == rt.model)
+	return serves(m, rt.want) && (rt.model == "" || m.Name == rt.model) && (m.Name == rt.want || rt.clearsFloor(m))
 }
 
 // thresholdLocked is the context the request needs on this network now: need if any allowed
@@ -555,7 +580,8 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 
 // pilotsMayServe reports whether a connector of the current config (replaced as a whole on
 // reload) may bring a pilot that could serve rt: one that can create pilots (max_pilots > 0), lists
-// rt's model or role in its models, and whose pilot, once connected, route.allows lets see rt
+// rt's model or role in its models, has a pilot tier with the context rt's project asks of a node
+// (min_node_ctx; without tiers, assumed), and whose pilot, once connected, route.allows lets see rt
 // (pilotProbe). allows is the one place that says who may see a request: through it, a pilot is
 // allowed rt's class only while pilots_chat_enabled (or for science), and never personal data, the
 // requester's "own nodes only", the emergency switch, tools without consent for volunteer nodes or a
@@ -568,11 +594,17 @@ func (g *Gateway) pilotsMayServe(rt *route) bool {
 	}
 	now := time.Now()
 	for _, c := range t.byID {
-		if c.MaxPilots > 0 && c.models[rt.want] && rt.allows(c.pilotProbe(now), now) {
+		if c.MaxPilots > 0 && c.models[rt.want] && c.mayClear(rt.minCtx) && rt.allows(c.pilotProbe(now), now) {
 			return true
 		}
 	}
 	return false
+}
+
+// mayClear reports whether c may bring a pilot with at least floor context (a project's min_node_ctx):
+// one of its pilot_tiers has it, or it has no tiers (the context of its pilots is not known ahead).
+func (c *connector) mayClear(floor int) bool {
+	return len(c.tiers) == 0 || c.tiers[len(c.tiers)-1].Ctx >= floor
 }
 
 // pilotProbe is a pilot c may bring, as route.allows sees one that has connected and registered:

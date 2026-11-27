@@ -683,7 +683,8 @@ func TestScienceDBRequestsMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.createPilot("boinc", time.Now().Add(time.Hour), 1, 1, time.Now()); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO pilots (id, connector, cred_sha256, state, deadline, created_at)
+		VALUES ('p-000000000001', 'boinc', 'h', 'created', '2099-01-01T00:00:00.000Z', '2026-11-18T12:00:00.000Z')`); err != nil {
 		t.Fatal(err)
 	}
 	s.close()
