@@ -212,8 +212,10 @@ func TestHeaderNavMatchesSite(t *testing.T) {
 			t.Fatalf("%s: no source code link in the header", p.path)
 		}
 		// The site's header has a Discord icon to its /discord/ (site/astro.config.mjs social), so the account pages do.
-		if strings.Count(page, `<a class="head-src" href="/discord/"><span class="sr-only">Discord</span><svg`) != 2 { // header and menu
-			t.Fatalf("%s: no Discord link in the header and its menu", p.path)
+		discord := `<a class="head-src" href="/discord/"><span class="sr-only">Discord</span><svg`
+		head, menu, _ := strings.Cut(page, `<details class="head-menu">`)
+		if strings.Count(head, discord) != 1 || strings.Count(menu, discord) != 1 {
+			t.Fatalf("%s: not one Discord link in the header and one in its menu", p.path)
 		}
 		if !strings.Contains(page, `<li><a href="/docs/">Docs</a></li>`) || strings.Contains(page, "reddit.com") {
 			t.Fatalf("%s: the footer is not the site's (Docs to /docs/, no subreddit link)", p.path)

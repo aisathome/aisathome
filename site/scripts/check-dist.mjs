@@ -103,8 +103,12 @@ if (!existsSync(discordFile)) errors.push('discord/index.html: missing');
 else {
 	const page = readFileSync(discordFile, 'utf8');
 	const to = page.match(/<meta http-equiv="refresh" content="0; url=([^"]*)"/)?.[1];
-	if (/data-discord-soon/.test(page) === Boolean(to)) errors.push('discord/index.html: neither coming soon nor sending on to an invite (or both)');
-	if (to && (!/^https:\/\/discord\.(gg|com\/invite)\//.test(to) || !page.includes(`<a href="${to}">`))) errors.push(`discord/index.html: sends visitors to ${to}`);
+	const invite = readFileSync(new URL('../src/data/discord.ts', import.meta.url), 'utf8').match(/^export const invite = '([^']*)';$/m);
+	if (!invite) errors.push('src/data/discord.ts: no `export const invite = \'...\';` line');
+	else if (invite[1] === '' && (!/data-discord-soon/.test(page) || to)) errors.push('discord/index.html: no invite, but the page does not say coming soon');
+	else if (invite[1] !== '' && (to !== invite[1] || !page.includes(`<a href="${to}">`) || /data-discord-soon/.test(page))) {
+		errors.push(`discord/index.html: sends visitors to ${to}, not to the invite ${invite[1]}`);
+	}
 }
 for (const f of html) {
 	if (/\shref="https:\/\/(discord\.(gg|com)|discordapp\.com)\//.test(readFileSync(f, 'utf8')) && relative(dist, f) !== join('discord', 'index.html')) {

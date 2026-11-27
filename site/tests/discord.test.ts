@@ -27,4 +27,6 @@ test('the committed invite is valid, and the page is a page the statistics count
 	assert.doesNotThrow(() => inviteTarget(invite));
 	// tools/sitestats counts a GET of a path ending in "/" or ".html" as a page view, per path.
 	assert.match(discordPath, /^\/[a-z]+\/$/);
+	// and leaves out the gateway's and the build's own paths (tools/sitestats/stats.go notSite)
+	for (const x of ['/v1/', '/account', '/stats/', '/__login', '/_astro/', '/pagefind/']) assert.ok(!discordPath.startsWith(x), x);
 });
