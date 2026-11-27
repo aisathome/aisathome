@@ -732,7 +732,7 @@ done
 
 # engine_on_gpu on its own (fake journalctl and systemctl): llama-server on the CPU stops
 # the install, and the engine is stopped and left disabled rather than running on the CPU.
-eval "$(sed -n '/^engine_on_gpu() {/,/^}/p' "$installer")"
+eval "$(sed -n '/^engine_on_gpu() {/,/^}/p;/^after_failed_check() {/,/^}/p' "$installer")"
 die() { echo "$1"; return 1; }
 e="$tmp/engine"; mkdir -p "$e"
 printf '#!/bin/sh\nprintf "%%s\\n" "$FAKE_JOURNAL"\nseq "${FAKE_JOURNAL_REPEAT:-0}" | sed "s/^/restarting, line /"\n' > "$e/journalctl"
@@ -749,11 +749,17 @@ check_engine $'E ggml_cuda_init: failed to initialize CUDA: no CUDA-capable devi
 [[ $code -eq 1 ]] || fail "engine on the CPU: exit $code, want 1"
 has "engine on the CPU" "ran on the CPU, so the installer stopped it"
 has "engine on the CPU" "systemctl disable --now aisathome-node aisathome-llama"
-unset -f engine_on_gpu die check_engine
+# An update too: the new units would run it on the CPU at every boot.
+updating=1 node_on_before=1
+check_engine $'warning: no usable GPU found, --gpu-layers option will be ignored'
+[[ $code -eq 1 ]] || fail "update, engine on the CPU: exit $code, want 1"
+has "update, engine on the CPU" "systemctl disable --now aisathome-node aisathome-llama"
+updating=0 node_on_before=0
+unset -f engine_on_gpu die check_engine after_failed_check
 
 # engine_fits on its own: llama-server out of GPU memory at start stops the install with the
 # tier's advice and leaves the engine disabled (systemd would restart it every 5 s).
-eval "$(sed -n '/^engine_fits() {/,/^}/p;/^fit_advice() {/,/^}/p;/^engine_on_gpu() {/,/^}/p' "$installer")"
+eval "$(sed -n '/^engine_fits() {/,/^}/p;/^fit_advice() {/,/^}/p;/^engine_on_gpu() {/,/^}/p;/^after_failed_check() {/,/^}/p' "$installer")"
 die() { echo "$1"; return 1; }
 : > "$e/systemctl.log"
 out="$(export PATH="$e:$PATH" FAKE_JOURNAL=$'llama_kv_cache: CUDA0 KV buffer size = 1440.00 MiB\nggml_backend_cuda_buffer_type_alloc_buffer: allocating 480.00 MiB on device 0: cudaMalloc failed: out of memory'; tier=standard; engine_fits "2026-10-23 10:00:00")"; code=$?
@@ -761,6 +767,13 @@ out+=$'\n'"$(cat "$e/systemctl.log")"
 [[ $code -eq 1 ]] || fail "engine out of memory: exit $code, want 1"
 has "engine out of memory" "ran out of GPU memory while loading the standard tier"; has "engine out of memory" "connect the monitor to the motherboard"
 has "engine out of memory" "systemctl disable --now aisathome-node aisathome-llama"
+# An update out of GPU memory: both stopped, start at boot left as the node had it.
+: > "$e/systemctl.log"
+out="$(export PATH="$e:$PATH" FAKE_JOURNAL="cudaMalloc failed: out of memory"; tier=standard updating=1 node_on_before=1; engine_fits "2026-10-23 10:00:00")"; code=$?
+out+=$'\n'"$(cat "$e/systemctl.log")"
+[[ $code -eq 1 ]] || fail "update, engine out of memory: exit $code, want 1"
+has "update, engine out of memory" "so the installer stopped the node (start at boot is unchanged)"
+has "update, engine out of memory" "systemctl stop aisathome-node aisathome-llama"; lacks "update, engine out of memory" "disable"
 # A long log after the match (systemd restarting the engine for minutes): a "grep -q" would end
 # early, journalctl would get SIGPIPE, and under pipefail the check would pass silently
 # (2026-10-23, RTX 4080 SUPER VM). FAKE_JOURNAL_REPEAT adds that many lines after the log.
@@ -771,7 +784,7 @@ out="$(export PATH="$e:$PATH" FAKE_JOURNAL="warning: no usable GPU found, --gpu-
 : > "$e/systemctl.log"
 out="$(export PATH="$e:$PATH" FAKE_JOURNAL="main: model loaded"; tier=big; engine_fits "2026-10-23 10:00:00")"; code=$?
 ok "engine not out of memory"; [[ ! -s "$e/systemctl.log" ]] || fail "engine not out of memory: systemctl called"
-unset -f engine_fits fit_advice engine_on_gpu die
+unset -f engine_fits fit_advice engine_on_gpu die after_failed_check
 
 # The speed test against a fake llama-server: /tokenize, and /completion with llama-server's
 # timings. FAKE_TPS sets the decode speed it reports; it records the request it got.
@@ -797,11 +810,11 @@ PY
 echo 30 > "$fs/tps"
 python3 "$fs/server.py" "$fs/port" "$fs" & fspid=$!
 for _ in $(seq 50); do [[ -s "$fs/port" ]] && break; sleep 0.1; done
-eval "$(sed -n '/^speed_probe() {/,/^}/p;/^speed_check() {/,/^}/p' "$installer")"
+eval "$(sed -n '/^speed_probe() {/,/^}/p;/^speed_check() {/,/^}/p;/^after_failed_check() {/,/^}/p' "$installer")"
 die() { echo "$1"; return 1; }
-speed() {  # speed <tokens/s the fake reports> [min]: runs speed_check, sets out and code
+speed() {  # speed <tokens/s the fake reports> [min]: runs speed_check, sets out and code (UPD: "updating node_on_before llama_on_before")
   echo "$1" > "$fs/tps"; : > "$e/systemctl.log"
-  out="$(export PATH="$e:$PATH"; engine_url="http://127.0.0.1:$(cat "$fs/port")" speed_ctx=32000 min_tps="${2:-20}" \
+  out="$(export PATH="$e:$PATH"; read -r updating node_on_before llama_on_before <<<"${UPD:-0 0 0}"; engine_url="http://127.0.0.1:$(cat "$fs/port")" speed_ctx=32000 min_tps="${2:-20}" \
     gpu_idx=0 gpu_name="NVIDIA GeForce RTX 5060 Ti" speed_check 2>&1)"; code=$?
   out+=$'\n'"$(cat "$e/systemctl.log")"
 }
@@ -821,8 +834,17 @@ ok "MIN_DECODE_TPS=0 never refuses"
 speed -1
 [[ $code -eq 1 ]] || fail "speed test error: exit $code, want 1"; has "speed test error" "the speed test failed (HTTPError"
 has "speed test error" "systemctl disable --now"
+# An update: start at boot is left alone, and each service goes back to how it was before the install.
+UPD="1 1 1" speed 13.8
+[[ $code -eq 1 ]] || fail "update, speed too slow: exit $code, want 1"; has "update, speed too slow" "the node runs again as before it"
+has "update, speed too slow" "systemctl start aisathome-node"; lacks "update, speed too slow" "disable"
+UPD="1 0 0" speed 13.8
+has "update of a stopped node, speed too slow" "the node is stopped as it was before it"
+has "update of a stopped node, speed too slow" "systemctl stop aisathome-node"$'\n'"systemctl stop aisathome-llama"; lacks "update of a stopped node, speed too slow" "disable"
+UPD="1 1 1" speed -1
+has "update, speed test error" "the speed test failed (HTTPError"; has "update, speed test error" "systemctl start aisathome-node"; lacks "update, speed test error" "disable"
 kill "$fspid" 2>/dev/null; wait "$fspid" 2>/dev/null
-unset -f speed_probe speed_check speed die
+unset -f speed_probe speed_check speed die after_failed_check
 
 # uninstall.sh in a fake root (fake systemctl and userdel): removes the units, their drop-ins
 # (also one made with "systemctl edit"), binaries and config; keeps the model unless --purge.

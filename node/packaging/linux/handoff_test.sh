@@ -6,7 +6,8 @@
 # links, a same-gateway upgrade, a gateway change, a token without its issuer record, an interrupted
 # link, the moved-aside token given again, --anonymous over a token, the update the one-line install runs
 # (no account option, at a terminal) over a linked node, one without an account and one from before
-# v0.6.0, a dry run, and the node binary override (one older than the installer is refused).
+# v0.6.0, a dry run, the node binary override (one older than the installer is refused), and an engine
+# check that fails after the files are installed (speed test, no GPU) on a first install and on updates.
 #
 # It runs in a sandbox that cannot touch this machine's node: a user namespace (root inside, this
 # user outside), a private mount namespace (/etc is a copy made of links with its own empty
@@ -74,7 +75,7 @@ for d in /opt /var/lib /usr/local /run; do mount -t tmpfs tmpfs "$d" || die "can
 st="$tmp/state"; mkdir -p "$st" "$tmp/stubs"
 # systemctl: the node's and llama's ActiveState in $st/<unit>.state. stop/start/restart of the node are
 # logged with where the token and the gateway are at that moment. A start of the node honours the unit's
-# ConditionFileNotEmpty=token.env.
+# ConditionFileNotEmpty=token.env and its Requires= (llama starts with it). enable/disable are logged in $st/enable.log; disable --now also stops.
 cat > "$tmp/stubs/systemctl" <<'SH'
 #!/usr/bin/env bash
 st="$HANDOFF_STATE"
@@ -82,6 +83,7 @@ gw() { python3 -c 'import json,sys
 try: print(json.load(open(sys.argv[1])).get("gateway_url",""))
 except Exception: print("")' /etc/aisathome-node/node.json; }
 where() { echo "token.env:$([[ -s /etc/aisathome-node/token.env ]] && echo here || echo none) gw:$(gw)"; }
+now=0; [[ " $* " != *" --now "* ]] || now=1
 args=(); for a in "$@"; do [[ $a == --* ]] || args+=("$a"); done
 set -- "${args[@]}"
 case "$1" in
@@ -103,9 +105,20 @@ case "$1" in
       fi
       if [[ $verb = stop ]]; then echo inactive > "$st/$u.state"
       elif [[ $u = aisathome-node && ! -s /etc/aisathome-node/token.env ]]; then echo inactive > "$st/$u.state"
-      else echo active > "$st/$u.state"; fi
+      else
+        echo active > "$st/$u.state"
+        [[ $u != aisathome-node ]] || echo active > "$st/aisathome-llama.state" # Requires=aisathome-llama
+      fi
     done ;;
-  enable|disable) echo "$*" >> "$st/enable.log" ;;
+  enable|disable)
+    echo "$*" >> "$st/enable.log"
+    if [[ $1 = disable && $now = 1 ]]; then
+      for u in "${@:2}"; do
+        u="${u%.service}"
+        [[ $u = aisathome-node ]] && echo "stop $u $(where)" >> "$st/systemctl.log"
+        echo inactive > "$st/$u.state"
+      done
+    fi ;;
   is-enabled|is-active) exit 1 ;;
   status) echo "status $2: $(cat "$st/$2.state" 2>/dev/null)" ;;
   *) ;;
@@ -120,7 +133,8 @@ case "$*" in
   *) echo "0, NVIDIA GeForce RTX 3090, 535.183.01, 8.6" ;;
 esac
 SH
-printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/journalctl"
+# journalctl: llama-server's log as $st/journal has it (none: a clean start).
+printf '#!/bin/sh\ncat "$HANDOFF_STATE/journal" 2>/dev/null\nexit 0\n' > "$tmp/stubs/journalctl"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/useradd"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/userdel"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/chown"
@@ -237,7 +251,7 @@ node_bin="$tmp/bin/aisathome-node"
 # fresh: a machine with nothing installed.
 fresh() {
   rm -rf "$conf" /opt/aisathome-node /var/lib/aisathome-node /etc/systemd/system/aisathome-* /usr/local/bin/aisathome-node
-  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held "$st"/*.register
+  rm -f "$st"/*.state "$st"/*.log "$st"/*.link "$st"/*.revoked "$st"/*.held "$st"/*.register "$st/journal"
   echo 30 > "$st/tps"; : > "$st/systemctl.log"
 }
 # seed <gateway> [<token> [<record>|-]]: an earlier install: node.json for gateway (node id box-1),
@@ -642,6 +656,79 @@ want_code "an older --node-bin" 2; has "an older --node-bin" "has no 'config pre
 token_is "an older --node-bin" "$toka" "$gwa"; [[ ! -s "$st/systemctl.log" && ! -e /opt/aisathome-node ]] || fail "an older --node-bin: something was installed"
 NODE_BIN="$tmp/old-node" inst -- --dry-run
 want_code "an older --node-bin, dry run" 2
+
+# ---- An engine check that fails after the install ---------------------------------------------------
+# The files are installed by then (no rollback of them). A first install ends stopped and disabled. An update
+# keeps the node's start at boot as it was; after a slow speed test (most often another program on the GPU)
+# each service is put back as it was. With no GPU (llama-server on the CPU) it ends stopped and disabled on
+# an update too, so nothing runs on the CPU at the next boot. A token moved aside for the install (a gateway
+# change, a token from before v0.6.0) comes back, and the node ends as it would without that.
+# booted <name>: start at boot was not changed (no disable; enabling waits for the speed test).
+booted() { ! grep -q "^disable" "$st/enable.log" 2>/dev/null || fail "$1: start at boot turned off: $(cat "$st/enable.log")"; }
+# unbooted <name>: both services stopped and disabled.
+unbooted() {
+  grep -qx "disable aisathome-node aisathome-llama" "$st/enable.log" 2>/dev/null || fail "$1: not disabled: $(cat "$st/enable.log" 2>/dev/null)"
+  states "$1" inactive inactive
+}
+# states <name> <node> <llama>: the services' ActiveState at the end.
+states() {
+  local n l; n="$(cat "$st/aisathome-node.state" 2>/dev/null)" l="$(cat "$st/aisathome-llama.state" 2>/dev/null)"
+  [[ "$n $l" = "$2 $3" ]] || fail "$1: node $n, llama $l; want node $2, llama $3"
+}
+slow() { echo 5 > "$st/tps"; }
+
+# A first install whose speed test fails: stopped and left disabled (start at boot is never turned on).
+fresh; slow
+inst -- --anonymous --enable-at-boot --gateway-url "$gwa"
+want_code "first install, slow: stopped and disabled" 1; has "first install, slow: stopped and disabled" "so the installer stopped the node"
+unbooted "first install, slow: stopped and disabled"
+grep -q "^POST /v1/node/register" "$st/a.log" 2>/dev/null && fail "first install, slow: stopped and disabled: registered"
+grep -q "^enable aisathome-gpu-init" "$st/enable.log" && fail "first install, slow: stopped and disabled: enabled at boot"
+
+# A: the one-line update of a running linked node, speed test fails: running again, start at boot unchanged.
+seed "$gwa" "$toka"; slow
+tty_inst "[Y/n]" $'y\r' --
+want_code "update, slow: running again, boot unchanged" 1; has "update, slow: running again, boot unchanged" "the node runs again as before it"
+booted "update, slow: running again, boot unchanged"; states "update, slow: running again, boot unchanged" active active
+token_is "update, slow: running again, boot unchanged" "$toka" "$gwa"
+[[ "$(tail -n 1 "$st/systemctl.log")" = "start aisathome-node token.env:here gw:$gwa" ]] || fail "update, slow: running again, boot unchanged: $(cat "$st/systemctl.log")"
+# The same for a node that was paused (both services stopped): it stays stopped, start at boot unchanged.
+seed "$gwa" "$toka"; echo inactive > "$st/aisathome-node.state"; echo inactive > "$st/aisathome-llama.state"; slow
+inst -- --keep-token
+want_code "update of a stopped node, slow: stays stopped, boot unchanged" 1; has "update of a stopped node, slow: stays stopped, boot unchanged" "the node is stopped as it was before it"
+booted "update of a stopped node, slow: stays stopped, boot unchanged"; states "update of a stopped node, slow: stays stopped, boot unchanged" inactive inactive
+
+# C: the one-line update of a node from before v0.6.0 (its token is moved aside), speed test fails before the
+# link question: the token and its node.json come back, and the node ends as in A.
+seed "$gwa" "$toka" -; slow
+tty_inst "[Y/n]" $'y\r' --
+want_code "update before v0.6.0, slow: token back, running again, boot unchanged" 1
+booted "update before v0.6.0, slow: token back, running again, boot unchanged"; states "update before v0.6.0, slow: token back, running again, boot unchanged" active active
+[[ "$(tok_env)" = "AISATHOME_NODE_TOKEN=$toka" && "$(json "$conf/node.json" node_id)" = box-1 && ! -e "$conf/token.env.unlinked" ]] ||
+  fail "update before v0.6.0, slow: token back, running again, boot unchanged: token.env $(tok_env | head -c 30), node id $(json "$conf/node.json" node_id)"
+[[ "$(tail -n 1 "$st/systemctl.log")" = "start aisathome-node token.env:here gw:$gwa" ]] || fail "update before v0.6.0, slow: token back, running again, boot unchanged: $(cat "$st/systemctl.log")"
+
+# D: a gateway change that links, speed test fails: a's token and node.json come back, the node ends as in A.
+seed "$gwa" "$toka"; slow
+inst -- --gateway-url "$gwb" --link
+want_code "gateway change, slow: token back, running again, boot unchanged" 1
+booted "gateway change, slow: token back, running again, boot unchanged"; states "gateway change, slow: token back, running again, boot unchanged" active active
+token_is "gateway change, slow: token back, running again, boot unchanged" "$toka" "$gwa"; never_sent "gateway change, slow" b "$toka"
+[[ "$(tail -n 1 "$st/systemctl.log")" = "start aisathome-node token.env:here gw:$gwa" ]] || fail "gateway change, slow: token back, running again, boot unchanged: $(cat "$st/systemctl.log")"
+
+# No GPU (llama-server ran on the CPU) on an update: stopped and disabled, as on a first install.
+seed "$gwa" "$toka"; echo "warning: no usable GPU found, --gpu-layers option will be ignored" > "$st/journal"
+inst -- --keep-token
+want_code "update, no GPU: stopped and disabled" 1; has "update, no GPU: stopped and disabled" "ran on the CPU, so the installer stopped it"
+unbooted "update, no GPU: stopped and disabled"; token_is "update, no GPU: stopped and disabled" "$toka" "$gwa"
+# The same with a gateway change: a's token comes back, and the node is not started again (it would put
+# llama-server back on the CPU).
+seed "$gwa" "$toka"; echo "warning: no usable GPU found, --gpu-layers option will be ignored" > "$st/journal"
+inst -- --gateway-url "$gwb" --link
+want_code "gateway change, no GPU: token back, stopped and disabled" 1
+unbooted "gateway change, no GPU: token back, stopped and disabled"; token_is "gateway change, no GPU: token back, stopped and disabled" "$toka" "$gwa"
+grep -q "^start aisathome-node" "$st/systemctl.log" && fail "gateway change, no GPU: token back, stopped and disabled: started: $(cat "$st/systemctl.log")"
+rm -f "$st/journal"
 
 if [[ $fails -gt 0 ]]; then echo "handoff: $fails failure(s)"; exit 1; fi
 echo "handoff: all tests passed"
