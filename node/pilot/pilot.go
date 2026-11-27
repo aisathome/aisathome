@@ -7,6 +7,8 @@
 //   - after IdleExit (30 min) with no request routed to it: leaves, exits 0;
 //   - on SIGTERM (BOINC quits or preempts the task; the wrapper kills it 10 s later): it pauses,
 //     gives requests in flight a moment, leaves and is gone within StopBudget;
+//   - when the card cannot hold its tier or is below the speed floor (checked before it connects,
+//     since no installer ran): exits 1 without connecting, with the reason "engine" or "slow";
 //   - when the engine keeps failing: leaves, exits 1 (BOINC reports an error), unless it has
 //     served an answer, in this run or an earlier run of the same task: then it exits 0, so that
 //     BOINC validates the result and the work served earns its credit (the close reason and the
@@ -52,6 +54,7 @@ const (
 	ReasonIdle    = "idle"
 	ReasonTime    = "time"
 	ReasonEngine  = "engine"
+	ReasonSlow    = "slow" // below the speed floor: it never connected
 )
 
 // Options is one pilot's command line.
@@ -61,13 +64,22 @@ type Options struct {
 	// may be BOINC's soft-link file for the credential; the pilot follows the link itself.
 	CredentialFile string
 	Model          string // the GGUF file (the wrapper resolves BOINC's soft link: boinc_resolve(model.gguf))
-	Tier           string // the engine settings' tier; default "big"
+	// Tier is the engine settings' tier (node/setup Tiers), or TierAuto (the default): the tier of
+	// the model file, else of the card.
+	Tier string
 	// The engine: EngineArchive, the node's Linux bundle (.tar.xz with bin/llama-server and
 	// lib/), is unpacked once under EngineDir and reused by later pilots. LlamaServer instead
 	// names a llama-server to run as it is.
 	EngineArchive string
 	EngineDir     string
 	LlamaServer   string
+
+	// MinTPS is the speed floor: decode tokens/s after a SpeedPromptTokens prompt. 0 = the
+	// installer's (setup.MinDecodeTPS); negative = measure, never refuse (tests).
+	MinTPS float64
+	// EngineWait bounds the wait for the engine to load the model before the speed test;
+	// default 15 min.
+	EngineWait time.Duration
 
 	MaxServe  time.Duration // default 4 h
 	IdleExit  time.Duration // default 30 min
@@ -87,13 +99,17 @@ type Options struct {
 
 func (o *Options) defaults() {
 	if o.Tier == "" {
-		o.Tier = "big"
+		o.Tier = TierAuto
+	}
+	if o.MinTPS == 0 {
+		o.MinTPS = setup.MinDecodeTPS
 	}
 	for _, d := range []struct {
 		p *time.Duration
 		v time.Duration
 	}{{&o.MaxServe, 4 * time.Hour}, {&o.IdleExit, 30 * time.Minute}, {&o.DrainWait, 10 * time.Minute},
-		{&o.StopBudget, 8 * time.Second}, {&o.Slice, time.Hour}, {&o.YieldIdle, 5 * time.Minute}} {
+		{&o.StopBudget, 8 * time.Second}, {&o.Slice, time.Hour}, {&o.YieldIdle, 5 * time.Minute},
+		{&o.EngineWait, 15 * time.Minute}} {
 		if *d.p <= 0 {
 			*d.p = d.v
 		}
@@ -117,6 +133,11 @@ type Deps struct {
 	Now       func() time.Time
 	// AgentConfig, when set, adjusts the agent's config (tests: shorter timeouts).
 	AgentConfig func(*node.Config)
+	// Devices lists the card the engine would use (cmd is the engine's command, without
+	// arguments); default: `llama-server --list-devices` in the engine's environment.
+	Devices func(ctx context.Context, cmd engine.Command) (Device, error)
+	// SpeedTest measures the running engine at its base URL; default: setup.SpeedTest.
+	SpeedTest func(ctx context.Context, base string) (setup.Speed, error)
 }
 
 // Result is how a pilot ended.
@@ -128,15 +149,17 @@ type Result struct {
 // Summary is the pilot's output file: what BOINC uploads as the task's result. It holds no
 // credential, account or node identity; the gateway's pilot record is the source of truth.
 type Summary struct {
-	Agent            string `json:"agent"`
-	Reason           string `json:"reason"`
-	ServedSeconds    int64  `json:"served_s"`
-	Connected        bool   `json:"connected"` // the gateway accepted the pilot at least once
-	Requests         int64  `json:"requests"`
-	Failed           int64  `json:"failed"`
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	Error            string `json:"error,omitempty"` // why the pilot could not start
+	Agent            string  `json:"agent"`
+	Reason           string  `json:"reason"`
+	ServedSeconds    int64   `json:"served_s"`
+	Connected        bool    `json:"connected"` // the gateway accepted the pilot at least once
+	Requests         int64   `json:"requests"`
+	Failed           int64   `json:"failed"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Tier             string  `json:"tier,omitempty"`      // the tier it served (node/setup)
+	SpeedTPS         float64 `json:"speed_tps,omitempty"` // its speed test, when it ran one this run
+	Error            string  `json:"error,omitempty"`     // why the pilot could not start
 }
 
 // engineFailures is how many times the engine may end on its own before the pilot gives up.
@@ -157,12 +180,25 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
+	if d.Devices == nil {
+		d.Devices = listDevices
+	}
+	if d.SpeedTest == nil {
+		d.SpeedTest = speedTest
+	}
 	log := d.Log
 	start := d.Now()
 	fail := func(err error) Result {
 		log.Error("pilot cannot start", "err", err)
 		writeSummary(o.Summary, Summary{Agent: node.AgentVersion(), Reason: ReasonEngine, Error: err.Error()}, log)
 		return Result{Reason: ReasonEngine, Code: engineExitCode(servedBefore(o))}
+	}
+	// stopped: SIGTERM before the pilot served (nothing of the engine runs).
+	stopped := func(start time.Time) Result {
+		log.Info("pilot ended before serving", "reason", ReasonSigterm)
+		writeSummary(o.Summary, Summary{Agent: node.AgentVersion(), Reason: ReasonSigterm,
+			ServedSeconds: int64(d.Now().Sub(start) / time.Second)}, log)
+		return Result{Reason: ReasonSigterm}
 	}
 	if !strings.HasPrefix(o.Gateway, "wss://") && !strings.HasPrefix(o.Gateway, "ws://") {
 		return fail(fmt.Errorf("--gateway must be a ws:// or wss:// URL"))
@@ -193,9 +229,30 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 			return fail(err)
 		}
 	}
-	tier, ok := setup.TierByName(o.Tier)
-	if !ok {
-		return fail(fmt.Errorf("unknown tier %q", o.Tier))
+	mi, err := os.Stat(o.Model)
+	if err != nil {
+		return fail(fmt.Errorf("model: %w", err))
+	}
+	// The card as the engine will see it: the same program, libraries and CUDA_VISIBLE_DEVICES.
+	devCmd := engine.Command{Path: exe, Env: []string{"GGML_NO_BACKTRACE=1"}, Dir: filepath.Dir(exe)}
+	if libDir != "" {
+		devCmd.Env = append(devCmd.Env, "LD_LIBRARY_PATH="+libDir)
+	}
+	dev, err := d.Devices(ctx, devCmd)
+	if err != nil {
+		if ctx.Err() != nil {
+			return stopped(start)
+		}
+		return fail(err)
+	}
+	tier, how, err := pickTier(o.Tier, mi.Size(), dev)
+	if err != nil {
+		return fail(err)
+	}
+	log.Info("pilot tier", "tier", tier.Name, "chosen_by", how, "model", tier.Alias, "ctx", tier.Ctx,
+		"gpu", dev.Desc, "total_mib", dev.TotalMiB, "free_mib", dev.FreeMiB)
+	if err := checkCard(tier, dev); err != nil {
+		return fail(err)
 	}
 	s := tier.Engine(exe, o.Model)
 	// Several pilots (one per GPU) and the volunteer's own programs share 127.0.0.1: take a
@@ -205,9 +262,6 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	}
 	if err := s.Validate(); err != nil {
 		return fail(fmt.Errorf("engine: %w", err))
-	}
-	if _, err := os.Stat(o.Model); err != nil {
-		return fail(fmt.Errorf("model: %w", err))
 	}
 	// The wrapper reports a checkpoint when the file's time changes, not when it first appears:
 	// it must exist before the first one counts.
@@ -256,12 +310,36 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 		defer close(engineDone)
 		eng.Run(ectx)
 	}()
+	parent := d.Parent()
+
+	// Before it connects: the engine loads the model, then the speed floor (or a recent pass on
+	// this card, tier and engine). The engine is stopped again on a refusal or SIGTERM.
+	speed, why, err := ready(ctx, o, d, s, tier, dev, engineID(o, exe), engineDown, parent, log)
+	if why != "" {
+		stopEngine()
+		select {
+		case <-engineDone:
+		case <-time.After(o.StopBudget):
+			log.Warn("engine still stopping; leaving it to its parent-death signal")
+		}
+		sum := Summary{Agent: node.AgentVersion(), Reason: why, ServedSeconds: int64(d.Now().Sub(start) / time.Second),
+			Tier: tier.Name, SpeedTPS: speed}
+		code := 0
+		if why != ReasonSigterm {
+			sum.Error = err.Error()
+			code = engineExitCode(servedBefore(o))
+			log.Error("pilot cannot serve", "reason", why, "err", err)
+		}
+		writeSummary(o.Summary, sum, log)
+		log.Info("pilot ended", "reason", why, "requests", 0, "code", code)
+		return Result{Reason: why, Code: code}
+	}
+
 	actx, stopAgent := context.WithCancel(context.Background())
 	agentDone := make(chan error, 1)
 	go func() { agentDone <- agent.Run(actx) }()
 	log.Info("pilot started", "agent", node.AgentVersion(), "tier", tier.Name, "max_serve", o.MaxServe, "idle_exit", o.IdleExit)
 
-	parent := d.Parent()
 	tick := time.NewTicker(d.Tick)
 	defer tick.Stop()
 	w := watch{o: o, start: start, lastActive: start, nextSlice: start.Add(o.Slice)}
@@ -324,7 +402,7 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	st := agent.Status()
 	sum := Summary{Agent: node.AgentVersion(), Reason: reason, ServedSeconds: int64(d.Now().Sub(start) / time.Second),
 		Connected: w.connected, Requests: st.Total.Requests, Failed: st.Total.Failed,
-		PromptTokens: st.Total.PromptTokens, CompletionTokens: st.Total.CompletionTokens}
+		PromptTokens: st.Total.PromptTokens, CompletionTokens: st.Total.CompletionTokens, Tier: tier.Name, SpeedTPS: speed}
 	writeSummary(o.Summary, sum, log)
 	if reason == ReasonTime || reason == ReasonIdle {
 		writeFraction(o.FractionDone, 1)
@@ -339,6 +417,78 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	}
 	log.Info("pilot ended", "reason", reason, "requests", sum.Requests, "served_s", sum.ServedSeconds, "code", code)
 	return Result{Reason: reason, Code: code}
+}
+
+// ready waits for the engine to load the model and applies the speed floor, unless this card, tier
+// and engine passed it within speedCacheFor. It returns the speed measured (0 when none ran) and,
+// when the pilot must not serve, the reason (ReasonSigterm, ReasonEngine or ReasonSlow) and why.
+// SIGTERM, the engine failing for good and the wrapper going away end it at once.
+func ready(ctx context.Context, o Options, d Deps, s setup.EngineSettings, tier setup.Tier, dev Device, engine string,
+	engineDown <-chan struct{}, parent int, log *slog.Logger) (float64, string, error) {
+	pctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	why := ReasonSigterm
+	var mu sync.Mutex
+	go func() {
+		t := time.NewTicker(d.Tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-pctx.Done():
+				return
+			case <-engineDown:
+				mu.Lock()
+				why = ReasonEngine
+				mu.Unlock()
+				cancel()
+				return
+			case <-t.C:
+				if d.Parent() != parent {
+					log.Warn("the wrapper is gone; stopping")
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	// ended: pctx ended (SIGTERM, the wrapper gone, or the engine failing for good).
+	ended := func() (float64, string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if why == ReasonEngine {
+			return 0, ReasonEngine, errors.New("the engine kept failing before the pilot could serve")
+		}
+		return 0, ReasonSigterm, nil
+	}
+	if err := waitHealthy(pctx, s.Upstream(), o.EngineWait, min(250*time.Millisecond, d.Tick*25)); err != nil {
+		if pctx.Err() == nil {
+			return 0, ReasonEngine, fmt.Errorf("the engine did not load the model within %s", o.EngineWait)
+		}
+		return ended()
+	}
+	key := speedKey(dev, tier.Name, engine)
+	if p, ok := cachedPass(o.EngineDir, key, d.Now()); ok {
+		log.Info("speed floor passed recently; no test", "tps", p.TPS, "at", p.At.UTC().Format(time.RFC3339))
+		return 0, "", nil
+	}
+	log.Info("speed test", "prompt_tokens", setup.SpeedPromptTokens, "min_tps", max(o.MinTPS, 0))
+	sp, err := d.SpeedTest(pctx, s.Upstream())
+	if err != nil {
+		if pctx.Err() != nil {
+			return ended()
+		}
+		return 0, ReasonEngine, fmt.Errorf("speed test: %w", err)
+	}
+	log.Info("speed test done", "tps", sp.TPS, "prompt_tokens", sp.PromptTokens, "prompt_s", sp.PromptSeconds)
+	if o.MinTPS > 0 && sp.TPS < o.MinTPS {
+		return sp.TPS, ReasonSlow, slowError(dev, sp, o.MinTPS)
+	}
+	if o.MinTPS > 0 {
+		if err := rememberPass(o.EngineDir, key, speedPass{TPS: sp.TPS, At: d.Now()}); err != nil {
+			log.Warn("cannot remember the speed test", "err", err)
+		}
+	}
+	return sp.TPS, "", nil
 }
 
 // servedMarker is a file in the task's folder, next to the checkpoint, that says an earlier run of

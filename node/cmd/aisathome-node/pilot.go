@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/aisathome/aisathome/node/pilot"
+	"github.com/aisathome/aisathome/node/setup"
 )
 
 // runPilot is `aisathome-node pilot`: the agent as a BOINC task (package pilot), started by
@@ -24,7 +25,7 @@ func runPilot(args []string, stderr io.Writer) int {
 	fs.StringVar(&o.Gateway, "gateway", "", "the gateway's node URL (wss://host/v1/node/connect)")
 	fs.StringVar(&o.CredentialFile, "credential-file", "", "file holding the node credential")
 	fs.StringVar(&o.Model, "model", "", "the GGUF model file")
-	fs.StringVar(&o.Tier, "tier", "big", "engine settings tier")
+	fs.StringVar(&o.Tier, "tier", pilot.TierAuto, "engine settings tier: standard, big, or auto (the model file's tier, else the card's)")
 	fs.StringVar(&o.EngineArchive, "engine-archive", "", "the node's Linux bundle (.tar.xz), unpacked once under --engine-dir")
 	fs.StringVar(&o.EngineDir, "engine-dir", "", "where the bundle is unpacked (the BOINC project folder)")
 	fs.StringVar(&o.LlamaServer, "llama-server", "", "run this llama-server instead of the bundle's")
@@ -33,6 +34,7 @@ func runPilot(args []string, stderr io.Writer) int {
 	fs.StringVar(&o.Checkpoint, "checkpoint", "", "job.xml's checkpoint file")
 	fs.StringVar(&o.FractionDone, "fraction-done", "", "job.xml's fraction-done file")
 	fs.StringVar(&o.Summary, "summary", "", "the task's output file (JSON summary)")
+	minTPS := fs.Float64("min-tps", setup.MinDecodeTPS, "speed floor: decode tokens/s after a 32k-token prompt (0: measure, never refuse)")
 	engineLog := fs.String("engine-log", "engine.log", "llama-server's output (a capped file; \"\" discards it)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -40,6 +42,14 @@ func runPilot(args []string, stderr io.Writer) int {
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "pilot: unexpected arguments %q\n", fs.Args())
 		return 2
+	}
+	if *minTPS < 0 {
+		fmt.Fprintln(stderr, "pilot: --min-tps must not be negative")
+		return 2
+	}
+	o.MinTPS = *minTPS
+	if o.MinTPS == 0 {
+		o.MinTPS = -1 // measure, never refuse
 	}
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	var engineOut io.Writer
