@@ -425,7 +425,8 @@ const (
 )
 
 // pickWait is pick, but waits until deadline for capacity: a free slot, or a node serving a
-// recently seen model (re)connecting. Unknown models fail at once.
+// recently seen model, or one a connector's pilots serve (pilotsMayServe), (re)connecting.
+// Unknown models fail at once.
 //
 // While it looks for a node, the request is registered for priority: requests of lower
 // classes leave it every node it could use (yieldsLocked). Science waits in its own queue, so
@@ -477,9 +478,10 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 				return nil, "", tooLong
 			}
 		}
-		// Unknown models fail at once, except just after a restart while no node is back yet.
+		// Unknown models fail at once, except just after a restart while no node is back yet, and
+		// except models a connector's pilots serve: those come only when the demand asks for them.
 		restarting := time.Since(g.start) < startupGrace && g.NodeCount() == 0
-		if (!seen || time.Since(last) > knownFor) && !restarting {
+		if (!seen || time.Since(last) > knownFor) && !restarting && !g.pilotsMayServe(rt) {
 			if g.servesNow(rt.want) == 0 {
 				return nil, "", unknownModel
 			}
@@ -534,6 +536,26 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 			return nil, "", why
 		}
 	}
+}
+
+// pilotsMayServe reports whether a connector of the current config (replaced as a whole on
+// reload) may bring a pilot that could serve rt: one that can create pilots (max_pilots > 0) and
+// lists rt's model or role in its models. Its pilots must be allowed rt's class (chat, agents and
+// API calls only while pilots_chat_enabled), and rt must be one that may reach a pilot at all: a
+// pilot is nobody's own node, so not personal data, the requester's "own nodes only" or the
+// emergency switch, and not tools without consent for volunteer nodes. Otherwise nothing could
+// ever serve rt, and waiting for it would only delay the "unknown" answer.
+func (g *Gateway) pilotsMayServe(rt *route) bool {
+	t := g.connCfgs.Load()
+	if t == nil || rt.pii != "" || rt.onlySelf || rt.ownOnly() || (rt.tools && !rt.consent) {
+		return false
+	}
+	for _, c := range t.byID {
+		if c.MaxPilots > 0 && c.models[rt.want] && (rt.class == ClassScience || c.PilotsChatEnabled) {
+			return true
+		}
+	}
+	return false
 }
 
 // servesNow counts connected nodes offering the model or role (held ones included: they

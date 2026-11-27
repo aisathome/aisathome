@@ -43,6 +43,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Connector is an outside system that brings pilots (Config.Connectors).
@@ -66,6 +67,10 @@ type Connector struct {
 	PilotsChatEnabled bool `json:"pilots_chat_enabled,omitempty"`
 	// NoChatUsers: its users whose pilots serve science only, whatever else says.
 	NoChatUsers []string `json:"no_chat_users,omitempty"`
+	// Models: the model names and roles its pilots serve. A request for one of them waits for
+	// capacity (a pilot the demand asks for) while MaxPilots > 0, as for a model a node offered
+	// recently, instead of failing as unknown (routing.go, pilotsMayServe). At most maxConnectorModels.
+	Models []string `json:"models,omitempty"`
 	// LegacyTrustedUsers is the removed "trusted_users" (removed.go): accepted and ignored.
 	LegacyTrustedUsers []string `json:"trusted_users,omitempty"`
 	// ChatHeadroom: pilots to keep for chat, agents and API calls (demand), counted only while
@@ -120,7 +125,11 @@ type connector struct {
 	keys   []string // hashes, lower case
 	allow  []netip.Prefix
 	noChat map[string]bool
+	models map[string]bool // Models
 }
+
+// maxConnectorModels caps a connector's models: a handful of names and roles, not a catalogue.
+const maxConnectorModels = 64
 
 func (c *connector) maxCredit() (perPilot, perDay float64) {
 	perPilot, perDay = c.MaxCreditPerPilot, c.MaxCreditPerAccountDay
@@ -200,6 +209,19 @@ func newConnectorTable(cs []Connector, projects *projectTable) (*connectorTable,
 				return nil, fmt.Errorf("connector %q: user %q: 1-64 letters, digits, '.', '_', ':' or '-'", c.ID, u)
 			}
 			cc.noChat[u] = true
+		}
+		if len(c.Models) > maxConnectorModels {
+			return nil, fmt.Errorf("connector %q: models: at most %d", c.ID, maxConnectorModels)
+		}
+		cc.models = map[string]bool{}
+		for _, m := range c.Models {
+			if m == "" || len(m) > 128 || strings.TrimSpace(m) != m || strings.ContainsFunc(m, unicode.IsControl) {
+				return nil, fmt.Errorf("connector %q: models: %q: 1-128 characters, no surrounding spaces", c.ID, m)
+			}
+			if cc.models[m] {
+				return nil, fmt.Errorf("connector %q: models: %q is listed twice", c.ID, m)
+			}
+			cc.models[m] = true
 		}
 		if a := c.Accounts; a != nil {
 			if err := a.check(); err != nil {
