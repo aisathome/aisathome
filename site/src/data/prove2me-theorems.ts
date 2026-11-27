@@ -189,6 +189,14 @@ const trials = (a: number, b: number) => (a === b ? `trial ${a}` : `trials ${a} 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** A theorem's name for people: prove2me's title without TeX, else the Lean name. */
 export const nameOf = (t: Pick<TheoremRow, 'title' | 'theorem' | 'leaf'>) => plainTitle(t.title || '') || t.theorem || t.leaf;
+/** A theorem's name cut to 70 characters, for its page's title, description and share card text. */
+export const shortName = (t: Pick<TheoremRow, 'title' | 'theorem' | 'leaf'>) => {
+	const name = nameOf(t);
+	return name.length > 70 ? `${name.slice(0, 69)}…` : name;
+};
+/** A theorem page's <title>, escaped: Starlight writes a head entry's content as raw HTML, and the title comes from
+ * prove2me's users through the gateway. */
+export const headTitle = (t: Pick<TheoremRow, 'title' | 'theorem' | 'leaf'>) => esc(`${shortName(t)} (${t.leaf}) - prove2me theorem - AIs@home`);
 const relationWord = (r?: string) => (r === 'part' ? 'part of' : r === 'import' ? 'imports' : 'same statement as');
 
 /** " (1 rejected, 1 not judged)": the submissions not accepted, by verdict. */
