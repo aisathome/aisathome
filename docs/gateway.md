@@ -825,7 +825,7 @@ gateway is BOINC-specific beyond the configuration.
   "key_sha256": ["<64 hex characters>"],
   "allow_from": ["203.0.113.7"],
   "max_pilots": 10,
-  "models": ["qwen3-30b-a3b", "deep"],
+  "models": ["qwen3.8-27b", "deep", "agent"],
   "mint_per_hour": 120,
   "pilots_chat_enabled": false,
   "no_chat_users": ["<Science United's BOINC user id>"],
@@ -850,7 +850,7 @@ gateway is BOINC-specific beyond the configuration.
 | `key_sha256` | SHA-256 of its keys (make one with `aisathome-gateway project-key <file>`). A connector key opens only that connector's endpoints: no API, project or account call. It must differ from every project key. |
 | `allow_from` | Optional: addresses or prefixes its calls must come from (behind a reverse proxy on loopback or in `trusted_proxies`, the last `X-Forwarded-For` hop). Others get 403. Also restrict the path at the reverse proxy. |
 | `max_pilots` | Its pilots that have not ended, at most (0: none can be created). |
-| `models` | Optional: the model names and roles its pilots serve (at most 64, each listed once). A request for one of them waits for capacity, up to the queue timeout (`queue_timeout_seconds`, a project's own for its science), as for a model a node offered in the last 24 hours, instead of failing at once with 404 "not served on this network": pilots come only when the demand asks for them, so without this the first request after a restart, or after a day with no such node online, could never wait for one. It counts only while `max_pilots` is above 0, and only for requests a pilot could serve: science, and people's requests while `pilots_chat_enabled`; never personal data or a request held to its sender's own nodes. A timeout then answers 503 "no node serving … is online". Anything else unknown still gets 404 at once. |
+| `models` | Optional: the model names and roles its pilots serve (at most 64, each listed once). A request for one of them waits for capacity, up to the queue timeout (`queue_timeout_seconds`, a project's own for its science), as for a model a node offered in the last 24 hours, instead of failing at once with 404 "not served on this network": pilots come only when the demand asks for them, so without this the first request after a restart, or after a day with no such node online, could never wait for one. It counts only while `max_pilots` is above 0, and only for requests a pilot could serve: science, and people's requests while `pilots_chat_enabled`; never personal data, a request held to its sender's own nodes, or a key held to one operator (`only_operator`: a pilot's operator is its account's pseudonym). The stock pilot (`aisathome-node pilot`, tier `big`) announces `qwen3.8-27b` with the roles `deep` and `agent`. A timeout then answers 503 "no node serving … is online". Anything else unknown still gets 404 at once. |
 | `mint_per_hour` | Pilots created per hour, at most (default 120). |
 | `max_deadline_hours` | A pilot's deadline at most this far ahead (default 336). |
 | `pilots_chat_enabled` | Off by default: its pilots serve **science only**. See below. |

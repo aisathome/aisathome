@@ -543,11 +543,13 @@ func (g *Gateway) pickWait(ctx context.Context, rt *route, deadline time.Time) (
 // lists rt's model or role in its models. Its pilots must be allowed rt's class (chat, agents and
 // API calls only while pilots_chat_enabled), and rt must be one that may reach a pilot at all: a
 // pilot is nobody's own node, so not personal data, the requester's "own nodes only" or the
-// emergency switch, and not tools without consent for volunteer nodes. Otherwise nothing could
-// ever serve rt, and waiting for it would only delay the "unknown" answer.
+// emergency switch, and not tools without consent for volunteer nodes; and not a key held to one
+// operator (only_operator), since a pilot's operator is its account's pseudonym, which no key names
+// ahead. Otherwise nothing could ever serve rt, and waiting for it would only delay the "unknown"
+// answer while holding a queue slot.
 func (g *Gateway) pilotsMayServe(rt *route) bool {
 	t := g.connCfgs.Load()
-	if t == nil || rt.pii != "" || rt.onlySelf || rt.ownOnly() || (rt.tools && !rt.consent) {
+	if t == nil || rt.pii != "" || rt.onlySelf || rt.ownOnly() || rt.operator != "" || (rt.tools && !rt.consent) {
 		return false
 	}
 	for _, c := range t.byID {
