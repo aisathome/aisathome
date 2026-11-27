@@ -225,3 +225,39 @@ func TestScienceRestart(t *testing.T) {
 		t.Fatalf("idempotency lost on restart: %v", out)
 	}
 }
+
+// A science database from the gateway before results' reuse (version 3) gets the column; its results
+// read with no reuse and take one.
+func TestScienceDBResultReuseMigration(t *testing.T) {
+	all := scienceMigrations
+	defer func() { scienceMigrations = all }()
+	dir := t.TempDir()
+	scienceMigrations = all[:3]
+	s, err := openScienceDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO campaigns (project, id, status, created_at, updated_at) VALUES ('p', 't9', 'finished', '2026-11-18T00:00:00Z', '2026-11-18T00:00:00Z');
+		INSERT INTO results (project, id, source, external_id, campaign, item, state, labels, submitted_at, verdict_at, created_at, updated_at)
+		VALUES ('p', 'r-00000000000000aa', 'prove2me', 'x-1', 't9', 'p2m-faf1e3', 'accepted', '{"kind":"proof"}', '2026-11-19T07:45:28Z', '2026-11-19T07:50:58Z', '2026-11-19T07:51:18Z', '2026-11-19T07:51:18Z')`); err != nil {
+		t.Fatal(err)
+	}
+	s.close()
+	scienceMigrations = all
+	if s, err = openScienceDB(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if v, _ := s.schemaVersion(); v != len(all) {
+		t.Fatalf("version %d", v)
+	}
+	rs, _, _, err := s.results("p", resultFilter{}, 10, "")
+	if err != nil || len(rs) != 1 || rs[0].Reuse != nil || rs[0].Labels["kind"] != "proof" {
+		t.Fatalf("after the migration: %+v %v", rs, err)
+	}
+	p := &resultPatch{Reuse: []byte(`{"name":"WilliamsonShmoys.edge_count_upper","author":"Eyal1990","relation":"import"}`)}
+	res, changed, err := s.patchResult("p", "r-00000000000000aa", p, nil, time.Now())
+	if err != nil || !changed || res.Reuse == nil || res.Reuse.Author != "Eyal1990" {
+		t.Fatalf("backfill after the migration: %+v %v %v", res, changed, err)
+	}
+}

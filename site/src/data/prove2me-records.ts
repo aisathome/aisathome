@@ -21,7 +21,6 @@ import { leafPlan } from './prove2me-outlines';
 import { provesLeaf } from './prove2me-outcomes';
 import type { Prove2me } from './prove2me';
 import type { TaskTableRow } from './task-table';
-import curatedReuses from './science/prove2me-reuses.json';
 
 export const CAMPAIGNS_URL = '/v1/projects/prove2me/campaigns?limit=200';
 export const RESULTS_URL = '/v1/projects/prove2me/results?limit=500';
@@ -50,6 +49,14 @@ export interface Campaign {
 	items: CampaignItem[];
 	updated_at: string;
 }
+/** What a result reused instead of the model's own work (the gateway's `reuse`): the proved prove2me theorem, its
+ * page, its author and how the leaf relates to it. */
+export interface Reuse {
+	name: string;
+	url?: string;
+	author?: string;
+	relation?: string;
+}
 export interface ExtResult {
 	id: string;
 	campaign: string | null;
@@ -59,6 +66,8 @@ export interface ExtResult {
 	state: 'pending' | 'accepted' | 'rejected' | 'error';
 	verdict: string;
 	labels: Record<string, string>;
+	/** The gateway's record of a reuse; null for a proof by the model (or a gateway from before the field). */
+	reuse: Reuse | null;
 	submitted_at: string;
 	verdict_at: string | null;
 }
@@ -103,20 +112,36 @@ export function parseCampaigns(d: unknown): { items: Campaign[] } | null {
 	return { items };
 }
 
-/** A reuse the records cannot mark: the leaf, the trial whose result it corrects, the theorem the proof imports. */
-type CuratedReuse = { trial: string; theorem: string; url: string; author: string; relation: string };
-const reuseFixes = Object.fromEntries(Object.entries(curatedReuses).filter(([k]) => leafID.test(k))) as Record<string, CuratedReuse>;
-
-/** A result corrected by science/prove2me-reuses.json: a leaf's accepted "proof" whose proof imports someone else's
- * proved theorem is a reuse (kind reuse, the theorem, its page and author in the labels). */
-function curated(r: ExtResult): ExtResult {
-	const fix = r.item ? reuseFixes[r.item] : undefined;
-	if (!fix || (r.labels.trial ?? r.campaign) !== fix.trial) return r;
-	return { ...r, labels: { ...r.labels, kind: 'reuse', reuses: fix.theorem, relation: fix.relation, reuses_url: fix.url, reuses_author: fix.author } };
+const author = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const relation = /^[a-z][a-z0-9_-]{0,31}$/;
+/** A result's `reuse` as the gateway records it, or null (none, or not what it should be). */
+function reuseOf(v: unknown): Reuse | null {
+	const u = v as Partial<Reuse> | null;
+	if (!u || typeof u !== 'object' || !isStr(u.name) || !u.name) return null;
+	return {
+		name: u.name,
+		...(isStr(u.url) && theoremURL.test(u.url) ? { url: u.url } : {}),
+		...(isStr(u.author) && author.test(u.author) ? { author: u.author } : {}),
+		...(isStr(u.relation) && relation.test(u.relation) ? { relation: u.relation } : {}),
+	};
 }
 
-/** One page of GET .../results, or null when it is not one; a result that is not what it should be is left out, a
- * curated reuse corrected (curated). */
+/** A result whose gateway record says it is a reuse is one, whatever its labels say (a writer that predates the record
+ * may have called it a proof): kind reuse, and the theorem, its relation, page and author as the labels the page reads. */
+function withReuse(r: ExtResult): ExtResult {
+	const u = r.reuse;
+	if (!u) return r;
+	return {
+		...r,
+		labels: {
+			...r.labels, kind: 'reuse', reuses: u.name, ...(u.relation ? { relation: u.relation } : {}), ...(u.url ? { reuses_url: u.url } : {}),
+			...(u.author ? { reuses_author: u.author } : {}),
+		},
+	};
+}
+
+/** One page of GET .../results, or null when it is not one; a result that is not what it should be is left out, one the
+ * gateway records as a reuse marked as one (withReuse). */
 export function parseResults(d: unknown): { items: ExtResult[] } | null {
 	const v = d as { results?: unknown };
 	if (!v || !Array.isArray(v.results)) return null;
@@ -131,10 +156,11 @@ export function parseResults(d: unknown): { items: ExtResult[] } | null {
 			state: r.state,
 			verdict: isStr(r.verdict) ? r.verdict : '',
 			labels: r.labels,
+			reuse: reuseOf(r.reuse),
 			submitted_at: r.submitted_at,
 			verdict_at: r.verdict_at ?? null,
 		}))
-		.map(curated);
+		.map(withReuse);
 	return { items };
 }
 

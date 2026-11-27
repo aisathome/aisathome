@@ -1,0 +1,104 @@
+---
+// The proved theorems (/science/prove2me/theorems/): every leaf of prove2me that prove2me accepted a proof of, newest
+// first, with the denominator, the selection from trial 11 on and three costs, all computed from the same records as
+// the prove2me page (prove2me-theorems.ts). The build fetches the records (prove2me-build.ts; its committed copy when
+// the gateway does not answer), and the browser reads them again every minute (scripts/theorems-live.ts). Statements in
+// plain English are not written yet: each row links to the theorem's statement on prove2me.
+// SPDX-License-Identifier: Apache-2.0
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { p2m } from '../../../../data/prove2me';
+import { THEOREMS_PATH, costsHTML, selectionText, theoremKpisHTML, theoremRowsHTML, updatedText } from '../../../../data/prove2me-theorems';
+import { buildTheorems } from '../../../../data/prove2me-theorems-build';
+import '../../../../styles/theorems.css';
+
+const { history, view, from, pages } = await buildTheorems();
+const leaves = pages.map((t) => t.leaf);
+const kp = theoremKpisHTML(view);
+const known = { history, pages: leaves };
+const image = new URL(`${THEOREMS_PATH}og.png`, Astro.site).href;
+const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by prove2me, and what each cost in GPU-hours.`;
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Proved theorems',
+		head: [
+			{ tag: 'title', content: `Lean theorems ${p2m.model} proved on prove2me - AIs@home` },
+			{ tag: 'meta', attrs: { property: 'og:image', content: image } },
+			{ tag: 'meta', attrs: { property: 'og:image:alt', content: imageAlt } },
+			{ tag: 'meta', attrs: { name: 'twitter:image:alt', content: imageAlt } },
+		],
+		description: `Every leaf of prove2me, research theorems stated in Lean 4, that ${p2m.model}, an open model on the AIs@home network, proved and prove2me accepted: how many were tried, and what a proof costs in GPU-hours.`,
+	}}
+	headings={[
+		{ depth: 2, slug: 'counts', text: 'What the count means' },
+		{ depth: 2, slug: 'cost', text: 'What a proof costs' },
+		{ depth: 2, slug: 'theorems', text: 'Every accepted leaf' },
+		{ depth: 2, slug: 'data', text: 'The data' },
+	]}
+>
+	<p>
+		<a href="https://prove2.me/">prove2me</a> collects theorems from mathematical research papers, stated in Lean 4 by its users and split into
+		small pieces called leaves. A leaf is one step toward a paper’s result, not the result itself. {p2m.model}, an open-weight model
+		on the AIs@home network, works on open leaves as an agent; Lean’s kernel checks each proof, and prove2me’s own check decides
+		whether to accept it. These are the leaves it accepted. More on how the trials run is on the <a href="/science/prove2me/">prove2me page</a>.
+	</p>
+	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
+	<script is:inline type="application/json" data-th-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
+
+	<dl class="th-kpis not-content" data-th-kpis data-source="build" style={`--kpis: ${kp.n}`} set:html={kp.html} />
+
+	<h2 id="counts">What the count means</h2>
+	<p data-th-selection>{selectionText(view)}</p>
+	<p>
+		A leaf closed by reuse is one whose accepted proof is a theorem someone else had already proved on prove2me: we submitted the
+		proof that uses it and name its author. It is listed below, marked, and counted neither as a proof by the model nor in the costs.
+	</p>
+
+	<h2 id="cost">What a proof costs</h2>
+	<dl class="th-costs not-content" data-th-costs data-source="build" style="--kpis: 3" set:html={costsHTML(view)} />
+	<p class="th-note">
+		A GPU-hour here is an hour of the model generating on one GPU, summed over a run’s tasks; Lean’s checks and the agent’s own time
+		are not counted, and tasks stopped before they finished are missing from the records, so all three are slight undercounts.
+		Benches, which run leaves of earlier trials again on a newer scaffold, are not counted. Part of the fall in cost since
+		trial {view.counts.selected.from} comes from choosing easier leaves (above), not only from a better scaffold. All three numbers are computed from the records each time the page
+		reads them.
+	</p>
+
+	<h2 id="theorems">Every accepted leaf</h2>
+	<p>
+		<span data-th-count>{view.theorems.length}</span> leaves, newest first. Each statement is on prove2me for now; plain-English statements
+		are not written yet. A leaf accepted since the site’s last build appears here at once, and gets its own page at the next build.
+	</p>
+	<div class="th-wrap not-content">
+		<table class="th-table">
+			<thead>
+				<tr>
+					<th scope="col">Leaf</th><th scope="col">Theorem and statement</th><th scope="col">Accepted</th><th scope="col" class="num" title="GPU-hours of the leaf’s own tasks">GPU-h</th>
+				</tr>
+			</thead>
+			<tbody data-th-rows data-source="build" set:html={theoremRowsHTML(view, new Set(leaves))} />
+		</table>
+	</div>
+	<p class="th-note">
+		GPU-hours and tokens of a leaf are those of its own tasks in the trial that proved it; earlier failed tries of the same leaf count in
+		the all-in costs above, not here.
+	</p>
+
+	<h2 id="data">The data</h2>
+	<ul>
+		<li>This page as JSON: <a href="/science/prove2me/theorems.json"><code>/science/prove2me/theorems.json</code></a> (as of the site’s build), and each leaf’s at <code>/science/prove2me/theorems/&lt;leaf&gt;.json</code>.</li>
+		<li>
+			The gateway’s public records, which this page reads every minute:
+			{' '}<a href="/v1/projects/prove2me/results"><code>results</code></a> (prove2me’s verdicts; a reuse carries a <code>reuse</code> record),
+			{' '}<a href="/v1/projects/prove2me/campaigns"><code>campaigns</code></a> (the trials and their leaves) and
+			{' '}<a href="/v1/tasks?project=prove2me"><code>tasks</code></a> (each task’s model minutes and tokens).
+		</li>
+		<li>Every leaf tried, failed runs included, and every task: the <a href="/science/prove2me/#leaves">prove2me page</a>.</li>
+	</ul>
+</StarlightPage>
+
+<script>
+	import { liveTheorems } from '../../../../scripts/theorems-live';
+	liveTheorems();
+</script>

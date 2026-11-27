@@ -1,0 +1,98 @@
+---
+// One proved theorem (/science/prove2me/theorems/<leaf>/): a leaf prove2me accepted a proof of, with its own share card
+// (theorems/<leaf>/og.png) and JSON (theorems/<leaf>.json). Built for every accepted leaf the build's records hold
+// (prove2me-theorems-build.ts); the browser refreshes its facts from the gateway's records every minute. The statement
+// itself is on prove2me until this page has a plain-English one.
+// SPDX-License-Identifier: Apache-2.0
+import type { GetStaticPaths } from 'astro';
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { p2m } from '../../../../data/prove2me';
+import { day } from '../../../../data/prove2me-current';
+import { THEOREMS_PATH, gpuH, nameOf, theoremFactsHTML, theoremPath, theoremReuseHTML, updatedText, type TheoremRow } from '../../../../data/prove2me-theorems';
+import { buildTheorems } from '../../../../data/prove2me-theorems-build';
+import '../../../../styles/theorems.css';
+
+export const getStaticPaths = (async () => (await buildTheorems()).pages.map((t) => ({ params: { leaf: t.leaf }, props: { t } }))) satisfies GetStaticPaths;
+
+const { t } = Astro.props as { t: TheoremRow };
+const { history, view, from, pages } = await buildTheorems();
+const name = nameOf(t);
+const at = t.verdict_at ?? t.submitted_at;
+const reuse = t.kind === 'reuse';
+const known = { history, pages: pages.map((x) => x.leaf), leaf: t.leaf };
+const image = new URL(`${theoremPath(t.leaf)}og.png`, Astro.site).href;
+const short = name.length > 70 ? `${name.slice(0, 69)}…` : name;
+const imageAlt = reuse
+	? `${short}: closed by reuse on prove2me, ${day(at)}.`
+	: `${short}: proved by ${p2m.model}, accepted by prove2me on ${day(at)}, ${gpuH(t.hours)} GPU-hours.`;
+const description = reuse
+	? `prove2me leaf ${t.leaf} (${short}), closed on ${day(at)} by reusing a theorem another prove2me user had proved; not counted as a proof by ${p2m.model}.`
+	: `prove2me leaf ${t.leaf} (${short}): ${p2m.model}, an open model on the AIs@home network, proved it in trial ${t.trial} with ${gpuH(t.hours)} GPU-hours, and prove2me accepted the proof on ${day(at)}.`;
+---
+
+<StarlightPage
+	frontmatter={{
+		title: name,
+		head: [
+			{ tag: 'title', content: `${short} (${t.leaf}) - prove2me theorem - AIs@home` },
+			{ tag: 'meta', attrs: { property: 'og:image', content: image } },
+			{ tag: 'meta', attrs: { property: 'og:image:alt', content: imageAlt } },
+			{ tag: 'meta', attrs: { name: 'twitter:image:alt', content: imageAlt } },
+		],
+		description,
+	}}
+	headings={[
+		{ depth: 2, slug: 'statement', text: 'Statement' },
+		{ depth: 2, slug: 'proof', text: 'The proof' },
+	]}
+>
+	<p class="th-kicker">{reuse ? 'Closed by reuse' : 'Accepted by prove2me'} · {day(at)}</p>
+	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
+	<script is:inline type="application/json" data-th-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
+
+	<h2 id="statement">Statement</h2>
+	<div class="th-statement not-content">
+		<p>
+			<code>{t.theorem}</code>
+		</p>
+		<p>
+			A plain-English statement is not written yet.{' '}
+			{t.url ? <a href={t.url} data-statement>Statement on prove2me →</a> : 'The statement is on prove2me.'}
+		</p>
+	</div>
+	<p>
+		This is a leaf of prove2me: one piece of a theorem from a research paper, stated in Lean 4 by a prove2me user, not by AIs@home. It
+		is one step toward the paper’s result, not the result itself.
+	</p>
+
+	<h2 id="proof">The proof</h2>
+	{
+		reuse ? (
+			<p>
+				This leaf was closed by reuse: the accepted proof is a theorem someone else had already proved on prove2me. We submitted the
+				proof that uses it; it is not counted as a proof by {p2m.model}, nor in the costs. The proof <span data-reuses set:html={theoremReuseHTML(t)} />.
+			</p>
+		) : (
+			<p>
+				{p2m.model}, an open-weight model on the AIs@home network, wrote the proof as an agent in trial {t.trial}. Our own full check
+				passed it (it builds, states exactly the leaf’s theorem, and uses no <code>sorry</code> and no axiom beyond Lean’s standard
+				three), and prove2me’s check accepted it.
+			</p>
+		)
+	}
+	<dl class="th-facts not-content" data-th-facts data-source="build" set:html={theoremFactsHTML(t)} />
+	<p class="th-note">
+		GPU-hours and tokens are those of the leaf’s own tasks in the trial that proved it: the time the model spent generating, on one GPU.
+		What a proof costs across all trials, failed leaves included, is on the <a href={THEOREMS_PATH + '#cost'}>list of proved theorems</a>.
+	</p>
+	<ul>
+		<li><a href={THEOREMS_PATH}>Every proved theorem</a></li>
+		<li><a href={`/science/prove2me/#trial-${t.trial}`}>Trial {t.trial} on the prove2me page</a>, with this leaf’s outlines and tasks</li>
+		<li>This leaf as JSON: <a href={`${THEOREMS_PATH}${t.leaf}.json`}><code>{THEOREMS_PATH}{t.leaf}.json</code></a></li>
+	</ul>
+</StarlightPage>
+
+<script>
+	import { liveTheorems } from '../../../../scripts/theorems-live';
+	liveTheorems();
+</script>

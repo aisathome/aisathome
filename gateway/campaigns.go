@@ -10,12 +10,21 @@
 // verdict text and when it was submitted and judged. The gateway knows nothing of what a campaign or
 // a result means for a project: that stays in labels and in the project's own code.
 //
+// One thing it does record of a result: whether it was reached by reusing someone else's work rather
+// than by the project's own (prove2me: an accepted submission whose proof is a theorem another user
+// had already proved). Its `reuse` is null, or what was reused: a name, a public link, the author (a
+// public username on the outside service) and how the result relates to it. The writer sets it when
+// it records the result; a later write without it keeps it (a retry or a verdict from a writer that
+// does not know the field never clears it); a PATCH changes or clears it, as a correction or a
+// backfill of results recorded before the field.
+//
 // Write, with the project's key (campaigns_http.go):
 //
 //	PUT    /v1/projects/{id}/campaigns/{campaign}   create or replace (idempotent)
 //	PATCH  /v1/projects/{id}/campaigns/{campaign}   change some fields (finish: {"status": "finished"})
 //	DELETE /v1/projects/{id}/campaigns/{campaign}   remove one no result refers to
 //	POST   /v1/projects/{id}/results                create or update, idempotent by (source, external_id)
+//	PATCH  /v1/projects/{id}/results/{result}       change its reuse or labels (by its public id)
 //	DELETE /v1/projects/{id}/results/{result}       remove one
 //
 // Read, without a key for a project with public_queue (else with its key):
@@ -71,6 +80,7 @@ const (
 	maxCampaignText  = 4096
 	maxItemTitle     = 300
 	maxResultVerdict = 1000
+	maxReuseName     = 200
 	maxPublicURL     = 500
 	maxProjectLinks  = 8
 	// maxClockSkew: how far ahead of the gateway's clock a writer's submitted_at may be.
@@ -173,6 +183,65 @@ type campaignPatch struct {
 	Items     *[]CampaignItem    `json:"items"`
 }
 
+// ResultReuse is what a result reused instead of the project's own work: the reused thing's name
+// (prove2me: the proved theorem's Lean name), its public page (under the project's public_links), its
+// author (a public username on the outside service) and how the result relates to it (a kind, such as
+// "same", "part" or "import"). Only the name is required.
+type ResultReuse struct {
+	Name     string `json:"name"`
+	URL      string `json:"url,omitempty"`
+	Author   string `json:"author,omitempty"`
+	Relation string `json:"relation,omitempty"`
+}
+
+// validate checks a reuse as it would be stored; links are the project's public_links.
+func (u *ResultReuse) validate(links []string) error {
+	if u == nil {
+		return nil
+	}
+	var errs []error
+	if u.Name == "" || len(u.Name) > maxReuseName || !utf8.ValidString(u.Name) || !utf8Printable(u.Name) ||
+		publicSecret.MatchString(u.Name) || publicEmail.MatchString(u.Name) {
+		errs = append(errs, fmt.Errorf("reuse.name: 1-%d printable bytes, nothing key-shaped and no e-mail address", maxReuseName))
+	}
+	errs = append(errs, checkPublicLink("reuse.url", u.URL, links))
+	if u.Author != "" && !publicRef(recordIDRe, u.Author) {
+		errs = append(errs, errors.New("reuse.author: 1-64 letters, digits, '.', '_' or '-'"))
+	}
+	if u.Relation != "" {
+		errs = append(errs, checkKind("reuse.relation", u.Relation))
+	}
+	return errors.Join(errs...)
+}
+
+func sameReuse(a, b *ResultReuse) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// reuseJSON is a reuse as stored: NULL for none.
+func reuseJSON(u *ResultReuse) any {
+	if u == nil {
+		return nil
+	}
+	b, _ := json.Marshal(u)
+	return string(b)
+}
+
+// readReuse reads a stored reuse; one that is not what it should be reads as none.
+func readReuse(s sql.NullString) *ResultReuse {
+	if !s.Valid {
+		return nil
+	}
+	var u ResultReuse
+	if json.Unmarshal([]byte(s.String), &u) != nil || u.Name == "" {
+		return nil
+	}
+	return &u
+}
+
 // Result is an external result as the public reads show it.
 type Result struct {
 	Project     string            `json:"project"`
@@ -185,6 +254,7 @@ type Result struct {
 	State       string            `json:"state"`
 	Verdict     string            `json:"verdict"`
 	Labels      map[string]string `json:"labels"`
+	Reuse       *ResultReuse      `json:"reuse"` // what it reused instead of the project's own work; null: its own work
 	SubmittedAt time.Time         `json:"submitted_at"`
 	VerdictAt   *time.Time        `json:"verdict_at"`
 	CreatedAt   time.Time         `json:"created_at"`
@@ -202,8 +272,16 @@ type resultIn struct {
 	State       string            `json:"state"`
 	Verdict     string            `json:"verdict"`
 	Labels      map[string]string `json:"labels"`
+	Reuse       *ResultReuse      `json:"reuse"`
 	SubmittedAt *time.Time        `json:"submitted_at"`
 	VerdictAt   *time.Time        `json:"verdict_at"`
+}
+
+// resultPatch is the body of a result's PATCH: absent fields stay as they are.
+type resultPatch struct {
+	// Reuse: absent, unchanged; null, none; an object, this reuse.
+	Reuse  json.RawMessage    `json:"reuse"`
+	Labels *map[string]string `json:"labels"`
 }
 
 // publicRef: a public id or reference (a campaign's, an item's, a task's) that holds nothing
@@ -724,7 +802,8 @@ func (s *scienceDB) deleteCampaign(project, id string) error {
 // validate checks a result's POST; links are the project's public_links.
 func (in *resultIn) validate(links []string) error {
 	errs := []error{checkTime("submitted_at", in.SubmittedAt), checkTime("verdict_at", in.VerdictAt),
-		checkPublicText("verdict", in.Verdict, maxResultVerdict), checkPublicLink("url", in.URL, links), checkLabels(in.Labels)}
+		checkPublicText("verdict", in.Verdict, maxResultVerdict), checkPublicLink("url", in.URL, links), checkLabels(in.Labels),
+		in.Reuse.validate(links)}
 	if err := checkKind("source", in.Source); err != nil {
 		errs = append(errs, err)
 	}
@@ -761,16 +840,17 @@ type storedResult struct {
 	ExternalID string `json:"external_id"`
 }
 
-const resultCols = `id, source, external_id, campaign, item, task, url, state, verdict, labels, submitted_at, verdict_at, created_at, updated_at`
+const resultCols = `id, source, external_id, campaign, item, task, url, state, verdict, labels, reuse, submitted_at, verdict_at, created_at, updated_at`
 
 func scanResult(project string, sc interface{ Scan(...any) error }) (*storedResult, error) {
 	var r storedResult
-	var camp, verdictAt sql.NullString
+	var camp, verdictAt, reuse sql.NullString
 	var item, task, link, labels, submitted, created, updated string
-	if err := sc.Scan(&r.ID, &r.Source, &r.ExternalID, &camp, &item, &task, &link, &r.State, &r.Verdict, &labels, &submitted,
+	if err := sc.Scan(&r.ID, &r.Source, &r.ExternalID, &camp, &item, &task, &link, &r.State, &r.Verdict, &labels, &reuse, &submitted,
 		&verdictAt, &created, &updated); err != nil {
 		return nil, err
 	}
+	r.Reuse = readReuse(reuse)
 	r.Project = project
 	if camp.Valid {
 		r.Campaign = &camp.String
@@ -784,8 +864,8 @@ func scanResult(project string, sc interface{ Scan(...any) error }) (*storedResu
 // sameResult: the row a holds what in (normalised) would store.
 func sameResult(a *storedResult, b *storedResult) bool {
 	return ptrEq(a.Campaign, b.Campaign) && ptrEq(a.Item, b.Item) && ptrEq(a.Task, b.Task) && ptrEq(a.URL, b.URL) &&
-		a.State == b.State && a.Verdict == b.Verdict && maps.Equal(a.Labels, b.Labels) && a.SubmittedAt.Equal(b.SubmittedAt) &&
-		sameTime(a.VerdictAt, b.VerdictAt)
+		a.State == b.State && a.Verdict == b.Verdict && maps.Equal(a.Labels, b.Labels) && sameReuse(a.Reuse, b.Reuse) &&
+		a.SubmittedAt.Equal(b.SubmittedAt) && sameTime(a.VerdictAt, b.VerdictAt)
 }
 
 func ptrEq(a, b *string) bool {
@@ -796,14 +876,15 @@ func ptrEq(a, b *string) bool {
 }
 
 // putResult creates or updates a project's result by (source, external_id). It reports whether it
-// was new. An unchanged result, or a pending write for one that has a verdict, writes nothing.
+// was new. An unchanged result, or a pending write for one that has a verdict, writes nothing. A
+// write without a reuse keeps the one the result has.
 func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*storedResult, bool, error) {
 	ctx, cancel := scienceCtx()
 	defer cancel()
 	now = now.UTC().Truncate(time.Second)
 	r := &storedResult{Result: Result{Project: project, ID: resultID(in.Source, in.ExternalID), Source: in.Source,
 		Campaign: strOrNil(in.Campaign), Item: strOrNil(in.Item), Task: strOrNil(in.Task), URL: strOrNil(in.URL), State: in.State,
-		Verdict: in.Verdict, Labels: in.Labels, SubmittedAt: *normTime(in.SubmittedAt), VerdictAt: normTime(in.VerdictAt)},
+		Verdict: in.Verdict, Labels: in.Labels, Reuse: in.Reuse, SubmittedAt: *normTime(in.SubmittedAt), VerdictAt: normTime(in.VerdictAt)},
 		ExternalID: in.ExternalID}
 	if r.Labels == nil {
 		r.Labels = map[string]string{}
@@ -833,6 +914,9 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 		}
 		if r.State != ResultPending && in.VerdictAt == nil && old.VerdictAt != nil && old.State == r.State {
 			r.VerdictAt = old.VerdictAt // the same verdict again keeps its time
+		}
+		if r.Reuse == nil {
+			r.Reuse = old.Reuse // recorded once, kept: only a PATCH clears it
 		}
 		if sameResult(old, r) {
 			return old, false, nil
@@ -868,12 +952,12 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 		camp = *r.Campaign
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO results (project, id, source, external_id, campaign, item, task, url, state, verdict, labels,
-		submitted_at, verdict_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		reuse, submitted_at, verdict_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (project, id) DO UPDATE SET campaign = excluded.campaign, item = excluded.item, task = excluded.task,
-		url = excluded.url, state = excluded.state, verdict = excluded.verdict, labels = excluded.labels,
+		url = excluded.url, state = excluded.state, verdict = excluded.verdict, labels = excluded.labels, reuse = excluded.reuse,
 		submitted_at = excluded.submitted_at, verdict_at = excluded.verdict_at, updated_at = excluded.updated_at`,
 		project, r.ID, r.Source, r.ExternalID, camp, in.Item, in.Task, in.URL, r.State, r.Verdict, labelsJSON(r.Labels),
-		fmtTime(r.SubmittedAt), fmtTimePtr(r.VerdictAt), fmtTime(r.CreatedAt), fmtTime(r.UpdatedAt))
+		reuseJSON(r.Reuse), fmtTime(r.SubmittedAt), fmtTimePtr(r.VerdictAt), fmtTime(r.CreatedAt), fmtTime(r.UpdatedAt))
 	if err != nil {
 		return nil, false, s.fail("put result: write", project, err)
 	}
@@ -881,6 +965,68 @@ func (s *scienceDB) putResult(project string, in *resultIn, now time.Time) (*sto
 		return nil, false, s.fail("put result: commit", project, err)
 	}
 	return r, old == nil, nil
+}
+
+// patchResult changes a project's result, by its public id, with the patch's reuse and labels
+// (validated against the project's public_links). It reports whether anything changed; an unchanged
+// result is not written.
+func (s *scienceDB) patchResult(project, id string, p *resultPatch, links []string, now time.Time) (*Result, bool, error) {
+	if len(p.Reuse) == 0 && p.Labels == nil {
+		return nil, false, &taskErr{code: http.StatusBadRequest, msg: "a result's PATCH takes reuse (an object, or null for none) and labels"}
+	}
+	var reuse *ResultReuse
+	if len(p.Reuse) > 0 && string(p.Reuse) != "null" {
+		dec := json.NewDecoder(strings.NewReader(string(p.Reuse)))
+		dec.DisallowUnknownFields()
+		reuse = &ResultReuse{}
+		if err := dec.Decode(reuse); err != nil {
+			return nil, false, &taskErr{code: http.StatusBadRequest, msg: "reuse: an object {name, url, author, relation}, or null"}
+		}
+	}
+	if err := errors.Join(reuse.validate(links), func() error {
+		if p.Labels == nil {
+			return nil
+		}
+		return checkLabels(*p.Labels)
+	}()); err != nil {
+		return nil, false, &taskErr{code: http.StatusBadRequest, msg: err.Error()}
+	}
+	ctx, cancel := scienceCtx()
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, s.fail("patch result: begin", project, err)
+	}
+	defer tx.Rollback()
+	old, err := scanResult(project, tx.QueryRowContext(ctx, `SELECT `+resultCols+` FROM results WHERE project = ? AND id = ?`, project, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, &taskErr{code: http.StatusNotFound, msg: "no such result"}
+	}
+	if err != nil {
+		return nil, false, s.fail("patch result: read", project, err)
+	}
+	n := *old
+	if len(p.Reuse) > 0 {
+		n.Reuse = reuse
+	}
+	if p.Labels != nil {
+		n.Labels = maps.Clone(*p.Labels)
+		if n.Labels == nil {
+			n.Labels = map[string]string{}
+		}
+	}
+	if sameResult(old, &n) {
+		return &old.Result, false, nil
+	}
+	n.UpdatedAt = now.UTC().Truncate(time.Second)
+	if _, err := tx.ExecContext(ctx, `UPDATE results SET labels = ?, reuse = ?, updated_at = ? WHERE project = ? AND id = ?`,
+		labelsJSON(n.Labels), reuseJSON(n.Reuse), fmtTime(n.UpdatedAt), project, id); err != nil {
+		return nil, false, s.fail("patch result: write", project, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, s.fail("patch result: commit", project, err)
+	}
+	return &n.Result, true, nil
 }
 
 // deleteResult removes a project's result by its public id.

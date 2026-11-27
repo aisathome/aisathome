@@ -77,6 +77,8 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           AISATHOME_HANDOFF_REQUIRED=1 ./node/packaging/linux/handoff_test.sh
+      - name: the prove2me reuse backfill's tests
+        run: python3 scripts/prove2me_reuse_backfill_test.py
       - name: node.sh tests (the one-line install without an account)
         run: ./scripts/node_sh_test.sh
       - name: prebuilt bundle packaging (fake llama-server)

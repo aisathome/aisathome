@@ -236,6 +236,29 @@ func (g *Gateway) handleResultPost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, map[string]any{"created": created, "result": res})
 }
 
+// handleResultPatch changes a result's reuse or labels by its public id (project key): 200, with
+// "changed" false when it already was so. The answer is the public result (no external_id).
+func (g *Gateway) handleResultPatch(w http.ResponseWriter, r *http.Request) {
+	id, rid := r.PathValue("id"), r.PathValue("result")
+	if !g.projectFor(w, r, id) {
+		return
+	}
+	if !resultIDRe.MatchString(rid) {
+		apiError(w, http.StatusNotFound, "no such result")
+		return
+	}
+	var p resultPatch
+	if !decodeTaskBody(w, r, maxResultBody, &p) {
+		return
+	}
+	res, changed, err := g.sci.patchResult(id, rid, &p, g.projectLinks(id), time.Now())
+	if err != nil {
+		taskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": changed, "result": res})
+}
+
 func (g *Gateway) handleResultDelete(w http.ResponseWriter, r *http.Request) {
 	id, rid := r.PathValue("id"), r.PathValue("result")
 	if !g.projectFor(w, r, id) {
@@ -260,5 +283,6 @@ func (g *Gateway) campaignRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/projects/{id}/campaigns/{campaign}", g.handleCampaignDelete)
 	mux.HandleFunc("GET /v1/projects/{id}/results", g.handleResultList)
 	mux.HandleFunc("POST /v1/projects/{id}/results", g.handleResultPost)
+	mux.HandleFunc("PATCH /v1/projects/{id}/results/{result}", g.handleResultPatch)
 	mux.HandleFunc("DELETE /v1/projects/{id}/results/{result}", g.handleResultDelete)
 }

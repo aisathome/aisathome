@@ -1,0 +1,52 @@
+/* The proved theorems pages (pages/science/prove2me/theorems/). Global: the build and the browser draw their parts as
+   HTML strings (prove2me-theorems.ts), which scoped styles would miss; every class here is th-. Same look as the
+   prove2me page: accent-topped number cards, plain tables that become cards on a phone. */
+.th-updated, main .th-note, .th-table .sub { color: var(--sl-color-gray-3); }
+.th-updated { font-size: 0.85rem; }
+main .th-note { font-size: 0.85rem; }
+.th-kpis, .th-costs { display: grid; grid-template-columns: repeat(var(--kpis, 3), 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
+.th-kpis div, .th-costs div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
+.th-kpis dd, .th-costs dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+.th-kpis dt, .th-costs dt { margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+.th-costs dt .sub { display: block; margin-top: 0.3rem; font-size: 0.72rem; color: var(--sl-color-gray-3); }
+@media (max-width: 40rem) { .th-kpis, .th-costs { grid-template-columns: 1fr; } }
+
+.th-wrap { overflow-x: auto; margin-top: 1rem; }
+.th-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.th-table :is(th, td) { padding: 0.45rem 0.75rem 0.45rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+.th-table :is(th, td):last-child { padding-right: 0; }
+.th-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+.th-table tbody th { white-space: nowrap; font: 600 0.82rem var(--font-mono, monospace); }
+.th-table tbody th .sub { font-family: var(--sl-font, inherit); font-weight: 400; cursor: help; }
+.th-table a { color: var(--sl-color-accent-high); }
+.th-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.th-table .nowrap { white-space: nowrap; }
+.th-table .thm { min-width: 10rem; }
+.th-table .thm .name { display: block; }
+.th-table .lean { display: block; margin-top: 0.15rem; padding: 0; background: none; font-size: 0.75rem; overflow-wrap: anywhere; color: var(--sl-color-gray-2); }
+.th-table .sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.th-table tr[data-kind='reuse'] .name { font-style: italic; }
+
+.th-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.25rem; margin: 1rem 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+.th-facts div { display: contents; }
+.th-facts dt { margin: 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+.th-facts dd { margin: 0; color: var(--sl-color-white); font-variant-numeric: tabular-nums; }
+.th-facts a { color: var(--sl-color-accent-high); }
+@media (max-width: 40rem) { .th-facts { grid-template-columns: 1fr; gap: 0 0; } .th-facts dd { margin-bottom: 0.5rem; } }
+.th-statement { margin: 1rem 0; padding: 0.75rem 1rem; border: 1px dashed var(--sl-color-gray-4); border-radius: 0.4rem; }
+.th-statement p { margin: 0.25rem 0 0; }
+.th-statement code { overflow-wrap: anywhere; }
+.th-kicker { margin: 0; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-accent-high); }
+
+/* Phones: each row as a small card. */
+@media (max-width: 40rem) {
+	.th-table, .th-table tbody { display: block; }
+	.th-table thead { display: none; }
+	.th-table tbody tr { display: grid; grid-template-columns: 1fr; gap: 0.2rem; padding: 0.6rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+	.th-table :is(th, td) { padding: 0; border: 0; }
+	.th-table .num { text-align: left; }
+	.th-table .thm { min-width: 0; }
+	.th-table td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+}
+.th-table .when { min-width: 6.5rem; }
+.th-statement a { color: var(--sl-color-accent-high); }
