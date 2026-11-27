@@ -14,6 +14,12 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   `lean.replay` refused that constant as "not a safe definition", so any proof defining a recursive helper failed.
   The check now leaves `<f>._unsafe_rec` out of the replay when `f` is a safe definition of the same module. Every
   other definition must still be safe, and a constant that used the helper does not replay.
+- **A resume after a stop of the worker counts against `max_resumes`.** A session resumed from a partial run.json
+  started its resume count at the interruptions in the record, leaving out the resume it made itself, so it allowed
+  one endpoint-error (or suspend) resume more than `max_resumes`; run.json's `resumed` already counted it. The count
+  now includes it. The record's format is unchanged: a partial run.json written by an earlier harness resumes with
+  one resume fewer left than before, as it should have had. A later endpoint-error resume's backoff
+  (`gateway_backoff_s` times the resumes so far) grows by one step accordingly.
 
 ## [0.4.0] - unreleased
 
