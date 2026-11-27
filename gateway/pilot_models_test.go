@@ -53,6 +53,17 @@ func unknownAtOnce(t *testing.T, s *stickyRig, rt *route) {
 	}
 }
 
+// waitQueued waits until one science request is queued: it found no node and was not refused as
+// unknown, so it waits for capacity.
+func waitQueued(t *testing.T, g *Gateway) {
+	t.Helper()
+	for end := time.Now().Add(5 * time.Second); g.queuedSc.Load() != 1; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the request never queued")
+		}
+	}
+}
+
 func sciRoute(want string) *route {
 	return &route{want: want, class: ClassScience, project: "lab", exclude: map[*nodeConn]bool{}}
 }
@@ -84,7 +95,7 @@ func TestPilotModelsWaitForPilot(t *testing.T) {
 				n, _, _ := s.g.pickWait(context.Background(), sciRoute("deep"), time.Now().Add(10*time.Second))
 				got <- n
 			}()
-			s.waitWaiters(1)
+			waitQueued(t, s.g) // past its first look and the unknown check: it really waits
 			var want *nodeConn
 			if pilot {
 				want = s.connectPilot()
@@ -147,6 +158,7 @@ func TestPilotModelsOnlyWhenAPilotCouldServe(t *testing.T) {
 			t.Fatalf("agent with consent: node %v, why %q", n, why)
 		}
 		for name, mod := range map[string]func(*route){
+			"only_operator":    func(rt *route) { rt.operator = "lab-gpu" },
 			"personal data":    func(rt *route) { rt.pii = piiEmail },
 			"own nodes only":   func(rt *route) { rt.onlySelf = true },
 			"emergency switch": func(rt *route) { rt.ownOnlyMode = true },
@@ -160,8 +172,28 @@ func TestPilotModelsOnlyWhenAPilotCouldServe(t *testing.T) {
 		}
 	})
 	t.Run("reloaded without the model", func(t *testing.T) {
-		s := pilotModelsRig(t, nil)
-		setConnector(t, s.g, func(c *Connector) { c.Models = []string{"other"} })
-		unknownAtOnce(t, s, sciRoute("deep"))
+		// A request that waits on the connector's models is woken by a reload that drops them and
+		// refused as unknown then, not at its timeout.
+		r := newPilotRig(t, func(c *Config) { c.Connectors[0].Models = []string{"deep"} })
+		r.g.start = time.Now().Add(-2 * startupGrace)
+		got := make(chan string, 1)
+		go func() {
+			_, _, why := r.g.pickWait(context.Background(), sciRoute("deep"), time.Now().Add(time.Minute))
+			got <- why
+		}()
+		waitQueued(t, r.g)
+		cfg := r.g.cfg
+		cfg.Connectors = testConnectors() // no models
+		if err := r.g.Reload(cfg); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case why := <-got:
+			if why != unknownModel {
+				t.Fatalf("why %q, want unknown", why)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the reload left the request waiting")
+		}
 	})
 }
