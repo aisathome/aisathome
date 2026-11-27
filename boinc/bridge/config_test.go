@@ -4,6 +4,7 @@ package bridge
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -75,4 +76,47 @@ func readSecretCheck(t *testing.T, s string) error {
 	os.WriteFile(p, []byte(s), 0o600)
 	_, err := ReadSecret(p)
 	return err
+}
+
+func TestLoadConfigTiers(t *testing.T) {
+	dir := t.TempDir()
+	write := func(s string) string {
+		p := filepath.Join(dir, "bridge.json")
+		os.WriteFile(p, []byte(s), 0o600)
+		return p
+	}
+	m := func(u string) string {
+		return `{"url": "https://example.org/` + u + `", "nbytes": 13146393504, "md5": "` + strings.Repeat("0", 32) + `"}`
+	}
+	good := `{"gateway": "https://api.example.org/", "connector": "boinc", "key_file": "/run/bridge/key",
+		"pilot_gateway": "wss://api.example.org/v1/node/connect", "project_dir": "/home/boincadm/project", "batch": 1,
+		"tiers": [{"name": "big", "app": "pilot", "model": ` + m("iq4.gguf") + `},
+			{"name": "standard", "app": "pilot_std", "model": ` + m("q3.gguf") + `}],
+		"web_url": "http://apache/project"}`
+	c, err := LoadConfig(write(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.App != "" || len(c.tiers()) != 2 || !slices.Equal(c.Apps(), []string{"pilot", "pilot_std"}) {
+		t.Errorf("tiers: %+v", c)
+	}
+	if tr, ok := c.tierOfApp("pilot_std"); !ok || tr.Name != "standard" {
+		t.Errorf("tier of pilot_std: %+v %v", tr, ok)
+	}
+	for _, bad := range []struct{ from, to string }{
+		{`"batch": 1`, `"batch": 1, "app": "pilot"`},
+		{`"batch": 1`, `"batch": 1, "model": ` + m("x.gguf")},
+		{`"name": "standard", "app": "pilot_std"`, `"name": "standard", "app": "pilot"`},
+		{`"name": "standard"`, `"name": "big"`},
+		{`"name": "standard"`, `"name": "Standard!"`},
+		{`"app": "pilot_std"`, `"app": "pilot std"`},
+		{`https://example.org/q3.gguf`, `http://example.org/q3.gguf`},
+	} {
+		if !strings.Contains(good, bad.from) {
+			t.Fatalf("test: %q not in the config", bad.from)
+		}
+		if _, err := LoadConfig(write(strings.Replace(good, bad.from, bad.to, 1))); err == nil {
+			t.Errorf("accepted %s", bad.to)
+		}
+	}
 }

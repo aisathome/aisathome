@@ -144,7 +144,7 @@ is on; never personal data), and the pilot's credit goes to the BOINC user it wa
 credential that the first connection redeems for a per-pilot secret only the real pilot keeps would
 close that; it needs the node agent and the gateway, and is not built yet.
 
-It reads the project's database (SELECT on `workunit`, `result` and `app` only; give it a user with no
+It reads the project's database (SELECT on `workunit`, `result` and `app` only, and only its own apps' work units; give it a user with no
 other rights, or it uses `config.xml`'s) and never writes it: BOINC's own tools make and cancel work
 units. Its work units carry `create_work --batch <batch>`, and it looks only at its own batch, so a
 test work unit made by hand, or a second bridge for another gateway (a staging one, with
@@ -169,6 +169,25 @@ project's own web server, which should keep those pages out of its access log.
   "max_granted_credit": 150000
 }
 ```
+
+**Tiers.** When the gateway's connector has `pilot_tiers` (a 16 GB tier beside the 24 GB one), the
+bridge's `tiers` replaces `app` and `model`: one entry per tier, with its name at the gateway, its own
+BOINC app and its model:
+
+```json
+"tiers": [
+  {"name": "big", "app": "pilot", "model": {"url": "https://huggingface.co/<repo>/resolve/<revision>/<24 GB file>.gguf", "nbytes": 14252845984, "md5": "<32 hex>"}},
+  {"name": "standard", "app": "pilot_std", "model": {"url": "https://huggingface.co/<repo>/resolve/<revision>/<16 GB file>.gguf", "nbytes": 13146393504, "md5": "<32 hex>"}}
+]
+```
+
+The gateway's demand then says how many pilots each tier needs, and the bridge creates each tier's pilots
+(with the tier's name) as work units of that tier's app, with that tier's model. The apps' plan classes
+decide which cards may get them, so a work unit's model always fits the host BOINC sends it to: a 16 GB
+card never gets a work unit of the 24 GB tier (or downloads its model). Unsent work units are cancelled per
+tier, a work unit's tier read from its app; the validator runs with each work unit's app. The connector's
+tiers and the bridge's must be the same (`-check` compares them); with tiers in the bridge and none at the
+gateway, the bridge creates nothing.
 
 Optional: `app` (`pilot`), `wu_template` and `result_template` (`templates/pilot_in`,
 `templates/pilot_out`), `target_host`, `deadline_hours` (60: the pilot's deadline at the gateway, after which its credential is refused),
