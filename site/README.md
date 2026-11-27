@@ -57,6 +57,13 @@ the holes in place, `closed_by`, an outcome in words) lives in `prove2me-outcome
 fixed data are `tests/prove2me-*.test.ts`; the page in a browser against fixed gateway answers is
 `e2e/browser/test_site_prove2me.py` (needs `site/dist`).
 
+Proved theorems (`/science/prove2me/theorems/`; one page per accepted leaf at `/science/prove2me/theorems/<leaf>/`, and
+`theorems.json` and `<leaf>.json`): every proof prove2me accepted, the denominator and three costs, computed from the same
+records (`src/data/prove2me-theorems.ts`) by the build (`prove2me-theorems-build.ts`) and again in the browser every
+minute (`src/scripts/theorems-live.ts`). A reuse is the gateway's `reuse` record on a result, nothing the site keeps.
+Each page's share card is drawn at build time by `src/data/og-card.ts`: the static `@fontsource` fonts read with
+`fontkitten`, a small rasterizer, and a PNG through `node:zlib`; no browser or native image library.
+
 Science (`/science/tauceti/`, data at `/science/tauceti.json`): a finished project (2026-11-15).
 Built from `src/data/science/tauceti.json`, the final data (public fields only, frozen from the
 gateway's last daily export), with `src/data/science-insights.ts` (numbers from `science-stats.ts`;

@@ -84,6 +84,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', link: '/science/' },
 						{ label: 'prove2me', link: '/science/prove2me/' },
+						{ label: 'Proved theorems', link: '/science/prove2me/theorems/' },
 						{ label: 'Tau Ceti', link: '/science/tauceti/' },
 					],
 				},

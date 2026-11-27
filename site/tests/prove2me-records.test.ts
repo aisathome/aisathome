@@ -285,27 +285,36 @@ test('the submissions table: newest trial first, the newest submission first wit
 	assert.deepEqual(newestFirst(mixed).map((s) => s.alias), ['B', 'A']);
 });
 
-test('a curated reuse: N18 (trial 9) imports a theorem another prover had proved, so it is a reuse, not a proof by the model', async () => {
+test('a reuse the gateway records: N18 (trial 9) imports a theorem another prover had proved, so it is a reuse, not a proof by the model', async () => {
 	const { recordsOf } = await import('../src/data/prove2me-build');
 	const snap = (await import('../src/data/science/prove2me-records.json')).default;
-	// the records say "proof"; the correction makes it a reuse with the theorem it imports
 	const raw18 = (snap as { results: { results: { item: string }[] } }).results.results.find((r) => r.item === 'p2m-faf1e3')!;
-	const [r18] = parseResults({ results: [raw18] })!.items;
+	// the gateway's reuse record decides, whatever the labels say (a writer from before the record called it a proof)
+	const asProof = { ...raw18, labels: { alias: 'N18', kind: 'proof', trial: 't9' } };
+	const [r18] = parseResults({ results: [asProof] })!.items;
 	assert.deepEqual([r18.labels.kind, r18.labels.relation, r18.labels.reuses_author], ['reuse', 'import', 'Eyal1990']);
 	assert.match(r18.labels.reuses, /^WilliamsonShmoys\.WilliamsonShmoys_maximal_planar_supergraph_edge_count_upper__/);
-	// only for its own trial: the same leaf's result from another trial stays as it is
-	assert.equal(parseResults({ results: [{ ...raw18, campaign: 't10', labels: { alias: 'N18', kind: 'proof', trial: 't10' } }] })!.items[0].labels.kind, 'proof');
-	// the page's numbers from the records of 2026-11-23: 11 accepted, 8 open leaves proved by the model, 3 closed by reuse
+	assert.equal(r18.reuse!.url, 'https://prove2.me/theorems/896d696c-1e18-4de1-b5bd-ab3d52a97871');
+	// without the record (a gateway from before the field, or a proof by the model) the labels stand
+	const { reuse: _drop, ...noRecord } = asProof as typeof asProof & { reuse?: unknown };
+	assert.equal(parseResults({ results: [noRecord] })!.items[0].labels.kind, 'proof');
+	assert.equal(parseResults({ results: [noRecord] })!.items[0].reuse, null);
+	// a record that is not one is none: a page outside prove2me and a bad author are dropped, a missing name drops it all
+	const odd = parseResults({ results: [{ ...noRecord, reuse: { name: 'X.y', url: 'https://evil.example/x', author: 'two words' } }, { ...noRecord, id: 'r-2', reuse: { url: 'https://prove2.me/theorems/896d696c-1e18-4de1-b5bd-ab3d52a97871' } }] })!.items;
+	assert.deepEqual(odd[0].reuse, { name: 'X.y' });
+	assert.equal(odd[1].reuse, null);
+	// the page's numbers from the committed records (after the backfill): N02, N05 and N18 are reuses, not proofs
 	const live = recordsOf(snap)!;
 	const v = scienceView(h, live);
-	assert.deepEqual([v.kpis.accepted, v.kpis.openProved, v.kpis.reused], [11, 8, 3]);
+	const reuses = v.submissions.filter((s) => s.kind === 'reuse').map((s) => s.alias).sort();
+	assert.deepEqual(reuses, ['N02', 'N05', 'N18']);
+	assert.equal(v.kpis.reused, 3);
 	assert.ok(!v.kpis.openProvedLeaves.some((l) => l.leaf === 'p2m-faf1e3'));
 	const s18 = v.submissions.find((s) => s.leaf === 'p2m-faf1e3')!;
-	assert.equal(s18.kind, 'reuse');
 	assert.equal(s18.reuses!.url, 'https://prove2.me/theorems/896d696c-1e18-4de1-b5bd-ab3d52a97871');
-	assert.match(submissionRowHTML(s18), /imports <a href="https:\/\/prove2\.me\/theorems\/896d696c/);
 	assert.equal(s18.reuses!.author, 'Eyal1990');
-	// trial 9: its run of N18 is no run (as trial 6's N05), 1 of 6 open runs proved
+	assert.match(submissionRowHTML(s18), /imports <a href="https:\/\/prove2\.me\/theorems\/896d696c/);
+	// trial 9: its run of N18 is no run (as trial 6's N05), 1 of 5 open runs proved
 	const t9 = v.trials.find((t) => t.label === '9')!;
 	assert.deepEqual([t9.open.proved, t9.open.runs], [1, 5]);
 });

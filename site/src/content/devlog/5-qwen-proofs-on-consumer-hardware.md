@@ -26,7 +26,7 @@ Promising, but not a slam dunk.
 - 43 different open lemmas attempted over 10 trials (some of them several times while we tuned the setup, and 4 only got a first outline).
 - 11 accepted by prove2me: 8 proved by Qwen itself, 3 by reusing a proof that already existed on the platform.
 - 26 failed. 6 are still running in the current trial.
-- The 5 most recent proofs took about 24 GPU-hours each on RTX 3090/4090s, counting everything those trials ran. Most of that time goes to the lemmas it doesn't manage to prove (83% in those three trials).
+- The 5 most recent proofs took about 24 GPU-hours each on RTX 3090/4090s, counting everything those trials ran. Most of that time goes to the lemmas it doesn't manage to prove (83% in those three trials). *(Update, 27 November: this figure is out of date. From trial 11 on we ran only lemmas we judged easy or moderate, and the cost per accepted proof fell well below it. The [proved theorems page](/science/prove2me/theorems/#cost) has the current numbers, computed from the gateway's records each time it loads. The 24 GPU-hours stays here as what these trials cost.)*
 - In tokens, each of those 5 proofs cost about 111M prompt (input) tokens and 3.0M generated (output) tokens. About 96% of the input tokens are served from the KV cache, so only about 4M input tokens per proof are actually computed.
 
 | Summary | |
@@ -106,7 +106,7 @@ Splitting into lemmas, together with a bigger budget per lemma and easier lemmas
 
 ## Limitations
 
-- Slow. ~24 GPU-hours per proof is a lot, even if it's cheap hardware.
+- Slow. ~24 GPU-hours per proof is a lot, even if it's cheap hardware. *(Update, 27 November: see the note above; the current cost per proof is on the [proved theorems page](/science/prove2me/theorems/#cost).)*
 - The outline is the weak point. The outline works like the first rough draft of the proof, end to end, but without proving each step. The results so far show that when the outline is good, the model proves almost every piece on the first try. When the outline has a false step, or one step as hard as the whole lemma, everything after that is wasted time. That is where most of the GPU-hours go right now.
 - Hard lemmas are out of reach for now. Maybe new models or better scaffolding will improve this.
 - Small numbers. Each recent trial is 5-6 lemmas, so it's hard to tell if a change actually helped.

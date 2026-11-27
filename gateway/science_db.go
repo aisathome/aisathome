@@ -174,6 +174,9 @@ var scienceMigrations = []string{
 	) WITHOUT ROWID;
 	CREATE INDEX connector_requests_by_state ON connector_requests (connector, state, created_at);
 	CREATE INDEX connector_requests_by_account ON connector_requests (account, created_at);`,
+	// 4: a result's reuse (campaigns.go): NULL for the project's own work, else what it reused as JSON
+	// {name, url, author, relation}.
+	`ALTER TABLE results ADD COLUMN reuse TEXT;`,
 }
 
 // scienceDB is the open database.
