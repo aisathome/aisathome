@@ -10,14 +10,15 @@ import { leafPlan, leafPlanHTML } from './prove2me-outlines';
 import { attemptOf, provesLeaf } from './prove2me-outcomes';
 import type { Kpis, LeavesView, ScienceView, SubRec, TrialDetail, TrialSum } from './prove2me-records';
 import { shortSpan, tokTitleOf } from './prove2me-trials';
+import { texText } from './tex-text';
 
 const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const safe = (u: string | undefined | null) => (u && theoremURL.test(u) ? u : '');
 const andList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 const link = (url: string | null | undefined, text: string, attrs = '') => (safe(url) ? `<a href="${esc(url)}"${attrs}>${esc(text)}</a>` : `<span${attrs}>${esc(text)}</span>`);
 
-/** A prove2me title without its TeX delimiters (the page has no TeX renderer). */
-export const plainTitle = (t: string) => t.replace(/\$([^$]*)\$/g, '$1').trim();
+/** A prove2me title as plain text, its TeX written in Unicode (tex-text.ts; the site has no TeX renderer). */
+export const plainTitle = (t: string) => texText(t);
 /** A trial's dates: "7 November 2026", "9 to 12 November 2026", "since 16 November 2026" while it runs. */
 export function span(t: { start: string; end: string | null }) {
 	if (!t.end) return `since ${day(t.start)}`;

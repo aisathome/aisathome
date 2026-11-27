@@ -8,5 +8,7 @@ section: Added
   on, and three costs (the median GPU-hours per proof, and all-in for recent trials and for every
   trial), all computed from the gateway's records at the build and again every minute in the browser.
   Each accepted leaf has a page of its own with a share card, and the list and each leaf are also JSON.
-  Reuses come from the gateway's `reuse` record; the site's own correction file is gone. Dev log 5's
+  Reuses come from the gateway's `reuse` record; the site's own correction file is gone. TeX in
+  prove2me's titles reads as plain text (`$\Pr[\Sigma_S=\sigma^-_S]\ge\pi^-$` as "Pr[Σ_S = σ⁻_S] ≥ π⁻")
+  on these pages, the prove2me page and the share cards. Dev log 5's
   "~24 GPU-hours per proof" now carries a dated note that points to the current numbers. (site)
