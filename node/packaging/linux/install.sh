@@ -347,27 +347,60 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# after_failed_check speed|memory|gpu: the engine failed a check after the install (the speed test, out of GPU
+# memory at load, no GPU); the new files stay installed. It sets the services and says in after_text what it
+# did, for the error message.
+#   A first install: both services stopped and disabled, whatever failed (start at boot is turned on only
+#   after the speed test, so a node that never passed stays off).
+#   An update (updating=1: the node's unit was there before this run): start at boot stays as the node had
+#   it. A slow speed test (most often another program on the GPU: this card passed before) puts each service
+#   back as it was before this run (node_on_before, llama_on_before). Out of GPU memory: both stopped now
+#   (systemd would restart a failing engine every 5 s), and a reboot, with the memory free, starts it again.
+#   No GPU: stopped and disabled as on a first install, as the new units would run it on the CPU at every
+#   boot.
+# keep_stopped=1: the node stays off, so restore_unlinked does not start it again when it puts a moved-aside
+# token back. A node that runs again with a moved-aside token is started by restore_unlinked, once the token
+# is back.
+after_failed_check() {
+  if [[ ${updating:-0} = 0 || $1 = gpu ]]; then
+    keep_stopped=1 after_text="the installer stopped the node"
+    systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
+  elif [[ $1 = memory ]]; then
+    keep_stopped=1 after_text="the installer stopped the node (start at boot is unchanged)"
+    systemctl stop aisathome-node aisathome-llama >/dev/null 2>&1 || true
+  elif [[ ${node_on_before:-0} = 1 ]]; then
+    keep_stopped=0 after_text="the update stops here: the node runs again as before it (start at boot is unchanged)"
+    [[ ${token_aside:-0} = 1 ]] || systemctl start aisathome-node >/dev/null 2>&1 || true
+  else
+    keep_stopped=1 after_text="the update stops here: the node is stopped as it was before it (start at boot is unchanged)"
+    systemctl stop aisathome-node >/dev/null 2>&1 || true
+    [[ ${llama_on_before:-0} = 1 ]] || systemctl stop aisathome-llama >/dev/null 2>&1 || true
+  fi
+}
+
 # engine_on_gpu <since>: llama-server, started at <since>, must run on the GPU. When CUDA sees
 # no GPU (in the sandbox, most likely device rules that do not match the driver), llama-server
-# carries on on the CPU: stop it then and leave it disabled, so nothing runs on the CPU.
+# carries on on the CPU: stop it then and leave it disabled, so nothing runs on the CPU (an update
+# too: after_failed_check).
 engine_on_gpu() {
   # grep without -q reads the whole log: with -q, an early match ends grep, journalctl gets
   # SIGPIPE, and under pipefail the pipeline reports failure (the check passed silently).
   journalctl -u aisathome-llama --since "$1" -o cat | grep "no usable GPU found" >/dev/null || return 0
-  systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
+  after_failed_check gpu
   local names
   names="$(grep -i nvidia /proc/devices 2>/dev/null | paste -sd, - || true)"
   die "llama-server found no GPU and ran on the CPU, so the installer stopped it. If nvidia-smi works, the service's device rules probably do not match this driver: get the newest installer and run it again, or tell us (NVIDIA devices in /proc/devices: ${names:-none}). Details: journalctl -u aisathome-llama"
 }
 
 # engine_fits <since>: llama-server, started at <since>, did not become healthy. If it ran out
-# of GPU memory (it fails at start, cleanly, when the tier does not fit), stop it, leave it
-# disabled (systemd would restart it every 5 s) and say why. Otherwise return.
+# of GPU memory (it fails at start, cleanly, when the tier does not fit), stop it (systemd would
+# restart it every 5 s; a first install also leaves it disabled: after_failed_check) and say why.
+# Otherwise return.
 engine_fits() {
   journalctl -u aisathome-llama --since "$1" -o cat |
     grep -iE "out of memory|failed to allocate|unable to allocate|cudaMalloc failed" >/dev/null || return 0
-  systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
-  die "llama-server ran out of GPU memory while loading the $tier tier, so the installer stopped the node. $(fit_advice) Details: journalctl -u aisathome-llama"
+  after_failed_check memory
+  die "llama-server ran out of GPU memory while loading the $tier tier, so $after_text. $(fit_advice) Details: journalctl -u aisathome-llama"
 }
 
 # ---- Tier: the card, its free memory and a speed test -------------------------------------
@@ -526,19 +559,20 @@ except Exception as e:
 PY
 }
 
-# speed_check: llama-server is up; refuse cards that write too slowly after a long prompt.
+# speed_check: llama-server is up; refuse cards that write too slowly after a long prompt (what becomes of
+# the services: after_failed_check).
 speed_check() {
   local r tps n secs
   echo "speed test: a ${speed_ctx}-token prompt, then 256 tokens (a minute or two)" >&2
   if ! r="$(speed_probe "${engine_url:-http://127.0.0.1:8000}")"; then
-    systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
-    die "the speed test failed ($r), so the installer stopped the node. Details: journalctl -u aisathome-llama"
+    after_failed_check speed
+    die "the speed test failed ($r), so $after_text. Details: journalctl -u aisathome-llama"
   fi
   read -r tps n secs <<<"$r"
   echo "speed: $tps tokens/s after a $n-token prompt (read in $secs s); the network needs at least $min_tps" >&2
   if LC_ALL=C awk -v a="$tps" -v b="$min_tps" 'BEGIN { exit !(a + 0 < b + 0) }'; then
-    systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
-    die "GPU $gpu_idx ($gpu_name) writes $tps tokens/s after a $n-token prompt; the network needs at least $min_tps, so the installer stopped the node (users would wait too long on long prompts). If other programs used the GPU during the test (BOINC GPU tasks, games, video), stop them and run the installer again."
+    after_failed_check speed
+    die "GPU $gpu_idx ($gpu_name) writes $tps tokens/s after a $n-token prompt; the network needs at least $min_tps (users would wait too long on long prompts), so $after_text. If other programs used the GPU during the test (BOINC GPU tasks, games, video), stop them and run the installer again."
   fi
 }
 
@@ -567,6 +601,8 @@ check_model_file() {
 
 # A temporary directory, removed on exit; created on first use (call workdir, then use $work).
 work="" token_aside=0 node_was_on=0 park_token=0 dl_pid=""
+# After a failed engine check (after_failed_check): an update or a first install, what ran before this run.
+updating=0 node_on_before=0 llama_on_before=0 keep_stopped=0 after_text=""
 # on_exit: removes the work folder, and puts an installed token back if the install stopped before
 # its link step (token_aside=1: set_aside_before_link, restore_unlinked).
 # A download running in the background (fetch_model) ends with the installer (Ctrl+C included: a
@@ -1053,9 +1089,9 @@ stop_node() {
 
 # restore_unlinked <config dir>: the install stopped before its link step started (an error, Ctrl+C):
 # the token goes back together with the node.json it was made for, and a node that was on starts again,
-# so the node is as it was. Once the link step has started, a link that did not happen leaves the token
-# aside and the node off (no token for the new gateway). Without a copy of the old node.json the token
-# stays aside.
+# so the node is as it was (unless a failed engine check keeps it off: after_failed_check). Once the link
+# step has started, a link that did not happen leaves the token aside and the node off (no token for the new
+# gateway). Without a copy of the old node.json the token stays aside.
 #
 # Order: the node is stopped first (a start under way may have read the new files), then a token this
 # install wrote is removed, then the old node.json and only then the old token come back: at no moment
@@ -1078,7 +1114,7 @@ restore_unlinked() {
   mv -f "$1/node.json.unlinked" "$1/node.json"
   mv -f "$1/token.env.unlinked" "$1/token.env"
   echo "The install stopped before linking: the installed token and its node.json are back in $1." >&2
-  if [[ $node_was_on = 1 ]]; then
+  if [[ $node_was_on = 1 && ${keep_stopped:-0} = 0 ]]; then
     systemctl start aisathome-node || echo "The node did not start again: sudo systemctl start aisathome-node" >&2
   fi
 }
@@ -1181,6 +1217,13 @@ preflight_ok || preflight_too_old
 # changes anything; it writes the node.json and token.env to install into $work.
 take_lock
 preflight
+
+# An update (the node's unit is installed) or a first install, and which services run, before anything changes:
+# what a failed engine check leaves (after_failed_check).
+[[ ! -e /etc/systemd/system/aisathome-node.service ]] || updating=1
+svc_on() { case "$(systemctl show -p ActiveState --value "$1" 2>/dev/null)" in active|activating|reloading) return 0 ;; esac; return 1; }
+if svc_on aisathome-node; then node_on_before=1; fi
+if svc_on aisathome-llama; then llama_on_before=1; fi
 
 # 1. Unprivileged system user without a login shell.
 id aisathome >/dev/null 2>&1 || useradd --system --home-dir /var/lib/aisathome-node --shell /usr/sbin/nologin aisathome
