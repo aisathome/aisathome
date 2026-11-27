@@ -598,7 +598,7 @@ func (g *Gateway) pressureNow() pressSample {
 	all, withWork := map[*nodeConn]int{}, map[*nodeConn]int{}
 	capSum, demand := 0, 0
 	for i, p := range projs {
-		rt := &route{tools: true, consent: p.AgentOK, pilotProbationOK: p.PilotProbationOK, ownOnlyMode: ownOnly}
+		rt := scienceRoute(p, ownOnly)
 		var sl []int
 		for _, u := range ups {
 			if rt.allows(u.n, now) {

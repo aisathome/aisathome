@@ -280,6 +280,32 @@ func TestPressureNowDemand(t *testing.T) {
 	}
 }
 
+// Science's slots are those real science requests may use: a pilot that serves science only and a node
+// without an account that the model check admitted count; one it has not admitted does not.
+func TestPressureNowScienceNodes(t *testing.T) {
+	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
+		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, AgentOK: true, PublicQueue: true},
+	}})
+	defer g.Close()
+	add := func(id string, slots int, mod func(*nodeConn)) {
+		n := &nodeConn{id: id, operator: "op-" + id, pending: map[string]*pendingReq{}, closed: make(chan struct{}),
+			models: []protocol.ModelInfo{{Name: "m", Slots: slots}}}
+		mod(n)
+		g.mu.Lock()
+		g.node[id] = n
+		g.mu.Unlock()
+	}
+	add("n1", 1, func(*nodeConn) {})
+	add("p-000000000001", 2, func(n *nodeConn) {
+		n.pilot, n.connector, n.deadline, n.scienceOnly = "p-000000000001", "boinc", time.Now().Add(time.Hour), true
+	})
+	add("a1", 4, func(n *nodeConn) { n.anon, n.admitted = true, true })
+	add("a2", 8, func(n *nodeConn) { n.anon = true }) // not admitted yet
+	if s := g.pressureNow(); s.Slots != 15 || s.ScienceSlots != 7 {
+		t.Fatalf("slots %d, science slots %d, want 15 and 7 (the node, the pilot and the admitted node)", s.Slots, s.ScienceSlots)
+	}
+}
+
 // The endpoint: public, cached, the ranges it names, and aggregates only (no node, operator,
 // project or user).
 func TestPressureEndpoint(t *testing.T) {

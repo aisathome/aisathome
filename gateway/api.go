@@ -365,7 +365,7 @@ func (g *Gateway) chatPrepare(w http.ResponseWriter, c *chatCaller, body map[str
 	rt.class = c.class
 	queueWait := g.cfg.QueueTimeoutSec
 	if c.proj != nil {
-		rt.project, rt.share, rt.pilotProbationOK = c.proj.ID, c.proj.MaxNodeShare, c.proj.PilotProbationOK
+		rt.forProject(c.proj)
 		if c.proj.QueueTimeoutSec > 0 {
 			queueWait = c.proj.QueueTimeoutSec
 		}
