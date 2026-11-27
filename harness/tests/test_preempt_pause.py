@@ -286,7 +286,8 @@ class RoundTime(unittest.TestCase):
             self.assertEqual(rig.slept, [15, 30, 60])
             run = rig.run([{"err": {"type": "provider.internal", "status": 502, "message": "Bad Gateway"}},
                            {"done": True}], resume=True)
-            self.assertEqual(rig.slept[3:], [loop.Timing.gateway_backoff_s])   # the 502 resumed (1 of 3)
+            self.assertEqual(rig.slept[3:], [2 * loop.Timing.gateway_backoff_s])   # the 502 resumed (2 of 3:
+                                                                                   # the stop was the first)
             self.assertEqual((run["resumed"], run["exit"]), (2, 0))    # the stop and the 502
 
     def test_a_resume_that_finds_the_round_s_budget_spent_ends_on_it_not_on_the_old_pause(self):
@@ -341,12 +342,10 @@ class RoundTime(unittest.TestCase):
             self.assertEqual((len(rig.kw), run["exit"]), (5, 0))   # all three errors resumed
             self.assertEqual(run["resumed"], 3)                     # the three errors, not the give-back
 
-    @unittest.expectedFailure
     def test_the_resume_after_a_worker_stop_counts_against_max_resumes(self):
-        """Known bug, not fixed here: a resume after a stop of the worker starts its count at
-        interruptions(segments), which leaves out the resume this call itself makes after the stop (run.json's
-        `resumed` counts it). Two endpoint errors and a stop have used max_resumes (3), so the next error must
-        end the session; today it is resumed a fourth time (run.json then says resumed: 4)."""
+        """A resume after a stop of the worker counts the resume it makes itself (run.json's `resumed` counts
+        it too): two endpoint errors and a stop have used max_resumes (3), so the next error ends the session
+        instead of being resumed a fourth time."""
         with tempfile.TemporaryDirectory() as d:
             rig = Rig(Path(d), self.T)
             rig.run([{"waited": 40, "exhausted": True}])          # the give-back: free

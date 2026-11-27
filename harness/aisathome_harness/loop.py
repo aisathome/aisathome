@@ -1066,6 +1066,7 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
     notice: dict = {}    # what clear_step_notice did at this round's start
     ev_start = 0         # byte offset in events.jsonl where this round's events begin
     budget = None        # a retry's own start: {"segment", "events_offset", "steps"} (the caps count from it)
+    stopped = False      # resuming after a stop of the worker (a partial run.json with a segment in it)
 
     def step_reset(message: str) -> str:
         return with_step_reset(message, events, steps, home, notice, s.prompts,
@@ -1110,6 +1111,7 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
         _ungzip_events(raw)
         # everything about the round comes from its record, not from this call: its caps, where it began
         segments = prev["segments"]
+        stopped = bool(prev.get("partial") and segments)
         steps, wall_min = prev["step_cap"], prev["wall_cap_min"]
         if prev.get("step_notice"):
             notice.update(prev["step_notice"])
@@ -1147,7 +1149,9 @@ def _run_session(s: Session, base_url, key_file, model, wall_min, steps, resume,
     s.say(f"run: {model} via {base_url}, cap {wall_min} min of model time (at most "
           f"{T.awake_ceiling * wall_min} min awake) / {steps} steps"
           + (f" (resuming session {sid})" if resume else ""))
-    resumes = interruptions(segments) if resume else 0
+    # the resumes used so far: after a stop of the worker, also the one this call makes (the next segment,
+    # which run.json's `resumed` counts too)
+    resumes = interruptions(segments + [{}] if stopped else segments) if resume else 0
     ran_from = len(segments)   # the segments before this call: their marks are history, not this run's end
     spent = None               # the cap this call found spent before any further segment ("time", "awake ceiling")
     round_no = (fu_round or 0) + 1
