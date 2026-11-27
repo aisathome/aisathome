@@ -318,6 +318,10 @@ func Run(ctx context.Context, o Options, d Deps) Result {
 	// Before it connects: the engine loads the model, then the speed floor (or a recent pass on
 	// this card, tier and engine). The engine is stopped again on a refusal or SIGTERM.
 	speed, why, err := ready(ctx, o, d, s, tier, dev, engineID(o, exe), engineDown, parent, log)
+	if why == "" && d.Parent() != parent { // gone between ready's own checks
+		log.Warn("the wrapper is gone; stopping")
+		why = ReasonSigterm
+	}
 	if why != "" {
 		stopEngine()
 		select {
