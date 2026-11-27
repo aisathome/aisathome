@@ -232,8 +232,8 @@ standard` (16 GB cards) or `--tier big` (24 GB and more).
 
 **`llama-server ran out of GPU memory while loading`.** The same, found when the model
 loaded: something took GPU memory after the check. The installer stopped the node; free the
-memory and run it again. On an update, start at boot stays as it was, so a reboot starts the
-node again.
+memory and run it again. On an update, start at boot stays as it was: a node that started at
+boot tries again at the next boot, and one that did not stays off until you start it.
 
 **`... writes N tokens/s after a 32000-token prompt; the network needs at least 20`.** The
 speed test after the install was too slow. A new install stops the node. An update stops

@@ -347,30 +347,39 @@ WantedBy=multi-user.target
 UNIT
 }
 
-# after_failed_check speed|memory|gpu: the engine failed a check after the install (the speed test, out of GPU
-# memory at load, no GPU); the new files stay installed. It sets the services and says in after_text what it
+# after_failed_check slow|probe|memory|gpu: the engine failed a check after the install (a speed test that ran
+# but was too slow, a speed test that failed, out of GPU memory at load, no GPU); the new files stay installed. It sets the services and says in after_text what it
 # did, for the error message.
 #   A first install: both services stopped and disabled, whatever failed (start at boot is turned on only
 #   after the speed test, so a node that never passed stays off).
 #   An update (updating=1: the node's unit was there before this run): start at boot stays as the node had
 #   it. A slow speed test (most often another program on the GPU: this card passed before) puts each service
-#   back as it was before this run (node_on_before, llama_on_before). Out of GPU memory: both stopped now
-#   (systemd would restart a failing engine every 5 s), and a reboot, with the memory free, starts it again.
-#   No GPU: stopped and disabled as on a first install, as the new units would run it on the CPU at every
-#   boot.
+#   back as it was before this run (node_on_before, llama_on_before); a start that systemd refuses is said.
+#   Out of GPU memory: both stopped now (systemd would restart a failing engine every 5 s); a node that
+#   starts at boot tries again at the next boot, with the memory free.
+#   No GPU, and a speed test that failed (the engine answered /health but not a generation): stopped and
+#   disabled as on a first install: the new units would run it on the CPU at every boot, or put an engine
+#   that cannot serve back in front of the gateway.
 # keep_stopped=1: the node stays off, so restore_unlinked does not start it again when it puts a moved-aside
 # token back. A node that runs again with a moved-aside token is started by restore_unlinked, once the token
 # is back.
 after_failed_check() {
-  if [[ ${updating:-0} = 0 || $1 = gpu ]]; then
+  if [[ ${updating:-0} = 0 || $1 = gpu || $1 = probe ]]; then
     keep_stopped=1 after_text="the installer stopped the node"
     systemctl disable --now aisathome-node aisathome-llama >/dev/null 2>&1 || true
   elif [[ $1 = memory ]]; then
     keep_stopped=1 after_text="the installer stopped the node (start at boot is unchanged)"
     systemctl stop aisathome-node aisathome-llama >/dev/null 2>&1 || true
   elif [[ ${node_on_before:-0} = 1 ]]; then
-    keep_stopped=0 after_text="the update stops here: the node runs again as before it (start at boot is unchanged)"
-    [[ ${token_aside:-0} = 1 ]] || systemctl start aisathome-node >/dev/null 2>&1 || true
+    keep_stopped=0
+    if [[ ${token_aside:-0} = 1 ]]; then
+      # restore_unlinked starts it once the token is back, and says so if it does not start.
+      after_text="the update stops here: the node's token goes back and the node is started again as before it (start at boot is unchanged)"
+    elif systemctl start aisathome-node >/dev/null 2>&1; then
+      after_text="the update stops here: the node runs again as before it (start at boot is unchanged)"
+    else
+      after_text="the update stops here, and the node did not start again: sudo systemctl start aisathome-node (start at boot is unchanged; details: journalctl -u aisathome-node)"
+    fi
   else
     keep_stopped=1 after_text="the update stops here: the node is stopped as it was before it (start at boot is unchanged)"
     systemctl stop aisathome-node >/dev/null 2>&1 || true
@@ -565,13 +574,13 @@ speed_check() {
   local r tps n secs
   echo "speed test: a ${speed_ctx}-token prompt, then 256 tokens (a minute or two)" >&2
   if ! r="$(speed_probe "${engine_url:-http://127.0.0.1:8000}")"; then
-    after_failed_check speed
+    after_failed_check probe
     die "the speed test failed ($r), so $after_text. Details: journalctl -u aisathome-llama"
   fi
   read -r tps n secs <<<"$r"
   echo "speed: $tps tokens/s after a $n-token prompt (read in $secs s); the network needs at least $min_tps" >&2
   if LC_ALL=C awk -v a="$tps" -v b="$min_tps" 'BEGIN { exit !(a + 0 < b + 0) }'; then
-    after_failed_check speed
+    after_failed_check slow
     die "GPU $gpu_idx ($gpu_name) writes $tps tokens/s after a $n-token prompt; the network needs at least $min_tps (users would wait too long on long prompts), so $after_text. If other programs used the GPU during the test (BOINC GPU tasks, games, video), stop them and run the installer again."
   fi
 }
@@ -1470,6 +1479,9 @@ systemctl stop aisathome-node 2>/dev/null || true
 systemctl restart aisathome-llama
 for i in $(seq 1 90); do curl -fs http://127.0.0.1:8000/health >/dev/null && break; sleep 2; done
 if ! curl -fs http://127.0.0.1:8000/health >/dev/null; then
+  # On the CPU first: llama-server that fell back to the CPU and then could not allocate is not a GPU out of
+  # memory (that keeps start at boot on an update; on the CPU never does).
+  engine_on_gpu "$started"
   engine_fits "$started"
   echo "llama-server did not become healthy; see: journalctl -u aisathome-llama" >&2; exit 1
 fi
