@@ -29,13 +29,16 @@
 //   - max_pilots and the spend cap cut the total target as above, taken from the smallest tiers first:
 //     what only a larger tier can do keeps its pilots;
 //   - each tier's outstanding pilots cover its own target; a larger tier's surplus covers a smaller
-//     tier's need, never the reverse; pilots_wanted per tier is the need left;
+//     tier's need (the larger needs first, each from the closest larger tier), never the reverse;
+//     pilots_wanted per tier is the need left;
 //   - the totals' caps (unsent_buffer − unsent, mint_per_hour left, and max_pilots − outstanding) are
 //     shared out from the largest tier down; cancel_unsent per tier is its unsent pilots that no
 //     tier's target uses.
 //
 // A pilot created without a tier (an older connector), or with a tier the config no longer has,
-// counts as the largest tier. The answer's top-level numbers are the sums; "tiers" has each tier's.
+// counts as the largest tier. So a connector that names no tier creates only largest-tier pilots for
+// the whole pilots_wanted, which serve every tier's need, and its cancel_unsent is only largest-tier
+// surplus. The answer's top-level numbers are the sums; "tiers" has each tier's.
 // Without pilot_tiers there is one kind of pilot and the answer has no "tiers".
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -45,6 +48,8 @@ import (
 	"net/http"
 	"slices"
 	"time"
+
+	"github.com/aisathome/aisathome/protocol"
 )
 
 // pilotDemand is the demand answer.
@@ -129,8 +134,12 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) (demandScience, []i
 		}
 	}
 	// The slots online, each node once: one that some project's agents may use, with the context that
-	// project asks of a node. cap is in sessions.
-	type slot struct{ ctx, cap int }
+	// project asks of a node. Its slots are shared by its models (nodeSlots); a project can use only
+	// those of a model that clears its floor. Capacities are in sessions.
+	type slot struct {
+		ctx, cap, used int
+		models         []protocol.ModelInfo
+	}
 	var slots []slot
 	g.mu.Lock()
 	for _, n := range g.node {
@@ -145,8 +154,8 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) (demandScience, []i
 		}
 		for _, p := range projs {
 			if p.rt.allows(n, now) && p.rt.nodeClearsFloor(n) {
-				d.SlotsOnline += nodeSlots(n)
-				slots = append(slots, slot{nodeCtx(n), nodeSlots(n) * d.SessionsPerSlot})
+				d.SlotsOnline += p.rt.floorSlots(n)
+				slots = append(slots, slot{ctx: nodeCtx(n), cap: nodeSlots(n) * d.SessionsPerSlot, models: slices.Clone(n.models)})
 				break
 			}
 		}
@@ -171,9 +180,14 @@ func (g *Gateway) scienceDemand(c *connector, now time.Time) (demandScience, []i
 			if need == 0 {
 				break
 			}
-			if ctxClears(slots[i].ctx, p.rt.minCtx) {
-				k := min(need, slots[i].cap)
-				slots[i].cap -= k
+			fs := 0 // the node's slots this project can use (floorSlots, on the copy taken under g.mu)
+			for _, m := range slots[i].models {
+				if ctxClears(m.Ctx, p.rt.minCtx) {
+					fs = max(fs, m.Slots)
+				}
+			}
+			if k := min(need, min(fs*d.SessionsPerSlot, slots[i].cap)-slots[i].used); k > 0 {
+				slots[i].used += k
 				need -= k
 			}
 		}
@@ -262,7 +276,7 @@ func (g *Gateway) demand(c *connector, now time.Time) (*pilotDemand, error) {
 		used := min(out[i], target[i])
 		left[i], need[i] = out[i]-used, target[i]-used
 	}
-	for i := range nt {
+	for i := nt - 1; i >= 0; i-- { // the larger needs first: a big surplus goes where only it can serve
 		for j := i + 1; j < nt && need[i] > 0; j++ {
 			k := min(need[i], left[j])
 			need[i] -= k
