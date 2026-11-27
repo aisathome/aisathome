@@ -32,7 +32,7 @@ export const hero = {
 // installer) is src/components/NodeStart.astro, shared with /node/.
 export const nodeBlock = {
 	kicker: 'Give your GPU',
-	title: 'Run a node',
+	title: 'Contribute by running a node',
 	intro:
 		'No account needed to start. A node without an account does science only: it works on prove2me proofs, never on people’s chats. Link it to an account later and it serves chats too and earns credit (recognition, not money).',
 };

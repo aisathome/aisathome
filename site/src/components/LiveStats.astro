@@ -1,9 +1,11 @@
 ---
 // Live network strip: fetches the gateway's public /v1/stats (same origin) and shows nodes
 // online, and requests and tokens processed since the network started. It stays hidden until real numbers arrive and
-// hides again on any failure: never dashes, zeros-by-default or error text.
+// hides again on any failure: never dashes, zeros-by-default or error text. A page may put something of its own
+// beside the time of the numbers (slot "aside"; the home page's newest dev log post); it hides with the strip.
 interface Props { class?: string }
 const { class: cls } = Astro.props;
+const aside = Astro.slots.has('aside');
 ---
 <section class:list={['live-stats not-content', cls]} data-live-stats hidden aria-label="The network right now">
 	<p class="live-head"><span class="live-dot" aria-hidden="true"></span><span>Live</span></p>
@@ -15,7 +17,14 @@ const { class: cls } = Astro.props;
 			<dd class="live-note" data-stat-note>on consumer GPUs with open models, not OpenAI, Anthropic or Google</dd>
 		</div>
 	</dl>
-	<p class="live-updated">Updated <time data-stat="updated"></time> UTC</p>
+	{aside ? (
+		<div class="live-side">
+			<slot name="aside" />
+			<p class="live-updated">Updated <time data-stat="updated"></time> UTC</p>
+		</div>
+	) : (
+		<p class="live-updated">Updated <time data-stat="updated"></time> UTC</p>
+	)}
 </section>
 
 <script>
