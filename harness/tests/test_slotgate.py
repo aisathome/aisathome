@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""slotgate: the slot count (leased and held model tasks per model slot), no slots online (one model task for the
-demand), the idle release (start-up, calls in
-flight, the idle window, the ceiling), the memory gate, the pick in the gateway's claim order (held for another
+"""slotgate: the slot count (leased and held model tasks per model slot), no slots online (waits by default;
+bootstrap=1: one model task for the demand), the idle release (start-up, calls in flight, the idle window, the
+ceiling), the memory gate, the pick in the gateway's claim order (held for another
 worker, skipped, not runnable here, tasks without the model while the slots are full), Picking's claim by id, and
 spare_capacity. In process, against a fake task list and fake stats; the clock: 2026-11-14 20:00:00 UTC."""
 from __future__ import annotations
@@ -148,29 +148,42 @@ class Slots(unittest.TestCase):
         self.assertEqual(seen, ["http://gw/v1/stats"])
 
 
+def boot(tasks, **kw):
+    """A gate with bootstrap=1 and no model slots online."""
+    kw.setdefault("bootstrap", 1)
+    return gate(tasks, slots=0, **kw)
+
+
 class NoSlots(unittest.TestCase):
-    """No model slots online: one model task may be claimed, so the gateway sees a worker and asks for a pilot."""
+    """No model slots online. By default the gate waits; with bootstrap=1 one model task may be claimed, so the gateway
+    sees a worker and asks for a pilot."""
     NONE = "no model slots online (1 per slot)"
 
-    def test_one_model_task_is_claimed_then_the_gate_waits(self):
+    def test_by_default_the_gate_waits(self):
+        g = gate([task("a", seq=1), task("b", seq=2)], slots=0)
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+        g = gate([task("b", seq=2)], slots=0, idle_s=20)
+        self.assertEqual((g(), g.pick), (self.NONE, None))
+
+    def test_bootstrap_1_claims_one_model_task_then_the_gate_waits(self):
         said = []
-        g = gate([task("a", seq=1), task("b", seq=2)], slots=0, log=said.append)
+        g = boot([task("a", seq=1), task("b", seq=2)], log=said.append)
         self.assertEqual((g(), g.pick), (None, "a"))
         self.assertEqual(said, ["gate: no model slots online; claiming a model task (a) so the gateway sees the demand "
                                 "for one"])
-        g = gate([task("a", "leased", seq=1), task("b", seq=2)], slots=0)
+        g = boot([task("a", "leased", seq=1), task("b", seq=2)])
         self.assertEqual((g(), g.pick), (self.NONE, None))
         # with idle release alike, an idle lease included
-        g = gate([task("b", seq=2)], slots=0, idle_s=20)
+        g = boot([task("b", seq=2)], idle_s=20)
         self.assertEqual((g(), g.pick), (None, "b"))
-        g = gate([leased("a", {"in_flight": 0, "updated_at": ago(600)}), task("b", seq=2)], slots=0, idle_s=20)
+        g = boot([leased("a", {"in_flight": 0, "updated_at": ago(600)}), task("b", seq=2)], idle_s=20)
         self.assertEqual(g(), self.NONE + "; 1 more leased, idle")
 
     def test_a_task_held_for_its_worker_counts(self):
         held = task("h", seq=1, prefer_worker="r-2", prefer_until=ago(-300))
-        g = gate([held, task("b", seq=2)], slots=0, worker="r-1")
+        g = boot([held, task("b", seq=2)], worker="r-1")
         self.assertEqual((g(), g.pick), (self.NONE, None))
-        g = gate([held, task("b", seq=2)], slots=0, worker="r-2")      # r-2 resumes its own
+        g = boot([held, task("b", seq=2)], worker="r-2")      # r-2 resumes its own
         self.assertEqual((g(), g.pick), (self.NONE, None))
 
     def test_bootstrap_sets_how_many_and_0_is_none(self):
@@ -184,13 +197,13 @@ class NoSlots(unittest.TestCase):
 
     def test_the_memory_gate_and_the_pick_still_apply(self):
         no = lambda: "memory: full"
-        g = gate([task("a")], slots=0, memory=no)
+        g = boot([task("a")], memory=no)
         self.assertEqual((g(), g.pick), ("memory: full", None))
-        g = gate([task("a", seq=1), task("a-check", role="check", seq=2)], slots=0, memory=no)
+        g = boot([task("a", seq=1), task("a-check", role="check", seq=2)], memory=no)
         self.assertEqual((g(), g.pick), (None, "a-check"))
-        g = gate([task("a", release="r2")], slots=0, runnable=runnable)
+        g = boot([task("a", release="r2")], runnable=runnable)
         self.assertEqual((g(), g.pick), (self.NONE, None))
-        g = gate([], slots=0)                                          # nothing queued: the reason as before
+        g = boot([])                                          # nothing queued: the reason as before
         self.assertEqual((g(), g.pick), (self.NONE, None))
 
     def test_slots_online_are_not_bootstrapped(self):
