@@ -33,10 +33,11 @@ releases are `v<version>` in the repository's own CHANGELOG.md). The format foll
   held for another worker, not skipped by this worker, and one this release can run (`runnable`); while the slots
   are full only tasks that use no model (`uses_model`) are picked. `spare_capacity` counts the room left alike.
   Standard library only; the project passes its settings as values.
-- With no model slots online (`nodes.slots` 0) `SlotGate` still lets a model task be claimed while the project's
-  leased (and held) model tasks are fewer than `bootstrap` (default 1; 0: wait for a slot, as before). The gateway
-  asks a connector for a pilot only for workers it has seen claim or holding a lease, so a project whose GPUs are
-  all pilots would otherwise wait for a slot that is never asked for. The memory gate still applies.
+- `SlotGate(..., bootstrap=N)`, off by default (0: with no model slots online the gate waits for a slot, as
+  before). With N >= 1 and no model slots online (`nodes.slots` 0) a model task may still be claimed while the
+  project's leased (and held) model tasks are fewer than N; its first model request waits in the gateway's queue
+  for a pilot. The gateway asks a connector for a pilot only for workers it has seen claim or holding a lease, so a
+  project whose GPUs are all pilots needs this to start. The memory gate still applies.
 
 ### Fixed
 

@@ -17,12 +17,13 @@ gate picks the first queued task of that sort instead. /v1/stats unreadable (or 
 time (logged), as a worker without the gate; the memory gate still applies. The task list unreadable: OSError, which
 the worker logs before claiming as without a gate.
 
-No model slots online (`bootstrap`): the gateway asks a connector for a pilot (a GPU node made on demand) only for
-the project's workers it has seen claim or holding a lease, so a gate that waits for a slot before it claims would
-wait for good where pilots are the only GPUs. With `nodes.slots` 0 the gate therefore still lets a model task be
-claimed while the project's leased (and held) model tasks are fewer than `bootstrap` (default 1; 0: none). That
-lease is the demand; the task's first model request waits for the pilot as long as the gateway queues it (the
-project's queue timeout). The memory gate still applies. /v1/stats unreadable is not 0 slots.
+No model slots online (`bootstrap`, off by default): the gateway asks a connector for a pilot (a GPU node made on
+demand) only for the project's workers it has seen claim or holding a lease, so a gate that waits for a slot before
+it claims would wait for good where pilots are the only GPUs. With `bootstrap` N >= 1 and `nodes.slots` 0 the gate
+still lets a model task be claimed while the project's leased (and held) model tasks are fewer than N. That lease
+is the demand; the task's first model request waits for the pilot as long as the gateway queues it (the project's
+queue timeout). The default, 0, waits for a slot. The memory gate still applies. /v1/stats unreadable is not 0
+slots.
 
 Idle release (`idle_s`): a leased model task counts against the slots only while it uses the model
 (`holds_slot`), from the task list's `live` record of its model calls:
@@ -194,7 +195,7 @@ class SlotGate:
                  memory: Callable[[], str | None] | None = None, idle_s: float | None = None,
                  max_per_slot: int = MAX_PER_SLOT, startup_s: float = STARTUP_S,
                  uses_model: Callable[[dict], bool] | None = None, log: Callable[[str], None] = _stderr,
-                 bootstrap: int = 1):
+                 bootstrap: int = 0):
         if per_slot is not None and per_slot < 1:
             raise ValueError("per_slot: a whole number >= 1")
         if not isinstance(bootstrap, int) or bootstrap < 0:
