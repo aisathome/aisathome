@@ -254,6 +254,10 @@ class Watchers(Tmp):
 
     def test_interruptions(self):
         self.assertEqual(loop.interruptions([{}, {}, {"first_edit_nudge": True}, {}]), 2)
+        # a last segment's mark (a give-back) frees the segment after it, which is not there yet
+        self.assertEqual(loop.interruptions([{}, {}, {"preempt_wait_exhausted": True}]), 2)
+        self.assertEqual(loop.interruptions([{"preempt_pause_s": 15}, {"preempt_wait_exhausted": True}]), 0)
+        self.assertEqual(loop.interruptions([]), 0)
 
 
 class Checkpoint(Tmp):

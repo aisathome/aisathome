@@ -361,9 +361,10 @@ def tree_changed(git: TreeGit, targets: list[str], accept: Callable[[str], bool]
 
 def interruptions(segments: list[dict]) -> int:
     """Segments that continued after an interruption: every later one, except after a nudge's stop or a
-    preemption's pause (those do not count against max_resumes)."""
+    preemption's pause (those do not count against max_resumes). A mark frees the segment after it, so the
+    last segment's mark (a give-back, or a nudge whose round then found its budget spent) frees nothing yet."""
     ours = ("first_edit_nudge", "loop_nudge", "step_continue", "preempt_wait_exhausted")
-    return max(0, len(segments) - 1 - sum(1 for s_ in segments
+    return max(0, len(segments) - 1 - sum(1 for s_ in segments[:-1]
                                           if "preempt_pause_s" in s_ or any(s_.get(k) for k in ours)))
 
 
