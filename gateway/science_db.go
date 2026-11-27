@@ -174,6 +174,9 @@ var scienceMigrations = []string{
 	) WITHOUT ROWID;
 	CREATE INDEX connector_requests_by_state ON connector_requests (connector, state, created_at);
 	CREATE INDEX connector_requests_by_account ON connector_requests (account, created_at);`,
+	// 4: a pilot's tier (connector.go, pilot_tiers): the kind of pilot the connector created it for. ''
+	// for pilots created before tiers, or by a connector without them.
+	`ALTER TABLE pilots ADD COLUMN tier TEXT NOT NULL DEFAULT '';`,
 }
 
 // scienceDB is the open database.

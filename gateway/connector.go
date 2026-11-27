@@ -4,7 +4,7 @@
 // keys (by SHA-256) and an optional address allowlist, and its key opens only its own endpoints:
 //
 //	GET  /v1/connectors/{id}/demand                  how many pilots to create now (the formula below)
-//	POST /v1/connectors/{id}/pilots                  create a pilot: {"deadline"} → id and credential (once)
+//	POST /v1/connectors/{id}/pilots                  create a pilot: {"deadline", "tier"} → id and credential (once)
 //	GET  /v1/connectors/{id}/pilots?state=&limit=    its pilots, newest first
 //	GET  /v1/connectors/{id}/pilots/{pid}            one pilot's record and totals
 //	POST /v1/connectors/{id}/pilots/{pid}/bind       {"user", "host", "team"}: who runs it
@@ -71,6 +71,12 @@ type Connector struct {
 	// capacity (a pilot the demand asks for) while MaxPilots > 0, as for a model a node offered
 	// recently, instead of failing as unknown (routing.go, pilotsMayServe). At most maxConnectorModels.
 	Models []string `json:"models,omitempty"`
+	// PilotTiers: the kinds of pilot it brings, by the context their model has ("standard" 16 GB cards
+	// at 81,920, "big" 24 GB cards at 196,608). A pilot is created for one tier (POST .../pilots
+	// "tier"), and the demand says how many of each are wanted (connector_demand.go): a project's
+	// sessions need a tier whose context clears its min_node_ctx. None: one kind, as before tiers. At
+	// most maxPilotTiers, names and contexts distinct.
+	PilotTiers []PilotTier `json:"pilot_tiers,omitempty"`
 	// LegacyTrustedUsers is the removed "trusted_users" (removed.go): accepted and ignored.
 	LegacyTrustedUsers []string `json:"trusted_users,omitempty"`
 	// ChatHeadroom: pilots to keep for chat, agents and API calls (demand), counted only while
@@ -89,6 +95,18 @@ type Connector struct {
 	// operator links (`accounts link`).
 	Accounts *ConnectorAccounts `json:"accounts,omitempty"`
 }
+
+// PilotTier is one kind of pilot a connector brings: its name and the context (tokens per request)
+// its model serves.
+type PilotTier struct {
+	Name string `json:"name"`
+	Ctx  int    `json:"ctx"`
+}
+
+// maxPilotTiers caps a connector's pilot tiers.
+const maxPilotTiers = 8
+
+var pilotTierRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 // ConnectorAccounts is what the account page offers for a connector's users. Nothing in it is
 // specific to BOINC: the BOINC project's values are in docs/gateway.md.
@@ -126,6 +144,26 @@ type connector struct {
 	allow  []netip.Prefix
 	noChat map[string]bool
 	models map[string]bool // Models
+	tiers  []PilotTier     // PilotTiers, smallest context first; nil: no tiers
+}
+
+// tier returns c's tier called name, or false.
+func (c *connector) tier(name string) (PilotTier, bool) {
+	for _, t := range c.tiers {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return PilotTier{}, false
+}
+
+// largestTier is the name of c's tier with the most context ("" without tiers): the tier of a pilot
+// created without one (a connector from before tiers).
+func (c *connector) largestTier() string {
+	if len(c.tiers) == 0 {
+		return ""
+	}
+	return c.tiers[len(c.tiers)-1].Name
 }
 
 // maxConnectorModels caps a connector's models: a handful of names and roles, not a catalogue.
@@ -222,6 +260,23 @@ func newConnectorTable(cs []Connector, projects *projectTable) (*connectorTable,
 				return nil, fmt.Errorf("connector %q: models: %q is listed twice", c.ID, m)
 			}
 			cc.models[m] = true
+		}
+		if len(c.PilotTiers) > maxPilotTiers {
+			return nil, fmt.Errorf("connector %q: pilot_tiers: at most %d", c.ID, maxPilotTiers)
+		}
+		for i, pt := range c.PilotTiers {
+			if !pilotTierRe.MatchString(pt.Name) || pt.Ctx <= 0 {
+				return nil, fmt.Errorf("connector %q: pilot_tiers: %q: a name of 1-32 lower-case letters, digits, '_' or '-', and ctx > 0", c.ID, pt.Name)
+			}
+			for _, o := range c.PilotTiers[:i] {
+				if o.Name == pt.Name || o.Ctx == pt.Ctx {
+					return nil, fmt.Errorf("connector %q: pilot_tiers: %q: names and contexts must differ", c.ID, pt.Name)
+				}
+			}
+		}
+		if len(c.PilotTiers) > 0 {
+			cc.tiers = slices.Clone(c.PilotTiers)
+			slices.SortFunc(cc.tiers, func(a, b PilotTier) int { return a.Ctx - b.Ctx })
 		}
 		if a := c.Accounts; a != nil {
 			if err := a.check(); err != nil {
@@ -325,6 +380,7 @@ func (g *Gateway) handlePilotCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Deadline time.Time `json:"deadline"`
+		Tier     string    `json:"tier"`
 	}
 	if !decodeTaskBody(w, r, maxConnectorBody, &body) {
 		return
@@ -334,12 +390,29 @@ func (g *Gateway) handlePilotCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, fmt.Sprintf("deadline: an RFC 3339 time in the next %d hours", c.MaxDeadlineHours))
 		return
 	}
-	p, cred, err := g.sci.createPilot(c.ID, body.Deadline, c.MaxPilots, c.MintPerHour, now)
+	tier := body.Tier
+	switch {
+	case len(c.tiers) == 0 && tier != "":
+		apiError(w, http.StatusBadRequest, "tier: this connector has no pilot_tiers")
+		return
+	case tier == "":
+		tier = c.largestTier() // a connector from before tiers: its pilots are the largest kind
+	default:
+		if _, ok := c.tier(tier); !ok {
+			names := make([]string, len(c.tiers))
+			for i, t := range c.tiers {
+				names[i] = t.Name
+			}
+			apiError(w, http.StatusBadRequest, "tier: one of "+strings.Join(names, ", "))
+			return
+		}
+	}
+	p, cred, err := g.sci.createPilot(c.ID, tier, body.Deadline, c.MaxPilots, c.MintPerHour, now)
 	if err != nil {
 		taskError(w, err)
 		return
 	}
-	g.log.Info("pilot created", "connector", c.ID, "pilot", p.ID, "deadline", p.Deadline)
+	g.log.Info("pilot created", "connector", c.ID, "pilot", p.ID, "tier", p.Tier, "deadline", p.Deadline)
 	writeJSON(w, http.StatusCreated, map[string]any{"pilot": g.pilotView(p), "credential": cred})
 }
 

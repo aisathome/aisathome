@@ -133,6 +133,7 @@ an account's budget, the lowest priority, and a cap on its share of the nodes:
 | `max_node_share` | At most this share of the nodes that may serve a request work for the project at once (rounded down, at least one node, so a small network still does science when people leave it idle); `0` = no cap. |
 | `agent_ok` | The project's requests with tools (agents) may go to volunteer nodes past their probation, as an account key with consent may; without it they go to no node (a project has no nodes of its own). Requests that look like personal data are refused, and secrets are redacted, as for everyone. |
 | `pilot_probation_ok` | With `agent_ok`: the project's agents may also use connector pilots (below) whose account is still in probation (science only, where every proof is checked). Standalone nodes in probation stay excluded. |
+| `min_node_ctx` | Keeps the project's sessions off nodes with a small context: its requests for a role (`agent`, `deep`) reach only models that announce at least this many tokens of context (a model that announces none is assumed to have it), and the pilots its demand asks for come from a tier that large (`pilot_tiers`, below). An agent session grows, and one that started on a small node fails there once it outgrows it (a session stays on its model). A request that names a model itself (`qwen3.8-27b-q3`) is not held to it: it chose that model. `0` (default) = no floor. |
 | `rpm`, `concurrent` | Request limits for the project (all keys together); `0` = none. |
 | `queue_timeout_seconds` | How long its requests wait for a node (default the gateway's `queue_timeout_seconds`); science waits behind people, so give it more. |
 | `kinds` | The task kinds the project may create besides `other`: one per scaffold generation (`p2m-v7`), 1-32 lower-case letters, digits, `_` or `-`. Its workers claim by kind, so a worker never takes a task of a generation it does not run. None: `other` only. |
@@ -834,6 +835,7 @@ gateway is BOINC-specific beyond the configuration.
   "unsent_buffer": 2,
   "max_credit_per_pilot": 150000,
   "max_credit_per_account_day": 1800000,
+  "pilot_tiers": [{"name": "standard", "ctx": 81920}, {"name": "big", "ctx": 196608}],
   "accounts": {
     "name": "BOINC",
     "attach_url": "https://boinc.aisathome.org/aisathome/",
@@ -850,7 +852,7 @@ gateway is BOINC-specific beyond the configuration.
 | `key_sha256` | SHA-256 of its keys (make one with `aisathome-gateway project-key <file>`). A connector key opens only that connector's endpoints: no API, project or account call. It must differ from every project key. |
 | `allow_from` | Optional: addresses or prefixes its calls must come from (behind a reverse proxy on loopback or in `trusted_proxies`, the last `X-Forwarded-For` hop). Others get 403. Also restrict the path at the reverse proxy. |
 | `max_pilots` | Its pilots that have not ended, at most (0: none can be created). |
-| `models` | Optional: the model names and roles its pilots serve (at most 64, each listed once). A request for one of them waits for capacity, up to the queue timeout (`queue_timeout_seconds`, a project's own for its science), as for a model a node offered in the last 24 hours, instead of failing at once with 404 "not served on this network": pilots come only when the demand asks for them, so without this the first request after a restart, or after a day with no such node online, could never wait for one. It counts only while `max_pilots` is above 0, and only for requests a pilot could serve: science, and people's requests while `pilots_chat_enabled`; never personal data, a request held to its sender's own nodes, or a key held to one operator (`only_operator`: a pilot's operator is its account's pseudonym). The stock pilot (`aisathome-node pilot`, tier `big`) announces `qwen3.8-27b` with the roles `deep` and `agent`. A timeout then answers 503 "no node serving … is online". Anything else unknown still gets 404 at once. |
+| `models` | Optional: the model names and roles its pilots serve (at most 64, each listed once). A request for one of them waits for capacity, up to the queue timeout (`queue_timeout_seconds`, a project's own for its science), as for a model a node offered in the last 24 hours, instead of failing at once with 404 "not served on this network": pilots come only when the demand asks for them, so without this the first request after a restart, or after a day with no such node online, could never wait for one. It counts only while `max_pilots` is above 0, and only for requests a pilot could serve: science, and people's requests while `pilots_chat_enabled`; never personal data, a request held to its sender's own nodes, a key held to one operator (`only_operator`: a pilot's operator is its account's pseudonym), or, with `pilot_tiers`, a project whose `min_node_ctx` no tier clears. The stock pilot (`aisathome-node pilot`) announces `qwen3.8-27b` with the roles `deep` and `agent` in the `big` tier, and `qwen3.8-27b-q3` with the same roles in the `standard` tier. A timeout then answers 503 "no node serving … is online". Anything else unknown still gets 404 at once. |
 | `mint_per_hour` | Pilots created per hour, at most (default 120). |
 | `max_deadline_hours` | A pilot's deadline at most this far ahead (default 336). |
 | `pilots_chat_enabled` | Off by default: its pilots serve **science only**. See below. |
@@ -859,6 +861,7 @@ gateway is BOINC-specific beyond the configuration.
 | `sessions_per_slot` | Science sessions one GPU slot keeps busy (default 2: a session alternates model calls with its own tools). |
 | `unsent_buffer` | Created pilots no machine has taken yet, at most (default 2). |
 | `max_credit_per_pilot`, `max_credit_per_account_day` | Credit caps (default 150,000 and 1,800,000; `-1`: none). See `docs/credit.md`. |
+| `pilot_tiers` | Optional: the kinds of pilot it brings, by the context their model serves (the node's tiers: `standard`, 16 GB cards at 81,920 tokens; `big`, 24 GB cards at 196,608). Names 1-32 lower-case letters, digits, `_` or `-`; names and contexts distinct; at most 8. A pilot is created for one tier, and the demand says how many of each are wanted ("Pilots wanted"). The gateway routes a pilot by what it announces once connected; the tier only sizes the demand. None: one kind of pilot, as before tiers. |
 | `accounts` | Optional: people link their account to the connector's users from the account page ("Linked accounts" below). `name` as people know the connector; `attach_url` (https) what machines attach to; `attach_command` the one-line attach, `{url}` and `{key}` replaced; `key_url` (https) where people find the account key to claim with (BOINC: `weak_auth.php`, which shows both keys); `address_domain` the domain of the pseudonymous addresses (mail to it should be dropped). |
 
 Connectors need accounts (a pilot serves as an account's node) and work best with a `state_dir`
@@ -871,10 +874,10 @@ refused):
 
 | Call | What |
 |---|---|
-| `GET /v1/connectors/{id}/demand` | How many pilots to create now (`pilots_wanted`), how many unsent ones to cancel (`cancel_unsent`), the `unsent_buffer`, and the numbers behind them (below) |
-| `POST /v1/connectors/{id}/pilots` `{"deadline": "<RFC 3339>"}` | Create a pilot: `{"pilot": {...}, "credential": "pc-…"}`, 201. The credential is shown only here; only its SHA-256 is stored. 409 at `max_pilots`, 429 over `mint_per_hour` |
+| `GET /v1/connectors/{id}/demand` | How many pilots to create now (`pilots_wanted`), how many unsent ones to cancel (`cancel_unsent`), the `unsent_buffer`, and the numbers behind them (below); with `pilot_tiers`, the same per tier in `tiers` |
+| `POST /v1/connectors/{id}/pilots` `{"deadline": "<RFC 3339>", "tier": "<name>"}` | Create a pilot: `{"pilot": {...}, "credential": "pc-…"}`, 201. The credential is shown only here; only its SHA-256 is stored. `tier` is one of `pilot_tiers` (none given: the largest, so a connector from before tiers keeps working; an unknown one, or any for a connector without tiers, 400); the record keeps it as `tier`. 409 at `max_pilots`, 429 over `mint_per_hour` |
 | `GET /v1/connectors/{id}/pilots?state=&limit=` | Its pilots, newest first (`limit` 1-500, default 100) |
-| `GET /v1/connectors/{id}/pilots/{pid}` | One pilot: state, deadline, user/host/team, `account` (`linked` or `unclaimed`, never which), times, `close_reason`, `end_reason`, `connections`, `served_seconds`, `requests` (answers that went to the client, whole or in part), `failed` (the others), `self_served`, `tokens`, `metered_credit`, `credit`, `withheld`, `agent` |
+| `GET /v1/connectors/{id}/pilots/{pid}` | One pilot: `tier` (with `pilot_tiers`), state, deadline, user/host/team, `account` (`linked` or `unclaimed`, never which), times, `close_reason`, `end_reason`, `connections`, `served_seconds`, `requests` (answers that went to the client, whole or in part), `failed` (the others), `self_served`, `tokens`, `metered_credit`, `credit`, `withheld`, `agent` |
 | `POST /v1/connectors/{id}/pilots/{pid}/bind` `{"user", "host", "team"}` | Who runs it: the connector's own ids (1-64 letters, digits, `.`, `_`, `:` or `-`; never an address). Binding again with the same ids changes nothing; other ids, or an ended pilot, get 409 |
 | `POST /v1/connectors/{id}/pilots/{pid}/reported` `{"outcome": "success\|error\|cancelled\|expired"}` | Its work item is done (or was cancelled): the pilot ends (`end_reason` `reported: <outcome>`) and its connection, if any, is closed. Idempotent |
 | `POST /v1/connectors/{id}/users/{user}/operator-terms` `{"version", "accepted_at"}` | The connector's user accepted the operator terms (BOINC: the bridge, when BOINC records the user's ENROLL consent to `terms_of_use.txt`, which holds the operator terms). `version` the terms version accepted, `accepted_at` when (RFC 3339; stored as sent; at most a minute ahead of the gateway's clock, more is refused; a withdrawal is recorded after any acceptance it withdraws and never moves back, so a retried record never undoes it). An optional `country` is accepted and ignored. Recorded on the user's account, the linked one or a new unclaimed one; a record older than the account's acceptance or withdrawal changes nothing. Answer: `{"recorded", "current", "current_version", "account_kind"}`: `recorded` whether this call changed the record, `current` whether the account's pilots may serve chat now. The user's connected pilots follow within the call |
@@ -1028,6 +1031,29 @@ outstanding      = its pilots not ended (created, bound, connected, disconnected
 pilots_wanted    = min(max(0, target − outstanding), unsent_buffer − unsent, mint_per_hour left)
 cancel_unsent    = min(unsent, max(0, outstanding − target))
 ```
+
+A project's `min_node_ctx` narrows `have` to the slots of nodes with that much context.
+
+**With `pilot_tiers`** the same numbers are worked out per tier, so the connector creates pilots
+that can serve what is waiting:
+
+- each project's sessions use the slots online first: the projects with the highest
+  `min_node_ctx` first, each on the slots with the least context that clears its floor;
+- the sessions left need pilots of the smallest tier whose context clears the project's floor (a
+  floor no tier clears asks for none); per tier, ceil(sessions left / `sessions_per_slot`); chat
+  headroom goes to the smallest tier;
+- `max_pilots` and the spend cap cut the total target from the smallest tiers first: what only a
+  larger tier can do keeps its pilots;
+- a tier's outstanding pilots cover its own target, and a larger tier's surplus covers a smaller
+  tier's need (never the reverse); what is left is that tier's `pilots_wanted`;
+- the shared limits (`unsent_buffer − unsent`, `mint_per_hour` left, and `max_pilots −
+  outstanding`) go to the largest tier first; a tier's `cancel_unsent` is its unsent pilots that no
+  tier's target uses.
+
+The top-level `target`, `pilots_wanted` and `cancel_unsent` are the tiers' sums, and `tiers` has
+each: `{"standard": {"ctx", "target", "pilots_wanted", "cancel_unsent", "outstanding", "unsent"},
+"big": {…}}`. A pilot created without a tier, or with a tier the config no longer has, counts as
+the largest.
 
 Open tasks are queued or leased; a runner worker counts once it claims (a task or none) or renews a
 lease, and the distinct workers holding leases count after a restart. The answer shows each part

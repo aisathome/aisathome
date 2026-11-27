@@ -25,7 +25,7 @@
 // (final 0) if a guard held the pilot, and the gateway's model check (modelcheck.go), when it withholds, the same way
 // (withholdPilotCredit).
 //
-// The records live in the science database (science_db.go, migration 2).
+// The records live in the science database (science_db.go, migration 2; the tier, migration 4).
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -108,6 +108,7 @@ func newPilotCredential() (id, cred string, err error) {
 type Pilot struct {
 	ID          string       `json:"id"`
 	Connector   string       `json:"connector"`
+	Tier        string       `json:"tier,omitempty"` // the connector's pilot tier it was created for (connector.go)
 	State       string       `json:"state"`
 	Deadline    time.Time    `json:"deadline"`
 	User        string       `json:"user,omitempty"`
@@ -153,7 +154,7 @@ func parsePTime(s sql.NullString) *time.Time {
 const pilotCols = `id, connector, state, deadline, ext_user, ext_host, ext_team, account, created_at, bound_at,
 	first_connected_at, connected_at, disconnected_at, seen_at, ended_at, close_reason, end_reason, connections,
 	served_ms, requests, failed, self_served, prompt_tokens, cached_tokens, completion_tokens, metered, credit,
-	withheld, agent`
+	withheld, agent, tier`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -164,7 +165,7 @@ func scanPilot(r rowScanner) (*Pilot, error) {
 	err := r.Scan(&p.ID, &p.Connector, &p.State, &deadline, &p.User, &p.Host, &p.Team, &p.account, &created, &bound,
 		&first, &conn, &disc, &seen, &ended, &p.CloseReason, &p.EndReason, &p.Connections, &p.servedMs, &p.Requests,
 		&p.Failed, &p.SelfServed, &p.Tokens.Prompt, &p.Tokens.Cached, &p.Tokens.Completion, &p.Metered, &p.Credit,
-		&p.Withheld, &p.Agent)
+		&p.Withheld, &p.Agent, &p.Tier)
 	if err != nil {
 		return nil, err
 	}
@@ -187,10 +188,10 @@ func pilotCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
-// createPilot adds a pilot for connector with deadline, unless the connector already has max pilots
-// that have not ended, or created mint pilots in the last hour. It returns the record and the
-// credential (shown once).
-func (s *scienceDB) createPilot(connector string, deadline time.Time, max, mint int, now time.Time) (*Pilot, string, error) {
+// createPilot adds a pilot of tier ("" without tiers) for connector with deadline, unless the
+// connector already has max pilots that have not ended, or created mint pilots in the last hour. It
+// returns the record and the credential (shown once).
+func (s *scienceDB) createPilot(connector, tier string, deadline time.Time, max, mint int, now time.Time) (*Pilot, string, error) {
 	ctx, cancel := pilotCtx()
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -217,8 +218,8 @@ func (s *scienceDB) createPilot(connector string, deadline time.Time, max, mint 
 		if id, cred, err = newPilotCredential(); err != nil {
 			return nil, "", err
 		}
-		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO pilots (id, connector, cred_sha256, state, deadline, created_at)
-			VALUES (?, ?, ?, 'created', ?, ?)`, id, connector, keyHash(cred), ptime(deadline), ptime(now))
+		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO pilots (id, connector, cred_sha256, state, deadline, created_at, tier)
+			VALUES (?, ?, ?, 'created', ?, ?, ?)`, id, connector, keyHash(cred), ptime(deadline), ptime(now), tier)
 		if err != nil {
 			return nil, "", s.fail("pilot create", connector, err)
 		}
@@ -298,24 +299,28 @@ func (s *scienceDB) pilots(connector, state string, limit int) ([]*Pilot, error)
 	return out, nil
 }
 
-// pilotCounts counts connector's pilots by state (ended ones not counted), and those created in
-// the hour before now.
-func (s *scienceDB) pilotCounts(connector string, now time.Time) (map[string]int, int, error) {
+// pilotCounts counts connector's pilots that have not ended by tier ("" for one created without a
+// tier) and state, and those created in the hour before now.
+func (s *scienceDB) pilotCounts(connector string, now time.Time) (map[string]map[string]int, int, error) {
 	ctx, cancel := pilotCtx()
 	defer cancel()
-	rows, err := s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM pilots WHERE connector = ? AND state != 'ended' GROUP BY state`, connector)
+	rows, err := s.db.QueryContext(ctx, `SELECT tier, state, COUNT(*) FROM pilots WHERE connector = ? AND state != 'ended'
+		GROUP BY tier, state`, connector)
 	if err != nil {
 		return nil, 0, s.fail("pilot counts", connector, err)
 	}
 	defer rows.Close()
-	by := map[string]int{}
+	by := map[string]map[string]int{}
 	for rows.Next() {
-		var st string
+		var tier, st string
 		var n int
-		if err := rows.Scan(&st, &n); err != nil {
+		if err := rows.Scan(&tier, &st, &n); err != nil {
 			return nil, 0, s.fail("pilot counts", connector, err)
 		}
-		by[st] = n
+		if by[tier] == nil {
+			by[tier] = map[string]int{}
+		}
+		by[tier][st] = n
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, s.fail("pilot counts", connector, err)

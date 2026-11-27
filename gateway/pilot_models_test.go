@@ -234,6 +234,7 @@ func TestPilotCheckMatchesAllows(t *testing.T) {
 		"share":            {func(rt *route) { rt.share = 0.5 }},
 		"pilotProbationOK": {func(rt *route) { rt.pilotProbationOK = true }},
 		"rules":            {func(rt *route) { rt.rules = true }},
+		"minCtx":           nil, // the connector's pilot tiers decide (connector.mayClear, TestPilotTiersMayServe)
 	}
 	var missing []string
 	rtType := reflect.TypeFor[route]()
