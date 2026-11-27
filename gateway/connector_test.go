@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -186,6 +187,11 @@ func TestConnectorConfigChecked(t *testing.T) {
 		"email as user":    {ID: "boinc", KeySHA256: ok.KeySHA256, NoChatUsers: []string{"a@b.org"}},
 		"bad credit cap":   {ID: "boinc", KeySHA256: ok.KeySHA256, MaxCreditPerPilot: -2},
 		"nan credit cap":   {ID: "boinc", KeySHA256: ok.KeySHA256, MaxCreditPerAccountDay: math.NaN()},
+		"empty model":      {ID: "boinc", KeySHA256: ok.KeySHA256, Models: []string{"deep", ""}},
+		"spaced model":     {ID: "boinc", KeySHA256: ok.KeySHA256, Models: []string{" deep"}},
+		"long model":       {ID: "boinc", KeySHA256: ok.KeySHA256, Models: []string{strings.Repeat("m", 129)}},
+		"model twice":      {ID: "boinc", KeySHA256: ok.KeySHA256, Models: []string{"deep", "qwen", "deep"}},
+		"too many models":  {ID: "boinc", KeySHA256: ok.KeySHA256, Models: manyModels(maxConnectorModels + 1)},
 		"twice, same id":   {ID: "boinc", KeySHA256: []string{keyHash("ak-x")}},
 		"twice, same hash": {ID: "b2", KeySHA256: ok.KeySHA256},
 	} {
@@ -200,10 +206,23 @@ func TestConnectorConfigChecked(t *testing.T) {
 	if _, err := newConnectorTable([]Connector{ok}, pt); err != nil {
 		t.Errorf("valid connector refused: %v", err)
 	}
+	withModels := ok
+	withModels.Models = manyModels(maxConnectorModels)
+	if ct, err := newConnectorTable([]Connector{withModels}, pt); err != nil || !ct.byID["boinc"].models["m-0"] {
+		t.Errorf("connector with %d models: %v", maxConnectorModels, err)
+	}
 	// Connectors need accounts.
 	if _, err := New(Config{Connectors: []Connector{ok}}, nil); err == nil {
 		t.Error("connectors without accounts accepted")
 	}
+}
+
+func manyModels(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("m-%d", i)
+	}
+	return out
 }
 
 // Pilots are created within max_pilots and mint_per_hour, with a deadline in range; the credential
