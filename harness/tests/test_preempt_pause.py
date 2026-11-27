@@ -207,7 +207,7 @@ class Rig:
     the segment's first checkpoint (as when the host stops in the middle of it)."""
 
     def __init__(self, d: Path, timing: dict):
-        self.root, self.timing, self.kw, self.slept = d, timing, [], []
+        self.root, self.timing, self.kw, self.slept, self.left = d, timing, [], [], []
         self.tree, self.raw = d / "tree", d / "raw"
         self.tree.mkdir()
         (self.tree / "f").write_text("base\n")
@@ -217,6 +217,7 @@ class Rig:
     def segment(self, spec: dict):
         def seg(cmd, raw, left, **kw):
             self.kw.append(kw)
+            self.left.append(left)                         # the awake time the loop allowed it
             now = time.time()
             t0 = now - spec.get("waited", 0) - 2
             evs = [{"type": "step_start", "timestamp": int(t0 * 1000), "sessionID": "ses_r"},
@@ -325,20 +326,35 @@ class RoundTime(unittest.TestCase):
             rig = Rig(Path(d), {**self.T, "preempt_wait_cap_s": 20000})
             run = rig.run([{"waited": 10500, "active_s": 11000}, {"done": True}])
             self.assertEqual(len(rig.kw), 2)                       # the second segment ran
+            self.assertEqual(rig.left, [10800, 10300])             # 10800 - (11000 - 10500)
             self.assertEqual((run["timed_out"], run["cap"], run["exit"]), (False, None, 0))
 
+    BAD = {"err": {"type": "provider.internal", "status": 502, "message": "Bad Gateway"}}
+
     def test_the_segment_that_spent_the_wait_does_not_count_against_max_resumes(self):
-        """The give-back after the spent wait is a pause, not an interruption: a resume after it still has
-        all max_resumes (3) for endpoint errors, also across a stop of the worker."""
-        bad = {"err": {"type": "provider.internal", "status": 502, "message": "Bad Gateway"}}
+        """The give-back after the spent wait is a pause, not an interruption: the resume after it still has
+        all max_resumes (3) for endpoint errors."""
         with tempfile.TemporaryDirectory() as d:
             rig = Rig(Path(d), self.T)
             rig.run([{"waited": 40, "exhausted": True}])
+            run = rig.run([self.BAD, self.BAD, self.BAD, {"done": True}], resume=True)
+            self.assertEqual((len(rig.kw), run["exit"]), (5, 0))   # all three errors resumed
+            self.assertEqual(run["resumed"], 3)                     # the three errors, not the give-back
+
+    @unittest.expectedFailure
+    def test_the_resume_after_a_worker_stop_counts_against_max_resumes(self):
+        """Known bug, not fixed here: a resume after a stop of the worker starts its count at
+        interruptions(segments), which leaves out the resume this call itself makes after the stop (run.json's
+        `resumed` counts it). Two endpoint errors and a stop have used max_resumes (3), so the next error must
+        end the session; today it is resumed a fourth time (run.json then says resumed: 4)."""
+        with tempfile.TemporaryDirectory() as d:
+            rig = Rig(Path(d), self.T)
+            rig.run([{"waited": 40, "exhausted": True}])          # the give-back: free
             with self.assertRaises(KeyboardInterrupt):
-                rig.run([bad, bad, {"waited": 5, "stop": True}], resume=True)     # 2 errors, then a stop: 3 used
-            run = rig.run([bad, {"done": True}], resume=True)
-            self.assertEqual((len(rig.kw), run["exit"]), (6, 0))   # the third error was still resumed
-            self.assertEqual(run["resumed"], 4)                     # 2 errors, the stop, the third error
+                rig.run([self.BAD, self.BAD, {"waited": 5, "stop": True}], resume=True)
+            run = rig.run([self.BAD, {"done": True}], resume=True)
+            self.assertEqual((len(rig.kw), run["exit"]), (5, 1))   # the error after the stop is not resumed
+            self.assertEqual(run["resumed"], 3)                     # 2 errors and the stop
 
     def test_a_run_json_from_before_the_preemption_pause_resumes(self):
         """A partial run.json that a harness without the pause wrote (no preemption fields in it or its
