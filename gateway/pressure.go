@@ -601,8 +601,9 @@ func (g *Gateway) pressureNow() pressSample {
 		rt := scienceRoute(p, ownOnly)
 		var sl []int
 		for _, u := range ups {
-			if rt.allows(u.n, now) && rt.nodeClearsFloor(u.n) { // min_node_ctx: a smaller node never takes its sessions
-				sl = append(sl, u.slots)
+			// min_node_ctx: only the slots of a model with the context the project asks of a node.
+			if fs := rt.floorSlots(u.n); fs > 0 && rt.allows(u.n, now) {
+				sl = append(sl, fs)
 				all[u.n] = u.slots
 				if open[i] > 0 {
 					withWork[u.n] = u.slots

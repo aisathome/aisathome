@@ -1059,7 +1059,8 @@ that can serve what is waiting:
 - `max_pilots` and the spend cap cut the total target from the smallest tiers first: what only a
   larger tier can do keeps its pilots;
 - a tier's outstanding pilots cover its own target, and a larger tier's surplus covers a smaller
-  tier's need (never the reverse); what is left is that tier's `pilots_wanted`;
+  tier's need (the larger needs first, each from the closest larger tier; never the reverse); what
+  is left is that tier's `pilots_wanted`;
 - the shared limits (`unsent_buffer − unsent`, `mint_per_hour` left, and `max_pilots −
   outstanding`) go to the largest tier first; a tier's `cancel_unsent` is its unsent pilots that no
   tier's target uses.
@@ -1067,7 +1068,9 @@ that can serve what is waiting:
 The top-level `target`, `pilots_wanted` and `cancel_unsent` are the tiers' sums, and `tiers` has
 each: `{"standard": {"ctx", "target", "pilots_wanted", "cancel_unsent", "outstanding", "unsent"},
 "big": {…}}`. A pilot created without a tier, or with a tier the config no longer has, counts as
-the largest.
+the largest. So a connector that names no tier gets the largest kind for the whole `pilots_wanted`
+(they serve every tier's need), and its `cancel_unsent` is only surplus of that kind. A node's
+slots count for a project with a floor only as far as its models with that much context have them.
 
 Open tasks are queued or leased; a runner worker counts once it claims (a task or none) or renews a
 lease, and the distinct workers holding leases count after a restart. The answer shows each part
