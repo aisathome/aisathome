@@ -9,7 +9,8 @@
   the same against a real Docker daemon.
 - lean.toolchain / lean.pkgsets: what a jail may write in a workspace, and the package set readable for its uid.
 - lean.replay: the trusted snapshot and the proof's .olean are never read through a symlink; the check program
-  never imports the proof's module.
+  never imports the proof's module; a recursive definition's `_unsafe_rec` is left out of the replay, nothing else
+  that is not safe (with AISATHOME_TEST_LEAN=1, the program run by a real `lean` on PATH, no jail).
 """
 from __future__ import annotations
 
@@ -442,6 +443,57 @@ class Replay(unittest.TestCase):
         self.assertIn("Kernel.isDefEqGuarded", p)                    # no instances, notation or hints
         self.assertNotIn("isDefEq solTy", p.replace("Kernel.isDefEqGuarded env {} solTy", ""))
         self.assertIn("unknown constant", p[p.index("def axiomsOf"):p.index("unsafe def check")])   # never skipped
+
+    def test_only_a_safe_definitions_own_unsafe_rec_is_left_out(self):
+        p = replay.PROGRAM
+        self.assertIn("if d.safety matches .partial && unsafeRecOf mod n then continue", p)
+        f = p[p.index("def unsafeRecOf"):p.index("unsafe def check")]
+        self.assertIn('unless s == "_unsafe_rec" do return false', f)
+        self.assertIn("return d.safety matches .safe", f)              # `f` itself a safe definition of the module
+        self.assertIn("unless d.safety matches .safe do", p)            # every other definition still safe
+
+
+# A recursive helper (Lean adds `pow2._unsafe_rec`) and what must still be refused, against a real Lean.
+REPLAY_TARGET = "theorem p2m_check_target : ∀ n : Nat, 0 < 2 ^ n := sorry\n"
+REPLAY_SOLUTION = "theorem solution : ∀ n : Nat, 0 < 2 ^ n := fun n => Nat.two_pow_pos n\n"
+REPLAY_POW2 = "def pow2 : Nat → Nat\n  | 0 => 1\n  | n + 1 => 2 * pow2 n\n"
+REPLAY_PROOFS = {
+    "recursive_helper": (REPLAY_POW2 + "theorem pow2_pos (n : Nat) : 0 < pow2 n := by\n"
+                         "  induction n with\n  | zero => decide\n  | succ n ih => simp [pow2]; omega\n"
+                         + REPLAY_SOLUTION, None),
+    "partial": ("partial def loop (n : Nat) : Nat := loop n\n" + REPLAY_SOLUTION, "`loop` is not a theorem"),
+    "unsafe": ("unsafe def u : Nat := unsafeCast ()\n" + REPLAY_SOLUTION, "`u` is not a safe definition"),
+    "uses_unsafe_rec": (REPLAY_POW2 + "unsafe def sneaky : Nat := pow2._unsafe_rec 3\n" + REPLAY_SOLUTION,
+                        "`sneaky` is not a safe definition"),
+}
+
+
+@unittest.skipUnless(os.environ.get("AISATHOME_TEST_LEAN") == "1", "needs `lean` on PATH (AISATHOME_TEST_LEAN=1)")
+class RealLeanReplay(unittest.TestCase):
+    """replay.PROGRAM run by a real `lean` (the workers' toolchain), without the jail: the proofs above."""
+
+    def test_a_recursive_helper_passes_and_nothing_else_unsafe_does(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "lib" / "Targets").mkdir(parents=True)
+            (d / "lib" / "Targets" / "Sol_x.lean").write_text(REPLAY_TARGET)
+            (d / "Replay.lean").write_text(replay.PROGRAM)
+            env = dict(os.environ, LEAN_PATH=str(d / "lib"))
+            subprocess.run(["lean", "-o", "Targets/Sol_x.olean", "Targets/Sol_x.lean"], cwd=d / "lib", env=env,
+                           check=True, capture_output=True)
+            for name, (text, refused) in REPLAY_PROOFS.items():
+                (d / f"{name}.lean").write_text(text)
+                subprocess.run(["lean", "-o", f"{name}.olean", f"{name}.lean"], cwd=d, env=env, check=True,
+                               capture_output=True)
+                r = subprocess.run(["lean", "--run", "Replay.lean", "M", "p2m_check_target", "solution", "Targets.Sol_x",
+                                    f"{name}.olean", "Init,Std,Targets", "propext", "Classical.choice", "Quot.sound"],
+                                   cwd=d, env=env, capture_output=True, text=True, timeout=300)
+                if refused is None:
+                    self.assertEqual(r.returncode, 0, (name, r.stdout, r.stderr))
+                    self.assertIn("M_OK", r.stdout, name)
+                else:
+                    self.assertEqual(r.returncode, 2, (name, r.stdout, r.stderr))
+                    self.assertIn("M_FAIL not_allowed: " + refused, r.stdout, name)
 
 
 @unittest.skipUnless(os.environ.get("AISATHOME_TEST_DOCKER") == "1", "needs Docker (AISATHOME_TEST_DOCKER=1)")
