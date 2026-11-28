@@ -272,6 +272,13 @@ if (existsSync(join(theoremsDir, 'index.html'))) {
 		else for (const p of check(lds[0])) errors.push(`${page}: JSON-LD: ${p}`);
 	};
 	one('science/prove2me/theorems/index.html', (d) => datasetJsonLdProblems(d, origin));
+	// the records' licence (src/data/licence.ts): on the page and in each JSON file the site publishes them in
+	if (!readFileSync(join(theoremsDir, 'index.html'), 'utf8').match(/<p data-th-licence>[^<]*Apache License 2\.0/)) errors.push('science/prove2me/theorems/index.html: no licence line');
+	const leafJSON = readdirSync(theoremsDir).filter((f) => f.endsWith('.json')).map((f) => `science/prove2me/theorems/${f}`);
+	for (const f of ['science/prove2me/theorems.json', 'science/prove2me.json', ...leafJSON]) {
+		const lic = existsSync(join(dist, f)) ? JSON.parse(readFileSync(join(dist, f), 'utf8')).license : undefined;
+		if (lic?.spdx !== 'Apache-2.0' || lic?.url !== 'https://www.apache.org/licenses/LICENSE-2.0') errors.push(`${f}: no Apache-2.0 license field`);
+	}
 	for (const leaf of readdirSync(theoremsDir).filter((f) => existsSync(join(theoremsDir, f, 'index.html')))) {
 		one(`science/prove2me/theorems/${leaf}/index.html`, (d) => proofJsonLdProblems(d, origin, leaf));
 	}

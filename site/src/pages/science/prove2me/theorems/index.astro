@@ -13,6 +13,7 @@ import {
 import AcceptedChart from '../../../../components/AcceptedChart.astro';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
 import '../../../../styles/theorems.css';
+import { recordsLicenceText } from '../../../../data/licence';
 
 const { history, view, from, pages } = await buildTheorems();
 const leaves = pages.map((t) => t.leaf);
@@ -131,6 +132,7 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 		</li>
 		<li>Every leaf tried, failed runs included, and every task: the <a href="/science/prove2me/#leaves">prove2me page</a>.</li>
 	</ul>
+	<p data-th-licence>{recordsLicenceText}</p>
 </StarlightPage>
 
 <script>

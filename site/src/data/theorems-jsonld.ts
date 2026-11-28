@@ -7,8 +7,10 @@
 // prove2me, but does not publish the Lean source. schema.org's author and creator are a Person or an Organization, so
 // the creator is AIs@home, whose network ran the model; the description names the model that wrote the proof. Titles
 // come from prove2me's users through the gateway: jsonLdScript (seo.ts) escapes every "<" when this goes in a script.
-// The site states no licence for the records, so the Dataset names none.
+// Both carry the Apache License 2.0 (licence.ts): prove2me licenses every public contribution under it, statements and
+// proofs included, and the site publishes the records under it.
 // SPDX-License-Identifier: Apache-2.0
+import { RECORDS_LICENSE_URL } from './licence';
 import { origin } from './seo';
 import { THEOREMS_PATH, nameOf, theoremPath, type TheoremRow, type TheoremsView } from './prove2me-theorems';
 
@@ -30,6 +32,7 @@ export function theoremsDatasetJsonLd(view: Pick<TheoremsView, 'updated'>, model
 		description,
 		url: `${base}${THEOREMS_PATH}`,
 		creator: organization(base),
+		license: RECORDS_LICENSE_URL,
 		isAccessibleForFree: true,
 		keywords: ['Lean 4', 'formal proof', 'automated theorem proving', 'prove2me', 'open-weight model', model],
 		// theorems.json's fields: the counts, a proof's GPU-hours and the tokens its tasks computed
@@ -62,6 +65,7 @@ export function theoremJsonLd(
 		...(basedOn.length ? { isBasedOn: basedOn.length === 1 ? basedOn[0] : basedOn } : {}),
 		creator: organization(base),
 		dateCreated: t.submitted_at,
+		license: RECORDS_LICENSE_URL,
 		keywords: reuse ? ['Lean 4', 'formal proof', 'prove2me'] : ['Lean 4', 'formal proof', 'prove2me', model],
 		isAccessibleForFree: true,
 		isPartOf: { '@id': datasetId(base) },
