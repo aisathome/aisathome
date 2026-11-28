@@ -40,6 +40,7 @@ type Gateway struct {
 	pstatus  *projectStatuses // runners' latest status, for the operations page (projstatus.go)
 	pubq     publicQueues     // built public views of task queues (queue_public.go)
 	ptasks   publicTaskList   // the built list of GET /v1/tasks (tasks_public.go)
+	served   servedIndex      // which nodes served each task, from the usage log (tasks_served.go)
 	speeds   nodeSpeeds       // nodes' recent answer speeds, for their operators (nodework.go)
 	tasks    *taskStore       // projects' task queues (tasks.go)
 	sci      *scienceDB       // campaigns and external results (science_db.go, campaigns.go)
@@ -280,12 +281,13 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		g.glog.path = filepath.Join(cfg.StateDir, GuardLogFile)
 		g.glog.load(log, time.Now())
 	}
-	// The usage log rebuilds today's and all-time statistics, and the history's request and
-	// token counts of the days it still covers.
+	// The usage log rebuilds today's and all-time statistics, the history's request and token
+	// counts of the days it still covers, and who served each task (tasks_served.go).
 	fromLog := newHistory()
 	replayUsage(cfg.UsageLog, func(r usageRecord) {
 		g.stats.add(r)
 		fromLog.add(r)
+		g.served.add(&r)
 	})
 	g.hist.merge(fromLog)
 	return nil
