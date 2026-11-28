@@ -546,7 +546,9 @@ func TestTaskAffinity(t *testing.T) {
 	// although another task is first in the claim order.
 	r2 := newTaskRig(t, "")
 	r2.create("A1", "p2m-v7")
-	id, _ = r2.claim("w1", 60)
+	if id, _ := r2.claim("w1", 60); id != "A1" {
+		t.Fatalf("w1 claimed %q, want A1", id)
+	}
 	r2.now = r2.now.Add(61 * time.Second)
 	r2.create("F1", "other")
 	if id, _ := r2.claim("w2", 60); id != "F1" {
