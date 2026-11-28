@@ -784,13 +784,18 @@ const leafCols = [
 			// keep what the page shows
 		}
 	};
-	// #leaf-<id> or #leaf-<alias>: that leaf's row is marked (the alias is a span inside the row)
+	// #leaf-<id> or #leaf-<alias>: that leaf's row is marked (the alias is a span inside the row) and opened once per
+	// address, so a reader who closes it again keeps it closed through the minute's refresh
+	let openedFor = '';
 	const markLeaf = () => {
 		const li = location.hash.startsWith('#leaf-') ? document.getElementById(location.hash.slice(1))?.closest('li') : null;
 		document.querySelectorAll('[data-p2m-now] li.target').forEach((x) => x !== li && x.classList.remove('target'));
 		li?.classList.add('target');
 		const row = li?.querySelector<HTMLDetailsElement>(':scope > details[data-leaf-detail]');
-		if (row) row.open = true;
+		if (row && openedFor !== `${location.hash}|${nowBox?.dataset.source}`) {
+			row.open = true;
+			openedFor = `${location.hash}|${nowBox?.dataset.source}`;
+		}
 	};
 	window.addEventListener('hashchange', markLeaf);
 	markLeaf();
