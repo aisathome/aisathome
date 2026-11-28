@@ -206,8 +206,9 @@ def test_home_page_links_say_where_they_go(open_page):
     latest release; the footer's Docs opens the docs index and the footer has no subreddit link."""
     page = open_page(path="/")
     expect(page.locator(".hero a[data-home-why]")).to_have_attribute("href", "/about/")
-    for name, href in [("prove2me trials: Qwen’s Lean proofs", "/science/prove2me/"), ("All science projects", "/science/"),
-                       ("Every Tau Ceti pull request", "/science/tauceti/"), ("All dev log posts", "/devlog/")]:
+    for name, href in [("The proved theorems", "/science/prove2me/theorems/"), ("prove2me, live", "/science/prove2me/"),
+                       ("All science projects", "/science/"), ("pull requests merged into Tau Ceti", "/science/tauceti/"),
+                       ("All dev log posts", "/devlog/")]:
         expect(page.get_by_role("link", name=name)).to_have_attribute("href", href)
     expect(page.locator("[data-home-node]").get_by_role("link", name="the latest release")).to_have_attribute(
         "href", RELEASES + "latest")

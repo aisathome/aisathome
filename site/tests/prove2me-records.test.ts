@@ -15,7 +15,10 @@ import {
 	trialDetails, type Campaign, type Records,
 } from '../src/data/prove2me-records';
 import { provesLeaf } from '../src/data/prove2me-outcomes';
-import { cardNumbers, homeLine, kpisHTML, newestFirst, plainHTML, smallNumbersHTML, submissionRowHTML, submissionRowsHTML, trialDetailHTML, trialFacts, trialRowHTML, trialsFootHTML } from '../src/data/prove2me-view';
+import {
+	acceptedOf, cardNumbers, cardStatus, headlineStripHTML, homeLine, kpisHTML, newestFirst, plainHTML, smallNumbersHTML, submissionRowHTML, submissionRowsHTML, trialDetailHTML, trialFacts,
+	trialPlainRowHTML, trialSummaryHTML, trialsFootHTML, trialsNewestFirst,
+} from '../src/data/prove2me-view';
 
 const p2m = raw as unknown as Prove2me;
 const h = historyOf(p2m);
@@ -109,15 +112,38 @@ test('the headline numbers, the submissions and the trials table as HTML: escape
 	const small = smallNumbersHTML(v, 21, (a) => ({ O04: 'p2m-7f145a', F01: 'p2m-a146ce' })[a] ?? a);
 	assert.match(small, /^Small numbers: 6 open leaves with an accepted proof so far\. That shows the model can do it, not yet how often\./);
 	assert.match(small, /11 of 16 runs succeeded/);
-	const t8row = trialRowHTML(row(v, '8'));
-	assert.match(t8row, /^<tr data-trial="8" data-source="live" data-status="running">/);
-	assert.match(t8row, /<a href="#trial-8">Trial 8<\/a><span class="sub">running<\/span>/);
-	assert.match(t8row, /data-cell="proved">2 of 6</);
-	assert.match(t8row, /data-label="Tokens computed" class="num tok" data-tokens="\d+" data-with-cache="\d+" title="At least: [\d,]+ tokens computed; [\d,]+ with the cache re-reads">≥ /);
-	assert.match(trialRowHTML(row(v, '7p')), /<span>Trial 7 probes<\/span>.*data-cell="proved">–</s);
+	// the headline: the theorems page's number, what it is out of, the way there
+	const hl = headlineStripHTML(v, 'M <b>');
+	assert.match(hl, /data-p2m-hl-n>6</);
+	assert.match(hl, /Lean 4 proofs written by M &lt;b&gt; and accepted by prove2me, out of 26 open leaves tried\./);
+	assert.match(hl, /<a href="\/science\/prove2me\/theorems\/" data-p2m-theorems-link="headline">/);
+	// the trials, newest first, a trial's probes under it; each row: dates, scaffold, leaves, accepted proofs, GPU-h per proof
+	assert.deepEqual(trialsNewestFirst(v).map((t) => t.label), ['8', '7', '7p', '6', '6p', '5', '4', '3', '2', '1']);
+	assert.equal(acceptedOf(v, 7), 2);
+	assert.equal(acceptedOf(v, 6), 1, 'trial 6’s reuse is no proof');
+	const t7 = row(v, '7');
+	const t7row = trialSummaryHTML(t7, 2);
+	assert.match(t7row, /<span class="tr-name">Trial 7<\/span>/);
+	assert.match(t7row, /data-cell="dates"><time datetime="2026-11-15">15–17 Nov<\/time>/);
+	assert.match(t7row, /data-cell="scaffold"><span class="u">scaffold <\/span>v8</);
+	assert.match(t7row, /data-cell="leaves">4<span class="u"> leaves<\/span>/);
+	assert.match(t7row, /data-cell="accepted">2<span class="u"> accepted<\/span>/);
+	assert.match(t7row, new RegExp(`data-cell="per-proof" title="[^"]+">${(t7.model_min / 120).toFixed(1)}<span class="u"> GPU-h per proof</span>`));
+	const t8row = trialSummaryHTML(row(v, '8'), 1);
+	assert.match(t8row, /Trial 8 <span class="tr-run">running<\/span>/);
+	assert.match(t8row, /16 Nov–<\/time>/);
+	assert.match(trialSummaryHTML(row(v, '4'), 0), /data-cell="per-proof" title="[\d.]+ GPU-hours, no proof accepted"><span class="u">GPU-h per proof: <\/span>–/);
+	assert.match(trialPlainRowHTML(row(v, '7p')), /^<div class="p2m-trow p2m-tprobe" data-trial="7p" data-probes data-source="live"><span class="tr-name">Trial 7 probes<\/span>.*Outline probes to choose its leaves: <span data-cell="hours">0\.99<\/span> GPU-h, /s);
+	assert.match(trialPlainRowHTML(row(v, '8'), 1), /^<div class="p2m-trow" id="trial-8" data-p2m-trial="8"/);
 	const foot = trialsFootHTML(v);
-	assert.match(foot, /data-cell="proved">17 of 54</);
-	assert.match(foot, /data-cell="calibration">11 of 16</);
+	assert.match(foot, /data-cell="trials">8<span class="u"> trials/);
+	assert.match(foot, /data-cell="leaves">54</);
+	assert.match(foot, /data-cell="accepted">6</);
+	const text = (html: string) => html.replace(/<[^>]+>/g, '');
+	assert.match(text(foot), /Runs that passed our own check: 17 of 54 \(calibration 11 of 16, open 6 of 38\) · Model hours: [\d.]+, outline probes included · Tokens computed: ≥ /);
+	assert.match(foot, /<span data-cell="proved">17 of 54<\/span>/);
+	assert.match(foot, /<span class="tok" data-cell="tokens" data-tokens="\d+" data-with-cache="\d+" title="At least: [\d,]+ tokens computed; [\d,]+ with the cache re-reads">≥ /);
+	assert.match(trialPlainRowHTML(row(v, '7p')), new RegExp(`<span class="tok" data-cell="tokens" data-tokens="${row(v, '7p').computed}"`));
 	const sub = submissionRowHTML({ ...v.submissions.at(-1)!, title: 'A <b>title</b> & $x$' });
 	assert.match(sub, /^<tr data-submission="N12" data-leaf-id="p2m-527634" data-verdict="accepted" data-kind="proof">/);
 	assert.match(sub, /<span class="sub">A &lt;b&gt;title&lt;\/b&gt; &amp; x<\/span>/);
@@ -136,7 +162,8 @@ test('a trial’s list: generated facts, the campaign’s own text as plain text
 	assert.equal(trialFacts(ds[2]), 'Trial 8 has run since 16 November 2026 on scaffold v9: 6 leaves (1 calibration, 5 open), so far 2 of 6 runs proved; prove2me accepted 1 proof from it.');
 	assert.match(trialFacts(ds[0]), /^Trial 6 ran on 15 November 2026 on scaffold v7: 2 leaves \(1 calibration, 1 open\), 2 of 2 runs proved; prove2me accepted 1 proof from it and 1 leaf closed by reuse\.$/);
 	const html = trialDetailHTML(d7);
-	assert.match(html, /^<details class="p2m-trial" id="trial-7" data-p2m-trial="7" data-source="live"><summary>Trial 7 · 15 to 17 November 2026 · 3 of 4 proved<\/summary>/);
+	assert.match(html, /^<details class="p2m-trial" id="trial-7" data-p2m-trial="7" data-trial="7" data-source="live"><summary class="p2m-trow"><span class="tr-name">Trial 7<\/span>.*data-cell="accepted">2</);
+	assert.match(html.replace(/<(?!\/?p[ >])[^>]+>/g, ''), /<p class="caps" data-trial-numbers>Runs that passed our own check: 3 of 4 \(calibration 1 of 1, open 2 of 3\) · Model hours: 23\.5 · Tokens computed: 6\.4M<\/p>/);
 	assert.match(html, /<div data-trial-text><p>Scaffold v8: v7 with what trial 6 taught\./);
 	assert.match(html, /<p>Closing: &lt;script&gt;x&lt;\/script&gt; &amp; \[a link\]\(https:\/\/example\.org\) \*not em\*<\/p><\/div>/);
 	assert.doesNotMatch(html, /<script>|<a href="https:\/\/example/);
@@ -249,18 +276,17 @@ test('campaigns and results: every page, a bad entry left out, a failed source k
 
 test('the home page’s line and the /science/ card', () => {
 	const v = scienceView(h, records());
-	assert.equal(
-		homeLine(v, 'Qwen3.8 27B'),
-		'proofs by Qwen3.8 27B accepted on prove2me so far: it proved 6 of the 26 open lemmas it tried and closed 2 more by reusing a proof already there. prove2me states theorems from research papers in Lean 4 and checks every proof by machine. Trial 8 is running.',
-	);
+	// one number and what it is from; what prove2me is, the links and Tau Ceti are lines of their own on the page
+	assert.equal(homeLine(v, 'Qwen3.8 27B'), 'Lean proofs by Qwen3.8 27B accepted by prove2me so far, from 26 open leaves tried.');
+	// the card as the Tau Ceti one: a status line and two numbers
+	assert.equal(cardStatus(v), 'Active: trial 8 running since 16 November 2026');
 	assert.deepEqual(cardNumbers(v), [
-		{ key: 'accepted', value: '6', label: 'proofs by the model accepted by prove2me, of 8 submitted' },
-		{ key: 'open', value: '6 of 26', label: 'open leaves with an accepted proof; 2 more closed by reuse' },
-		{ key: 'trial', value: 'Trial 8', label: 'running since 16 November 2026' },
+		{ key: 'accepted', value: '6', label: 'Lean proofs by the model accepted by prove2me' },
+		{ key: 'open', value: '6 of 26', label: 'open leaves tried, with a proof accepted' },
 	]);
 	const done = scienceView(h, { ...records(), campaigns: records().campaigns.map((c) => (c.id === 't8' ? { ...c, status: 'finished' as const, ended_at: '2026-11-19T00:00:00Z' } : c)) });
 	assert.equal(done.current, null);
-	assert.doesNotMatch(homeLine(done, 'M'), /Trial 8/);
+	assert.equal(cardStatus(done), 'Active');
 });
 
 test('the build’s task rows carry tokens computed, the cache re-reads beside them', () => {
@@ -382,7 +408,7 @@ test('live on the home page and /science/: a leaf proved by its in-place task co
 	assert.deepEqual([v.kpis.openProved, v.kpis.openTried, v.kpis.openAccepted, v.kpis.proofs], [page.kpis.openProved, page.kpis.openTried, page.kpis.openAccepted, page.kpis.proofs]);
 	// the home line and the card count prove2me's acceptance, not our check: the leaf is tried, not yet accepted
 	assert.equal(v.kpis.openAccepted, before.openAccepted);
-	assert.match(homeLine(v, 'M'), new RegExp(`it proved ${before.openAccepted} of the ${before.openTried + 1} open lemmas`));
+	assert.match(homeLine(v, 'M'), new RegExp(`from ${before.openTried + 1} open leaves tried`));
 	assert.equal(cardNumbers(v).find((n) => n.key === 'open')!.value, `${before.openAccepted} of ${before.openTried + 1}`);
 	assert.match(smallNumbersHTML(v), new RegExp(`^Small numbers: ${before.openAccepted} open leaves with an accepted proof so far \\(${v.kpis.openProved - before.openAccepted} more passed our own check without an accepted proof\\)\\.`));
 });

@@ -5,13 +5,18 @@
 // (prove2me-build.ts; since 2026-11-23: no manual data exports), so the page without JavaScript is as of the build, and
 // the browser reads them again every minute, with the network's share of the work from /v1/stats; when the gateway does
 // not answer, the build's copy stays. The build and the browser draw every part with the same renderers.
+//
+// The page (2026-11-28, simpler): the work, live; the proved theorems page is what was proved and at what cost. It leads
+// with that page's headline number and the way there, then the status and "Working on now" (one row per leaf, opening
+// to its outlines, holes and tasks), the results, the submissions, the trials (one row per trial, newest first, opening
+// to its list), every leaf and every task, and "How to read this" (four lines; the full method collapsed).
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { counts, day, hhmm, outcomeLabel, p2m, plainTitle, span, sumTokens, theoremURL, tokTitle, tokensWithCache, computedTokens, compact } from '../../data/prove2me';
 import { FROZEN_THROUGH, taskTableRows } from '../../data/prove2me-current';
 import { allRuns, builtDetail, builtTaskRows, historyOf, leavesView, scienceView, trialDetails, type TrialDetail } from '../../data/prove2me-records';
 import {
-	kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialDetailHTML, trialRowHTML,
-	trialsFootHTML,
+	acceptedOf, headlineStripHTML, kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialDetailHTML,
+	trialNumbersHTML, trialPlainRowHTML, trialSummaryHTML, trialsFootHTML, trialsHeadHTML, trialsNewestFirst,
 } from '../../data/prove2me-view';
 import { fromStatic, leafDetail, taskTableHTML } from '../../data/prove2me-live';
 import { leafPlan, leafPlanHTML } from '../../data/prove2me-outlines';
@@ -22,6 +27,7 @@ import { nowAll, nowBlocksHTML } from '../../data/prove2me-now';
 import { buildRecords } from '../../data/prove2me-build';
 import { acceptedSeries } from '../../data/prove2me-chart';
 import AcceptedChart from '../../components/AcceptedChart.astro';
+import { THEOREMS_PATH } from '../../data/prove2me-theorems';
 
 const safe = (u: string) => (theoremURL.test(u) ? u : undefined);
 const groupLabel = { calibration: 'Calibration', open: 'Open' } as Record<string, string>;
@@ -34,6 +40,11 @@ const reuseOf: Record<string, string> = Object.fromEntries(p2m.submissions.filte
 const known = {
 	reuses: reuseOf,
 	theorems: Object.fromEntries(p2m.trials.flatMap((tr) => tr.leaves).filter((r) => safe(r.url)).map((r) => [r.theorem, r.url])),
+	// each leaf's prove2me title by id, for its row's short title (the campaigns' items over the build's leaves)
+	titles: Object.fromEntries([
+		...p2m.leaves.map((l) => [l.id, l.title]),
+		...rec.campaigns.flatMap((c) => c.items).filter((i) => i.title).map((i) => [i.id, i.title]),
+	]) as Record<string, string>,
 };
 const trials = p2m.trials.map((tr) => ({ ...tr, c: counts(tr.leaves), hours: tr.leaves.reduce((a, r) => a + r.model_minutes, 0) / 60, tok: sumTokens(tr.leaves), v5: tr.leaves.some((r) => r.tasks) }));
 // The page's numbers, submissions, trials and leaves (prove2me-records.ts): the build's history with the records the
@@ -51,6 +62,7 @@ const st: StatusView = { ...statusView(rec, null)!, source: 'build', saved: recF
 const stx = statusTexts(st, new Date(rec.updated));
 const bar = queueBarHTML(st);
 const frozenTrials = trials.filter((tr) => tr.trial <= FROZEN_THROUGH);
+const frozenOf = (n: number) => frozenTrials.find((tr) => tr.trial === n);
 const builtDetails = trialDetails(
 	p2m.trials.filter((tr) => tr.trial > FROZEN_THROUGH).map((tr) => builtDetail(p2m, hist, tr.trial)).filter((d): d is TrialDetail => !!d),
 	rec,
@@ -63,7 +75,7 @@ const trialDetail = (r: Run) => leafDetail((r.tasks ?? []).map(fromStatic), r.ou
 const runs = allRuns(hist, rec);
 const earlier = (leaf: string, n: number) => [...new Set(runs.filter((r) => r.leaf === leaf && r.trial < n).map((r) => r.trial))].sort((a, b) => a - b);
 const nowDocsBuilt = nowAll(null, rec);
-const nowHTML = nowBlocksHTML(nowDocsBuilt, rec.tasks, { theorems: known.theorems, reuses: reuseOf, earlier });
+const nowHTML = nowBlocksHTML(nowDocsBuilt, rec.tasks, { theorems: known.theorems, reuses: reuseOf, titles: known.titles, earlier });
 // The texts below name F01's trial-5 run; its task count comes from the data.
 const f01 = p2m.trials.flatMap((tr) => tr.leaves).find((r) => r.leaf === 'F01' && r.outcome === 'proved' && r.tasks);
 // A leaf's id (p2m- and the start of prove2me's theorem id) leads everywhere; the trials' alias (O04, F01) is shown small.
@@ -95,7 +107,7 @@ const tasksHTML = allTasksHTML(builtRows, p2mTaskOptions(taskLeaves));
 const taskKnown = { rows: builtRows, leafIds, leaves: taskLeaves, holes: taskHoles };
 // What the browser's script needs to redo the numbers, submissions, trials, leaves and the status block with the
 // gateway's records; the build's status stands in while the gateway does not answer.
-const recordsKnown = { history: hist, f01Tasks: f01?.tasks?.length ?? null, aliasIds, status: st };
+const recordsKnown = { history: hist, model: p2m.model, f01Tasks: f01?.tasks?.length ?? null, aliasIds, status: st };
 const cacheTimes = Math.round(view.kpis.withCache / Math.max(view.kpis.computed, 1));
 const cacheShare = Math.round((100 * (view.kpis.withCache - view.kpis.computed)) / Math.max(view.kpis.withCache, 1));
 const leafCols = [
@@ -119,17 +131,32 @@ const leafCols = [
 	}}
 	headings={[
 		{ depth: 2, slug: 'status', text: 'Status' },
+		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
 		{ depth: 2, slug: 'results', text: 'Results so far' },
 		{ depth: 2, slug: 'submissions', text: 'Submitted to prove2me' },
-		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
+		{ depth: 2, slug: 'trials', text: 'Trials' },
 		{ depth: 2, slug: 'leaves', text: 'Every leaf' },
 		{ depth: 2, slug: 'tasks', text: 'Every task' },
-		{ depth: 2, slug: 'trials', text: 'Trials' },
 		{ depth: 2, slug: 'how-to-read-this', text: 'How to read this' },
 	]}
 >
-	{/* The status block: the queue, the open benchmarks and trials and the submissions from the records the build
-	    fetched; the browser refreshes them from the gateway's records and adds /v1/stats every minute (prove2me-status.ts). */}
+	{/* The headline: the same number, in the same words, as the proved theorems page's, and the way there (live, see the script). */}
+	<section class="p2m-headline not-content" data-p2m-headline data-source="build" aria-label="Proofs accepted by prove2me" set:html={headlineStripHTML(view, p2m.model)} />
+
+	<p>
+		<a href={p2m.project_url} data-p2m-link="home">prove2me</a> collects theorems from mathematical research papers, stated in Lean 4
+		and split into small pieces called leaves. Anyone, a person or an agent, may submit a proof of an open leaf, and prove2me’s own
+		check decides: the Lean kernel and the axioms the proof uses.
+	</p>
+	<p>
+		{p2m.model}, an open-weight model on the AIs@home network, works on leaves as an agent, with Lean and Mathlib at prove2me’s
+		versions. Our own full check judges every attempt: the proof must build, state exactly the leaf’s theorem, and use no
+		{' '}<code>sorry</code> and no axiom beyond Lean’s standard three. We submit every proof that passes it. AIs@home is not part of prove2me.
+	</p>
+	<script is:inline type="application/json" data-p2m-records-known set:html={JSON.stringify(recordsKnown).replace(/</g, '\\u003c')} />
+
+	{/* The status block: the queue and the open benchmarks and trials from the records the build fetched; the browser
+	    refreshes them from the gateway's records and adds /v1/stats every minute (prove2me-status.ts). */}
 	<section class="p2m-status not-content" data-p2m-status data-source="build" data-trials={st.trials.map((x) => x.label).join(' ')} aria-labelledby="status">
 		<h2 id="status">Status</h2>
 		<p class="p2m-st-head" data-st="head">{stx.head}</p>
@@ -148,24 +175,23 @@ const leafCols = [
 		<dl class="p2m-st-nums">
 			<div data-num="nodes" hidden><dt>nodes online (whole network)</dt><dd /></div>
 			<div data-num="slots" hidden><dt>GPU slots busy now</dt><dd /></div>
-			<div data-num="accepted"><dt>proofs accepted by prove2me, of submitted</dt><dd>{stx.nums.accepted}</dd></div>
 		</dl>
 		<p class="p2m-st-updated" data-st="updated">{stx.updated}</p>
 	</section>
 
-	<p>
-		<a href={p2m.project_url} data-p2m-link="home">prove2me</a> collects theorems from mathematical research papers, stated in Lean 4
-		and split into small pieces called leaves. Anyone, a person or an agent, may submit a proof of an open leaf, and prove2me’s own
-		check decides: the Lean kernel and the axioms the proof uses.
-	</p>
-	<p>
-		{p2m.model}, an open-weight model on the AIs@home network, works on leaves as an agent, with Lean and Mathlib at prove2me’s
-		versions. Our own full check judges every attempt: the proof must build, state exactly the leaf’s theorem, and use no
-		{' '}<code>sorry</code> and no axiom beyond Lean’s standard three. Only proofs that pass it are submitted, and since 12 November 2026
-		every one of them that proves an open leaf is. AIs@home is not part of prove2me.
-	</p>
-	<p class="p2m-updated" data-p2m-updated>Updated on <time datetime={rec.updated}>{day(rec.updated)}</time></p>
-	<script is:inline type="application/json" data-p2m-records-known set:html={JSON.stringify(recordsKnown).replace(/</g, '\\u003c')} />
+	<h2 id="working-on-now">Working on now</h2>
+	<script is:inline type="application/json" data-p2m-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
+	{/* The build's copy; the browser replaces it with the project's data document and the gateway's tasks (see the script). */}
+	<section class="p2m-now not-content" data-p2m-now data-trial={nowDocsBuilt.map((d) => d.trial.id).join(' ')} data-source="build">
+		{/* One block per open benchmark and per trial not finished (prove2me-now.ts), one row per leaf that opens to its
+		    outlines, holes and tasks; the outline probes sit under the newest trial's head. */}
+		<div class="probes" data-now-probes hidden>
+			<p class="probes-head" data-probes-head></p>
+			<ul data-probes-list></ul>
+		</div>
+		<Fragment set:html={nowHTML} />
+		<p class="meta" data-now-asof>As of {day(rec.updated)}, {hhmm(rec.updated)}: a copy from the site’s last build.</p>
+	</section>
 
 	<h2 id="results">Results so far</h2>
 	{/* The build's numbers; the browser redoes them from the gateway's records (see the script). */}
@@ -182,13 +208,11 @@ const leafCols = [
 			<div><dt>tokens computed in all</dt><dd data-live="tokens"></dd></div>
 			<div><dt>GPU hours in all</dt><dd data-live="hours"></dd></div>
 		</dl>
-		<p class="p2m-note">
-			Live from the gateway’s public statistics, updated <time data-live="updated"></time> UTC. The network counts prove2me on its own
-			since 11 November 2026 (trial 4 on); the requests of trials 1 to 3 count under Tau Ceti’s project.
-		</p>
+		<p class="p2m-note">Live, updated <time data-live="updated"></time> UTC.</p>
 	</section>
 
 	<h2 id="submissions">Submitted to prove2me</h2>
+	<p>Every proof we submitted and prove2me’s verdict, newest first. <a href={THEOREMS_PATH} data-p2m-theorems-link="submissions">Each accepted proof with what it cost →</a></p>
 	{/* Newest trial first; the area shows about five and scrolls for the rest (a keyboard can scroll it too). */}
 	<div class="p2m-wrap p2m-subs-scroll not-content" data-p2m-subs-scroll tabindex="0" role="region" aria-label="Submitted to prove2me, newest trial first">
 		<table class="p2m-table" data-p2m-submissions data-source="build">
@@ -198,23 +222,92 @@ const leafCols = [
 			<tbody set:html={submissionRowsHTML(view)} />
 		</table>
 	</div>
-	<p class="caps">Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the model. Every accepted proof with what it cost, one page each: <a href="/science/prove2me/theorems/">proved theorems</a>.</p>
+	<p class="caps">Closed by reuse: the proof imports a theorem someone else had already proved; not counted as the model’s proof.</p>
 
-	<h2 id="working-on-now">Working on now</h2>
-	<script is:inline type="application/json" data-p2m-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
-	{/* The build's copy; the browser replaces it with the project's data document and the gateway's tasks (see the script). */}
-	<section class="p2m-now not-content" data-p2m-now data-trial={nowDocsBuilt.map((d) => d.trial.id).join(' ')} data-source="build">
-		{/* One block per open benchmark and per trial not finished (prove2me-now.ts); the outline probes sit under the newest trial's head. */}
-		<div class="probes" data-now-probes hidden>
-			<p class="probes-head" data-probes-head></p>
-			<ul data-probes-list></ul>
+	<h2 id="trials">Trials</h2>
+	<p>
+		Each trial changed the agent’s scaffold (its instructions, tools and rounds) from what the one before taught, so the trials are
+		steps, not repeats. Newest first; open a trial for every leaf it ran.
+	</p>
+	{/* One row per trial (prove2me-view.ts trialSummaryHTML), newest first, each opening to its own list. Trials 1 to 5 are
+	    frozen history; from trial 6 on each trial's list is made from its records (the build's here, the gateway's in
+	    the browser: trialDetailHTML). */}
+	<div class="p2m-trials not-content" data-p2m-trials data-source="build">
+		<p class="p2m-trow p2m-thead" aria-hidden="true" set:html={trialsHeadHTML()} />
+		<div class="p2m-trial-rows" data-p2m-trial-lists>
+		{
+			trialsNewestFirst(view).map((t) => {
+				const tr = !t.probe && t.number <= FROZEN_THROUGH ? frozenOf(t.number) : undefined;
+				const built = !t.probe ? builtDetails.find((d) => d.sum.number === t.number) : undefined;
+				if (built) return <Fragment set:html={trialDetailHTML(built)} />;
+				if (!tr) return <Fragment set:html={trialPlainRowHTML(t, acceptedOf(view, t.number))} />;
+				return (
+					<details class="p2m-trial" id={`trial-${tr.trial}`} data-p2m-trial={tr.trial} data-trial={t.label} data-source="build">
+						<summary class="p2m-trow" set:html={trialSummaryHTML(t, acceptedOf(view, t.number))} />
+						<p>{tr.summary}</p>
+						<Fragment set:html={trialNumbersHTML(t)} />
+						<p class="caps">Budget per leaf: {tr.caps}.</p>
+						<div class="p2m-wrap not-content">
+							<table class="p2m-table p2m-leaves">
+								<thead>
+									<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">{tr.v5 ? 'Tasks' : 'Rounds'}</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Tokens computed</th></tr>
+								</thead>
+								<tbody>
+									{tr.leaves.map((r) => (
+										<tr data-leaf={r.leaf} data-outcome={r.outcome} data-scored={String(r.scored)}>
+											<th scope="row">
+												{idOfTheorem(r.theorem) ?? r.leaf}
+												{idOfTheorem(r.theorem) && <span class="sub" data-alias title="The id the trials used">{r.leaf}</span>}
+											</th>
+											<td class="thm">
+												<a href={safe(r.url)}>{r.theorem}</a>
+												<span class="sub">{plainTitle(r.title)}</span>
+											</td>
+											<td data-label="Kind">
+												{groupLabel[r.group] ?? r.group}
+												{r.earlier.length > 0 && <span class="sub">{earlierText(r.earlier)}</span>}
+											</td>
+											<td data-label="Result" class:list={['result', r.outcome === 'proved' ? 'proved' : r.scored ? 'failed' : 'unscored']}>
+												{outcomeLabel(r)}
+												{!r.scored && r.not_scored_why && <span class="sub">{r.not_scored_why}</span>}
+											</td>
+											{r.tasks ? (
+												<td data-label="Tasks" class="num">
+													{r.tasks.length}
+													<span class="sub">{r.rounds === 1 ? '1 outline' : `${r.rounds} outlines`}</span>
+												</td>
+											) : (
+												<td data-label="Rounds" class="num">{r.rounds}</td>
+											)}
+											<td data-label="Model min" class="num">{r.model_minutes.toFixed(1)}</td>
+											<td data-label="Tokens computed" class="num tok" data-tokens={computedTokens(r)} data-with-cache={tokensWithCache(r)} title={tokTitle(r)}>{compact(computedTokens(r))}</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+						{tr.v5 && (
+							<div class="p2m-trial-tasks not-content" data-p2m-trial-tasks={tr.trial}>
+								<p class="caps">Each leaf’s outlines, newest first, with what became of every hole; under each, every task (outline, hole, try and assembly) with its counts, as in “Working on now”.</p>
+								{tr.leaves.filter((r) => r.tasks?.length).map((r) => {
+									const d = trialDetail(r);
+									return (
+										<div class="p2m-trial-leaf" data-trial-leaf={r.leaf}>
+											<p class="p2m-tleaf">{named(idOfTheorem(r.theorem), r.leaf)}</p>
+											<Fragment set:html={leafPlanHTML(r.leaf, leafPlan(d, [], reuseOf[r.theorem]), true)} />
+											<Fragment set:html={taskTableHTML(r.leaf, d, `${named(idOfTheorem(r.theorem), r.leaf)}: every task`)} />
+										</div>
+									);
+								})}
+							</div>
+						)}
+					</details>
+				);
+			})
+		}
 		</div>
-		<Fragment set:html={nowHTML} />
-		<p class="meta" data-now-asof>
-			As of {day(rec.updated)}, {hhmm(rec.updated)}, from the gateway’s records at the site’s last build. The page updates this list from the gateway every
-			minute; without it, it shows this copy from the site’s last build.
-		</p>
-	</section>
+		<p class="p2m-trow p2m-tall" data-p2m-trials-all set:html={trialsFootHTML(view)} />
+	</div>
 
 	<h2 id="leaves">Every leaf</h2>
 	<p>
@@ -276,151 +369,73 @@ const leafCols = [
 		<Fragment set:html={tasksHTML} />
 	</details>
 
-	<h2 id="trials">Trials</h2>
-	<p>
-		Each trial changed the agent’s scaffold (its instructions, tools and rounds) from what the one before taught, so the trials are
-		steps, not repeats. Tap a trial for every leaf it ran.
-	</p>
-	<div class="p2m-wrap not-content">
-		<table class="p2m-table p2m-trials" data-p2m-trials data-source="build">
-			<thead>
-				<tr>
-					<th scope="col">Trial</th><th scope="col">Dates</th><th scope="col">Scaffold</th><th scope="col" class="num">Proved</th>
-					<th scope="col" class="num">Calibration</th><th scope="col" class="num">Open</th><th scope="col" class="num">Model hours</th>
-					<th scope="col" class="num">Tokens computed</th>
-				</tr>
-			</thead>
-			<tbody set:html={view.trials.map(trialRowHTML).join('')} />
-			<tfoot set:html={trialsFootHTML(view)} />
-		</table>
-	</div>
-	<p class="p2m-note" data-p2m-trials-live>Trials 1 to 5 as recorded; from trial 6 on from the gateway’s records at the site’s last build, {day(rec.updated)}, {hhmm(rec.updated)}.</p>
-
-	{/* Trials 1 to 5 are frozen history; from trial 6 on each trial's list is made from its records (the build's here,
-	    the gateway's in the browser: prove2me-view.ts trialDetailHTML). */}
-	<div data-p2m-trial-lists>
-	{
-		frozenTrials.map((tr) => (
-			<details class="p2m-trial" id={`trial-${tr.trial}`} data-p2m-trial={tr.trial}>
-				<summary>
-					Trial {tr.trial} · {span(tr)} · {tr.c.all.proved} of {tr.c.all.runs} proved
-				</summary>
-				<p>{tr.summary}</p>
-				<p class="caps">Budget per leaf: {tr.caps}.</p>
-				<div class="p2m-wrap not-content">
-					<table class="p2m-table p2m-leaves">
-						<thead>
-							<tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">{tr.v5 ? 'Tasks' : 'Rounds'}</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Tokens computed</th></tr>
-						</thead>
-						<tbody>
-							{tr.leaves.map((r) => (
-								<tr data-leaf={r.leaf} data-outcome={r.outcome} data-scored={String(r.scored)}>
-									<th scope="row">
-										{idOfTheorem(r.theorem) ?? r.leaf}
-										{idOfTheorem(r.theorem) && <span class="sub" data-alias title="The id the trials used">{r.leaf}</span>}
-									</th>
-									<td class="thm">
-										<a href={safe(r.url)}>{r.theorem}</a>
-										<span class="sub">{plainTitle(r.title)}</span>
-									</td>
-									<td data-label="Kind">
-										{groupLabel[r.group] ?? r.group}
-										{r.earlier.length > 0 && <span class="sub">{earlierText(r.earlier)}</span>}
-									</td>
-									<td data-label="Result" class:list={['result', r.outcome === 'proved' ? 'proved' : r.scored ? 'failed' : 'unscored']}>
-										{outcomeLabel(r)}
-										{!r.scored && r.not_scored_why && <span class="sub">{r.not_scored_why}</span>}
-									</td>
-									{r.tasks ? (
-										<td data-label="Tasks" class="num">
-											{r.tasks.length}
-											<span class="sub">{r.rounds === 1 ? '1 outline' : `${r.rounds} outlines`}</span>
-										</td>
-									) : (
-										<td data-label="Rounds" class="num">{r.rounds}</td>
-									)}
-									<td data-label="Model min" class="num">{r.model_minutes.toFixed(1)}</td>
-									<td data-label="Tokens computed" class="num tok" data-tokens={computedTokens(r)} data-with-cache={tokensWithCache(r)} title={tokTitle(r)}>{compact(computedTokens(r))}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-				{tr.v5 && (
-					<div class="p2m-trial-tasks not-content" data-p2m-trial-tasks={tr.trial}>
-						<p class="caps">Each leaf’s outlines, newest first, with what became of every hole; under each, every task (outline, hole, try and assembly) with its counts, as in “Working on now”.</p>
-						{tr.leaves.filter((r) => r.tasks?.length).map((r) => {
-							const d = trialDetail(r);
-							return (
-								<div class="p2m-trial-leaf" data-trial-leaf={r.leaf}>
-									<p class="p2m-tleaf">{named(idOfTheorem(r.theorem), r.leaf)}</p>
-									<Fragment set:html={leafPlanHTML(r.leaf, leafPlan(d, [], reuseOf[r.theorem]), true)} />
-									<Fragment set:html={taskTableHTML(r.leaf, d, `${named(idOfTheorem(r.theorem), r.leaf)}: every task`)} />
-								</div>
-							);
-						})}
-					</div>
-				)}
-			</details>
-		))
-	}
-	<Fragment set:html={builtDetails.map(trialDetailHTML).join('')} />
-	</div>
-
 	<h2 id="how-to-read-this">How to read this</h2>
-	<ul>
-		<li>
-			<strong>The Lean kernel is the judge.</strong> A run counts as proved only when our full check passes (the proof builds, its theorem
-			is exactly the leaf’s, and it uses no <code>sorry</code> and only the axioms <code>propext</code>, <code>Classical.choice</code> and
-			{' '}<code>Quot.sound</code>), with Lean {p2m.lean} and Mathlib <code>{p2m.mathlib}</code> as on prove2me. A submission counts as
-			accepted only when prove2me’s verdict says so. We do not grade the model’s work ourselves.
-		</li>
-		<li>
-			<strong>Calibration and open leaves.</strong> A calibration leaf had already been proved by someone else when we chose it. It
-			tells us whether the setup works; the model is not shown that proof, and we never submit one. An open leaf had no accepted proof
-			when we chose it. An open leaf “closed by reuse” has the same statement as a theorem already proved on prove2me, or is a part of
-			one: we submit the one-line proof that uses it, name its author, and do not count it as proved by the model.
-		</li>
-		<li>
-			<strong>Every run counts.</strong> A run is one leaf in one trial: a first round, and from trial 2 up to two fix rounds in which
-			the model gets Lean’s errors. From trial 5 a run is all of a leaf’s tasks: its outlines, one task per hole, the tries and the
-			assembly. Failed runs stay in the tables. A leaf tried again in a later trial counts as one more run, and once among the open
-			leaves tried. Runs cut short by a fault on our side, not the model’s, or stopped by us because of one, say “Not scored” and why
-			(<span data-p2m-not-scored>{lv.notScored}</span> so far); they still count among the runs. A bench runs leaves of earlier trials again
-			on a newer scaffold: its runs are not counted in the numbers, the trials or the leaves, where they would count those leaves twice.
-		</li>
-		<li>
-			<strong>Model minutes</strong> are the time the model spent generating, summed over a run’s rounds (from trial 5, its tasks).
-			{' '}<strong>Tokens computed</strong> are the work the GPU did: what the model read that was not already in the cache, plus
-			what it wrote. An agent reads the same files again and again, and the cache serves those re-reads: counted with them, the
-			tokens are about <span data-p2m-cache-times>{cacheTimes}</span> times as many (<span data-p2m-cache-share>{cacheShare}%</span> of everything read and written were re-reads).
-			Hover a token count for both numbers. Two first tries in trial 2 that the gateway’s personal-data filter cut off are not in the counts.
-		</li>
-		<li>
-			<strong>Working on now</strong> and the trials from trial 5 show each leaf’s outlines, newest first. An outline is in progress,
-			refuted (one of its holes is false, or its shape was refused), proved (its holes put together passed our full check) or
-			abandoned for a new outline. Each hole is proved by its own task, false (the model disproved it), closed before any task
-			by the pre-pass of standard tactics, by our index of prove2me’s library (reuse) or by the ledger (proved before), or it is
-			running, queued, not tried or cancelled; the holes left in the outline’s file (“in place”) share one task. A cancelled
-			task says why: its outline refuted, replaced or abandoned after a hole failed, or its leaf proved. A leaf’s tokens count
-			every task, each outline and each try included: tokens computed as above, and the count with the cache re-reads beside
-			them. Open “Every task” for each task’s result, steps, model minutes and tokens. A running task’s steps and tokens show as the gateway counts them where it can, else once the task ends.
-		</li>
-		<li>
-			<strong>Small samples.</strong> <span data-p2m-runs-trials>{view.kpis.runs} runs in {view.kpis.lastTrial} trials</span>, each with a different scaffold, budget and set of leaves.
-			They show what happened, not a success rate.
-		</li>
-		<li>
-			<strong>These are our own measurements</strong>, from the records of each run, not estimates. The model runs on the AIs@home
-			network, which today is mostly the maintainer’s own GPUs, some of them rented. The recorded history is published as
-			JSON, as exported on <span data-p2m-json-asof>{day(p2m.generated_at)}</span>, its totals as of that day (the page takes
-			trials 1 to {FROZEN_THROUGH} from it): <a href="/science/prove2me.json" data-p2m-json><code>/science/prove2me.json</code></a>.
-			Everything else comes live from the gateway’s public records, which this page reads every minute:
-			{' '}<a href="/v1/projects/prove2me/campaigns" data-p2m-records-link="campaigns"><code>campaigns</code></a>,
-			{' '}<a href="/v1/projects/prove2me/results" data-p2m-records-link="results"><code>results</code></a> and
-			{' '}<a href="/v1/tasks?project=prove2me" data-p2m-records-link="tasks"><code>tasks</code></a>.
-		</li>
+	<ul class="p2m-read" data-p2m-read>
+		<li><strong>The Lean kernel is the judge.</strong> A proof counts only when it passes our full check, and as accepted only when prove2me says so.</li>
+		<li><strong>Every attempt counts.</strong> Failed runs stay in the tables and the totals.</li>
+		<li><strong>Reuses are not the model’s proofs.</strong> A leaf closed by a theorem someone else proved is listed, marked, and never counted as proved by the model.</li>
+		<li><strong>These are our own records, live.</strong> The page reads the gateway’s public records every minute.</li>
 	</ul>
+	<details class="p2m-method" data-p2m-method>
+		<summary>The full method</summary>
+		<ul>
+			<li>
+				<strong>The Lean kernel is the judge.</strong> A run counts as proved only when our full check passes (the proof builds, its theorem
+				is exactly the leaf’s, and it uses no <code>sorry</code> and only the axioms <code>propext</code>, <code>Classical.choice</code> and
+				{' '}<code>Quot.sound</code>), with Lean {p2m.lean} and Mathlib <code>{p2m.mathlib}</code> as on prove2me. A submission counts as
+				accepted only when prove2me’s verdict says so. We do not grade the model’s work ourselves. Since 12 November 2026 we submit every
+				proof of an open leaf that passes our check.
+			</li>
+			<li>
+				<strong>Calibration and open leaves.</strong> A calibration leaf had already been proved by someone else when we chose it. It
+				tells us whether the setup works; the model is not shown that proof, and we never submit one. An open leaf had no accepted proof
+				when we chose it. An open leaf “closed by reuse” has the same statement as a theorem already proved on prove2me, or is a part of
+				one: we submit the one-line proof that uses it, name its author, and do not count it as proved by the model.
+			</li>
+			<li>
+				<strong>Every run counts.</strong> A run is one leaf in one trial: a first round, and from trial 2 up to two fix rounds in which
+				the model gets Lean’s errors. From trial 5 a run is all of a leaf’s tasks: its outlines, one task per hole, the tries and the
+				assembly. Failed runs stay in the tables. A leaf tried again in a later trial counts as one more run, and once among the open
+				leaves tried. Runs cut short by a fault on our side, not the model’s, or stopped by us because of one, say “Not scored” and why
+				(<span data-p2m-not-scored>{lv.notScored}</span> so far); they still count among the runs. A bench runs leaves of earlier trials again
+				on a newer scaffold: its runs are not counted in the numbers, the trials or the leaves, where they would count those leaves twice.
+			</li>
+			<li>
+				<strong>Model minutes</strong> are the time the model spent generating, summed over a run’s rounds (from trial 5, its tasks).
+				A trial’s GPU-hours per proof are its model hours over the proofs from it that prove2me accepted.
+				{' '}<strong>Tokens computed</strong> are the work the GPU did: what the model read that was not already in the cache, plus
+				what it wrote. An agent reads the same files again and again, and the cache serves those re-reads: counted with them, the
+				tokens are about <span data-p2m-cache-times>{cacheTimes}</span> times as many (<span data-p2m-cache-share>{cacheShare}%</span> of everything read and written were re-reads).
+				Hover a token count for both numbers. Two first tries in trial 2 that the gateway’s personal-data filter cut off are not in the counts.
+			</li>
+			<li>
+				<strong>Working on now</strong> and the trials from trial 5 show each leaf’s outlines, newest first. An outline is in progress,
+				refuted (one of its holes is false, or its shape was refused), proved (its holes put together passed our full check) or
+				abandoned for a new outline. Each hole is proved by its own task, false (the model disproved it), closed before any task
+				by the pre-pass of standard tactics, by our index of prove2me’s library (reuse) or by the ledger (proved before), or it is
+				running, queued, not tried or cancelled; the holes left in the outline’s file (“in place”) share one task. A cancelled
+				task says why: its outline refuted, replaced or abandoned after a hole failed, or its leaf proved. A leaf’s row counts the
+				holes of its newest outline. A leaf’s tokens count every task, each outline and each try included: tokens computed as above, and the count with the cache re-reads beside
+				them. Open “Every task” for each task’s result, steps, model minutes and tokens. A running task’s steps and tokens show as the gateway counts them where it can, else once the task ends.
+			</li>
+			<li>
+				<strong>Small samples.</strong> <span data-p2m-runs-trials>{view.kpis.runs} runs in {view.kpis.lastTrial} trials</span>, each with a different scaffold, budget and set of leaves.
+				They show what happened, not a success rate.
+			</li>
+			<li>
+				<strong>These are our own measurements</strong>, from the records of each run, not estimates. The model runs on the AIs@home
+				network, which today is mostly the maintainer’s own GPUs, some of them rented. The recorded history is published as
+				JSON, as exported on <span data-p2m-json-asof>{day(p2m.generated_at)}</span>, its totals as of that day (the page takes
+				trials 1 to {FROZEN_THROUGH} from it): <a href="/science/prove2me.json" data-p2m-json><code>/science/prove2me.json</code></a>.
+				Everything else comes live from the gateway’s public records, which this page reads every minute:
+				{' '}<a href="/v1/projects/prove2me/campaigns" data-p2m-records-link="campaigns"><code>campaigns</code></a>,
+				{' '}<a href="/v1/projects/prove2me/results" data-p2m-records-link="results"><code>results</code></a> and
+				{' '}<a href="/v1/tasks?project=prove2me" data-p2m-records-link="tasks"><code>tasks</code></a>.
+				The network’s statistics (“prove2me on the network”) count prove2me on its own from 11 November 2026, trial 4 on; requests
+				before then are not in them.
+			</li>
+		</ul>
+	</details>
 
 </StarlightPage>
 
@@ -431,8 +446,8 @@ const leafCols = [
 	import { CURRENT_URL, day, fetchAllTasks, hhmm, parseCurrent, probeRound, refutedOutlines, taskTableRows, theoremURL, walkPages } from '../../data/prove2me-current';
 	import { CAMPAIGNS_URL, RESULTS_URL, allRuns, getJSON, leavesView, parseCampaigns, parseResults, scienceView, trialDetails, type History, type Records } from '../../data/prove2me-records';
 	import {
-		kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialDetailHTML, trialRowHTML,
-		trialsFootHTML,
+		acceptedOf, headlineStripHTML, kpisHTML, leafFiltersHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialDetailHTML,
+		trialPlainRowHTML, trialsFootHTML, trialsNewestFirst,
 	} from '../../data/prove2me-view';
 	import type { CurrentDoc, TasksView } from '../../data/prove2me-current';
 	import { parseNodes, queueBarHTML, statusTexts, statusView, type Nodes, type StatusView } from '../../data/prove2me-status';
@@ -475,8 +490,8 @@ const leafCols = [
 	// (the project's data document for its own trial or a newer one), on load and every minute; otherwise the build's
 	// copy stays (prove2me-now.ts).
 	const nowBox = document.querySelector<HTMLElement>('[data-p2m-now]');
-	type Known = { reuses: Record<string, string>; theorems: Record<string, string> };
-	let known: Known = { reuses: {}, theorems: {} };
+	type Known = { reuses: Record<string, string>; theorems: Record<string, string>; titles: Record<string, string> };
+	let known: Known = { reuses: {}, theorems: {}, titles: {} };
 	try {
 		known = JSON.parse(document.querySelector('[data-p2m-known]')?.textContent || '{}') as Known;
 	} catch {}
@@ -528,6 +543,7 @@ const leafCols = [
 		try {
 			return JSON.parse(document.querySelector('[data-p2m-records-known]')?.textContent || 'null') as {
 				history: History;
+				model: string;
 				f01Tasks: number | null;
 				aliasIds: Record<string, string>;
 				status: StatusView;
@@ -580,11 +596,21 @@ const leafCols = [
 	};
 	// The chart under the headline numbers: drawn again at its real width, and with each newer read of the records.
 	const acceptedChart = mountAcceptedChart(document.querySelector<HTMLElement>('[data-p2m-chart]'));
+	const fromHTML = (html: string) => {
+		const tpl = document.createElement('template');
+		tpl.innerHTML = html; // every value escaped (prove2me-view.ts)
+		return tpl.content.firstElementChild as HTMLElement;
+	};
 	const showRecords = (live: Records) => {
 		if (!recordsKnown) return;
 		const h = recordsKnown.history;
 		const v = scienceView(h, live);
 		acceptedChart.update(v);
+		const head = document.querySelector<HTMLElement>('[data-p2m-headline]');
+		if (head) {
+			head.innerHTML = headlineStripHTML(v, recordsKnown.model); // escaped (prove2me-view.ts)
+			head.dataset.source = 'live';
+		}
 		const kpis = document.querySelector<HTMLElement>('[data-p2m-kpis]');
 		if (kpis) {
 			const k = kpisHTML(v.kpis);
@@ -600,17 +626,6 @@ const leafCols = [
 			fitSubmissions();
 			subs.dataset.source = 'live';
 		}
-		const table = document.querySelector<HTMLElement>('[data-p2m-trials]');
-		if (table) {
-			table.querySelector('tbody')!.innerHTML = v.trials.map(trialRowHTML).join('');
-			table.querySelector('tfoot')!.innerHTML = trialsFootHTML(v);
-			table.dataset.source = 'live';
-		}
-		const note = document.querySelector<HTMLElement>('[data-p2m-trials-live]');
-		if (note) {
-			note.textContent = `Trials 1 to 5 as recorded; from trial 6 on live from the gateway’s records, updated ${hhmm(live.updated)}.`;
-			note.hidden = false;
-		}
 		const runsTrials = document.querySelector<HTMLElement>('[data-p2m-runs-trials]');
 		if (runsTrials) runsTrials.textContent = `${v.kpis.runs} runs in ${v.kpis.lastTrial} trials`;
 		const share = document.querySelector<HTMLElement>('[data-p2m-cache-share]');
@@ -619,29 +634,29 @@ const leafCols = [
 		if (times && v.kpis.computed > 0) times.textContent = String(Math.round(v.kpis.withCache / v.kpis.computed));
 		// the submissions' paragraph and the reuse notes, made from the submissions
 		showLeaves(h, live);
-		// each trial's list from trial 6 on: replaced in place (what is open stays open), a new one in order
-		const lists = document.querySelector<HTMLElement>('[data-p2m-trial-lists]');
-		if (lists) {
-			for (const d of trialDetails([], live, h)) {
-				const old = lists.querySelector<HTMLDetailsElement>(`details[data-p2m-trial="${d.sum.number}"]`);
-				const tpl = document.createElement('template');
-				tpl.innerHTML = trialDetailHTML(d);
-				const fresh = tpl.content.firstElementChild as HTMLDetailsElement;
-				if (old) {
+		// the trials, newest first: trials 1 to 5 keep the build's list; from trial 6 on each trial's list is made again from
+		// the records (what is open stays open), a new trial or probe round joins in its place
+		const trialsBox = document.querySelector<HTMLElement>('[data-p2m-trials]');
+		const rowsBox = trialsBox?.querySelector<HTMLElement>('[data-p2m-trial-lists]');
+		if (trialsBox && rowsBox) {
+			const details = new Map(trialDetails([], live, h).map((d) => [d.sum.number, d]));
+			const rows = trialsNewestFirst(v).map((t) => {
+				if (t.probe) return fromHTML(trialPlainRowHTML(t));
+				const old = rowsBox.querySelector<HTMLElement>(`:scope > [data-p2m-trial="${t.number}"]`);
+				const d = details.get(t.number);
+				if (!d) return old ?? fromHTML(trialPlainRowHTML(t, acceptedOf(v, t.number)));
+				const fresh = fromHTML(trialDetailHTML(d)) as HTMLDetailsElement;
+				if (old instanceof HTMLDetailsElement) {
 					const open = new Set([...old.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]')].filter((x) => x.open).map((x) => x.dataset.leafTasks));
 					fresh.open = old.open;
 					fresh.querySelectorAll<HTMLDetailsElement>('details[data-leaf-tasks]').forEach((x) => (x.open = open.has(x.dataset.leafTasks)));
-					old.replaceWith(fresh);
-				} else {
-					const later = [...lists.querySelectorAll<HTMLElement>(':scope > details[data-p2m-trial]')].find((x) => Number(x.dataset.p2mTrial) > d.sum.number);
-					lists.insertBefore(fresh, later ?? null);
 				}
-			}
-		}
-		const upd = document.querySelector<HTMLElement>('[data-p2m-updated]');
-		if (upd) {
-			upd.textContent = `Live from the gateway’s records, updated ${day(live.updated)}, ${hhmm(live.updated)}`;
-			upd.dataset.source = 'live';
+				return fresh;
+			});
+			rowsBox.replaceChildren(...rows);
+			const all = trialsBox.querySelector<HTMLElement>('[data-p2m-trials-all]');
+			if (all) all.innerHTML = trialsFootHTML(v); // escaped (prove2me-view.ts)
+			trialsBox.dataset.source = 'live';
 		}
 		openTrial();
 	};
@@ -660,19 +675,27 @@ const leafCols = [
 	/** "Working on now": a block per open benchmark and per trial not finished (prove2me-now.ts nowAll), replaced as a
 	 * whole; a leaf's task table stays open across the minute's refresh, and the next trial's outline probes sit under the
 	 * newest trial's head. */
+	/** Each leaf's prove2me title: the build's, and the gateway's campaigns' items. */
+	const titlesOf = (live: Records | null) => {
+		const t = { ...known.titles };
+		for (const c of live?.campaigns ?? []) for (const i of c.items) if (i.title) t[i.id] = i.title;
+		return t;
+	};
 	const showNow = (doc: CurrentDoc | null, live: Records | null, tasks: TasksView) => {
 		const docs = nowAll(doc, live);
 		if (!nowBox || !docs.length) return;
 		const trialsShown = docs.filter((d) => !isBenchDoc(d));
 		const newest = trialsShown[trialsShown.length - 1];
 		const probes = nowBox.querySelector<HTMLElement>('[data-now-probes]')!;
-		const key = (d: HTMLDetailsElement) => `${d.closest<HTMLElement>('[data-now-trial]')?.dataset.nowTrial}|${d.dataset.leafTasks}`;
-		const opened = new Set([...nowBox.querySelectorAll<HTMLDetailsElement>('[data-now-trial] details[data-leaf-tasks]')].filter((d) => d.open).map(key));
+		// a leaf's row and its task table stay open across the refresh
+		const openable = '[data-now-trial] details:is([data-leaf-detail], [data-leaf-tasks])';
+		const key = (d: HTMLDetailsElement) => `${d.closest<HTMLElement>('[data-now-trial]')?.dataset.nowTrial}|${d.dataset.leafDetail ? 'row' : 'tasks'}|${d.dataset.leafDetail ?? d.dataset.leafTasks}`;
+		const opened = new Set([...nowBox.querySelectorAll<HTMLDetailsElement>(openable)].filter((d) => d.open).map(key));
 		const runs = live && recordsKnown ? allRuns(recordsKnown.history, live) : [];
 		const earlier = (leaf: string, n: number) => [...new Set(runs.filter((r) => r.leaf === leaf && r.trial < n).map((r) => r.trial))].sort((a, b) => a - b);
 		const tpl = document.createElement('template');
 		// every value escaped (prove2me-now.ts)
-		tpl.innerHTML = nowBlocksHTML(docs, tasks, { theorems: known.theorems, reuses: known.reuses, earlier });
+		tpl.innerHTML = nowBlocksHTML(docs, tasks, { theorems: known.theorems, reuses: known.reuses, titles: titlesOf(live), earlier });
 		const blocks = [...tpl.content.children] as HTMLElement[];
 		const asof = nowBox.querySelector<HTMLElement>('[data-now-asof]')!;
 		nowBox.append(probes); // out of the old blocks before they go
@@ -682,13 +705,12 @@ const leafCols = [
 		const home = blocks.find((b) => b.dataset.nowTrial === newest?.trial.id) ?? blocks[blocks.length - 1];
 		home.querySelector('[data-now-head]')!.after(probes);
 		if (newest) showProbes(newest, tasks);
-		nowBox.querySelectorAll<HTMLDetailsElement>('[data-now-trial] details[data-leaf-tasks]').forEach((d) => (d.open = opened.has(key(d))));
+		nowBox.querySelectorAll<HTMLDetailsElement>(openable).forEach((d) => (d.open = opened.has(key(d))));
 		asof.hidden = false;
 		const own = docs.filter((d) => d.schema !== 'campaign' && !isBenchDoc(d));
 		asof.textContent = !own.length
-			? `Live from the gateway’s records of the ${docs.length > 1 ? 'trials and their' : 'trial and its'} tasks, updated ${hhmm(tasks.updated)}. It refreshes every minute.`
-			: `Live: the trial’s data as published ${day(own[0].updated_at, false)}, ${hhmm(own[0].updated_at)}; its tasks from the gateway, ` +
-				`updated ${hhmm(tasks.updated)}. It refreshes every minute.`;
+			? `Live, updated ${hhmm(tasks.updated)}.`
+			: `Live, updated ${hhmm(tasks.updated)}; the trial’s data as published ${day(own[0].updated_at, false)}, ${hhmm(own[0].updated_at)}.`;
 		nowBox.dataset.source = 'live';
 		nowBox.dataset.trial = docs.map((d) => d.trial.id).join(' ');
 		nowBox.dataset.status = (newest ?? docs[0]).trial.status;
@@ -767,6 +789,8 @@ const leafCols = [
 		const li = location.hash.startsWith('#leaf-') ? document.getElementById(location.hash.slice(1))?.closest('li') : null;
 		document.querySelectorAll('[data-p2m-now] li.target').forEach((x) => x !== li && x.classList.remove('target'));
 		li?.classList.add('target');
+		const row = li?.querySelector<HTMLDetailsElement>(':scope > details[data-leaf-detail]');
+		if (row) row.open = true;
 	};
 	window.addEventListener('hashchange', markLeaf);
 	markLeaf();
@@ -924,8 +948,19 @@ const leafCols = [
 	.p2m-st-updated { font-size: 0.8rem; color: var(--sl-color-gray-3); }
 	/* Global: the build and the browser draw parts of the page as HTML (prove2me-view.ts, prove2me-live.ts), which
 	   scoped styles would miss; every class here is the page's own (p2m-, tt-) or under main. */
-	.p2m-updated, .p2m-note, main :is(.caps, .sub, .meta) { color: var(--sl-color-gray-3); }
-	.p2m-updated { font-size: 0.85rem; }
+	.p2m-note, main :is(.caps, .sub, .meta) { color: var(--sl-color-gray-3); }
+	/* The headline: the proved theorems page's number, what it is out of, and the way there. */
+	.p2m-headline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; margin: 0 0 1.25rem; padding: 0.9rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+	.p2m-headline p { margin: 0; }
+	.p2m-hl-n { font: 900 2.6rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+	.p2m-hl-text { flex: 1 1 16rem; min-width: 0; }
+	.p2m-hl-what { color: var(--sl-color-gray-2); }
+	.p2m-hl-go { margin-top: 0.3rem !important; }
+	.p2m-hl-go a { font-weight: 700; color: var(--sl-color-accent-high); }
+	@media (max-width: 40rem) { .p2m-headline { flex-direction: column; align-items: flex-start; } .p2m-hl-text { flex: none; } }
+	/* How to read this: four lines, and the full method collapsed under them. */
+	.p2m-method { margin-top: 0.75rem; }
+	.p2m-method > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
 	.p2m-kpis { display: grid; grid-template-columns: repeat(var(--kpis, 3), 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
 	.p2m-kpis div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
 	.p2m-kpis dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); color: var(--sl-color-white); }
@@ -959,7 +994,6 @@ const leafCols = [
 	.p2m-table td.result { min-width: 8rem; }
 	.p2m-table .tok { cursor: help; }
 	.p2m-table .nowrap { white-space: nowrap; }
-	.p2m-trials :is(th, td) { padding-right: 0.6rem; }
 	.p2m-table .thm a { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
 	.p2m-table .sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; overflow-wrap: anywhere; }
 	.p2m-table .proved, .p2m-table .verdict-accepted { font-weight: 600; color: var(--sl-color-accent-high); }
@@ -1015,8 +1049,45 @@ const leafCols = [
 	.tt-table tr[hidden] { display: none; }
 	.tt-table tr:target { outline: 2px solid var(--sl-color-accent); outline-offset: -2px; }
 
-	.p2m-trial { margin-top: 0.75rem; }
-	.p2m-trial > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+	/* The trials: one row per trial, newest first; a trial's row opens to its list. On a wide screen a head names the
+	   columns and each cell's unit is for screen readers only; on a phone the head goes and the units show. */
+	.p2m-trials { margin-top: 1rem; }
+	.p2m-trow { display: grid; grid-template-columns: 1rem 7.5rem 5.5rem 4.5rem 3.75rem 4.75rem minmax(0, 1fr); gap: 0.2rem 0.6rem; align-items: baseline; margin: 0; padding: 0.5rem 0; font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+	.p2m-trow > .tr-name { grid-column: 2; font-weight: 700; color: var(--sl-color-white); }
+	.p2m-trow > :is(.tr-leaves, .tr-accepted, .tr-per-proof, .tr-trials) { text-align: right; }
+	.p2m-trow .tr-run { font-size: 0.75rem; font-weight: 600; color: var(--sl-color-accent-high); }
+	.p2m-trow .tr-accepted { font-weight: 600; color: var(--sl-color-white); }
+	.p2m-trow .u { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+	.p2m-thead { padding: 0 0 0.3rem; border-bottom: 1px solid var(--sl-color-gray-5); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+	.p2m-thead > .tr-name { font-weight: 600; color: var(--sl-color-gray-3); }
+	.p2m-thead > :nth-child(n + 4) { text-align: right; }
+	.p2m-trial, .p2m-trial-rows > .p2m-trow { border-bottom: 1px solid var(--sl-color-gray-5); }
+	.p2m-trial > summary { cursor: pointer; list-style: none; }
+	.p2m-trial > summary::-webkit-details-marker { display: none; }
+	.p2m-trial > summary::before { content: '▸'; grid-column: 1; grid-row: 1; color: var(--sl-color-accent-high); }
+	.p2m-trial[open] > summary::before { content: '▾'; }
+	.p2m-trial > summary:hover .tr-name { color: var(--sl-color-accent-high); }
+	.p2m-trial > summary:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+	.p2m-trial > :not(summary) { margin-left: 1.6rem; }
+	.p2m-trial > :last-child { margin-bottom: 1rem; }
+	.p2m-tprobe { font-size: 0.82rem; color: var(--sl-color-gray-3); }
+	.p2m-tprobe > .tr-name { font-weight: 600; color: var(--sl-color-gray-2); }
+	.p2m-tprobe > .tr-wide { grid-column: 4 / -1; }
+	.p2m-tall > .tr-trials { grid-column: 3; text-align: left; }
+	.p2m-tall .tr-trials .u { position: static; width: auto; height: auto; clip-path: none; }
+	.p2m-tall .tr-more { grid-column: 2 / -1; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+	.p2m-tall .tok, .p2m-trial .tok { cursor: help; }
+	@media (max-width: 40rem) {
+		.p2m-trow { display: flex; flex-wrap: wrap; gap: 0.15rem 0.75rem; padding-left: 1.25rem; position: relative; }
+		.p2m-trial > summary::before { position: absolute; left: 0; }
+		.p2m-trow > .tr-name { flex: 1 0 100%; }
+		.p2m-trow > :is(.tr-leaves, .tr-accepted, .tr-per-proof, .tr-trials) { text-align: left; }
+		.p2m-trow .u { position: static; width: auto; height: auto; clip-path: none; }
+		.p2m-tall > .tr-scaffold { display: none; }
+		.p2m-tall .tr-more { flex: 1 0 100%; }
+		.p2m-trial > :not(summary) { margin-left: 0; }
+		.p2m-trow.p2m-thead { display: none; }
+	}
 	.p2m-trial-tasks { margin-top: 0.75rem; }
 	.p2m-trial-tasks .caps { margin: 0 0 0.25rem; }
 	main .caps { font-size: 0.85rem; }
@@ -1037,6 +1108,30 @@ const leafCols = [
 	.p2m-now .meta > span + span::before { content: ' · '; }
 	.p2m-now .state { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
 	.p2m-now .state-running { color: var(--sl-color-accent-high); }
+	/* A leaf's row: id, short title, its line, holes solved and GPU-hours; it opens to the rest. */
+	.p2m-now [data-now-leaves] > li + li { margin-top: 0; }
+	.p2m-now [data-now-leaves] > li { border-top: 1px solid var(--sl-color-gray-5); }
+	.p2m-now [data-now-leaves] > li:last-child { border-bottom: 1px solid var(--sl-color-gray-5); }
+	.p2m-now .now-row { display: grid; grid-template-columns: 1rem 7.5rem minmax(0, 1fr) auto; gap: 0.1rem 0.6rem; align-items: baseline; padding: 0.45rem 0; cursor: pointer; list-style: none; }
+	.p2m-now .now-row::-webkit-details-marker { display: none; }
+	.p2m-now .now-row::before { content: '▸'; grid-column: 1; grid-row: 1; color: var(--sl-color-accent-high); }
+	.p2m-now .now-leaf[open] > .now-row::before { content: '▾'; }
+	.p2m-now .now-row:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+	.p2m-now .now-row .leaf { grid-column: 2; grid-row: 1; margin: 0; }
+	.p2m-now .now-title { grid-column: 3; grid-row: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--sl-color-white); }
+	.p2m-now .now-row .state { grid-column: 3; grid-row: 2; font-weight: 500; }
+	.p2m-now .now-nums { grid-column: 4; grid-row: 1 / span 2; display: flex; flex-direction: column; align-items: flex-end; font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--sl-color-gray-2); }
+	.p2m-now .now-row:hover .now-title { color: var(--sl-color-accent-high); }
+	.p2m-now .now-more { margin: 0 0 0.75rem 1.6rem; }
+	.p2m-now .now-id { margin: 0 !important; }
+	@media (max-width: 40rem) {
+		.p2m-now .now-row { grid-template-columns: 1rem minmax(0, 1fr); }
+		.p2m-now .now-row .leaf, .p2m-now .now-title, .p2m-now .now-row .state, .p2m-now .now-nums { grid-column: 2; grid-row: auto; }
+		.p2m-now .now-title { white-space: normal; overflow-wrap: anywhere; }
+		.p2m-now .now-nums { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem; }
+		.p2m-now .now-nums > span + span::before { content: '· '; }
+		.p2m-now .now-more { margin-left: 0; }
+	}
 	.p2m-now .probes { margin: 0 0 0.9rem; padding: 0 0 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5); }
 	.p2m-now .probes[hidden] { display: none; }
 	.p2m-now .probes-head { margin: 0; font-weight: 600; color: var(--sl-color-white); }

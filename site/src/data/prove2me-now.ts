@@ -2,15 +2,18 @@
 // 2026-11-23, a trial or a bench): every trial that has not finished (prove2me-records.ts nowDocs), then every bench with
 // open tasks (prove2me-status.ts isBench; no campaign, its tasks name it), shown as a trial is.
 //
-// A block names the trial or bench, its start and scaffold, then its leaves and their tasks; no description of the
-// trial or its budget (2026-11-23: state what is being worked on). One HTML renderer for the build (from the
-// records the build fetched) and the browser (live, every minute), so the two never say different things. Every value
-// is escaped.
+// A block names the trial or bench, its start and scaffold, then one row per leaf (2026-11-28: the block had grown to
+// every outline, hole and task of every leaf at once): the leaf, a short title, its line in words, holes solved of its
+// newest outline's and GPU-hours so far. The row opens to the rest: role, earlier trials, tokens, submissions, the
+// theorem's link, the outlines with every hole, and the task table. One HTML renderer for the build (from the records
+// the build fetched) and the browser (live, every minute), so the two never say different things. Every value is
+// escaped.
 //
 // SPDX-License-Identifier: Apache-2.0
 import { day, submissionText, theoremURL, trialQueue, type CurrentDoc, type TasksView } from './prove2me-current';
 import { leafTokensText, liveLeaves, taskTableHTML, type LiveLeaf } from './prove2me-live';
-import { leafPlan, leafPlanHTML } from './prove2me-outlines';
+import { leafPlan, leafPlanHTML, type LeafPlan } from './prove2me-outlines';
+import { texText } from './tex-text';
 import { nowDocs, type Records } from './prove2me-records';
 import { benchName, isBench } from './prove2me-status';
 
@@ -71,7 +74,27 @@ export interface NowCtx {
 	earlier?: (leaf: string, n: number) => number[];
 	/** The build's reuses: theorem -> the proved theorem its one-line proof imports. */
 	reuses?: Record<string, string>;
+	/** prove2me's title of a leaf by its id (the campaigns' items and the build's leaves), for the row's short title. */
+	titles?: Record<string, string>;
 }
+
+/** A leaf's short title for its row: prove2me's title in plain text, cut to `max` characters; else its Lean name. */
+export function shortTitle(title: string | undefined, theorem: string, max = 70): string {
+	const t = texText(title ?? '').replace(/\s+/g, ' ').trim() || theorem;
+	return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+
+/** The newest outline's holes as "3 of 5 holes solved"; '' before an outline has holes. The assembly is no hole. */
+export function holesDone(p: LeafPlan | null): { solved: number; total: number; text: string } | null {
+	const o = p?.outlines[0];
+	const hs = o?.holes.filter((h) => h.kind !== 'assembly') ?? [];
+	if (!hs.length) return null;
+	const solved = hs.filter((h) => h.state === 'solved').length;
+	return { solved, total: hs.length, text: `${solved} of ${hs.length} ${hs.length === 1 ? 'hole' : 'holes'} solved` };
+}
+
+/** GPU-hours as the theorems page writes them: two decimals under 10, one above. */
+const gpuText = (h: number) => `${h < 10 ? h.toFixed(2) : h.toFixed(1)} GPU-h`;
 
 function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, live: LiveLeaf | undefined, ctx: NowCtx, taken: Set<string>): string {
 	const bench = isBenchDoc(doc);
@@ -95,14 +118,32 @@ function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, 
 	const reuse = reuseSub ? reuseSub.reuses?.theorem ?? ctx.reuses?.[theorem] ?? 'a theorem already proved on prove2me' : undefined;
 	const plan = live ? leafPlan(live.detail, l?.outlines ?? [], reuse) : null;
 	const words = state === 'planned' || !plan ? 'Not started yet' : plan.summary;
+	const holes = holesDone(plan);
+	const minutes = d ? d.rows.reduce((a, r) => a + (r.minutes ?? 0), 0) : 0;
+	const title = shortTitle(ctx.titles?.[leafID], theorem || leafID);
+	// the row: what a reader scans; the rest opens under it
+	const row =
+		`<summary class="now-row">` +
+		`<span class="leaf">${esc(leafID)}</span>` +
+		`<span class="now-title" data-now-title${title !== theorem ? ` title="${esc(theorem)}"` : ''}>${esc(title)}</span>` +
+		`<span class="state state-${esc(state)}" data-progress="${esc(plan?.summary ?? '')}" data-leaf-summary>${esc(words)}</span>` +
+		`<span class="now-nums">` +
+		(holes ? `<span data-now-holes="${holes.solved}/${holes.total}">${esc(holes.text)}</span>` : '') +
+		(d && d.rows.length ? `<span data-now-hours="${(minutes / 60).toFixed(3)}">${esc(gpuText(minutes / 60))}${state === 'running' || state === 'queued' ? ' so far' : ''}</span>` : '') +
+		`</span>` +
+		`</summary>`;
+	const more =
+		`<div class="now-more">` +
+		`<p class="now-id">` +
+		(l ? `<span class="alias"${id(`leaf-${alias}`)} title="The id the trials used" data-alias>${esc(alias)}</span>` : '') +
+		(theorem ? (theoremURL.test(url) ? `<a class="thm-name" href="${esc(url)}">${esc(theorem)}</a>` : `<span class="thm-name">${esc(theorem)}</span>`) : '') +
+		`</p>` +
+		`<span class="meta">${meta.join('')}</span>` +
+		(live && plan ? leafPlanHTML(alias, plan) + taskTableHTML(alias, live.detail, 'Every task') : '') +
+		`</div>`;
 	return (
 		`<li${id(`leaf-${leafID}`)} data-current-leaf="${esc(alias)}"${l ? ` data-leaf-id="${esc(l.id)}"` : ''} data-state="${esc(state)}">` +
-		`<span class="leaf">${esc(leafID)}</span>` +
-		(l ? `<span class="alias"${id(`leaf-${alias}`)} title="The id the trials used" data-alias>${esc(alias)}</span>` : '') +
-		(theorem ? ` ${theoremURL.test(url) ? `<a class="thm-name" href="${esc(url)}">${esc(theorem)}</a>` : `<span class="thm-name">${esc(theorem)}</span>`}` : '') +
-		`<span class="meta">${meta.join('')}</span>` +
-		`<span class="state state-${esc(state)}" data-progress="${esc(plan?.summary ?? '')}" data-leaf-summary>${esc(words)}</span>` +
-		(live && plan ? leafPlanHTML(alias, plan) + taskTableHTML(alias, live.detail, 'Every task') : '') +
+		`<details class="now-leaf" data-leaf-detail="${esc(alias)}">${row}${more}</details>` +
 		`</li>`
 	);
 }

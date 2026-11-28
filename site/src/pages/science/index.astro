@@ -1,13 +1,15 @@
 ---
-// Science overview (/science/): one card per project, the active one first, each with its status, a few headline numbers
-// from the same committed data its own page renders (science/prove2me.json, science/tauceti.json), and a link to it.
-// prove2me's numbers come live from the gateway's records in the browser, as on its own page (prove2me-records.ts).
+// Science overview (/science/): one card per project, the active one first, each built the same way (2026-11-28: the
+// prove2me card follows the Tau Ceti one): a status line, one line on the project, two numbers, and a footer with the
+// date and the links. prove2me's status and numbers come live from the gateway's records in the browser, as on its own
+// page (prove2me-records.ts); its card links the proved theorems too.
 // SPDX-License-Identifier: Apache-2.0
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../data/prove2me';
 import { historyOf, scienceView } from '../../data/prove2me-records';
 import { buildRecords } from '../../data/prove2me-build';
-import { cardNumbers } from '../../data/prove2me-view';
+import { cardNumbers, cardStatus } from '../../data/prove2me-view';
+import { THEOREMS_PATH } from '../../data/prove2me-theorems';
 import { science as tc } from '../../data/science';
 
 const p2mHistory = historyOf(p2m);
@@ -21,11 +23,12 @@ const cards = [
 		id: 'prove2me',
 		name: 'prove2me',
 		href: '/science/prove2me/',
-		status: 'Active',
+		status: cardStatus(p2mView),
 		state: 'active',
 		about: 'Research theorems stated in Lean 4 and split into leaves. The Lean kernel checks every proof.',
 		numbers: cardNumbers(p2mView),
 		asOf: p2mView.updated,
+		more: [{ href: THEOREMS_PATH, text: 'Proved theorems', key: 'theorems' }],
 	},
 	{
 		id: 'tauceti',
@@ -39,6 +42,7 @@ const cards = [
 			...(tc.firstReviewed ? [{ key: 'first-review', value: `${tc.firstReviewApproved} of ${tc.firstReviewed}`, label: 'approved at the first review' }] : []),
 		],
 		asOf: tc.generatedAt?.toISOString() ?? '',
+		more: [] as { href: string; text: string; key: string }[],
 	},
 ];
 ---
@@ -74,6 +78,12 @@ const cards = [
 					<p class="foot">
 						{c.asOf && <span data-card-asof>As of {dayLabel(c.asOf)}. </span>}
 						<a href={c.href}>See {c.name} <span aria-hidden="true">→</span></a>
+						{c.more.map((m) => (
+							<>
+								<span class="sep" aria-hidden="true">·</span>
+								<a href={m.href} data-card-link={m.key}>{m.text} <span aria-hidden="true">→</span></a>
+							</>
+						))}
 					</p>
 				</li>
 			))
@@ -86,7 +96,7 @@ const cards = [
 	// prove2me's card, live: the build's history with the gateway's records (prove2me-records.ts), on load and every
 	// minute while the page is visible; without them the card keeps what it shows.
 	import { liveSummary, type History } from '../../data/prove2me-records';
-	import { cardNumbersHTML } from '../../data/prove2me-view';
+	import { cardNumbersHTML, cardStatus } from '../../data/prove2me-view';
 	import { day, hhmm } from '../../data/prove2me-current';
 
 	const card = document.querySelector<HTMLElement>('[data-project=prove2me]');
@@ -98,8 +108,9 @@ const cards = [
 			const v = await liveSummary(known.history);
 			if (!v) return;
 			card.querySelector<HTMLElement>('[data-card-numbers]')!.innerHTML = cardNumbersHTML(v); // every value escaped
+			card.querySelector<HTMLElement>('[data-project-status]')!.textContent = cardStatus(v);
 			const asOf = card.querySelector<HTMLElement>('[data-card-asof]');
-			if (asOf) asOf.textContent = `Live, ${day(v.updated)}, ${hhmm(v.updated)}. `;
+			if (asOf) asOf.textContent = `Live, updated ${day(v.updated)}, ${hhmm(v.updated)}. `;
 			card.dataset.source = 'live';
 		} catch {
 			// keep what the card shows
@@ -119,10 +130,14 @@ const cards = [
 	.status { margin: 0.25rem 0 0; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
 	.card-active .status { color: var(--sl-color-accent-high); }
 	.about { margin: 0.5rem 0 0; color: var(--sl-color-gray-2); }
+	/* Global inside the card: the browser draws prove2me's numbers again as HTML (prove2me-view.ts cardNumbersHTML), which
+	   scoped styles would miss, so both cards' numbers look the same live as at the build. */
 	.card dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.5rem 1rem; margin: 0.75rem 0 0; }
-	.card dl div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
-	.card dd { margin: 0; font: 900 1.5rem/1.1 var(--font-display); color: var(--sl-color-white); }
-	.card dt { margin-top: 0.2rem; font-size: 0.78rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+	.card dl :global(div) { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+	.card dl :global(dd) { margin: 0; font: 900 1.5rem/1.1 var(--font-display); color: var(--sl-color-white); }
+	.card dl :global(dt) { margin-top: 0.2rem; font-size: 0.78rem; line-height: 1.25; color: var(--sl-color-gray-2); }
 	.foot { margin: 0.75rem 0 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
 	.foot a { font-weight: 600; color: var(--sl-color-accent-high); }
+	.foot .sep { margin: 0 0.4rem; }
+	.foot a { white-space: nowrap; }
 </style>

@@ -3,6 +3,8 @@
    prove2me page: accent-topped number cards, plain tables that become cards on a phone. */
 .th-updated, main .th-note, .th-table .sub { color: var(--sl-color-gray-3); }
 .th-updated { font-size: 0.85rem; }
+.th-go { margin-top: 0.4rem !important; }
+.th-go a { font-weight: 700; color: var(--sl-color-accent-high); }
 main .th-note { font-size: 0.85rem; }
 .th-kpis, .th-costs { display: grid; grid-template-columns: repeat(var(--kpis, 3), 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
 .th-kpis div, .th-costs div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
