@@ -25,6 +25,13 @@ export interface BuildRecords {
 	from: RecordsFrom;
 }
 
+/** The records without who served each task (`served_by`): a GPU's owner's public username is shown only live, from the
+ * gateway's current list, never in the build's HTML, so a username cleared on the gateway leaves the site at once
+ * instead of staying in pages built while it was set (prove2me-proof.ts). */
+export function withoutServed(r: Records): Records {
+	return { ...r, tasks: { ...r.tasks, tasks: r.tasks.tasks.map(({ served_by: _, ...t }) => t) } };
+}
+
 /** A records file (the committed copy, a test fixture): each list as one page of the gateway's answer. Null when it is
  * not one. */
 export function recordsOf(d: unknown): Records | null {
@@ -70,5 +77,6 @@ export async function loadRecords(
 }
 
 let once: Promise<BuildRecords> | null = null;
-/** The build's records, fetched once per build (every page that shows them reads the same). */
-export const buildRecords = () => (once ??= loadRecords());
+/** The build's records, fetched once per build (every page that shows them reads the same), without who served each task
+ * (withoutServed). */
+export const buildRecords = () => (once ??= loadRecords().then((b) => ({ ...b, records: withoutServed(b.records) })));
