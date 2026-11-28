@@ -18,12 +18,18 @@ const (
 	otherProjectKey = "ak-other-project-key-987654321"
 )
 
-func statusGateway(t *testing.T, dir string) *Gateway {
+// statusGateway: lab and other, in dir; cfg may set more (its StateDir and Projects are replaced).
+func statusGateway(t *testing.T, dir string, cfg ...Config) *Gateway {
 	t.Helper()
-	return newTestGateway(t, Config{StateDir: dir, Projects: []Project{
+	var c Config
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
+	c.StateDir, c.Projects = dir, []Project{
 		{ID: "lab", KeySHA256: []string{keyHash(testProjectKey)}, Kinds: []string{"p2m-v7"}},
 		{ID: "other", KeySHA256: []string{keyHash(otherProjectKey)}},
-	}})
+	}
+	return newTestGateway(t, c)
 }
 
 // minimalStatus is a valid status generated at now.

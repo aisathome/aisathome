@@ -17,12 +17,12 @@ import (
 // v1Rig: prove2me (public, kinds p2m-v7), lab (not public).
 func v1Rig(t *testing.T) *taskRig {
 	t.Helper()
-	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
+	r := &taskRig{t: t, now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
+	g := newTestGateway(t, Config{TasksNow: r.clock, StateDir: t.TempDir(), Projects: []Project{
 		{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true, Kinds: []string{"p2m-v7"}},
 		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}, Kinds: []string{"p2m-v7"}},
 	}})
-	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
-	g.tasks.now = r.clock
+	r.g = g
 	t.Cleanup(func() { g.Close() })
 	return r
 }

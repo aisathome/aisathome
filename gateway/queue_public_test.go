@@ -14,12 +14,12 @@ import (
 // publicRig: prove2me with a public queue (key testProjectKey), lab without one.
 func publicRig(t *testing.T) *taskRig {
 	t.Helper()
-	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
+	r := &taskRig{t: t, now: time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)}
+	g := newTestGateway(t, Config{TasksNow: r.clock, StateDir: t.TempDir(), Projects: []Project{
 		{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true},
 		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
-	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)}
-	g.tasks.now = r.clock
+	r.g = g
 	t.Cleanup(func() { g.Close() })
 	return r
 }

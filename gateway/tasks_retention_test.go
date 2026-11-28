@@ -16,11 +16,11 @@ import (
 // retentionRig: prove2me (public, kinds p2m-v7) with task_compact_days days (0: the default), in dir.
 func retentionRig(t *testing.T, dir string, days int) *taskRig {
 	t.Helper()
-	g := newTestGateway(t, Config{StateDir: dir, Projects: []Project{
+	r := &taskRig{t: t, now: time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)}
+	g := newTestGateway(t, Config{TasksNow: r.clock, StateDir: dir, Projects: []Project{
 		{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true, Kinds: []string{"p2m-v7"}, TaskCompactDays: days},
 	}})
-	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)}
-	g.tasks.now = r.clock
+	r.g = g
 	t.Cleanup(func() { g.Close() })
 	return r
 }
