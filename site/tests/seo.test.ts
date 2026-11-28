@@ -65,7 +65,7 @@ test('robots.txt names the search and AI answer crawlers, with the same rules as
 	assert.ok(robotsProblems(loose, origin).some((p) => p.startsWith('does not disallow /account for Googlebot')));
 });
 
-test('robots.txt leaves the training crawlers under "*": their policy is the owner\'s call', () => {
+test('robots.txt leaves the training crawlers under "*": changing their policy is a decision of its own', () => {
 	for (const a of trainingCrawlers) {
 		assert.ok(!robotsGroups(robotsTxt()).some((g) => g.agents.includes(a)), a);
 		assert.ok(robotsProblems(`${robotsTxt()}\nUser-agent: ${a}\nDisallow: /\n`, origin).some((p) => p.startsWith(`names ${a}`)), a);
