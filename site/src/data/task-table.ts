@@ -244,6 +244,22 @@ export function attachTaskTable(box: HTMLElement, o: TaskTableOptions, rows: Tas
 	fillSelects();
 	apply();
 	return {
+		/** The row of task `anchor` (its element id), shown even when a filter hides it: the filters are cleared then, as
+		 * a relation's link clears them. Null when the table has no such row. */
+		reveal(anchor: string): HTMLElement | null {
+			const row = box.querySelector<HTMLElement>(`tr[id="${CSS.escape(anchor)}"]`);
+			if (!row) return null;
+			if (row.hidden) {
+				for (const k of Object.keys(filter)) {
+					filter[k] = '';
+					touched.add(k);
+				}
+				show = '';
+				box.querySelectorAll<HTMLSelectElement>('select[data-tt-filter]').forEach((el) => (el.value = ''));
+				apply();
+			}
+			return row;
+		},
 		/** Merge the live rows in (a build's row with the same id gives way to its live row) and draw the table again. */
 		setLive(live: TaskTableRow[]) {
 			const b = body();

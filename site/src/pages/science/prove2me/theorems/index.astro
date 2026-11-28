@@ -10,6 +10,7 @@ import { p2m } from '../../../../data/prove2me';
 import {
 	THEOREMS_PATH, costsHTML, ctaHTML, headlineHTML, listCountText, selectionText, theoremKpisHTML, theoremRowsHTML, trialBarRowsHTML, trialBarsSVG, updatedText,
 } from '../../../../data/prove2me-theorems';
+import { builtLabelHTML } from '../../../../data/prove2me-view';
 import AcceptedChart from '../../../../components/AcceptedChart.astro';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
 import '../../../../styles/theorems.css';
@@ -51,7 +52,7 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 	</p>
 	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
 	{/* until the browser's first read of the gateway, in place of the line above (styles/theorems.css) */}
-	<p class="th-updated th-pending" data-th-pending role="status">As of the last build, {view.updated.slice(11, 16)} UTC · updating…</p>
+	<p class="th-updated th-pending" data-th-pending role="status" set:html={builtLabelHTML(view.updated)} />
 	{/* The way back to the work itself (2026-11-28): this page is what was proved and at what cost, the prove2me page the
 	    work, live. */}
 	<p class="th-go"><a href="/science/prove2me/" data-th-work-link>The work behind these proofs, live: every trial, leaf and task <span aria-hidden="true">→</span></a></p>

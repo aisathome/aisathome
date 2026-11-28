@@ -295,6 +295,17 @@ export function trialDetailHTML(d: TrialDetail, list = true, open = false): stri
 // (/science/prove2me/record/), which the build draws in full with the same renderers.
 
 export const RECORD_PATH = '/science/prove2me/record/';
+
+/** Until the page's first read of the gateway has run: "As of the last build, 10:21 UTC · updating…", the build's day
+ * in it when that is not today (the browser shows it: showBuiltDays). */
+export const builtLabelHTML = (iso: string) =>
+	`As of the last build, <span data-p2m-built-day="${esc(iso.slice(0, 10))}" hidden>${esc(day(iso, false))}, </span>${esc(hhmm(iso))} · updating…`;
+
+/** In the browser: the build's day in its "As of the last build" labels, when that day is not today (UTC). */
+export function showBuiltDays(root: ParentNode = document, now = new Date()) {
+	const today = now.toISOString().slice(0, 10);
+	root.querySelectorAll<HTMLElement>('[data-p2m-built-day]').forEach((e) => (e.hidden = e.dataset.p2mBuiltDay === today));
+}
 /** The build's data for those parts (pages/science/prove2me/record.json.ts). */
 export const RECORD_JSON = '/science/prove2me/record.json';
 

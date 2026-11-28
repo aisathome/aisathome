@@ -8,7 +8,7 @@ import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../data/prove2me';
 import { historyOf, scienceView } from '../../data/prove2me-records';
 import { buildRecords } from '../../data/prove2me-build';
-import { cardNumbers, cardStatus } from '../../data/prove2me-view';
+import { builtLabelHTML, cardNumbers, cardStatus } from '../../data/prove2me-view';
 import { THEOREMS_PATH } from '../../data/prove2me-theorems';
 import { science as tc } from '../../data/science';
 
@@ -29,7 +29,7 @@ const cards = [
 		numbers: cardNumbers(p2mView),
 		asOf: p2mView.updated,
 		// until the browser's first read: the status is the build's, so it says so (styles below)
-		pending: `As of the last build, ${p2mView.updated.slice(11, 16)} UTC · updating…`,
+		pending: builtLabelHTML(p2mView.updated),
 		more: [{ href: THEOREMS_PATH, text: 'Proved theorems', key: 'theorems' }],
 	},
 	{
@@ -69,7 +69,7 @@ const cards = [
 						<a href={c.href} data-project-link>{c.name}</a>
 					</h2>
 					<p class="status" data-project-status>{c.status}</p>
-					{c.pending && <p class="status pending" data-card-pending role="status">{c.pending}</p>}
+					{c.pending && <p class="status pending" data-card-pending role="status" set:html={c.pending} />}
 					<p class="about">{c.about}</p>
 					<dl data-card-numbers>
 						{c.numbers.map((n) => (
@@ -100,7 +100,7 @@ const cards = [
 	// prove2me's card, live: the build's history with the gateway's records (prove2me-records.ts), on load and every
 	// minute while the page is visible; without them the card keeps what it shows.
 	import { liveSummary, type History } from '../../data/prove2me-records';
-	import { cardNumbersHTML, cardStatus } from '../../data/prove2me-view';
+	import { cardNumbersHTML, cardStatus, showBuiltDays } from '../../data/prove2me-view';
 	import { day, hhmm } from '../../data/prove2me-current';
 
 	const card = document.querySelector<HTMLElement>('[data-project=prove2me]');
@@ -121,6 +121,7 @@ const cards = [
 		}
 	};
 	// at once as the page loads; until this first read has run the card's status says it is the build's (styles below)
+	showBuiltDays();
 	load().finally(() => document.documentElement.setAttribute('data-p2m-read', ''));
 	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>
