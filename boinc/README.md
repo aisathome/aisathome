@@ -152,6 +152,10 @@ BOINC app and its model:
 ]
 ```
 
+Each work unit's command line also names the node's tier (`--tier standard` or `--tier big`; a tier's
+`node_tier`, default its name), so the pilot runs the model with that tier's context and model name
+whatever the app version's `job.xml` says.
+
 The gateway's demand then says how many pilots each tier needs, and the bridge creates each tier's pilots
 (with the tier's name) as work units of that tier's app, with that tier's model. The apps' plan classes
 decide which cards may get them, so a work unit's model always fits the host BOINC sends it to: a 16 GB

@@ -87,6 +87,9 @@ func TestExecToolsCreateWorkInTheTiersApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := argsLog(t, cfg)
+	if !strings.Contains(got, "--command_line\n--passthrough_child --gateway wss://gw.example/v1/node/connect --tier standard\n") {
+		t.Errorf("the standard tier's work unit does not name the pilot's tier:\n%s", got)
+	}
 	if !strings.HasPrefix(got, "--appname\npilot_std\n") ||
 		!strings.Contains(got, "--remote_file\nhttps://example.org/q3.gguf\n13146393504\n"+strings.Repeat("b", 32)+"\npc-p-0123456789ab-ff\n") {
 		t.Errorf("create_work args for the standard tier:\n%s", got)
