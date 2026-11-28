@@ -27,6 +27,8 @@ func TestAccountsNodeFailures(t *testing.T) {
 			map[string]any{"node": "n-small", "model": "qwen3.8-27b-q3", "ctx": 81920, "kinds": map[string]int{
 				"ok": 4, "length_context": 2, "bad_tool_calls": 1, "failed:context_length_exceeded": 2,
 				"failed:tool_call_parse": 1, "failed:node stalled": 1}},
+			map[string]any{"node": "n-small2", "model": "qwen3.8-27b-q3", "ctx": 81920, "kinds": map[string]int{"ok": 3, "blocked": 1}},
+			map[string]any{"node": "n-\x1b[2Jevil", "model": "m\nNODE forged", "kinds": map[string]int{"ok": 1}},
 			map[string]any{"node": "-", "model": "qwen3.8-27b-q3", "kinds": map[string]int{"refused:too_long": 3}}}},
 		map[string]any{"day": day(0), "rows": []any{
 			map[string]any{"node": "n-small", "model": "qwen3.8-27b-q3", "ctx": 81920, "kinds": map[string]int{"ok": 0, "cancelled": 1}}}},
@@ -58,18 +60,23 @@ func TestAccountsNodeFailures(t *testing.T) {
 	// n-small: 11 attempts (bad_tool_calls marks an answer), 6 answers, 2 cut at the context, 2 context
 	// exceeded, 1 parse error, 1 bad call, 1 other failure, 1 cancelled.
 	small := strings.Join(line("n-small "), " ")
-	if !strings.Contains(small, "n-small qwen3.8-27b-q3 81920 11 6 0 2 (18.2%) 2 (18.2%) 1 (9.1%) 1 (9.1%) 1 (9.1%) 1/0") {
+	if !strings.Contains(small, "n-small qwen3.8-27b-q3 81920 11 6 0 2 (18.2%) 2 (18.2%) 1 (9.1%) 1 (9.1%) 1 (9.1%) 1/0/0/0") {
 		t.Fatalf("n-small: %s\n%s", small, out)
 	}
 	if f := line("n-big "); f[3] != "10" || f[4] != "10" || f[5] != "1" {
 		t.Fatalf("n-big: %v", f)
+	}
+	if strings.ContainsAny(out, "\x1b") || strings.Contains(out, "\nNODE forged") || !strings.Contains(out, "n-?[2Jevil") {
+		t.Fatalf("control characters reach the terminal:\n%q", out)
 	}
 	if strings.Contains(out, "n-old") {
 		t.Fatalf("a day older than 7 is counted:\n%s", out)
 	}
 	perModel := false
 	for _, l := range strings.Split(out, "\n") {
-		if f := strings.Fields(l); len(f) > 3 && f[0] == "all" && f[1] == "qwen3.8-27b-q3" && f[3] == "11" {
+		// summed over n-small and n-small2: 11 + 4 attempts, 6 + 3 answers, one blocked
+		if f := strings.Fields(l); len(f) > 4 && f[0] == "all" && f[1] == "qwen3.8-27b-q3" && f[3] == "15" && f[4] == "9" &&
+			f[len(f)-1] == "1/0/1/0" {
 			perModel = true
 		}
 	}

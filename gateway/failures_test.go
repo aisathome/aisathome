@@ -79,6 +79,14 @@ func TestFailureCountsKeepAndBound(t *testing.T) {
 	if other == nil || other.Kinds[kindOK] != 6 { // n-a took a row before the 1000 others filled the day
 		t.Fatalf("other %+v", other)
 	}
+	f.add("n-\x1b[2J", strings.Repeat("m", 200)+"\n", 1, now, kindOK)
+	f.mu.Lock()
+	for _, r := range f.days["2026-11-28"] {
+		if strings.ContainsAny(r.Node+r.Model, "\x1b\n") || len(r.Model) > 128 {
+			t.Fatalf("unprintable or long name kept: %q %q", r.Node, r.Model)
+		}
+	}
+	f.mu.Unlock()
 	var nilCounts *failureCounts // a gateway part that is off
 	nilCounts.add("n", "m", 1, now, kindOK)
 	if nilCounts.save() != nil {
@@ -209,6 +217,16 @@ func TestFailureCountsFromRequests(t *testing.T) {
 	if r := rows[failuresNoNode]; r == nil || r.Model != "deep" || r.Kinds["refused:too_long"] != 1 {
 		t.Fatalf("refusals %+v", r)
 	}
+	// A refusal for a name no node offered keeps none of what the client typed.
+	g.countRefusal(&route{}, "my secret plan", "queue_full")
+	g.fails.mu.Lock()
+	unknown := g.fails.snapshotLocked().Days[0].Rows
+	g.fails.mu.Unlock()
+	for _, r := range unknown {
+		if strings.Contains(r.Model, "secret") || (r.Node == failuresNoNode && r.Model != "deep" && r.Model != "(unknown)") {
+			t.Fatalf("refusal row %+v", r)
+		}
+	}
 
 	closed = true
 	if err := g.Close(); err != nil {
@@ -223,7 +241,7 @@ func TestFailureCountsFromRequests(t *testing.T) {
 			t.Fatalf("the counts name %q: %s", s, raw)
 		}
 	}
-	if days, err := ReadFailures(filepath.Join(dir, FailuresFile)); err != nil || len(days) != 1 || len(days[0].Rows) != 2 {
+	if days, err := ReadFailures(filepath.Join(dir, FailuresFile)); err != nil || len(days) != 1 || len(days[0].Rows) != 3 { // n-small, deep and (unknown) refusals
 		t.Fatalf("read back %v %+v", err, days)
 	}
 }
@@ -247,6 +265,7 @@ func TestAttemptKinds(t *testing.T) {
 		{live, errors.New("node disconnected"), "failed:node disconnected"},
 		{live, errors.New("node stalled"), "failed:node stalled"},
 		{live, errors.New("free text from a node: PROMPT"), "failed:node error"},
+		{live, errors.New("engine stream ended early"), "failed:engine stream ended early"}, // onError's error is the category
 	} {
 		rl := &relay{ctx: c.ctx}
 		if got := rl.attemptKinds(c.err); len(got) != 1 || got[0] != c.want {

@@ -24,11 +24,12 @@
 // (no name, or arguments that are not a JSON object: signals.go). Requests the gateway refused before
 // any node (no node with enough context: too_long, a session's model offline, ...) count as
 // refused:<reason> under the node "-" and the model asked for (the session's model, when it continues
-// one; "(unknown)" for a model nobody serves, so a client's made-up names add no rows).
+// one; "(unknown)" for a name no node offered, so nothing a client typed reaches the file).
 //
 // Counts only: no request, prompt, answer, error text, user, key, account or operator; a node's id and
 // its model's name and context. In memory, saved in the state dir (failures.json) every few seconds and
-// on close, for failuresKeepDays days; at most failuresMaxRows rows a day, the rest under "(other)".
+// on close, for failuresKeepDays days; at most failuresMaxRows node rows a day, the rest under "(other)".
+// Names are kept to 128 bytes of printable ASCII.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway
@@ -105,9 +106,7 @@ func (f *failureCounts) add(node, model string, ctx int, now time.Time, kinds ..
 	if f == nil || len(kinds) == 0 {
 		return
 	}
-	if len(model) > 64 {
-		model = model[:64]
-	}
+	node, model = printable(node), printable(model)
 	day := now.UTC().Format(time.DateOnly)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -120,7 +119,7 @@ func (f *failureCounts) add(node, model string, ctx int, now time.Time, kinds ..
 	key := node + "\x00" + model
 	r := rows[key]
 	if r == nil {
-		if len(rows) >= failuresMaxRows {
+		if len(rows) >= failuresMaxRows && node != failuresNoNode {
 			node, model, ctx, key = failuresOther, failuresOther, 0, failuresOther+"\x00"+failuresOther
 			r = rows[key]
 		}
@@ -177,6 +176,7 @@ func (f *failureCounts) save() error {
 	f.saveMu.Lock()
 	defer f.saveMu.Unlock()
 	f.mu.Lock()
+	f.pruneLocked(time.Now())
 	if f.path == "" || !f.dirty {
 		f.mu.Unlock()
 		return nil
@@ -270,8 +270,13 @@ func (rl *relay) attemptKinds(err error) []string {
 			if rec.Signals.Finish == "length" {
 				kinds[0] = kindLengthContext
 				// The node's own count, unclamped: the usage record's is bounded by the chunks the gateway
-				// saw, and a node that lies about it only mislabels its own cut answers.
-				if rl.maxTokens > 0 && rl.reportedOut >= rl.maxTokens {
+				// saw, and a node that lies about it only mislabels its own cut answers. Without one
+				// (a done message may carry no usage), the chunks with text, about one token each.
+				out := rl.reportedOut
+				if out < 0 {
+					out = rl.relayed
+				}
+				if rl.maxTokens > 0 && out >= rl.maxTokens {
 					kinds[0] = kindLengthMax
 				}
 			}
@@ -303,14 +308,33 @@ func (g *Gateway) countAttempt(rl *relay, err error) {
 	g.fails.add(rl.n.id, rl.model, ctx, time.Now(), rl.attemptKinds(err)...)
 }
 
+// printable keeps a node's or model's name to 128 bytes of printable ASCII ('?' for anything else), so
+// a name cannot carry control characters into the operator's terminal or split a report's rows.
+func printable(s string) string {
+	if len(s) > 128 {
+		s = s[:128]
+	}
+	b := []byte(s)
+	for i, c := range b {
+		if c < 0x20 || c > 0x7e {
+			b[i] = '?'
+		}
+	}
+	return string(b)
+}
+
 // countRefusal counts a request refused before any node, for reason (unavailable).
 func (g *Gateway) countRefusal(rt *route, want, reason string) {
 	model := want
-	switch {
-	case rt.model != "":
+	if rt.model != "" {
 		model = rt.model
-	case reason == "unknown_model":
-		model = "(unknown)"
+	} else {
+		g.mu.Lock()
+		_, known := g.known[want] // names nodes offered (models and roles), at most maxKnown
+		g.mu.Unlock()
+		if !known || reason == "unknown_model" {
+			model = "(unknown)" // whatever a client typed never reaches the file
+		}
 	}
 	g.fails.add(failuresNoNode, model, 0, time.Now(), kindRefusedPrefix+reason)
 }
