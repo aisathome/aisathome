@@ -1235,9 +1235,9 @@ def _served(records, by):
 def test_a_proof_page_shows_its_tasks_and_who_served_them(pages, site, records, width):
     """A proved theorem's page lists the leaf's tasks in the trial that proved it (every outline, hole and assembly, as
     the trial's list on the prove2me page has them), open, with who served each task's model calls. Without JavaScript
-    the build's (records of 2026-11-18, before the gateway kept who served a task: a dash each, and the line says so);
-    live, a GPU is named by its owner's public username only, any other by its kind, and the reader's closed table stays
-    closed through the minute's refresh."""
+    the build's, which never names anyone (a dash each, and the line says the GPUs show live); live, a GPU is named by its
+    owner's public username only, any other by its kind, and the reader's closed table stays closed through the
+    minute's refresh. A proof since recorded as a reuse loses its tasks live."""
     mine = [t for t in records["tasks"]["tasks"] if t["labels"].get("trial") == "t8" and t["labels"].get("leaf") == PROOF_LEAF]
     assert len(mine) == 10
     still = pages(js=False)
@@ -1246,7 +1246,7 @@ def test_a_proof_page_shows_its_tasks_and_who_served_them(pages, site, records, 
     box = still.locator("[data-th-tasks][data-source=build]")
     expect(box.locator("details[data-leaf-tasks][open] tbody tr")).to_have_count(10)
     expect(box.locator("td.served.none")).to_have_count(10)
-    expect(box.locator("[data-th-served]")).to_have_text("No record of which GPU served these tasks.")
+    expect(box.locator("[data-th-served]")).to_have_text("Which GPU served each task shows here once the page has read the gateway’s records.")
     expect(box.locator("[data-leaf-plan] [data-outline]")).not_to_have_count(0)
     expect(box.locator("[data-hole-statement]")).to_have_count(sum(1 for t in mine if t["role"] == "hole"))
     expect(box.locator("[data-hole-statement]").first).to_be_hidden()
@@ -1262,7 +1262,7 @@ def test_a_proof_page_shows_its_tasks_and_who_served_them(pages, site, records, 
     page.clock.install()
     page.goto(f"{site}{THEOREMS}{PROOF_LEAF}/")
     box = page.locator("[data-th-tasks][data-source=live]")
-    expect(box.locator("[data-th-served]")).to_have_text(re.compile(r"^Served by ada \(40 calls\) and a volunteer’s GPU through BOINC \(2\); \d+ tasks that ran the model have no record of the GPU\.$"))
+    expect(box.locator("[data-th-served]")).to_have_text(re.compile(r"^Served by ada \(40 calls\) and volunteers’ GPUs through BOINC \(2\); \d+ tasks that ran the model have no record of the GPU\.$"))
     cell = box.locator(f"tr[data-task='{outline['id']}'] td.served")
     expect(cell.locator(".srv")).to_have_count(2)
     expect(cell.locator(".srv[data-named]")).to_have_text("ada (40)")
@@ -1279,6 +1279,13 @@ def test_a_proof_page_shows_its_tasks_and_who_served_them(pages, site, records, 
     expect(box.locator("[data-th-served]")).to_contain_text("Served by ada (41 calls)", timeout=15_000)
     expect(box.locator("details[data-leaf-tasks]")).not_to_have_attribute("open", "")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    # recorded as a reuse since: no run of its own, so no tasks
+    res = json.loads(json.dumps(records["results"]))
+    next(x for x in res["results"] if x["item"] == PROOF_LEAF)["reuse"] = {"name": "Someone.else_theorem", "author": "someone", "relation": "same"}
+    page.unroute("**/v1/projects/prove2me/results?*")
+    _serve(page, "**/v1/projects/prove2me/results?*", res)
+    page.clock.run_for(60_000)
+    expect(box.locator("tbody tr")).to_have_count(0, timeout=15_000)
 
 
 def test_a_reused_leaf_has_no_tasks_section(pages, site, records):

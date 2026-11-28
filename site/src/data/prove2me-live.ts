@@ -340,11 +340,12 @@ export function servedLabel(r: ServedRow): string {
 const calls = (n: number) => `${n} model ${n === 1 ? 'call' : 'calls'}`;
 
 /** A task's "Served by" cell: who served its model calls, the calls of each when there are several; '–' when not
- * recorded (a task from before the gateway kept it, or the build's data) or without a model (the assembly). */
-export function servedCellHTML(r: Pick<TaskRow, 'served' | 'role' | 'steps'>): string {
+ * recorded (a task from before the gateway kept it, or the build's data) or without a model (the assembly). `later`: the
+ * build's copy, which never names anyone (prove2me-build.ts withoutServed): the browser fills it in. */
+export function servedCellHTML(r: Pick<TaskRow, 'served' | 'role' | 'steps'>, later = false): string {
 	const s = r.served;
 	if (!s?.length) {
-		const why = r.role === 'asm' ? 'The assembly runs no model' : r.steps ? 'Not recorded for this task' : 'No model calls recorded';
+		const why = r.role === 'asm' ? 'The assembly runs no model' : later ? 'Shown once the page has read the gateway’s records' : r.steps ? 'Not recorded for this task' : 'No model calls recorded';
 		return `<td data-label="Served by" class="served none" data-served="" title="${esc(why)}">–</td>`;
 	}
 	const all = s.reduce((a, x) => a + x.requests, 0);
@@ -353,10 +354,11 @@ export function servedCellHTML(r: Pick<TaskRow, 'served' | 'role' | 'steps'>): s
 	return `<td data-label="Served by" class="served" data-served="${all}" title="${esc(title)}">${text}</td>`;
 }
 
-/** Options of the task table: open it, add the "Served by" column, and keep each hole's place for its Lean statement. */
+/** Options of the task table: open it, add the "Served by" column ('later': the build's copy, filled in live), and keep
+ * each hole's place for its Lean statement. */
 export interface TaskTableOpts {
 	open?: boolean;
-	served?: boolean;
+	served?: boolean | 'later';
 	/** An empty place in a hole's row for its Lean statement (the runner does not send it yet: a v17 item). */
 	statements?: boolean;
 }
@@ -381,7 +383,7 @@ export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks', opts
 				`<td data-label="Model min" class="num">${r.minutes === null ? '–' : r.minutes.toFixed(1)}</td>` +
 				tokCell('Tokens computed', 'tok', r.computed, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-computed') +
 				tokCell('With cache re-reads', 'tok', r.total, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-total') +
-				(opts.served ? servedCellHTML(r) : '') +
+				(opts.served ? servedCellHTML(r, opts.served === 'later') : '') +
 				`</tr>`
 			);
 		})

@@ -26,7 +26,7 @@ const reuse = t.kind === 'reuse';
 // the gateway's campaign from trial 6 on, the build's data before; none for a reuse (no run).
 const built = [builtDetail(p2m, history, t.trial)].filter((d): d is TrialDetail => !!d);
 const proof = reuse ? null : proofLeaf(history, records, built, t);
-const known = { history, pages: pages.map((x) => x.leaf), leaf: t.leaf, ...(reuse ? {} : { trial: t.trial }) };
+const known = { history, pages: pages.map((x) => x.leaf), leaf: t.leaf };
 const image = new URL(`${theoremPath(t.leaf)}og.png`, Astro.site).href;
 const short = shortName(t);
 const imageAlt = reuse
@@ -105,7 +105,7 @@ const description = reuse
 					public username, as among the <a href="/network/#board-title">top volunteers</a> on the network page; one without is named only by the kind of
 					GPU it is.
 				</p>
-				<div class="th-tasks not-content" data-th-tasks data-source="build" set:html={proofTasksHTML(proof)} />
+				<div class="th-tasks not-content" data-th-tasks data-source="build" set:html={proofTasksHTML(proof, false)} />
 				{!proof && (
 					<p class="th-note" data-th-tasks-none>
 						Trial {t.trial} kept no per-task records; its run is on the <a href={`/science/prove2me/#trial-${t.trial}`}>prove2me page</a>.
