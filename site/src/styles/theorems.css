@@ -151,3 +151,11 @@ main .th-note { font-size: 0.85rem; }
 	.th-tasks .p2m-tasks .served .srv + .srv::before { content: ', '; }
 	.th-tasks .p2m-tasks tfoot td:empty { display: none; }
 }
+
+/* Until the page's first read of the gateway has run (data-p2m-read on the root), the build's "As of the site's build"
+   line gives way to "As of the last build, … · updating…" (one line for one line). Without scripting the build's line. */
+.th-pending { display: none; font-style: italic; }
+@media (scripting: enabled) {
+	:root:not([data-p2m-read]) .th-pending { display: block; }
+	:root:not([data-p2m-read]) [data-th-updated][data-source='build'] { display: none; }
+}

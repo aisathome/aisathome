@@ -50,6 +50,8 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 		in Lean 4 by a prove2me user. Lean’s kernel checks every proof, and prove2me’s own check decides whether to accept it.
 	</p>
 	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
+	{/* until the browser's first read of the gateway, in place of the line above (styles/theorems.css) */}
+	<p class="th-updated th-pending" data-th-pending role="status">As of the last build, {view.updated.slice(11, 16)} UTC · updating…</p>
 	{/* The way back to the work itself (2026-11-28): this page is what was proved and at what cost, the prove2me page the
 	    work, live. */}
 	<p class="th-go"><a href="/science/prove2me/" data-th-work-link>The work behind these proofs, live: every trial, leaf and task <span aria-hidden="true">→</span></a></p>

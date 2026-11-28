@@ -98,7 +98,9 @@ export function liveTheorems() {
 	try {
 		known = JSON.parse(document.querySelector('[data-th-known]')?.textContent || 'null') as Known | null;
 	} catch {}
-	if (!known || !window.fetch) return;
+	// until the first read has run, the build's copy says it is updating (styles/theorems.css)
+	const read = () => document.documentElement?.setAttribute('data-p2m-read', '');
+	if (!known || !window.fetch) return read();
 	const k = known;
 	const chart = mountAcceptedChart(document.querySelector<HTMLElement>('[data-p2m-chart]'));
 	let bars: ((b: TrialBar[]) => void) | null = null;
@@ -129,6 +131,7 @@ export function liveTheorems() {
 			bars = mountBars(rows.map(([trial, tried, accepted]) => ({ trial, tried, accepted })));
 		} catch {}
 	}
-	load();
+	// at once as the page loads
+	load().finally(read);
 	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 }

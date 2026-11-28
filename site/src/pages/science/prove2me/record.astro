@@ -1,0 +1,61 @@
+---
+// The prove2me record (/science/prove2me/record/): everything the prove2me page draws only when a reader opens it,
+// drawn in full as of the site's build, with the same renderers (2026-11-28, lazy sections): what ran at the build,
+// every trial's list, every leaf and every task. For readers without JavaScript (each closed part of the page links
+// its place here) and for search engines. No script: the live page is /science/prove2me/.
+// SPDX-License-Identifier: Apache-2.0
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { day, hhmm, p2m } from '../../../data/prove2me';
+import { leafListHTML, trialRowsHTML, trialsHeadHTML, trialsFootHTML, RECORD_JSON } from '../../../data/prove2me-view';
+import { nowBlocksHTML } from '../../../data/prove2me-now';
+import { taskTableHTML } from '../../../data/task-table';
+import { p2mTaskOptions } from '../../../data/prove2me-tasks';
+import { prove2mePage } from '../../../data/prove2me-page';
+import '../../../styles/prove2me.css';
+
+const { rec, view, lv, frozen, builtDetails, nowDocs, nowCtx, builtRows, taskLeaves } = await prove2mePage();
+const asOf = `${day(rec.updated)}, ${hhmm(rec.updated)} UTC`;
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'prove2me: the record',
+		head: [{ tag: 'title', content: `Every trial, leaf and task of ${p2m.model} on prove2me - AIs@home` }],
+		description: `The full record of ${p2m.model}'s work on prove2me's Lean 4 leaves on the AIs@home network: every trial's leaves with their outlines and holes, every leaf tried and every task, as of the site's last build.`,
+	}}
+	headings={[
+		{ depth: 2, slug: 'working-on-now', text: 'Working on now' },
+		{ depth: 2, slug: 'trials', text: 'Trials' },
+		{ depth: 2, slug: 'leaves', text: 'Every leaf' },
+		{ depth: 2, slug: 'tasks', text: 'Every task' },
+	]}
+>
+	<div class="p2m-record">
+		<p data-p2m-record-asof>
+			The record as of the site’s last build, {asOf}: every trial, leaf and task, all of it drawn on one page. The
+			{' '}<a href="/science/prove2me/" data-p2m-record-live>prove2me page</a> shows the same live, from the gateway’s records, with these parts
+			drawn when you open them. The data: <a href="/science/prove2me.json"><code>/science/prove2me.json</code></a> (trials 1 to 5) and
+			{' '}<a href={RECORD_JSON}><code>{RECORD_JSON}</code></a> (this page’s).
+		</p>
+
+		<h2 id="working-on-now">Working on now</h2>
+		<p class="caps">What was running or waiting at the build.</p>
+		<section class="p2m-now not-content" data-p2m-now data-source="build" set:html={nowBlocksHTML(nowDocs, rec.tasks, nowCtx)} />
+
+		<h2 id="trials">Trials</h2>
+		<p class="caps">Newest first. Each trial changed the agent’s scaffold from what the one before taught.</p>
+		<div class="p2m-trials not-content" data-p2m-trials data-source="build">
+			<p class="p2m-trow p2m-thead" aria-hidden="true" set:html={trialsHeadHTML()} />
+			<div class="p2m-trial-rows" data-p2m-trial-lists set:html={trialRowsHTML(view, frozen, builtDetails, true, true)} />
+			<p class="p2m-trow p2m-tall" data-p2m-trials-all set:html={trialsFootHTML(view)} />
+		</div>
+
+		<h2 id="leaves">Every leaf</h2>
+		<p class="caps">All {lv.all.leaves} leaves tried, one row per leaf over every trial that ran it, in the order they were first tried.</p>
+		<div class="p2m-list" data-p2m-list set:html={leafListHTML(lv)} />
+
+		<h2 id="tasks">Every task</h2>
+		<p class="caps">Every task of every trial and of the outline probes, grouped by leaf and outline; a run of trials 1 to 4 is one task.</p>
+		<div class="p2m-alltasks not-content" data-p2m-alltasks set:html={taskTableHTML(builtRows, p2mTaskOptions(taskLeaves))} />
+	</div>
+</StarlightPage>

@@ -12,7 +12,9 @@ as they were on 2026-11-18 (site/tests/fixtures). Checked here: "Working on now"
 trial campaigns not finished (a block each) and the tasks; each leaf's outlines and holes in words; the headline numbers, the submissions,
 the trials table, each trial's list from trial 6 on and every leaf live from the records, with
 tokens computed leading; a bench in the status block and in "Working on now", shown as a trial; the home page's line and the
-/science/ card; and the build's copy (the records at the build) when a source fails.
+/science/ card; and the build's copy (the records at the build) when a source fails. Since 2026-11-28 what starts closed
+(each trial's list, each leaf's outlines and tasks, every leaf, every task) is drawn when it opens, the same rows as the
+record page's (/science/prove2me/record/); and until the first read of the gateway has run the build's copy says so.
 
   cd e2e/browser && uv run --with-requirements requirements.txt pytest -q test_site_prove2me.py
 
@@ -689,6 +691,8 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     page.evaluate("location.hash = '#trial-6'")
     expect(table.locator("details#trial-6")).to_have_attribute("open", "")
     # the wording fix (2026-11-18): trial 8's p2m-03d4b4, outline 1's second tries cancelled when the outline was abandoned
+    # (a trial's list is drawn when it opens)
+    d8.locator(":scope > summary").click()
     n13 = d8.locator("[data-trial-leaf=N13] .p2m-outline[data-outline='1']")
     expect(n13.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Cancelled")
     expect(n13.locator("li[data-hole='2']")).to_have_attribute(
@@ -758,7 +762,207 @@ def test_without_javascript_the_page_is_the_builds(pages, site, data, records):
     now = page.locator("[data-p2m-now][data-source=build][data-trial=t8]")
     expect(now.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
     expect(now.locator("li[data-current-leaf]")).to_have_count(6)
+    # what starts closed is not in the page (2026-11-28): each closed part links its place on the record page, which
+    # has it all as of the build
+    t8 = page.locator("details#trial-8")
+    expect(t8.locator("table, [data-trial-leaf]")).to_have_count(0)
+    expect(t8.locator("a[data-p2m-record-link=trial]")).to_have_attribute("href", "/science/prove2me/record/#trial-8")
+    expect(now.locator(".p2m-holes, [data-leaf-tasks]")).to_have_count(0)
+    expect(page.locator("[data-p2m-alltasks] tr, [data-p2m-leaf-table]")).to_have_count(0)
+    lst = page.locator("details[data-p2m-list]")
+    lst.locator("summary").click()
+    lst.locator("a[data-p2m-record-link=leaves]").click()
+    expect(page).to_have_url(re.compile(r"/science/prove2me/record/#leaves$"))
     expect(page.locator("[data-p2m-leaf-table] tr[data-leaf-id=p2m-527634]")).to_have_attribute("data-outcome", "accepted")
+    expect(page.locator("details#trial-8[open] tr[data-leaf=N12]")).to_have_count(1)
+    expect(page.locator("details#trial-3[open] table.p2m-leaves tbody tr").first).to_be_visible()
+    expect(page.locator("[data-p2m-alltasks] tr[data-task-id='t8-p2m-03d4b4-s1-h02-a2']")).to_have_count(1)
+    expect(page.locator("[data-p2m-now] [data-now-trial=t8] .p2m-holes").first).to_be_attached()
+
+
+# ---- the sections drawn when they open (2026-11-28: they were 1.9 MB of a 2.4 MB page, all of it closed)
+
+_OPEN_ALL = """() => document.querySelectorAll('details[data-p2m-trial], [data-p2m-now] details[data-leaf-detail], details[data-p2m-list], details[data-p2m-alltasks]')
+    .forEach((d) => { d.open = true; })"""
+# Each trial's leaf rows and leaves' outlines, every leaf's row, every task's row and each leaf's outlines and tasks in
+# "Working on now": their ids and their cells' text.
+_ROWS = """() => {
+    const txt = (e) => (e?.textContent ?? '').replace(/\\s+/g, ' ').trim();
+    const q = (sel) => [...document.querySelectorAll(sel)];
+    const cells = (r) => [...r.children].map(txt);
+    return {
+        trials: Object.fromEntries(q('[data-p2m-trial-lists] > details[data-p2m-trial]').map((d) => [d.dataset.p2mTrial, [
+            ...[...d.querySelectorAll('table.p2m-leaves tbody tr')].map((r) => [r.dataset.leaf, r.dataset.outcome, ...cells(r)]),
+            ...[...d.querySelectorAll('[data-trial-leaf]')].map((x) => [x.dataset.trialLeaf, txt(x)]),
+        ]])),
+        leaves: q('[data-p2m-leaf-table] tbody tr').map((r) => [r.dataset.leafId, r.dataset.outcome, ...cells(r)]),
+        tasks: q('[data-p2m-alltasks] tbody tr').map((r) => [r.dataset.taskId, r.dataset.show, ...cells(r)]),
+        now: q('[data-p2m-now] details[data-leaf-detail]').map((d) => [d.dataset.leafDetail, txt(d.querySelector('[data-leaf-plan]')), d.querySelectorAll('[data-leaf-tasks] tbody tr').length]),
+    };
+}"""
+
+
+def _drawn(page):
+    """Open every closed section and wait until each is drawn."""
+    page.evaluate(_OPEN_ALL)
+    expect(page.locator(".p2m-lazy:not([data-lazy-state=done])")).to_have_count(0, timeout=15_000)
+    return page.evaluate(_ROWS)
+
+
+@pytest.mark.parametrize("source", ("live", "build"))
+def test_an_opened_section_draws_the_rows_the_build_drew(pages, site, records, source):
+    """Opened, each trial's list, "Working on now"'s rows, every leaf and every task have the same rows, cell for cell,
+    as the build draws them on the record page (the renderers the page drew them with in its HTML before): from the
+    gateway's records (here the same as the build's), and from the build's copy (record.json) when the gateway does
+    not answer."""
+    if source == "live":
+        page = _records_page(pages, records, site=site)
+        expect(page.locator("[data-p2m-trials][data-source=live]")).to_be_attached()
+        expect(page.locator("[data-p2m-now][data-source=live]")).to_be_attached()
+    else:
+        page = _page(pages)
+        page.goto(site + PAGE)
+        expect(page.locator("html[data-p2m-read]")).to_be_attached()
+        expect(page.locator("[data-p2m-trials]")).to_have_attribute("data-source", "build")
+    got = _drawn(page)
+    page.goto(site + "/science/prove2me/record/")
+    want = page.evaluate(_ROWS)
+    assert sorted(got["trials"]) == sorted(want["trials"]) == [str(n) for n in range(1, 9)]
+    for n, rows in want["trials"].items():
+        assert rows and got["trials"][n] == rows, f"trial {n}"
+    assert len(want["leaves"]) > 20 and got["leaves"] == want["leaves"]
+    assert len(want["tasks"]) > 100 and got["tasks"] == want["tasks"]
+    assert len(want["now"]) == 6 and got["now"] == want["now"]
+
+
+def test_a_closed_section_is_drawn_once_opened_and_stays_live(pages, site, records):
+    """A closed trial has no list; opened, "Loading…" holds its place for one line until its data is there, then the
+    list. An open trial's list is drawn again with each minute's read (the closed ones are not); every leaf too."""
+    rec = json.loads(json.dumps(records))
+    page = _page(pages, live=(404, rec["tasks"]), records={"campaigns": rec["campaigns"], "results": rec["results"]})
+    held = []
+    page.route("**/science/prove2me/record.json", lambda r: held.append(r))
+    page.clock.install()
+    page.goto(site + PAGE)
+    expect(page.locator("[data-p2m-trials][data-source=live]")).to_be_attached()
+    d3 = page.locator("details#trial-3")
+    d3.locator(":scope > summary").click()
+    slot = d3.locator(".p2m-lazy")
+    expect(slot).to_have_attribute("aria-busy", "true")
+    expect(slot.get_by_role("status")).to_have_text("Loading…")
+    assert slot.bounding_box()["height"] < 60
+    expect(d3.locator(":scope > summary")).to_be_focused()
+    page.wait_for_timeout(200)
+    for r in held:
+        r.continue_()
+    page.unroute("**/science/prove2me/record.json")
+    expect(d3.locator("table.p2m-leaves tbody tr").first).to_be_visible()
+    expect(slot).not_to_have_attribute("aria-busy", "true")
+    # trial 7 open, trial 6 closed: the next read draws 7's list again, with its new leaf line; 6 stays undrawn
+    page.locator("details#trial-7 > summary").click()
+    expect(page.locator("details#trial-7 tr[data-leaf=N10]")).to_have_attribute("data-outcome", "proved")
+    page.locator("details[data-p2m-list] > summary").click()
+    row = page.locator("[data-p2m-leaf-table] tr[data-leaf-id=p2m-527634]")
+    expect(row).to_have_attribute("data-outcome", "accepted")
+    for r in rec["results"]["results"]:
+        if r["item"] == "p2m-527634":
+            r["state"] = "pending"
+    page.unroute("**/v1/projects/prove2me/results?*")
+    _serve(page, "**/v1/projects/prove2me/results?*", rec["results"])
+    page.clock.run_for(60_000)
+    expect(row).to_have_attribute("data-outcome", "proved", timeout=15_000)
+    expect(page.locator("details#trial-7[open] tr[data-leaf=N10]")).to_have_count(1)
+    expect(page.locator("details#trial-6 table")).to_have_count(0)
+
+
+def test_an_address_opens_and_draws_its_section(pages, site, records):
+    """#trial-N opens that trial and draws its list (trials 1 to 5 from the build's copy, the later ones from the
+    records, or the build's copy when they do not answer), the reader's focus on its row; #leaf-<id> opens that leaf's
+    row in "Working on now" with its outlines; #p2m-task-<id> opens every task at that task."""
+    for n, recs in (("3", None), ("8", records), ("8", None)):
+        page = _records_page(pages, records, site=site, path=f"{PAGE}#trial-{n}") if recs else _page(pages)
+        if not recs:
+            page.goto(f"{site}{PAGE}#trial-{n}")
+        d = page.locator(f"details#trial-{n}")
+        expect(d).to_have_attribute("open", "")
+        expect(d.locator("table.p2m-leaves tbody tr").first).to_be_visible()
+        # the reader's focus is on its row (to_be_focused also needs the window to have it, which a new page may not)
+        assert page.evaluate("document.activeElement?.matches('details > summary') && document.activeElement.parentElement.id") == f"trial-{n}"
+    page = _records_page(pages, records, site=site)
+    leaf = page.locator("[data-p2m-now] li[data-current-leaf]").first.get_attribute("data-leaf-id")
+    page.goto(f"{site}{PAGE}#leaf-{leaf}")
+    li = page.locator(f"[data-p2m-now][data-source=live] li#leaf-{leaf}")
+    expect(li.locator(":scope > details")).to_have_attribute("open", "")
+    expect(li.locator("[data-leaf-plan]")).to_be_visible()
+    task = "t8-p2m-03d4b4-s1-h02-a2"
+    page.goto(f"{site}{PAGE}#p2m-task-{task}")
+    expect(page.locator("details[data-p2m-alltasks]")).to_have_attribute("open", "")
+    expect(page.locator(f"#p2m-task-{task}")).to_be_in_viewport()
+
+
+def test_the_build_copy_is_labelled_until_the_first_read(pages, site, records):
+    """Until the page's first read of the gateway has run (it starts as the page loads), the status block and "Working
+    on now" say they are the build's copy, updating, in place of their own time line (the same one line: nothing
+    moves), dimmed, and no trial is marked running; then the live lines. When the gateway does not answer, the
+    build's own lines say what they are."""
+    page = _page(pages, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": records["results"]})
+    held = []
+    page.route("**/v1/tasks?*", lambda r: held.append(r))
+    page.goto(site + PAGE)
+    st, now = page.locator("[data-p2m-status]"), page.locator("[data-p2m-now]")
+    for box in (st, now):
+        expect(box.locator("[data-p2m-pending]")).to_be_visible()
+        expect(box.locator("[data-p2m-pending]")).to_have_text(re.compile(r"^As of the last build, \d\d:\d\d UTC · updating…$"))
+    expect(st.locator("[data-st=updated]")).to_be_hidden()
+    expect(now.locator("[data-now-asof]")).to_be_hidden()
+    expect(page.locator("[data-p2m-trials] .tr-run").first).to_be_hidden()
+    assert float(st.locator("[data-st=head]").evaluate("e => getComputedStyle(e).opacity")) < 1
+    heights = (st.bounding_box()["height"], now.bounding_box()["height"])
+    assert held, "the first read starts as the page loads"
+    body = json.dumps(records["tasks"])
+    for r in held:
+        r.fulfill(status=200, content_type="application/json", body=body)
+    page.unroute("**/v1/tasks?*")
+    _serve(page, "**/v1/tasks?*", records["tasks"])
+    expect(page.locator("html[data-p2m-read]")).to_be_attached()
+    expect(st).to_have_attribute("data-source", "live")
+    for box in (st, now):
+        expect(box.locator("[data-p2m-pending]")).to_be_hidden()
+    expect(st.locator("[data-st=updated]")).to_have_text(re.compile(r"^(Live from the gateway|Updated )"))   # the fixture is days old
+    expect(now.locator("[data-now-asof]")).to_have_text("Live, updated 14:58 UTC.")
+    expect(page.locator("[data-p2m-trials] .tr-run").first).to_be_visible()
+    assert abs(st.bounding_box()["height"] - heights[0]) < 2 and abs(now.bounding_box()["height"] - heights[1]) < 2, "the blocks moved"
+    # the gateway does not answer: the build's own lines, no "updating…"
+    page = _page(pages)
+    page.goto(site + PAGE)
+    expect(page.locator("html[data-p2m-read]")).to_be_attached()
+    expect(page.locator("[data-p2m-pending]:visible")).to_have_count(0)
+    expect(page.locator("[data-p2m-status] [data-st=updated]")).to_contain_text("site’s last build")
+    expect(page.locator("[data-p2m-now] [data-now-asof]")).to_contain_text("a copy from the site’s last build")
+
+
+@pytest.mark.parametrize("path,line,pending", (
+    ("/science/", "[data-project=prove2me] [data-project-status]", "[data-project=prove2me] [data-card-pending]"),
+    ("/science/prove2me/theorems/", "[data-th-updated]", "[data-th-pending]"),
+))
+def test_the_overview_and_theorems_page_label_the_build_copy(pages, site, records, path, line, pending):
+    """/science/'s prove2me card (its status, "trial N running" at the build) and the proved theorems page's time line say
+    "As of the last build, … · updating…" until the page's first read of the gateway has run, then the live line."""
+    page = _page(pages, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": records["results"]})
+    held = []
+    page.route("**/v1/projects/prove2me/campaigns?*", lambda r: held.append(r))
+    page.goto(site + path)
+    expect(page.locator(pending)).to_be_visible()
+    expect(page.locator(pending)).to_have_text(re.compile(r"^As of the last build, \d\d:\d\d UTC · updating…$"))
+    expect(page.locator(line)).to_be_hidden()
+    body = json.dumps(records["campaigns"])
+    page.unroute("**/v1/projects/prove2me/campaigns?*")
+    _serve(page, "**/v1/projects/prove2me/campaigns?*", records["campaigns"])
+    for r in held:
+        r.fulfill(status=200, content_type="application/json", body=body)
+    expect(page.locator("html[data-p2m-read]")).to_be_attached()
+    expect(page.locator(pending)).to_be_hidden()
+    expect(page.locator(line)).to_be_visible()
 
 
 def test_home_and_science_overview_read_the_records(pages, site, records):
