@@ -94,3 +94,60 @@ main .th-note { font-size: 0.85rem; }
 .th-bars-table :is(th, td) { padding: 0.25rem 1rem 0.25rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: right; font-variant-numeric: tabular-nums; }
 .th-bars-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
 @media (max-width: 40rem) { .th-hero-n { font-size: 3.5rem; } }
+
+/* A proof page's tasks (prove2me-proof.ts): the prove2me page's outline list and task table (its p2m- classes, drawn by
+   the same renderers), styled here under .th-tasks, and the "Served by" column. */
+.th-tasks { margin: 1rem 0; font-size: 0.9rem; }
+.th-tasks .th-served { margin: 0 0 0.6rem; color: var(--sl-color-gray-2); }
+.th-tasks .th-served strong { color: var(--sl-color-white); }
+.th-tasks .p2m-plan { margin: 0.35rem 0 0; font-size: 0.85rem; }
+.th-tasks .p2m-plan .p2m-sum { margin: 0 0 0.3rem; font-weight: 600; color: var(--sl-color-gray-2); }
+.th-tasks .p2m-outline + .p2m-outline { margin-top: 0.5rem; }
+.th-tasks .p2m-ohead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.3rem; margin: 0; }
+.th-tasks .p2m-oname { font-weight: 700; color: var(--sl-color-white); }
+.th-tasks .p2m-ostate::before { content: '· '; color: var(--sl-color-gray-3); }
+.th-tasks .p2m-ostate { color: var(--sl-color-gray-2); }
+.th-tasks .p2m-outline[data-outline-state='proved'] .p2m-ostate { font-weight: 600; color: var(--sl-color-accent-high); }
+.th-tasks .p2m-ocost { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-3); }
+.th-tasks .p2m-holes { margin: 0.2rem 0 0; padding: 0 0 0 0.9rem; list-style: none; border-left: 2px solid var(--sl-color-gray-5); }
+.th-tasks .p2m-holes li { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0 0.5rem; margin: 0; padding: 0.1rem 0; }
+.th-tasks .p2m-hname, .th-tasks .p2m-htext { color: var(--sl-color-gray-2); }
+.th-tasks .p2m-hname { white-space: nowrap; }
+.th-tasks .p2m-htext { overflow-wrap: anywhere; }
+.th-tasks .p2m-holes li:is([data-hole-state='proved'], [data-hole-state='solved']) .p2m-htext { font-weight: 600; color: var(--sl-color-accent-high); }
+.th-tasks .p2m-holes li:is([data-hole-state='prepass'], [data-hole-state='index'], [data-hole-state='ledger']) .p2m-htext { color: var(--sl-color-accent-high); }
+.th-tasks .p2m-holes li:is([data-hole-state='not_tried'], [data-hole-state='cancelled'], [data-hole-state='waiting'], [data-hole-state='unknown']) .p2m-htext { color: var(--sl-color-gray-3); }
+.th-tasks .p2m-holes li:is([data-hole-state='false'], [data-hole-state='failed']) .p2m-htext { font-weight: 600; color: var(--sl-color-white); }
+.th-tasks .p2m-holes li[title] { cursor: help; }
+.th-tasks .p2m-tasks { margin-top: 0.75rem; font-size: 0.85rem; }
+.th-tasks .p2m-tasks > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+.th-tasks .p2m-tasks-wrap { overflow-x: auto; margin-top: 0.4rem; }
+.th-tasks .p2m-tasks table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.th-tasks .p2m-tasks :is(th, td) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+.th-tasks .p2m-tasks :is(th, td):last-child { padding-right: 0; }
+.th-tasks .p2m-tasks thead th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+.th-tasks .p2m-tasks tbody th { white-space: nowrap; font-weight: 600; color: var(--sl-color-white); }
+.th-tasks .p2m-tasks tfoot :is(th, td) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+.th-tasks .p2m-tasks .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.th-tasks .p2m-tasks .tok, .th-tasks .p2m-tasks .served[title] { cursor: help; }
+.th-tasks .p2m-tasks .sub { display: block; font-size: 0.75rem; font-weight: 400; white-space: normal; color: var(--sl-color-gray-3); }
+.th-tasks .p2m-tasks .proved { font-weight: 600; color: var(--sl-color-accent-high); }
+.th-tasks .p2m-tasks .running { color: var(--sl-color-accent-high); }
+.th-tasks .p2m-tasks .cancelled { font-style: italic; color: var(--sl-color-gray-3); }
+.th-tasks .p2m-tasks .served .srv { display: block; white-space: nowrap; }
+.th-tasks .p2m-tasks .served .srv[data-named] { font-weight: 600; color: var(--sl-color-white); }
+.th-tasks .p2m-tasks .served .calls { color: var(--sl-color-gray-3); font-variant-numeric: tabular-nums; }
+.th-tasks .p2m-tasks .served.none { color: var(--sl-color-gray-3); }
+.th-tasks .p2m-tasks p.outline-note { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+@media (max-width: 40rem) {
+	.th-tasks .p2m-tasks table, .th-tasks .p2m-tasks :is(tbody, tfoot) { display: block; }
+	.th-tasks .p2m-tasks thead { display: none; }
+	.th-tasks .p2m-tasks :is(tbody, tfoot) tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+	.th-tasks .p2m-tasks :is(th, td) { padding: 0; border: 0; }
+	.th-tasks .p2m-tasks tr > th, .th-tasks .p2m-tasks td.result, .th-tasks .p2m-tasks td.served { grid-column: 1 / -1; }
+	.th-tasks .p2m-tasks .num { text-align: left; }
+	.th-tasks .p2m-tasks td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+	.th-tasks .p2m-tasks .served .srv { display: inline; white-space: normal; }
+	.th-tasks .p2m-tasks .served .srv + .srv::before { content: ', '; }
+	.th-tasks .p2m-tasks tfoot td:empty { display: none; }
+}

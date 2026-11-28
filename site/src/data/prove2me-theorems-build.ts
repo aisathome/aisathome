@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { buildRecords, type RecordsFrom } from './prove2me-build';
 import { p2m } from './prove2me';
-import { historyOf, type History } from './prove2me-records';
+import { historyOf, type History, type Records } from './prove2me-records';
 import { theoremsView, type TheoremRow, type TheoremsView } from './prove2me-theorems';
 
 /** A leaf id that may name a page (p2m- and 6 or 8 hex digits). */
@@ -12,6 +12,8 @@ export const pageLeaf = /^p2m-[0-9a-f]{6}([0-9a-f]{2})?$/;
 
 export interface BuildTheorems {
 	history: History;
+	/** The records the build read (each proof page's tasks: prove2me-proof.ts). */
+	records: Records;
 	view: TheoremsView;
 	from: RecordsFrom;
 	/** The accepted leaves that get a page of their own. */
@@ -24,5 +26,5 @@ export const buildTheorems = () =>
 	(once ??= buildRecords().then(({ records, from }) => {
 		const history = historyOf(p2m);
 		const view = theoremsView(history, records);
-		return { history, view, from, pages: view.theorems.filter((t) => pageLeaf.test(t.leaf)) };
+		return { history, records, view, from, pages: view.theorems.filter((t) => pageLeaf.test(t.leaf)) };
 	}));

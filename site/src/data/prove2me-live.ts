@@ -13,6 +13,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { CurrentLeaf } from './prove2me';
+import type { ServedRow } from './prove2me-current';
 import { attemptOf, inplaceStanding, provesLeaf, resultLabel as outcomeWords } from './prove2me-outcomes';
 
 /** One task as the leaf view reads it (prove2me-current.ts asQueueTask makes it from GET /v1/tasks). */
@@ -42,6 +43,8 @@ export interface QueueTask {
 	closed_by?: string;
 	/** Its outline's holes, one word each (the label `hole_states`: prove2me-outlines.ts parseHoleStates). */
 	hole_states?: string;
+	/** Who served its model calls (GET /v1/tasks `served_by`); absent: not recorded. */
+	served_by?: ServedRow[];
 }
 
 export interface QueueView {
@@ -98,6 +101,8 @@ export interface TaskRow {
 	started?: boolean;
 	/** Its outline's holes, one word each, when the task list has them (prove2me-outlines.ts parseHoleStates). */
 	hole_states?: string;
+	/** Who served its model calls, when the gateway recorded it (absent: not recorded, or the build's data). */
+	served?: ServedRow[];
 }
 
 /** A leaf's tasks summed and per outline. */
@@ -154,6 +159,7 @@ export function fromQueue(t: QueueTask, known?: StaticTask): TaskRow {
 		total: null, computed: null, cached: null, output: null,
 		closed_by: t.closed_by ?? null, started: !!t.since || t.state === 'leased',
 		...(t.hole_states ? { hole_states: t.hole_states } : {}),
+		...(t.served_by?.length ? { served: t.served_by } : {}),
 	};
 	const p = t.prompt_tokens ?? 0, o = t.completion_tokens ?? 0;
 	if (t.cached_tokens !== undefined) Object.assign(row, { total: p + t.cached_tokens + o, computed: p + o, cached: t.cached_tokens, output: o });
@@ -320,17 +326,54 @@ export function outlineNote(o: Outline): string {
 const tokCell = (label: string, cls: string, v: number | null, title: string, attr: string) =>
 	`<td data-label="${label}" class="num ${cls}" ${attr}="${v ?? ''}" title="${esc(title)}">${v === null ? '–' : esc(compact(v))}</td>`;
 
+// ---- who served a task (GET /v1/tasks `served_by`, gateway tasks_served.go): a node is named only by its owner's public
+// username, the leaderboard's opt-in; any other node by the kind it is, never more.
+
+/** A row of `served_by` in words: the username ("ada", "ada (2 GPUs)"), else the kind of GPU. */
+export function servedLabel(r: ServedRow): string {
+	if (r.name) return r.nodes > 1 ? `${r.name} (${r.nodes} GPUs)` : r.name;
+	const one = { volunteer: 'a volunteer’s GPU', pilot: 'a volunteer’s GPU through BOINC', trusted: 'a GPU of the maintainer' }[r.class];
+	const many = { volunteer: 'volunteers’ GPUs', pilot: 'volunteers’ GPUs through BOINC', trusted: 'GPUs of the maintainer' }[r.class];
+	return r.nodes > 1 ? `${r.nodes} ${many}` : one;
+}
+
+const calls = (n: number) => `${n} model ${n === 1 ? 'call' : 'calls'}`;
+
+/** A task's "Served by" cell: who served its model calls, the calls of each when there are several; '–' when not
+ * recorded (a task from before the gateway kept it, or the build's data) or without a model (the assembly). */
+export function servedCellHTML(r: Pick<TaskRow, 'served' | 'role' | 'steps'>): string {
+	const s = r.served;
+	if (!s?.length) {
+		const why = r.role === 'asm' ? 'The assembly runs no model' : r.steps ? 'Not recorded for this task' : 'No model calls recorded';
+		return `<td data-label="Served by" class="served none" data-served="" title="${esc(why)}">–</td>`;
+	}
+	const all = s.reduce((a, x) => a + x.requests, 0);
+	const title = s.map((x) => `${servedLabel(x)}: ${calls(x.requests)}`).join('; ');
+	const text = s.map((x) => `<span class="srv"${x.name ? ' data-named' : ''}>${esc(servedLabel(x))}${s.length > 1 ? ` <span class="calls">(${x.requests})</span>` : ''}</span>`).join('');
+	return `<td data-label="Served by" class="served" data-served="${all}" title="${esc(title)}">${text}</td>`;
+}
+
+/** Options of the task table: open it, add the "Served by" column, and keep each hole's place for its Lean statement. */
+export interface TaskTableOpts {
+	open?: boolean;
+	served?: boolean;
+	/** An empty place in a hole's row for its Lean statement (the runner does not send it yet: a v17 item). */
+	statements?: boolean;
+}
+
 /** The leaf's tasks as an expandable table (a details element), with a totals row and a note per outline. */
-export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): string {
+export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks', opts: TaskTableOpts = {}): string {
 	if (!d.rows.length) return '';
 	const outl = (g: number) => d.outlines.find((o) => o.gen === g);
 	const rows = d.rows
 		.map((r) => {
 			const pp = prepassText(outl(r.gen), r);
 			const cls = r.state === 'finished' && r.outcome === 'proved' ? 'proved' : r.state === 'cancelled' ? 'cancelled' : r.state === 'running' ? 'running' : '';
+			// the hole's Lean statement goes here once the runner sends it; nothing is shown until then
+			const stmt = opts.statements && r.role === 'hole' ? `<span class="sub" data-hole-statement hidden></span>` : '';
 			return (
 				`<tr data-task="${esc(r.id)}" data-role="${esc(r.role)}" data-gen="${r.gen}" data-state="${esc(r.state)}"${r.outcome ? ` data-outcome="${esc(r.outcome)}"` : ''}>` +
-				`<th scope="row">${esc(roleLabel(r))}${pp ? `<span class="sub" data-prepass>${esc(pp)}</span>` : ''}</th>` +
+				`<th scope="row">${esc(roleLabel(r))}${pp ? `<span class="sub" data-prepass>${esc(pp)}</span>` : ''}${stmt}</th>` +
 				`<td data-label="Outline" class="num">${r.gen}</td>` +
 				`<td data-label="Try" class="num">${r.attempt}</td>` +
 				`<td data-label="Result" class="result ${cls}">${esc(resultLabel(r))}</td>` +
@@ -338,6 +381,7 @@ export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): str
 				`<td data-label="Model min" class="num">${r.minutes === null ? '–' : r.minutes.toFixed(1)}</td>` +
 				tokCell('Tokens computed', 'tok', r.computed, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-computed') +
 				tokCell('With cache re-reads', 'tok', r.total, tokensTitle(r.total, r.computed, r.cached, r.output), 'data-total') +
+				(opts.served ? servedCellHTML(r) : '') +
 				`</tr>`
 			);
 		})
@@ -349,13 +393,14 @@ export function taskTableHTML(leaf: string, d: LeafDetail, label = 'Tasks'): str
 		`<tr data-task="all"><th scope="row">All ${d.rows.length} tasks</th><td></td><td></td><td></td>` +
 		`<td data-label="Steps" class="num">${steps}</td><td data-label="Model min" class="num">${mins.toFixed(1)}</td>` +
 		`<td data-label="Tokens computed" class="num tok" data-computed="${d.computed}" title="${esc(`${exact(d.computed)} tokens computed`)}">${esc(compact(d.computed))}</td>` +
-		`<td data-label="With cache re-reads" class="num tok" data-total="${d.total}" data-exact="${d.exact}" title="${esc(`${exact(d.total)} with cache re-reads${d.exact ? '' : ' at least: the cache re-reads of some tasks are not known'}`)}">${esc(totalText)}</td></tr>`;
+		`<td data-label="With cache re-reads" class="num tok" data-total="${d.total}" data-exact="${d.exact}" title="${esc(`${exact(d.total)} with cache re-reads${d.exact ? '' : ' at least: the cache re-reads of some tasks are not known'}`)}">${esc(totalText)}</td>` +
+		`${opts.served ? '<td></td>' : ''}</tr>`;
 	const notes = d.outlines.map((o) => `<p class="outline-note" data-outline-note="${o.gen}">${esc(outlineNote(o))}</p>`).join('');
 	return (
-		`<details class="p2m-tasks" data-leaf-tasks="${esc(leaf)}"><summary>${esc(label)} (${d.rows.length})</summary>` +
+		`<details class="p2m-tasks" data-leaf-tasks="${esc(leaf)}"${opts.open ? ' open' : ''}><summary>${esc(label)} (${d.rows.length})</summary>` +
 		`<div class="p2m-tasks-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col" class="num">Outline</th><th scope="col" class="num">Try</th>` +
 		`<th scope="col">Result</th><th scope="col" class="num">Steps</th><th scope="col" class="num">Model min</th>` +
-		`<th scope="col" class="num">Tokens computed</th><th scope="col" class="num">With cache re-reads</th></tr></thead>` +
+		`<th scope="col" class="num">Tokens computed</th><th scope="col" class="num">With cache re-reads</th>${opts.served ? '<th scope="col">Served by</th>' : ''}</tr></thead>` +
 		`<tbody>${rows}</tbody><tfoot>${foot}</tfoot></table></div>${notes}</details>`
 	);
 }

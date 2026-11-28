@@ -90,7 +90,7 @@ func TestPublicTasksSchema(t *testing.T) {
 	fields := []string{"project", "id", "kind", "role", "state", "outcome", "try", "parent", "needs", "retry_of", "replaces", "closed_by",
 		"labels", "hole_id", "steps", "model_min", "tokens", "prompt_tokens", "cached_tokens", "completion_tokens",
 		"uncached_prompt_tokens", "tokens_computed", "tokens_with_cache", "created_at", "started_at", "finished_at", "updated_at",
-		"node_classes", "live"}
+		"node_classes", "served_by", "live"}
 	var ids []string
 	for _, tk := range page.Tasks {
 		ids = append(ids, tk["id"].(string))

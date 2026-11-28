@@ -11,6 +11,8 @@
 //	uncached_prompt_tokens, tokens_computed, tokens_with_cache      explicit counts (below)
 //	created_at, started_at, finished_at, updated_at,
 //	node_classes                                    volunteer or pilot (trusted before 2026-11-20): the nodes that served it
+//	served_by                                       who served its model calls, by public name only, from the usage
+//	                                                log (tasks_served.go): [{name, class, nodes, requests}], or null
 //	live                                            while it runs: the gateway's own count of its
 //	                                                model calls so far (tasks_live.go), else null
 //
@@ -20,7 +22,8 @@
 // tokens the model computed), tokens_computed (those plus completion_tokens) and tokens_with_cache
 // (plus cached_tokens), all null unless the result reported cached_tokens. `live` has the same three.
 //
-// A field the task does not have is null (labels {}, needs and node_classes []): a task made before
+// A field the task does not have is null (labels {}, needs and node_classes []; served_by null when
+// the usage log names none of its calls): a task made before
 // the typed fields has no relations, and its role and labels come from its spec as on the public
 // queue (queue_public.go: trial, leaf, group, theorem, outline, hole). Never in it: the spec, the
 // title, prompts or model text, the worker, the lease, the error text, the events, who created it,
@@ -79,15 +82,17 @@ type publicTaskV1 struct {
 	// cached_tokens, else null. UncachedPromptTokens: prompt tokens the model computed;
 	// TokensComputed: those plus completion_tokens (what the GPU did); TokensWithCache: also the
 	// prompt tokens re-read from the cache.
-	UncachedPromptTokens *int64      `json:"uncached_prompt_tokens"`
-	TokensComputed       *int64      `json:"tokens_computed"`
-	TokensWithCache      *int64      `json:"tokens_with_cache"`
-	CreatedAt            time.Time   `json:"created_at"`
-	StartedAt            *time.Time  `json:"started_at"`
-	FinishedAt           *time.Time  `json:"finished_at"`
-	UpdatedAt            time.Time   `json:"updated_at"`
-	NodeClasses          []string    `json:"node_classes"`
-	Live                 *publicLive `json:"live"`
+	UncachedPromptTokens *int64     `json:"uncached_prompt_tokens"`
+	TokensComputed       *int64     `json:"tokens_computed"`
+	TokensWithCache      *int64     `json:"tokens_with_cache"`
+	CreatedAt            time.Time  `json:"created_at"`
+	StartedAt            *time.Time `json:"started_at"`
+	FinishedAt           *time.Time `json:"finished_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	NodeClasses          []string   `json:"node_classes"`
+	// ServedBy: who served its model calls (tasks_served.go); null when the log names none of them.
+	ServedBy []publicServer `json:"served_by"`
+	Live     *publicLive    `json:"live"`
 }
 
 func strOrNil(s string) *string {
@@ -182,9 +187,10 @@ func (t *Task) publicV1(inFlight int64) publicTaskV1 {
 	return p
 }
 
-// publicTasks returns the public view of the given projects' tasks, newest first. An unreadable
-// queue is an error (a 503), not an empty one.
-func (s *taskStore) publicTasks(projects []string) ([]publicTaskV1, error) {
+// publicTasks returns the public view of the given projects' tasks, newest first; served, if set,
+// gives a task's served_by (taken under s.mu: it must not take it). An unreadable queue is an error
+// (a 503), not an empty one.
+func (s *taskStore) publicTasks(projects []string, served func(project, task string) []publicServer) ([]publicTaskV1, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []publicTaskV1
@@ -195,7 +201,11 @@ func (s *taskStore) publicTasks(projects []string) ([]publicTaskV1, error) {
 		}
 		for _, t := range p.byID {
 			if pubTaskIDRe.MatchString(t.ID) && t.Project == project {
-				out = append(out, t.publicV1(s.inFlight(t)))
+				p := t.publicV1(s.inFlight(t))
+				if served != nil {
+					p.ServedBy = served(project, t.ID)
+				}
+				out = append(out, p)
 			}
 		}
 	}
@@ -302,7 +312,8 @@ func (g *Gateway) handlePublicTasks(w http.ResponseWriter, r *http.Request) {
 	c := &g.ptasks
 	c.mu.Lock()
 	if c.list == nil || c.key != key || now.Sub(c.at) >= publicQueueTTL || now.Before(c.at) {
-		list, err := g.tasks.publicTasks(pub)
+		names := g.servedNames() // read now: a username cleared since the last build is off this one
+		list, err := g.tasks.publicTasks(pub, func(project, task string) []publicServer { return g.served.rows(project, task, names) })
 		if err != nil {
 			c.mu.Unlock()
 			taskError(w, err)
