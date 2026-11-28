@@ -107,18 +107,23 @@ const icons: Record<string, string> = {
 			<h2 id="b-sci">Our GPUs prove theorems</h2>
 			<div class="sci-body">
 				<div class="sci-words">
-					<p class="sci-text" data-home-prove2me data-source="build">
+					{/* One number (the model's proofs prove2me accepted, as on the proved theorems page), one line on prove2me, the
+					    two ways in; Tau Ceti in one short line (2026-11-28). */}
+					<p class="sci-text sci-lead" data-home-prove2me data-source="build">
 						<strong class="sci-count" data-home-p2m-accepted>{p2mView.kpis.proofs}</strong>{' '}
-						<span data-home-p2m-text>{homeLine(p2mView, p2m.model)}</span>{' '}
-						<a href="/science/prove2me/" data-home-p2m-link>prove2me trials: Qwen’s Lean proofs <span aria-hidden="true">→</span></a>
+						<span data-home-p2m-text>{homeLine(p2mView, p2m.model)}</span>
+					</p>
+					<p class="sci-text">prove2me states theorems from research papers in Lean 4 and checks every proof by machine.</p>
+					<p class="sci-links">
+						<a href="/science/prove2me/theorems/" data-home-theorems-link>The proved theorems <span aria-hidden="true">→</span></a>
+						<a href="/science/prove2me/" data-home-p2m-link>prove2me, live <span aria-hidden="true">→</span></a>
 					</p>
 					<script is:inline type="application/json" data-home-p2m-known set:html={JSON.stringify({ history: p2mHistory, model: p2m.model }).replace(/</g, '\\u003c')} />
 					{science.merged > 0 && (
 						<p class="sci-text sci-past" data-home-tauceti>
-							Before that: <strong data-home-science-merged>{science.merged}</strong>{' '}
-							<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> by {science.model} merged into Tau Ceti, a
-							library of formal mathematics (finished, at the maintainers’ request).{' '}
-							<a href={science.pagePath}>Every Tau Ceti pull request <span aria-hidden="true">→</span></a>
+							Before that:{' '}
+							<a href={science.pagePath}><strong data-home-science-merged>{science.merged}</strong>{' '}
+							<span data-home-science-noun>pull request{science.merged === 1 ? '' : 's'}</span> merged into Tau Ceti <span aria-hidden="true">→</span></a>
 						</p>
 					)}
 					<a class="more" href="/science/" data-home-science-all>All science projects <span aria-hidden="true">→</span></a>
@@ -338,6 +343,9 @@ const icons: Record<string, string> = {
 	.sci-text { max-width: 44rem; font-size: 1rem; line-height: 1.6; }
 	.sci-text + .sci-text { margin-top: 0.75rem; }
 	.sci-text a { font-weight: 600; color: var(--sl-color-gray-2); white-space: nowrap; }
+	.sci-lead { font-size: 1.1rem; }
+	.sci-links { display: flex; flex-wrap: wrap; gap: 0.35rem 1.5rem; margin-top: 0.75rem !important; }
+	.sci-links a { font-weight: 700; color: var(--sl-color-accent-high); white-space: nowrap; }
 	.sci-count { font: 900 1.6rem/1 var(--font-display); color: var(--sl-color-white); }
 
 	/* Dev log (last) */

@@ -193,6 +193,16 @@ def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, dat
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t96]")
     expect(box).to_be_visible()
     expect(box.locator("[data-now-head]")).to_have_text("Trial 96, since 15 November 2026 · scaffold v7")
+    # one row per leaf, closed but for the leaf the address names: its id, short title, line, holes solved, GPU-hours
+    expect(box.locator("details[data-leaf-detail]")).to_have_count(3)
+    expect(box.locator("details[data-leaf-detail][open]")).to_have_count(1)
+    expect(box.locator("li[data-current-leaf=X01] > details")).to_have_attribute("open", "")
+    row1 = box.locator("li[data-current-leaf=X01] .now-row")
+    expect(row1.locator(".leaf")).to_have_text(ids["X01"])
+    expect(row1.locator("[data-leaf-summary]")).to_have_text("Running: outline 1, hole 1")
+    expect(row1.locator("[data-now-hours]")).to_have_text(re.compile(r"^\d+\.\d\d GPU-h so far$"))
+    expect(box.locator("li[data-current-leaf=X03] .now-row [data-now-hours]")).to_have_count(0)
+    _open_rows(page)
     # the block states what is worked on: no description of the trial, no budget
     expect(box.locator("[data-now-about], [data-now-budget]")).to_have_count(0)
     assert "no html" not in box.inner_text() and "Budget" not in box.inner_text()
@@ -233,12 +243,10 @@ def test_working_on_now_is_live_from_the_document_and_the_tasks(pages, site, dat
     x3 = box.locator("li[data-current-leaf=X03]")
     expect(x3).to_have_attribute("data-state", "planned")
     expect(x3.locator(".state")).to_have_text("Not started yet")
-    expect(x3.locator("details")).to_have_count(0)
+    expect(x3.locator("details[data-leaf-tasks], [data-leaf-plan]")).to_have_count(0)
     expect(box.locator("[data-now-subs]")).to_have_text(
         "Also from this trial: p2m-b1d59e (N02), closed by reuse, accepted by prove2me on 14 November.")
-    expect(box.locator("[data-now-asof]")).to_have_text(
-        "Live: the trial’s data as published 15 November, 10:20 UTC; its tasks from the gateway, updated 10:21 UTC. "
-        "It refreshes every minute.")
+    expect(box.locator("[data-now-asof]")).to_have_text("Live, updated 10:21 UTC; the trial’s data as published 15 November, 10:20 UTC.")
     assert "N09" not in box.inner_text() and "F01" not in box.inner_text(), "a probe's or another trial's task counts"
     page.goto(f"{site}{PAGE}#leaf-X02")
     expect(page.locator("[data-p2m-now][data-source=live] li[data-current-leaf=X02]")).to_have_class(re.compile(r"\btarget\b"))
@@ -263,6 +271,7 @@ def test_working_on_now_follows_a_newer_document(pages, site, data):
     page.goto(site + PAGE)
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t97]")
     expect(box.locator("[data-now-head]")).to_have_text("Trial 97, since 1 December 2026 · scaffold v9")
+    _open_rows(page)
     li = box.locator("li[data-current-leaf=Z01]")
     expect(li).to_have_attribute("data-state", "running")
     expect(li.get_by_role("link", name="E2e.newer_leaf")).to_have_attribute("href", url)
@@ -350,6 +359,12 @@ def _outline(li, gen):
     return li.locator(f"[data-leaf-plan] .p2m-outline[data-outline='{gen}']")
 
 
+def _open_rows(page):
+    """Open every leaf's row in "Working on now" (each is one line that opens to its outlines, holes and tasks; a row the
+    reader opened stays open across the minute's refresh)."""
+    page.evaluate("document.querySelectorAll('[data-p2m-now] details[data-leaf-detail]').forEach((d) => { d.open = true; })")
+
+
 def _holes(o) -> list[tuple[str, str, str, str]]:
     """Each hole's name, state (waiting, working, solved, failed, cancelled; the assembly's own), text and tooltip."""
     return [(h.locator(".p2m-hname").inner_text(), h.get_attribute("data-hole-state"), h.locator(".p2m-htext").inner_text(),
@@ -370,6 +385,13 @@ def test_working_on_now_shows_each_outline_and_hole_in_words(pages, site, data, 
     page.evaluate("t => { document.documentElement.dataset.theme = t }", theme)
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
+    # closed, each leaf is one row that fits the phone: N03's holes solved of its newest outline's in it
+    expect(box.locator("li[data-current-leaf=N03] .now-row [data-now-holes]")).to_have_text("1 of 5 holes solved")
+    expect(box.locator("li[data-current-leaf=C07] .now-row [data-now-holes]")).to_have_text("3 of 3 holes solved")
+    for el in box.locator(".now-row").all():
+        b = el.bounding_box()
+        assert b and b["x"] >= 0 and b["x"] + b["width"] <= 390, f"a row on a phone: {b}"
+    _open_rows(page)
 
     n03 = box.locator("li[data-current-leaf=N03]")
     expect(n03.locator(".state")).to_have_text("Running: outline 2, hole 1")
@@ -424,6 +446,7 @@ def test_without_the_documents_holes_the_outlines_come_from_the_tasks(pages, sit
     page.goto(site + PAGE)
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
+    _open_rows(page)
     n03 = box.locator("li[data-current-leaf=N03]")
     expect(n03.locator(".state")).to_have_text("Running: outline 2, hole 1")
     o1 = _outline(n03, 1)
@@ -450,6 +473,7 @@ def test_every_hole_waits_works_or_is_solved_the_detail_in_a_tooltip(pages, site
     page.goto(site + PAGE)
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
+    _open_rows(page)
     o2 = _outline(box.locator("li[data-current-leaf=N03]"), 2)
     expect(o2).to_have_attribute("data-outline-state", "in_progress")
     expect(o2.locator("li[data-hole='6']")).to_be_visible()
@@ -499,6 +523,7 @@ def test_a_hole_in_place_is_decided_by_the_assembly(pages, site, data, asm_state
     page.goto(site + PAGE)
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
+    _open_rows(page)
     o2 = _outline(box.locator("li[data-current-leaf=N03]"), 2)
     expect(o2).to_have_attribute("data-outline-state", outline_state)
     holes = _holes(o2)
@@ -518,6 +543,7 @@ def test_a_hole_in_place_keeps_the_documents_verdict(pages, site, data):
     page.goto(site + PAGE)
     box = page.locator("[data-p2m-now][data-source=live][data-trial=t98]")
     expect(box).to_be_visible()
+    _open_rows(page)
     holes = _holes(_outline(box.locator("li[data-current-leaf=N03]"), 2))
     assert ("Hole 2", "failed", "Failed: the hole is false", "in place, false, disproved; re-judged") in holes, holes
 
@@ -569,7 +595,7 @@ def test_working_on_now_shows_every_trial_not_finished(pages, site, records, wid
     leaf = b8.locator("li[data-current-leaf]").first.get_attribute("data-leaf-id")
     expect(page.locator(f"#leaf-{leaf}")).to_have_count(1)
     expect(b8.locator(f"li#leaf-{leaf}")).to_have_count(1)
-    expect(now.locator("[data-now-asof]")).to_have_text("Live from the gateway’s records of the trials and their tasks, updated 14:58 UTC. It refreshes every minute.")
+    expect(now.locator("[data-now-asof]")).to_have_text("Live, updated 14:58 UTC.")
     assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
     # trial 8 ends: the next refresh shows trial 9 alone
     for c in rec["campaigns"]["campaigns"]:
@@ -612,7 +638,11 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     expect(kpis.locator("[data-kpi=runs] dt")).to_have_text("runs that passed our own check, of 54 in trials 1 to 8")
     expect(kpis.locator("[data-kpi=runs] dd")).to_have_text("17")
     expect(page.locator("[data-p2m-small]")).to_contain_text("Small numbers: 6 open leaves with an accepted proof so far.")
-    expect(page.locator("[data-p2m-updated]")).to_have_text(re.compile(r"^Live from the gateway’s records, updated 18 November 2026, 14:58 UTC$"))
+    # the headline: the proved theorems page's number, what it is out of, and the way there
+    head = page.locator("[data-p2m-headline][data-source=live]")
+    expect(head.locator("[data-p2m-hl-n]")).to_have_text("6")
+    expect(head).to_contain_text("Lean 4 proofs written by Qwen3.8 27B and accepted by prove2me, out of 26 open leaves tried.")
+    expect(head.get_by_role("link", name="The proved theorems, and what each cost")).to_have_attribute("href", "/science/prove2me/theorems/")
 
     subs = page.locator("[data-p2m-submissions][data-source=live] tbody tr")
     expect(subs).to_have_count(8)
@@ -625,33 +655,39 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     expect(n12.locator("td[data-label=From]")).to_have_text("Trial 8")
     expect(n12.locator("td[data-label=Verdict]")).to_have_text("Accepted07:22 UTC")
 
+    # the trials: one row each, newest first, a trial's outline probes under it; from trial 6 on live
     table = page.locator("[data-p2m-trials][data-source=live]")
-    rows = table.locator("tbody tr")
-    assert [r.get_attribute("data-trial") for r in rows.all()] == ["1", "2", "3", "4", "5", "6p", "6", "7p", "7", "8"]
-    assert [r.get_attribute("data-source") for r in rows.all()][4:] == ["build", "live", "live", "live", "live", "live"]
-    t7 = table.locator("tr[data-trial='7']")
-    expect(t7.locator("[data-cell=proved]")).to_have_text("3 of 4")
-    expect(t7.locator("td[data-label='Tokens computed']")).to_have_attribute("data-tokens", str(201793 + 138170 + 270465 + 5776280))
-    expect(t7.locator("td[data-label='Tokens computed']")).to_have_text("6.4M")
-    t8 = table.locator("tr[data-trial='8']")
-    expect(t8).to_have_attribute("data-status", "running")
-    expect(t8.locator("th")).to_have_text("Trial 8running")
-    expect(t8.locator("[data-cell=proved]")).to_have_text("2 of 6")
-    expect(table.locator("tfoot [data-cell=proved]")).to_have_text("17 of 54")
-    expect(page.locator("[data-p2m-trials-live]")).to_have_text("Trials 1 to 5 as recorded; from trial 6 on live from the gateway’s records, updated 14:58 UTC.")
+    rows = table.locator("[data-p2m-trial-lists] > [data-trial]")
+    assert [r.get_attribute("data-trial") for r in rows.all()] == ["8", "7", "7p", "6", "6p", "5", "4", "3", "2", "1"]
+    assert [r.get_attribute("data-source") for r in rows.all()][:6] == ["live", "live", "live", "live", "live", "build"]
+    d7 = table.locator("details#trial-7[data-source=live]")
+    t7 = d7.locator(":scope > summary")
+    expect(t7.locator("[data-cell=dates]")).to_have_text("15–17 Nov")
+    expect(t7.locator("[data-cell=scaffold]")).to_have_text("scaffold v8")
+    expect(t7.locator("[data-cell=leaves]")).to_have_text("4 leaves")
+    expect(t7.locator("[data-cell=accepted]")).to_have_text("2 accepted")
+    expect(t7.locator("[data-cell=per-proof]")).to_have_text(re.compile(r"^\d+\.\d GPU-h per proof$"))
+    expect(d7.locator("[data-trial-numbers] .tok")).to_have_attribute("data-tokens", str(201793 + 138170 + 270465 + 5776280))
+    expect(d7.locator("[data-trial-numbers]")).to_contain_text("Runs that passed our own check: 3 of 4 (calibration 1 of 1, open 2 of 3)")
+    d8 = table.locator("details#trial-8[data-source=live]")
+    expect(d8).to_have_attribute("data-status", "running")
+    expect(d8.locator(":scope > summary .tr-name")).to_have_text("Trial 8 running")
+    expect(d8.locator(":scope > summary [data-cell=accepted]")).to_have_text("1 accepted")
+    expect(table.locator("[data-trial='7p']")).to_contain_text("Outline probes to choose its leaves")
+    all_ = table.locator("[data-p2m-trials-all]")
+    expect(all_.locator("[data-cell=leaves]")).to_have_text("54 leaves")
+    expect(all_.locator("[data-cell=accepted]")).to_have_text("6 accepted")
+    expect(all_).to_contain_text("Runs that passed our own check: 17 of 54 (calibration 11 of 16, open 6 of 38)")
     assert "Qwen tokens" not in page.locator("[data-p2m-trials]").inner_text()
-
-    lists = page.locator("[data-p2m-trial-lists] > details[data-p2m-trial]")
-    assert [d.get_attribute("data-p2m-trial") for d in lists.all()] == ["1", "2", "3", "4", "5", "6", "7", "8"]
-    d7 = page.locator("details#trial-7[data-source=live]")
-    t7.get_by_role("link", name="Trial 7").click()
+    # a trial's row opens to its list; so does its address (the theorems page links #trial-N)
+    t7.click()
     expect(d7).to_have_attribute("open", "")
     expect(d7.locator("[data-trial-facts]")).to_have_text(
         "Trial 7 ran from 15 to 17 November 2026 on scaffold v8: 4 leaves (1 calibration, 3 open), 3 of 4 runs proved; prove2me accepted 2 proofs from it.")
     expect(d7.locator("[data-trial-text] p").first).to_contain_text("Scaffold v8: v7 with what trial 6 taught.")
     expect(d7.locator("tr[data-leaf=N10]")).to_have_attribute("data-outcome", "proved")
-    d8 = page.locator("details#trial-8[data-source=live]")
-    expect(d8.locator(":scope > summary")).to_have_text("Trial 8 · since 16 November 2026 · 2 of 6 proved")
+    page.evaluate("location.hash = '#trial-6'")
+    expect(table.locator("details#trial-6")).to_have_attribute("open", "")
     # the wording fix (2026-11-18): trial 8's p2m-03d4b4, outline 1's second tries cancelled when the outline was abandoned
     n13 = d8.locator("[data-trial-leaf=N13] .p2m-outline[data-outline='1']")
     expect(n13.locator("li[data-hole='2'] .p2m-htext")).to_have_text("Cancelled")
@@ -662,7 +698,7 @@ def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, si
     now = page.locator("[data-p2m-now][data-source=live][data-trial=t8]")
     expect(now.locator("[data-now-head]")).to_have_text("Trial 8, since 16 November 2026 · scaffold v9")
     expect(now.locator("li[data-current-leaf]")).to_have_count(6)
-    expect(now.locator("[data-now-asof]")).to_have_text("Live from the gateway’s records of the trial and its tasks, updated 14:58 UTC. It refreshes every minute.")
+    expect(now.locator("[data-now-asof]")).to_have_text("Live, updated 14:58 UTC.")
     # every task: trial 8's cancelled try says why
     page.locator("[data-p2m-alltasks] > summary").click()
     row = page.locator("[data-p2m-alltasks] tr[data-task-id='t8-p2m-03d4b4-s1-h02-a2']")
@@ -698,7 +734,7 @@ def test_the_numbers_stay_the_builds_when_the_records_fail(pages, site, data, re
     expect(page.locator("[data-p2m-trials]")).to_have_attribute("data-source", "build")
     expect(page.locator("[data-p2m-scorecard]")).to_have_attribute("data-source", "build")
     expect(page.locator("[data-p2m-submissions] tbody tr")).to_have_count(len(records["results"]["results"]))
-    expect(page.locator("[data-p2m-trials-live]")).to_contain_text("at the site’s last build, 18 November 2026, 14:58 UTC")
+    expect(page.locator("[data-p2m-headline]")).to_have_attribute("data-source", "build")
     page.locator("[data-p2m-alltasks] > summary").click()
     expect(page.locator("[data-p2m-alltasks] tr[data-task-id='t8-p2m-03d4b4-s1-h02-a2']")).to_have_attribute("data-source", "live")
 
@@ -710,9 +746,11 @@ def test_without_javascript_the_page_is_the_builds(pages, site, data, records):
     page.goto(site + PAGE)
     expect(page.locator("[data-p2m-kpis] [data-kpi=accepted] dd")).to_have_text("6")
     expect(page.locator("[data-p2m-kpis] [data-kpi=open] dt")).to_have_text("open leaves with an accepted proof, of 26 tried")
-    rows = page.locator("[data-p2m-trials] tbody tr")
-    assert [r.get_attribute("data-trial") for r in rows.all()] == ["1", "2", "3", "4", "5", "6p", "6", "7p", "7", "8"]
-    expect(page.locator("[data-p2m-trials] thead")).to_contain_text("Tokens computed")
+    expect(page.locator("[data-p2m-headline] [data-p2m-hl-n]")).to_have_text("6")
+    rows = page.locator("[data-p2m-trials] [data-p2m-trial-lists] > [data-trial]")
+    assert [r.get_attribute("data-trial") for r in rows.all()] == ["8", "7", "7p", "6", "6p", "5", "4", "3", "2", "1"]
+    expect(page.locator("[data-p2m-trials] .p2m-thead")).to_contain_text("GPU-h per proof")
+    expect(page.locator("details#trial-3 [data-trial-numbers] .tok")).to_have_count(1)
     for n in range(1, 9):
         expect(page.locator(f"details#trial-{n}")).to_have_count(1)
     expect(page.locator("[data-p2m-submissions] tbody tr")).to_have_count(len(records["results"]["results"]))
@@ -729,15 +767,22 @@ def test_home_and_science_overview_read_the_records(pages, site, records):
     page = _records_page(pages, records, path="/", site=site)
     line = page.locator("[data-home-prove2me][data-source=live]")
     expect(line.locator("[data-home-p2m-accepted]")).to_have_text("6")
-    expect(line.locator("[data-home-p2m-text]")).to_have_text(
-        "proofs by Qwen3.8 27B accepted on prove2me so far: it proved 6 of the 26 open lemmas it tried and closed 2 more by "
-        "reusing a proof already there. prove2me states theorems from research papers in Lean 4 and checks every proof by machine. "
-        "Trial 8 is running.")
+    expect(line.locator("[data-home-p2m-text]")).to_have_text("Lean proofs by Qwen3.8 27B accepted by prove2me so far, from 26 open leaves tried.")
+    sci = page.locator("[data-home-science]")
+    expect(sci.get_by_role("link", name="The proved theorems")).to_have_attribute("href", "/science/prove2me/theorems/")
+    expect(sci.get_by_role("link", name="prove2me, live")).to_have_attribute("href", "/science/prove2me/")
     page = _records_page(pages, records, path="/science/", site=site)
     card = page.locator("[data-project=prove2me][data-source=live]")
     expect(card.locator("[data-number=accepted] dd")).to_have_text("6")
     expect(card.locator("[data-number=open] dd")).to_have_text("6 of 26")
-    expect(card.locator("[data-number=trial] dt")).to_have_text("running since 16 November 2026")
+    expect(card.locator("[data-number]")).to_have_count(2)
+    expect(card.locator("[data-project-status]")).to_have_text("Active: trial 8 running since 16 November 2026")
+    expect(card.locator("[data-card-link=theorems]")).to_have_attribute("href", "/science/prove2me/theorems/")
+    # the live numbers keep the card's look: the number large, under it its label (as the Tau Ceti card's)
+    dd, dt = card.locator("[data-number=accepted] dd").bounding_box(), card.locator("[data-number=accepted] dt").bounding_box()
+    assert dd["y"] < dt["y"], (dd, dt)
+    assert card.locator("[data-number=accepted] dd").evaluate("e => getComputedStyle(e).fontWeight") == page.locator(
+        "[data-project=tauceti] [data-number] dd").first.evaluate("e => getComputedStyle(e).fontWeight")
     page = _page(pages)
     page.goto(site + "/")
     page.wait_for_timeout(1500)
@@ -840,7 +885,7 @@ def test_home_and_science_count_a_leaf_its_in_place_task_proved(pages, site, rec
     count it as tried (27); none counts it as proved, which takes prove2me's acceptance (6 of 27), and the prove2me
     page says it passed our own check."""
     rec = _with_inplace_proof(records)
-    for path, sel, want in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-text]", re.compile(r"it proved 6 of the 27 open lemmas")),
+    for path, sel, want in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-text]", re.compile(r"from 27 open leaves tried")),
                             ("/science/", "[data-project=prove2me][data-source=live] [data-number=open] dd", "6 of 27"),
                             (PAGE, "[data-p2m-kpis][data-source=live] [data-kpi=open] dt", "open leaves with an accepted proof, of 27 tried"),
                             (PAGE, "[data-p2m-small]", re.compile(r"^Small numbers: 6 open leaves with an accepted proof so far \(1 more passed our own check without an accepted proof\)\."))):
@@ -955,7 +1000,7 @@ def test_the_status_block_shows_the_whole_queue(pages, site, records, width, the
     expect(lines.nth(1)).to_have_text("Trial 9, 7 tasks: 2 ended otherwise, 1 running, 4 waiting; 0 of 6 leaves proved.")
     expect(box.locator("[data-num=nodes] dd")).to_have_text("2")
     expect(box.locator("[data-num=slots] dd")).to_have_text("1 of 2")
-    expect(box.locator("[data-num=accepted] dd")).to_have_text("6 of 8")
+    expect(box.locator("[data-num=accepted]")).to_have_count(0)  # the headline above has the proofs
     expect(box.locator("[data-st=updated]")).to_contain_text("updated 14:58 UTC")
     assert "%" not in box.inner_text()
     assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
@@ -1001,7 +1046,7 @@ def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, si
         expect(box.locator("[data-st-bar] > .grp[data-trial=t8]")).to_have_count(1)
         expect(box.locator("[data-st-trials] li")).to_have_count(1)
         expect(box.locator("[data-num=nodes]")).to_be_hidden()
-        expect(box.locator("[data-num=accepted] dd")).to_have_text("6 of 8")
+        expect(box.locator("[data-num=accepted]")).to_have_count(0)  # the headline above has the proofs
         expect(box.locator("[data-st=updated]")).to_have_text(
             "As of the gateway’s records at the site’s last build, 18 Nov, 14:58 UTC. The page refreshes it every minute when it can reach the gateway.")
 
@@ -1039,7 +1084,7 @@ def test_a_bench_is_shown_as_a_trial(pages, site, records):
     lines = box.locator("[data-st-trials] li")
     expect(lines).to_have_count(2)
     expect(lines.nth(1)).to_have_text("Bench v13, 4 tasks: 1 proved, 2 running, 1 waiting.")
-    expect(box.locator("[data-num=accepted] dd")).to_have_text("6 of 8")
+    expect(box.locator("[data-num=accepted]")).to_have_count(0)  # the headline above has the proofs
 
     now = page.locator("[data-p2m-now][data-source=live][data-trial='t8 bench-v13']")
     expect(now).to_be_visible()
@@ -1049,7 +1094,7 @@ def test_a_bench_is_shown_as_a_trial(pages, site, records):
     expect(bench.locator("li[data-current-leaf=N11]")).to_have_attribute("data-state", "running")
     expect(now.locator("[data-now-trial=t8] li#leaf-p2m-754bbc")).to_have_count(1)
     expect(page.locator("[data-p2m-kpis][data-source=live] [data-kpi=runs] dd")).to_have_text("17")
-    expect(page.locator("[data-p2m-trials] tbody tr[data-trial^=bench]")).to_have_count(0)
+    expect(page.locator("[data-p2m-trials] [data-trial^=bench]")).to_have_count(0)
     page.locator("[data-p2m-alltasks] > summary").click()
     expect(page.locator("[data-p2m-alltasks] tr[data-task-id^=bench]")).to_have_count(0)
 
@@ -1105,10 +1150,8 @@ def test_the_submissions_show_the_newest_five_and_scroll(pages, site, records, w
         return b.scrollTop + b.clientHeight >= b.scrollHeight - 2 && l.bottom <= r.bottom + 3 && l.top >= r.top - 1; }""")
     assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
     caption = page.locator("h2#submissions ~ p.caps").first
-    expect(caption).to_have_text(
-        "Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the "
-        "model. Every accepted proof with what it cost, one page each: proved theorems.")
-    expect(caption.locator("a")).to_have_attribute("href", "/science/prove2me/theorems/")
+    expect(caption).to_have_text("Closed by reuse: the proof imports a theorem someone else had already proved; not counted as the model’s proof.")
+    expect(page.locator("[data-p2m-theorems-link=submissions]")).to_have_attribute("href", "/science/prove2me/theorems/")
 
 
 # ---- the proved theorems page: one count of proofs, as built and as redrawn live

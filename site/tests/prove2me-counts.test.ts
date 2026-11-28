@@ -106,7 +106,7 @@ function checkOtherPages(c: { n: number; reused: number; openAcc: number; tried:
 	assert.match(kpi(k.kpisHtml, 'open').dt, new RegExp(`of ${c.tried} tried`));
 	if (c.reused) assert.equal(kpi(k.kpisHtml, 'reused').dd, c.reused);
 	assert.equal(k.homeCount, c.n, 'home page: its count is the proofs');
-	assert.match(k.homeLine, new RegExp(`it proved ${c.openAcc} of the ${c.tried} open lemmas it tried${c.reused ? ` and closed ${c.reused} more by reusing` : '\\.'}`));
+	assert.match(k.homeLine, new RegExp(`^Lean proofs? by .+ accepted by prove2me so far, from ${c.tried} open (?:leaf|leaves) tried\\.$`));
 	assert.equal(k.card.find((x) => x.key === 'accepted')!.value, String(c.n));
 	assert.equal(k.card.find((x) => x.key === 'open')!.value, `${c.openAcc} of ${c.tried}`);
 }

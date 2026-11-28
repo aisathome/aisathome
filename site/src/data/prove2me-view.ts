@@ -52,6 +52,21 @@ export function kpisHTML(k: Kpis): { html: string; n: number } {
 	return { html: cells.join(''), n: cells.length };
 }
 
+/** The page where every accepted proof has its line and its cost. */
+const THEOREMS = '/science/prove2me/theorems/';
+
+/** The prove2me page's headline (the block's children): the proved theorems page's number in its words, what it is out of,
+ * and the way to that page. */
+export function headlineStripHTML(v: ScienceView, model: string): string {
+	const n = v.kpis.proofs; // the proved theorems page's headline number (prove2me-records.ts Kpis)
+	return (
+		`<p class="p2m-hl-n" data-p2m-hl-n>${n}</p>` +
+		`<div class="p2m-hl-text"><p class="p2m-hl-what">Lean 4 ${n === 1 ? 'proof' : 'proofs'} written by ${esc(model)} and accepted by prove2me, ` +
+		`out of ${esc(plural(v.kpis.openTried, 'open leaf', 'open leaves'))} tried.</p>` +
+		`<p class="p2m-hl-go"><a href="${THEOREMS}" data-p2m-theorems-link="headline">The proved theorems, and what each cost <span aria-hidden="true">→</span></a></p></div>`
+	);
+}
+
 /** "Small numbers": what the counts show and what they do not. The two early proofs (O04, F01) are history and named
  * so; every count comes from the view. `f01Tasks`: F01's task count in trial 5 (the build's). */
 export function smallNumbersHTML(v: ScienceView, _f01Tasks?: number, _idOf?: (alias: string) => string): string {
@@ -96,46 +111,97 @@ export const newestFirst = (subs: SubRec[]) => [...subs].sort((a, b) => b.trial 
 /** The table's rows, newest trial first (the table shows about five and scrolls for the rest). */
 export const submissionRowsHTML = (v: ScienceView) => newestFirst(v.submissions).map(submissionRowHTML).join('');
 
-// ---- the trials table
+// ---- the trials (2026-11-28: one list, newest first; each trial one row that opens to its own list, instead of a
+// table of eight columns above a second list of the same trials)
 
-const tokCell = (computed: number, withCache: number, exactCount: boolean, attrs = '') =>
-	`<td data-label="Tokens computed" class="num tok" data-tokens="${computed}" data-with-cache="${withCache}"${attrs} title="${esc(tokTitleOf(computed, withCache, exactCount))}">${exactCount ? '' : '≥ '}${esc(compact(computed))}</td>`;
+const tokText = (computed: number, exactCount: boolean) => `${exactCount ? '' : '≥ '}${compact(computed)}`;
+/** GPU-hours as the theorems page writes them: two decimals under 10, one above. */
+const gpuH = (h: number) => (h < 10 ? h.toFixed(2) : h.toFixed(1));
 
-/** A trial (or probe round) as a row of the trials table. A trial links its own list; a running one says so. */
-export function trialRowHTML(t: TrialSum): string {
-	const cnt = (c: { proved: number; runs: number }, dashIfNone = false) => (t.probe || (dashIfNone && !c.runs) ? '–' : `${c.proved} of ${c.runs}`);
-	const name = t.probe
-		? `<span>Trial ${t.number} probes</span>`
-		: `<a href="#trial-${t.number}">Trial ${t.number}</a>${t.status === 'running' ? '<span class="sub">running</span>' : ''}`;
-	const start = t.start ?? '';
-	const dates = start ? `<time datetime="${esc(start)}">${esc(shortSpan({ start, end: t.end ?? start }))}${t.end ? '' : '–'}</time>` : '–';
+/** The model's proofs from trial `n` that prove2me accepted (reuses left out, as in the headline). */
+export const acceptedOf = (v: ScienceView, n: number) => v.submissions.filter((s) => s.trial === n && s.kind !== 'reuse' && s.verdict === 'accepted').length;
+
+/** A trial's dates for its row: "7 Nov", "9–12 Nov", "16 Nov–" while it runs; '' before it starts. */
+function rowDates(t: TrialSum): string {
+	if (!t.start) return '';
+	return `<time datetime="${esc(t.start)}">${esc(shortSpan({ start: t.start, end: t.end ?? t.start }))}${t.end ? '' : '–'}</time>`;
+}
+
+/** A cell of a trial's row. `unit` is said after the value (before it with `before`): read aloud everywhere, shown on a
+ * phone, where the row wraps and the list's head is hidden; on a wide screen the head names the columns. */
+const cell = (key: string, value: string, unit: string, attrs = '', before = false) =>
+	`<span class="tr-c tr-${key}" data-cell="${key}"${attrs}>${before ? `<span class="u">${esc(unit)} </span>${value}` : `${value}<span class="u"> ${esc(unit)}</span>`}</span>`;
+
+/** A trial's row (its list's summary): trial, dates, scaffold, leaves tried, accepted proofs, GPU-hours per accepted
+ * proof (its model hours over them; – when none was accepted, its hours in the tooltip). */
+export function trialSummaryHTML(t: TrialSum, accepted: number): string {
+	const h = t.model_min / 60;
+	const state = t.status === 'running' ? ' <span class="tr-run">running</span>' : t.status === 'preparing' ? ' <span class="tr-run">being prepared</span>' : '';
 	return (
-		`<tr data-trial="${esc(t.label)}" data-source="${t.source}"${t.probe ? ' data-probes' : ''}${t.status !== 'finished' ? ` data-status="${t.status}"` : ''}>` +
-		`<th scope="row">${name}</th>` +
-		`<td data-label="Dates" class="nowrap">${dates}</td>` +
-		`<td data-label="Scaffold">${esc(t.scaffold || '–')}</td>` +
-		`<td data-label="Proved" class="num" data-cell="proved">${cnt(t.all)}</td>` +
-		`<td data-label="Calibration" class="num" data-cell="calibration">${cnt(t.calibration, true)}</td>` +
-		`<td data-label="Open" class="num" data-cell="open">${cnt(t.open)}</td>` +
-		`<td data-label="Model hours" class="num" data-cell="hours">${(t.model_min / 60).toFixed(1)}</td>` +
-		tokCell(t.computed, t.withCache, t.exact) +
-		`</tr>`
+		`<span class="tr-name">Trial ${t.number}${state}</span>` +
+		`<span class="tr-c tr-dates" data-cell="dates">${rowDates(t) || '–'}</span>` +
+		cell('scaffold', esc(t.scaffold || '–'), 'scaffold', '', true) +
+		cell('leaves', String(t.all.runs), t.all.runs === 1 ? 'leaf' : 'leaves') +
+		cell('accepted', String(accepted), 'accepted') +
+		cell('per-proof', accepted ? esc(gpuH(h / accepted)) : '–', accepted ? 'GPU-h per proof' : 'GPU-h per proof:', ` title="${esc(`${gpuH(h)} GPU-hours${accepted ? ` over ${plural(accepted, 'accepted proof')}` : ', no proof accepted'}`)}"`, !accepted)
 	);
 }
 
-/** The trials table's All row. */
+/** The list's head on a wide screen: the columns' names (the rows say them themselves to a screen reader). */
+export const trialsHeadHTML = () =>
+	`<span class="tr-name">Trial</span><span class="tr-c">Dates</span><span class="tr-c">Scaffold</span><span class="tr-c">Leaves</span>` +
+	`<span class="tr-c">Accepted</span><span class="tr-c tr-per-proof">GPU-h per proof</span>`;
+
+/** The counts a trial's row leaves out (our own check's, by role; model hours; tokens computed), as one line: under a
+ * trial's row and in the All line. */
+function runCounts(all: { proved: number; runs: number }, cal: { proved: number; runs: number }, open: { proved: number; runs: number }, hours: number, computed: number, withCache: number, exactCount: boolean, hoursNote = '') {
+	const c = (key: string, x: { proved: number; runs: number }) => `<span data-cell="${key}">${x.proved} of ${x.runs}</span>`;
+	return (
+		`Runs that passed our own check: ${c('proved', all)}` +
+		(cal.runs ? ` (calibration ${c('calibration', cal)}, open ${c('open', open)})` : ` (open ${c('open', open)})`) +
+		` · Model hours: <span data-cell="hours">${esc(hours.toFixed(1))}</span>${esc(hoursNote)}` +
+		` · Tokens computed: <span class="tok" data-cell="tokens" data-tokens="${computed}" data-with-cache="${withCache}" title="${esc(tokTitleOf(computed, withCache, exactCount))}">${esc(tokText(computed, exactCount))}</span>`
+	);
+}
+
+/** Under a trial's row: its counts the row leaves out. */
+export const trialNumbersHTML = (t: TrialSum) =>
+	`<p class="caps" data-trial-numbers>${runCounts(t.all, t.calibration, t.open, t.model_min / 60, t.computed, t.withCache, t.exact)}</p>`;
+
+/** A row with no list under it: an outline probe round (its model time counts in the totals), or a trial whose list the
+ * page does not have. */
+export function trialPlainRowHTML(t: TrialSum, accepted = 0): string {
+	if (!t.probe)
+		return `<div class="p2m-trow" id="trial-${t.number}" data-p2m-trial="${t.number}" data-trial="${esc(t.label)}" data-source="${t.source}">${trialSummaryHTML(t, accepted)}</div>`;
+	return (
+		`<div class="p2m-trow p2m-tprobe" data-trial="${esc(t.label)}" data-probes data-source="${t.source}">` +
+		`<span class="tr-name">Trial ${t.number} probes</span>` +
+		`<span class="tr-c tr-dates" data-cell="dates">${rowDates(t) || '–'}</span>` +
+		`<span class="tr-c tr-wide">Outline probes to choose its leaves: <span data-cell="hours">${esc(gpuH(t.model_min / 60))}</span> GPU-h, ` +
+		`<span class="tok" data-cell="tokens" data-tokens="${t.computed}" data-with-cache="${t.withCache}" title="${esc(tokTitleOf(t.computed, t.withCache, t.exact))}">${esc(tokText(t.computed, t.exact))}</span> tokens computed</span>` +
+		`</div>`
+	);
+}
+
+/** The order of the list: newest trial first, a trial's outline probes under it (they ran before it). */
+export const trialsNewestFirst = (v: ScienceView) => [...v.trials].reverse();
+
+/** The list's All line: every trial and probe round together, as the theorems page's all-in cost counts them. */
 export function trialsFootHTML(v: ScienceView): string {
 	const k = v.kpis;
-	const open = v.trials.filter((t) => !t.probe).reduce((a, t) => ({ proved: a.proved + t.open.proved, runs: a.runs + t.open.runs }), { proved: 0, runs: 0 });
+	const trials = v.trials.filter((t) => !t.probe && t.all.runs > 0);
+	const hours = k.hours + k.probeHours;
+	const proofs = k.proofs;
+	const open = trials.reduce((a, t) => ({ proved: a.proved + t.open.proved, runs: a.runs + t.open.runs }), { proved: 0, runs: 0 });
 	const exactCount = v.trials.every((t) => t.exact);
 	return (
-		`<tr data-trial="all"><th scope="row">All</th><td></td><td></td>` +
-		`<td data-label="Proved" class="num" data-cell="proved">${k.proved} of ${k.runs}</td>` +
-		`<td data-label="Calibration" class="num" data-cell="calibration">${k.calibrationProved} of ${k.calibrationRuns}</td>` +
-		`<td data-label="Open" class="num" data-cell="open">${open.proved} of ${open.runs}</td>` +
-		`<td data-label="Model hours" class="num" data-cell="hours">${(k.hours + k.probeHours).toFixed(1)}</td>` +
-		tokCell(k.computed, k.withCache, exactCount) +
-		`</tr>`
+		`<span class="tr-name">All</span>` +
+		cell('trials', String(trials.length), trials.length === 1 ? 'trial' : 'trials') +
+		`<span class="tr-c tr-scaffold"></span>` +
+		cell('leaves', String(k.runs), k.runs === 1 ? 'leaf' : 'leaves') +
+		cell('accepted', String(proofs), 'accepted') +
+		cell('per-proof', proofs ? esc(gpuH(hours / proofs)) : '–', 'GPU-h per proof', ` title="${esc(`${gpuH(hours)} GPU-hours, outline probes included${proofs ? `, over ${plural(proofs, 'accepted proof')}` : ''}`)}"`) +
+		`<span class="tr-more" data-trials-numbers>${runCounts({ proved: k.proved, runs: k.runs }, { proved: k.calibrationProved, runs: k.calibrationRuns }, open, hours, k.computed, k.withCache, exactCount, ', outline probes included')}</span>`
 	);
 }
 
@@ -167,7 +233,6 @@ export function trialFacts(d: TrialDetail): string {
 /** A trial's list: its facts and text, its budget, a row per leaf and, under them, each leaf's outlines and tasks. */
 export function trialDetailHTML(d: TrialDetail): string {
 	const t = d.sum;
-	const head = `Trial ${t.number} · ${t.start ? span({ start: t.start, end: t.status === 'running' ? null : t.end ?? t.start }) : 'being prepared'} · ${t.all.proved} of ${t.all.runs} proved`;
 	const rows = d.leaves
 		.map((l) => {
 			// as the build's earlier trials: the outcome first (the outline that proved it), the leaf's line under it
@@ -200,8 +265,10 @@ export function trialDetailHTML(d: TrialDetail): string {
 		)
 		.join('');
 	return (
-		`<details class="p2m-trial" id="trial-${t.number}" data-p2m-trial="${t.number}" data-source="${t.source}"><summary>${esc(head)}</summary>` +
+		`<details class="p2m-trial" id="trial-${t.number}" data-p2m-trial="${t.number}" data-trial="${esc(t.label)}" data-source="${t.source}"${t.status !== 'finished' ? ` data-status="${t.status}"` : ''}>` +
+		`<summary class="p2m-trow">${trialSummaryHTML(t, d.accepted)}</summary>` +
 		`<p data-trial-facts>${esc(trialFacts(d))}</p>` +
+		trialNumbersHTML(t) +
 		(d.text.trim() ? `<div data-trial-text>${plainHTML(d.text)}</div>` : '') +
 		(d.budget ? `<p class="caps">Budget per leaf: ${esc(d.budget)}.</p>` : '') +
 		(rows
@@ -283,25 +350,27 @@ export function leafRowsHTML(v: LeavesView): string {
 
 // ---- the home page's line and the /science/ card
 
-/** The home page's prove2me line (after its count): "proofs by M accepted on prove2me so far: it proved 6 of the 26 open
- * lemmas it tried (...). Trial 8 is running." "Open lemmas" are the open leaves, in the dev log's word for them. */
+/** The home page's prove2me line, after its count: what the count is, and nothing else (2026-11-28: the line had grown to
+ * four claims; what prove2me is, the ways in and Tau Ceti are their own short lines on the page). */
 export function homeLine(v: ScienceView, model: string): string {
 	const k = v.kpis;
-	const cur = v.current ? ` Trial ${v.current.number} ${v.current.status === 'preparing' ? 'is being prepared' : 'is running'}.` : '';
-	return (
-		`${k.proofs === 1 ? 'proof' : 'proofs'} by ${model} accepted on prove2me so far: it proved ${k.openAccepted} of the ${k.openTried} open lemmas it tried` +
-		`${k.reused ? ` and closed ${k.reused} more by reusing a proof already there` : ''}. prove2me states theorems from research papers in Lean 4 and checks every proof by machine.${cur}`
-	);
+	return `Lean ${k.proofs === 1 ? 'proof' : 'proofs'} by ${model} accepted by prove2me so far, from ${plural(k.openTried, 'open leaf', 'open leaves')} tried.`;
 }
 
-/** The /science/ card's numbers. */
+/** The /science/ card's status line: active, and the trial running or being prepared. */
+export function cardStatus(v: ScienceView): string {
+	const c = v.current;
+	if (!c) return 'Active';
+	return `Active: trial ${c.number} ${c.status === 'preparing' ? 'being prepared' : c.start ? `running since ${day(c.start)}` : 'running'}`;
+}
+
+/** The /science/ card's numbers, in the Tau Ceti card's style: the headline number (the model's proofs prove2me
+ * accepted), and the open leaves with one of the open leaves tried. */
 export function cardNumbers(v: ScienceView): { key: string; value: string; label: string }[] {
 	const k = v.kpis;
-	const c = v.current;
 	return [
-		{ key: 'accepted', value: String(k.proofs), label: `${k.proofs === 1 ? 'proof' : 'proofs'} by the model accepted by prove2me, of ${k.submitted} submitted` },
-		{ key: 'open', value: `${k.openAccepted} of ${k.openTried}`, label: `open leaves with an accepted proof${k.reused ? `; ${k.reused} more closed by reuse` : ''}` },
-		...(c ? [{ key: 'trial', value: `Trial ${c.number}`, label: c.status === 'preparing' ? 'being prepared' : c.start ? `running since ${day(c.start)}` : 'running' }] : []),
+		{ key: 'accepted', value: String(k.proofs), label: `Lean ${k.proofs === 1 ? 'proof' : 'proofs'} by the model accepted by prove2me` },
+		{ key: 'open', value: `${k.openAccepted} of ${k.openTried}`, label: 'open leaves tried, with a proof accepted' },
 	];
 }
 
