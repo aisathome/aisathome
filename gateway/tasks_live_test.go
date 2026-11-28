@@ -42,7 +42,7 @@ func TestTaskLiveCount(t *testing.T) {
 	}
 
 	r.liveCall("prove2me", "t6-a", "ok", liveUsage)
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.liveCall("prove2me", "t6-a", "ok", protocol.Usage{PromptTokens: 1300, CachedTokens: 5000, CompletionTokens: 20, DurationMs: 500})
 	for _, o := range []string{"failed", "cancelled", outcomePreempted, outcomeBlocked} {
 		r.liveCall("prove2me", "t6-a", o, liveUsage)
@@ -149,7 +149,7 @@ func TestTaskLiveTries(t *testing.T) {
 		t.Fatalf("continued try: tries %d, live %+v", tk.Tries, tk.Live)
 	}
 	// The lease expires and another worker claims it: a new try.
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.p2m("/claim", map[string]any{"worker": "w3", "task": "t6-a", "lease_seconds": 30})
 	if tk := r.g.tasks.get("prove2me", "t6-a"); tk.Tries != 2 || tk.Live != nil {
 		t.Fatalf("new try: tries %d, live %+v", tk.Tries, tk.Live)

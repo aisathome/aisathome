@@ -22,7 +22,7 @@ func v1Rig(t *testing.T) *taskRig {
 		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}, Kinds: []string{"p2m-v7"}},
 	}})
 	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)}
-	g.tasks.now = func() time.Time { return r.now }
+	g.tasks.now = r.clock
 	t.Cleanup(func() { g.Close() })
 	return r
 }
@@ -56,21 +56,21 @@ func TestPublicTasksSchema(t *testing.T) {
 	r := v1Rig(t)
 	r.p2m("", map[string]any{"id": "t5-F01-h02", "kind": "other", "title": "secret title", "created_by": "owner",
 		"spec": p2mSpec("F01", "CodedSorting.proposition_7_1_transpose", map[string]any{"role": "hole", "gen": 1, "index": 1})})
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.p2m("", map[string]any{"id": "t6-p2m-a146ce-s2-h03", "kind": "p2m-v7", "title": "secret title", "created_by": "owner-private",
 		"role": "hole", "parent": "t6-p2m-a146ce-s2", "needs": []string{"t6-p2m-a146ce-s1-h01"}, "replaces": "t6-p2m-a146ce-s1",
 		"hole_id": "h-3f9c0a1b2c3d", "labels": map[string]string{"trial": "t6", "leaf": "p2m-a146ce", "alias": "F01"},
 		"spec": map[string]any{"prompt": "secret prompt text", "path": "/srv/runner/x"}})
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.p2m("", map[string]any{"id": "t6-p2m-a146ce-s2-h03-a2", "kind": "p2m-v7", "created_by": "owner", "role": "hole",
 		"retry_of": "t6-p2m-a146ce-s2-h03", "spec": map[string]any{}})
 	if w, _ := r.call("POST", "/v1/projects/lab/tasks", otherProjectKey, newTask("LAB-1", "p2m-v7")); w.Code != http.StatusCreated {
 		t.Fatalf("lab task: HTTP %d", w.Code)
 	}
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	lease := r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t6-p2m-a146ce-s2-h03", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.g.tasks.noteNode("prove2me", "t6-p2m-a146ce-s2-h03", nodeClassVolunteer)
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.p2m("/t6-p2m-a146ce-s2-h03/complete", map[string]any{"worker": "runner-host-7", "lease": lease, "closed_by": "reuse:formalpedia:Foo.bar",
 		"result": map[string]any{"outcome": "closed", "steps": 3, "prompt_tokens": 1000, "cached_tokens": 800, "completion_tokens": 50,
 			"model_min": 1.5, "raw_ref": "raw/2026-11-15/secret", "score": map[string]any{"note": "secret score"}}})
@@ -144,7 +144,7 @@ func TestPublicTasksPagesAndFilters(t *testing.T) {
 			role = "outline"
 		}
 		r.p2m("", map[string]any{"id": "t6-T" + string(rune('A'+i)), "kind": "p2m-v7", "created_by": "owner", "role": role, "spec": map[string]any{}})
-		r.now = r.now.Add(time.Second)
+		r.advance(time.Second)
 	}
 	var all []string
 	q := "?limit=3"
