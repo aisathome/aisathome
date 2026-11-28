@@ -17,6 +17,7 @@
 // the record page (/science/prove2me/record/), which has them all. The page was 2.4 MB of HTML, 1.9 MB of it closed.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { day, hhmm, p2m } from '../../data/prove2me';
+import { FROZEN_THROUGH } from '../../data/prove2me-current';
 import { headlineStripHTML, kpisHTML, lazyHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialRowsHTML, trialsFootHTML, trialsHeadHTML, RECORD_PATH } from '../../data/prove2me-view';
 import { queueBarHTML, statusTexts } from '../../data/prove2me-status';
 import { nowBlocksHTML } from '../../data/prove2me-now';
