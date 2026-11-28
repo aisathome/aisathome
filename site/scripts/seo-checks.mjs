@@ -115,8 +115,10 @@ const isoTime = (v) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\
 const isOrg = (o, origin) => o?.['@type'] === 'Organization' && o.name === 'AIs@home' && o.url === `${origin}/` && o['@id'] === `${origin}/#organization`;
 const text = (v, min = 1) => typeof v === 'string' && v.trim().length >= min;
 
+const APACHE = 'https://www.apache.org/licenses/LICENSE-2.0';
+
 /** The list's Dataset (Google's Dataset fields: name, a description of 50 to 5000 characters, url, creator,
- * distribution); no licence while the site states none for the records. */
+ * distribution, license: Apache-2.0, as prove2me's public contributions). */
 export function datasetJsonLdProblems(d, origin) {
 	const p = [];
 	if (d?.['@context'] !== 'https://schema.org') p.push('@context is not https://schema.org');
@@ -129,7 +131,7 @@ export function datasetJsonLdProblems(d, origin) {
 	const dist = Array.isArray(d?.distribution) ? d.distribution : [];
 	if (!dist.some((x) => x?.['@type'] === 'DataDownload' && x.encodingFormat === 'application/json' && x.contentUrl === `${origin}/science/prove2me/theorems.json`)) p.push('no DataDownload of theorems.json');
 	if (!isoTime(d?.dateModified)) p.push(`dateModified is ${d?.dateModified}`);
-	if ('license' in (d ?? {})) p.push('names a licence the site does not state');
+	if (d?.license !== APACHE) p.push(`license is ${d?.license}, not the Apache License 2.0`);
 	if (namesAPerson(d)) p.push('names a person or contact');
 	return p;
 }
@@ -149,6 +151,7 @@ export function proofJsonLdProblems(d, origin, leaf) {
 	if (d?.about?.url && ![d?.isBasedOn ?? []].flat().includes(d.about.url)) p.push('isBasedOn lacks the statement');
 	if (!isOrg(d?.creator, origin)) p.push('creator is not the AIs@home Organization');
 	if (!isoTime(d?.dateCreated)) p.push(`dateCreated is ${d?.dateCreated}`);
+	if (d?.license !== APACHE) p.push(`license is ${d?.license}, not the Apache License 2.0`);
 	if (d?.isPartOf?.['@id'] !== `${origin}${LIST}#dataset`) p.push('isPartOf is not the list\'s Dataset');
 	if (namesAPerson(d)) p.push('names a person or contact');
 	return p;
