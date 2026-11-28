@@ -29,17 +29,6 @@ func (r *taskRig) diskFull(match func(path string) bool) {
 	}
 }
 
-// fullAfter lets n writes through, then the disk is full.
-func (r *taskRig) fullAfter(n int) {
-	r.g.tasks.write = func(path string, raw []byte) error {
-		if n == 0 {
-			return syscall.ENOSPC
-		}
-		n--
-		return writeFileAtomic(path, raw)
-	}
-}
-
 func (r *taskRig) diskBack() { r.g.tasks.write = writeFileAtomic }
 
 // readOnly makes a queue's directories read-only until the returned call; root ignores that.
