@@ -868,9 +868,9 @@ See <a href="/use/api/">API and opencode</a>.</p></div>
 <form class="form" method="post" action="/account/username"><div class="field"><label for="username">Username</label>
 <div class="row"><input id="username" name="username" maxlength="32" autocomplete="nickname" value="{{if .TriedName}}{{.TriedName}}{{else}}{{.Account.Username}}{{end}}">
 <button class="btn ghost">Save</button></div>
-<p class="hint">Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit. Leave it empty to stay anonymous.</p></div></form>
-{{if .Account.Username}}<p class="mut small">You appear as <strong>{{.Account.Username}}</strong> on the <a href="/network/">leaderboard</a>.</p>
-{{else}}<p class="mut small">You are anonymous: your credit counts in the totals only.</p>{{end}}</div>
+<p class="hint">Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit, and as the name of your nodes where the proof pages say who served a task. Leave it empty to stay anonymous.</p></div></form>
+{{if .Account.Username}}<p class="mut small">You appear as <strong>{{.Account.Username}}</strong> on the <a href="/network/">leaderboard</a> and on the proof pages' tasks your nodes served.</p>
+{{else}}<p class="mut small">You are anonymous: your credit counts in the totals only, and your nodes are not named.</p>{{end}}</div>
 {{template "contact" .}}
 <div class="card" id="nodes"><h2>Your nodes</h2>
 <p class="mut">A node runs on your GPU and answers other people's chats. It can read what it serves, so the network

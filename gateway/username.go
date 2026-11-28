@@ -1,7 +1,9 @@
 // Usernames: like the name of a BOINC account. Setting one is the
 // consent to appear publicly, with one's credit, in the leaderboard and in the BOINC-format
-// statistics; without one an account counts in totals only and never appears by name or id.
-// Clearing it takes the account out of the next leaderboard and export.
+// statistics, and as the name of one's nodes in a task's served_by (tasks_served.go: the proof
+// pages' "served by"); without one an account counts in totals only and never appears by name or
+// id. Clearing it takes the account out of the next leaderboard and export, and out of served_by
+// at the next build of the task list.
 //
 // SPDX-License-Identifier: Apache-2.0
 package gateway

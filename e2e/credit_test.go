@@ -253,7 +253,7 @@ func TestCreditVolunteerFlow(t *testing.T) {
 
 	// A username is the consent to appear.
 	_, page = a.get(t, "/account", s1)
-	if !strings.Contains(page, "Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit. Leave it empty to stay anonymous.") {
+	if !strings.Contains(page, "Shown publicly in the leaderboard and in the BOINC-format statistics, with your credit, and as the name of your nodes where the proof pages say who served a task. Leave it empty to stay anonymous.") {
 		t.Fatal("the username field lacks its explanation")
 	}
 	a.post(t, "/account/username", s1, "username="+url.QueryEscape("  Crunch   Queen "))

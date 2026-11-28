@@ -174,8 +174,8 @@ type Account struct {
 	Nodes     []AccountNode `json:"nodes,omitempty"`
 	FirstNode *time.Time    `json:"first_node,omitempty"`
 	NodePref  string        `json:"node_pref,omitempty"` // NodePrefOwn (default), NodePrefOnly or NodePrefAny
-	// Username is public: setting one is the consent to appear in the leaderboard and the
-	// BOINC-format statistics (username.go). Empty = anonymous, in totals only.
+	// Username is public: setting one is the consent to appear in the leaderboard, the
+	// BOINC-format statistics and tasks' served_by (username.go). Empty = anonymous, in totals only.
 	Username string `json:"username,omitempty"`
 	// The address the user asked us to write to about important changes and outages, when
 	// (contact.go). Only with the user's consent; deleted when they turn it off. Never shown
