@@ -13,6 +13,7 @@ import { THEOREMS_PATH, ctaHTML, gpuH, headTitle, nameOf, shortName, theoremFact
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
 import { builtDetail, type TrialDetail } from '../../../../data/prove2me-records';
 import { proofLeaf, proofTasksHTML } from '../../../../data/prove2me-proof';
+import { builtLabelHTML } from '../../../../data/prove2me-view';
 import '../../../../styles/theorems.css';
 
 export const getStaticPaths = (async () => (await buildTheorems()).pages.map((t) => ({ params: { leaf: t.leaf }, props: { t } }))) satisfies GetStaticPaths;
@@ -59,7 +60,7 @@ const description = reuse
 	<aside class="th-cta not-content" data-th-cta data-source="build" set:html={ctaHTML(t)} />
 	<p class="th-updated" data-th-updated data-source="build">{updatedText(view, from === 'snapshot' ? 'saved' : 'build')}</p>
 	{/* until the browser's first read of the gateway, in place of the line above (styles/theorems.css) */}
-	<p class="th-updated th-pending" data-th-pending role="status">As of the last build, {view.updated.slice(11, 16)} UTC · updating…</p>
+	<p class="th-updated th-pending" data-th-pending role="status" set:html={builtLabelHTML(view.updated)} />
 	<script is:inline type="application/json" data-th-known set:html={JSON.stringify(known).replace(/</g, '\\u003c')} />
 
 	<h2 id="statement">Statement</h2>

@@ -18,7 +18,7 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { day, hhmm, p2m } from '../../data/prove2me';
 import { FROZEN_THROUGH } from '../../data/prove2me-current';
-import { headlineStripHTML, kpisHTML, lazyHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialRowsHTML, trialsFootHTML, trialsHeadHTML, RECORD_PATH } from '../../data/prove2me-view';
+import { builtLabelHTML, headlineStripHTML, kpisHTML, lazyHTML, leafScoreHTML, smallNumbersHTML, submissionRowsHTML, trialRowsHTML, trialsFootHTML, trialsHeadHTML, RECORD_PATH } from '../../data/prove2me-view';
 import { queueBarHTML, statusTexts } from '../../data/prove2me-status';
 import { nowBlocksHTML } from '../../data/prove2me-now';
 import { acceptedSeries } from '../../data/prove2me-chart';
@@ -38,8 +38,6 @@ const bar = queueBarHTML(st);
 const nowHTML = nowBlocksHTML(nowDocs, rec.tasks, { ...nowCtx, full: () => false });
 const cacheTimes = Math.round(view.kpis.withCache / Math.max(view.kpis.computed, 1));
 const cacheShare = Math.round((100 * (view.kpis.withCache - view.kpis.computed)) / Math.max(view.kpis.withCache, 1));
-// The build's time, for the time-sensitive parts' "as of the last build" while the browser's first read runs.
-const builtAt = hhmm(rec.updated);
 
 ---
 
@@ -100,7 +98,7 @@ const builtAt = hhmm(rec.updated);
 		<p class="p2m-st-updated" data-st="updated">{stx.updated}</p>
 		{/* Until the browser's first read of the gateway has run, in place of the line above (styles/prove2me.css): the
 		    build's copy is not shown as current. Without JavaScript the line above says what it is. */}
-		<p class="p2m-st-updated p2m-pending" data-p2m-pending role="status">As of the last build, {builtAt} · updating…</p>
+		<p class="p2m-st-updated p2m-pending" data-p2m-pending role="status" set:html={builtLabelHTML(rec.updated)} />
 	</section>
 
 	<h2 id="working-on-now">Working on now</h2>
@@ -109,7 +107,7 @@ const builtAt = hhmm(rec.updated);
 	<section class="p2m-now not-content" data-p2m-now data-p2m-fresh data-trial={nowDocs.map((d) => d.trial.id).join(' ')} data-source="build">
 		{/* When the blocks are from: first, so a reader knows before the rows (until the first read, the line after it). */}
 		<p class="meta p2m-asof" data-now-asof>As of {day(rec.updated)}, {hhmm(rec.updated)}: a copy from the site’s last build.</p>
-		<p class="meta p2m-asof p2m-pending" data-p2m-pending role="status">As of the last build, {builtAt} · updating…</p>
+		<p class="meta p2m-asof p2m-pending" data-p2m-pending role="status" set:html={builtLabelHTML(rec.updated)} />
 		{/* One block per open benchmark and per trial not finished (prove2me-now.ts), one row per leaf that opens to its
 		    outlines, holes and tasks; the outline probes sit under the newest trial's head. */}
 		<div class="probes" data-now-probes hidden>
@@ -158,7 +156,7 @@ const builtAt = hhmm(rec.updated);
 	{/* One row per trial (prove2me-view.ts trialSummaryHTML), newest first, each opening to its own list. Trials 1 to 5 are
 	    frozen history; from trial 6 on each trial's list is made from its records (the build's here, the gateway's in
 	    the browser: trialDetailHTML). */}
-	<div class="p2m-trials not-content" data-p2m-trials data-source="build">
+	<div class="p2m-trials not-content" data-p2m-trials data-p2m-fresh data-source="build">
 		<p class="p2m-trow p2m-thead" aria-hidden="true" set:html={trialsHeadHTML()} />
 		{/* each list is drawn when its trial opens (the browser), else linked on the record page */}
 		<div class="p2m-trial-rows" data-p2m-trial-lists set:html={trialRowsHTML(view, frozen, builtDetails, false)} />
@@ -286,7 +284,7 @@ const builtAt = hhmm(rec.updated);
 	import { CURRENT_URL, FROZEN_THROUGH, day, fetchAllTasks, hhmm, parseCurrent, probeRound, refutedOutlines, taskTableRows, theoremURL, walkPages } from '../../data/prove2me-current';
 	import { CAMPAIGNS_URL, RESULTS_URL, allRuns, getJSON, leavesView, parseCampaigns, parseResults, scienceView, trialDetails, type History, type Records } from '../../data/prove2me-records';
 	import {
-		RECORD_JSON, RECORD_PATH, acceptedOf, frozenListHTML, headlineStripHTML, kpisHTML, leafFiltersHTML, leafListHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML,
+		RECORD_JSON, RECORD_PATH, acceptedOf, showBuiltDays, frozenListHTML, headlineStripHTML, kpisHTML, leafFiltersHTML, leafListHTML, leafRowsHTML, leafScoreHTML, smallNumbersHTML,
 		submissionRowsHTML, trialDetailHTML, trialListHTML, trialPlainRowHTML, trialsFootHTML, trialsNewestFirst,
 	} from '../../data/prove2me-view';
 	import type { Prove2meRecord } from '../../data/prove2me-page';
@@ -442,10 +440,14 @@ const builtAt = hhmm(rec.updated);
 	};
 	/** Every task: the table once (the build's rows), the gateway's rows over them; drawn again when it opens. */
 	let taskTarget = '';
+	/** The task the address names, in sight: shown even when a filter hid it (the table's filters cleared, as a relation's
+	 * link does), scrolled to and given the focus (a keyboard goes on from it); the table is not drawn again. */
 	const showTaskTarget = () => {
-		const row = taskTarget ? document.getElementById(taskTarget) : null;
+		const row = taskTarget && taskTable ? taskTable.reveal(taskTarget) : null;
 		if (!row) return;
 		taskTarget = '';
+		row.tabIndex = -1;
+		row.focus({ preventScroll: true });
 		row.scrollIntoView({ block: 'center' });
 	};
 	const openTasks = () => {
@@ -876,16 +878,21 @@ const builtAt = hhmm(rec.updated);
 	};
 	const openTaskAt = () => {
 		if (!taskBox || !location.hash.startsWith(`#${taskAnchor('p2m', '')}`)) return;
-		taskTarget = decodeURIComponent(location.hash.slice(1));
-		if (taskBox.open) openTasks();
+		// an address that does not decode (#p2m-task-%E0%A4) names no task: nothing to open
+		try {
+			taskTarget = decodeURIComponent(location.hash.slice(1));
+		} catch {
+			return;
+		}
+		// the table drawn and the task in it (a relation's link, a second address): only shown, not drawn again
+		if (taskTable && taskBox.open && document.getElementById(taskTarget)) showTaskTarget();
+		else if (taskBox.open) openTasks();
 		else taskBox.open = true;
 	};
 	window.addEventListener('hashchange', () => {
 		openTrial(true);
 		openTaskAt();
 	});
-	openTrial(false);
-	openTaskAt();
 	// taken there by the address, the reader's focus on the trial's or the leaf's row: once the page has loaded, when the
 	// browser has gone to the address itself (which moves the focus)
 	const focusTarget = () =>
@@ -983,6 +990,12 @@ const builtAt = hhmm(rec.updated);
 		applyLeaves();
 	};
 	applyLeaves();
+	// the address's trial or task, once every listener above is in place (an address that does not parse costs nothing)
+	try {
+		openTrial(false);
+		openTaskAt();
+	} catch {}
+	showBuiltDays();
 	load();
 	setInterval(() => document.visibilityState === 'visible' && load(), 60000);
 </script>

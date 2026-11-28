@@ -313,14 +313,14 @@ main .caps { font-size: 0.85rem; }
    their time line says "As of the last build, … · updating…" in place of its own (one line for one line, so nothing
    moves) and the rest is dimmed; a trial's "running" mark waits. Only with scripting: without it the page is the
    build's and its own lines say so. After the read a part that stayed the build's (the gateway did not answer) shows
-   its own line again. */
+   its own line again. Only the live page's parts (data-p2m-fresh): the record page has no script and never reads. */
 .p2m-pending, [data-p2m-fresh] .p2m-pending { display: none; }
 @media (scripting: enabled) {
 	:root:not([data-p2m-read]) [data-p2m-fresh]:not([data-source='live']) .p2m-pending { display: block; }
 	:root:not([data-p2m-read]) [data-p2m-fresh]:not([data-source='live']) :is([data-st='updated']:not(.p2m-pending), [data-now-asof]) { display: none; }
-	:root:not([data-p2m-read]) [data-p2m-status]:not([data-source='live']) > :not(h2, .p2m-pending),
-	:root:not([data-p2m-read]) [data-p2m-now]:not([data-source='live']) > :not(.p2m-pending) { opacity: 0.55; }
-	:root:not([data-p2m-read]) [data-p2m-trials]:not([data-source='live']) .tr-run { visibility: hidden; }
+	:root:not([data-p2m-read]) [data-p2m-status][data-p2m-fresh]:not([data-source='live']) > :not(h2, .p2m-pending),
+	:root:not([data-p2m-read]) [data-p2m-now][data-p2m-fresh]:not([data-source='live']) > :not(.p2m-pending) { opacity: 0.55; }
+	:root:not([data-p2m-read]) [data-p2m-trials][data-p2m-fresh]:not([data-source='live']) .tr-run { visibility: hidden; }
 }
 .p2m-pending { font-style: italic; }
 

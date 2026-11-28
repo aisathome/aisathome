@@ -912,7 +912,8 @@ def test_the_build_copy_is_labelled_until_the_first_read(pages, site, records):
     st, now = page.locator("[data-p2m-status]"), page.locator("[data-p2m-now]")
     for box in (st, now):
         expect(box.locator("[data-p2m-pending]")).to_be_visible()
-        expect(box.locator("[data-p2m-pending]")).to_have_text(re.compile(r"^As of the last build, \d\d:\d\d UTC · updating…$"))
+        # the build was on another day than today: the label names it
+        expect(box.locator("[data-p2m-pending]")).to_have_text(re.compile(r"^As of the last build, 18 November, \d\d:\d\d UTC · updating…$"), use_inner_text=True)
     expect(st.locator("[data-st=updated]")).to_be_hidden()
     expect(now.locator("[data-now-asof]")).to_be_hidden()
     expect(page.locator("[data-p2m-trials] .tr-run").first).to_be_hidden()
@@ -941,6 +942,64 @@ def test_the_build_copy_is_labelled_until_the_first_read(pages, site, records):
     expect(page.locator("[data-p2m-now] [data-now-asof]")).to_contain_text("a copy from the site’s last build")
 
 
+def test_on_the_build_day_the_label_has_the_time_only(pages, site, records):
+    """On the day of the build, "As of the last build" gives the time only."""
+    page = _page(pages)
+    page.clock.set_fixed_time("2026-11-18T20:00:00Z")
+    page.route("**/v1/tasks?*", lambda r: None)      # never answers: the label stays
+    page.goto(site + PAGE)
+    expect(page.locator("[data-p2m-status] [data-p2m-pending]")).to_have_text(re.compile(r"^As of the last build, \d\d:\d\d UTC · updating…$"), use_inner_text=True)
+
+
+def test_a_bad_address_leaves_the_page_working(pages, site, records):
+    """An address that does not decode (#p2m-task-%E0%A4) names nothing; the page's script still runs: the first read,
+    the live parts, a trial that opens."""
+    errors = []
+    page = _records_page(pages, records, site=site, path=f"{PAGE}#p2m-task-%E0%A4")
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    expect(page.locator("[data-p2m-trials][data-source=live]")).to_be_attached()
+    expect(page.locator("html[data-p2m-read]")).to_be_attached()
+    page.locator("details#trial-7 > summary").click()
+    expect(page.locator("details#trial-7 table.p2m-leaves tbody tr").first).to_be_visible()
+    page.locator("details[data-p2m-list] > summary").click()
+    expect(page.locator("[data-p2m-leaf-table] tbody tr").first).to_be_visible()
+    assert not errors, errors
+
+
+def test_a_task_address_shows_its_row_without_drawing_the_table_again(pages, site, records):
+    """Every task: a task of an older trial (hidden by the default filter, the newest trial) named by the address is
+    shown (the filters cleared) and in sight; a relation's link, followed from the keyboard, shows its task without
+    drawing the table again; the focus goes to that task's row (not to the page), and a keyboard goes on from there."""
+    old = "t6-p2m-dbd69f-s2-asm"
+    page = _records_page(pages, records, site=site, path=f"{PAGE}#p2m-task-{old}")
+    row = page.locator(f"#p2m-task-{old}")
+    expect(row).to_be_visible()
+    expect(row).to_be_in_viewport()
+    expect(page.locator("select[data-tt-filter='label:trial']")).to_have_value("")
+    # a retry's note links the try before it
+    retry, before = "t8-p2m-fe7aa1-s1-h02-a2", "t8-p2m-fe7aa1-s1-h02"
+    page.evaluate("document.querySelectorAll('[data-p2m-alltasks] tbody tr').forEach((r) => (r.__kept = true))")
+    link = page.locator(f"#p2m-task-{retry} a[data-rel-to='{before}']")
+    link.focus()
+    page.keyboard.press("Enter")
+    expect(page).to_have_url(re.compile(f"#p2m-task-{before}$"))
+    expect(page.locator(f"#p2m-task-{before}")).to_be_in_viewport()
+    page.wait_for_timeout(300)
+    assert page.evaluate("[...document.querySelectorAll('[data-p2m-alltasks] tbody tr')].every((r) => r.__kept)"), "the table was drawn again"
+    assert page.evaluate("document.activeElement?.dataset.taskId") == before, "the focus is not on the task's row"
+
+
+def test_the_record_page_is_not_dimmed_with_javascript(pages, site):
+    """The record page has no script and never reads the gateway: with JavaScript on, its "Working on now" is not dimmed
+    and its trials keep their "running" mark (the live page's "updating" state is the live page's only)."""
+    page = pages()
+    page.goto(site + "/science/prove2me/record/")
+    now = page.locator("[data-p2m-now] [data-now-trial]").first
+    expect(now).to_be_visible()
+    assert float(now.evaluate("e => getComputedStyle(e).opacity")) == 1
+    expect(page.locator("[data-p2m-trials] .tr-run").first).to_be_visible()
+
+
 @pytest.mark.parametrize("path,line,pending", (
     ("/science/", "[data-project=prove2me] [data-project-status]", "[data-project=prove2me] [data-card-pending]"),
     ("/science/prove2me/theorems/", "[data-th-updated]", "[data-th-pending]"),
@@ -953,7 +1012,8 @@ def test_the_overview_and_theorems_page_label_the_build_copy(pages, site, record
     page.route("**/v1/projects/prove2me/campaigns?*", lambda r: held.append(r))
     page.goto(site + path)
     expect(page.locator(pending)).to_be_visible()
-    expect(page.locator(pending)).to_have_text(re.compile(r"^As of the last build, \d\d:\d\d UTC · updating…$"))
+    # (the card's status line is set in capitals)
+    expect(page.locator(pending)).to_have_text(re.compile(r"^As of the last build, 18 November, \d\d:\d\d UTC · updating…$", re.I), use_inner_text=True)
     expect(page.locator(line)).to_be_hidden()
     body = json.dumps(records["campaigns"])
     page.unroute("**/v1/projects/prove2me/campaigns?*")

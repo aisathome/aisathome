@@ -5,6 +5,7 @@
 import { mountAcceptedChart } from '../data/prove2me-chart';
 import { fetchRecords, getJSON, type History, type Records } from '../data/prove2me-records';
 import { proofLeaf, proofTasksHTML } from '../data/prove2me-proof';
+import { showBuiltDays } from '../data/prove2me-view';
 import {
 	costsHTML, ctaHTML, headlineHTML, listCountText, selectionText, theoremFactsHTML, theoremKpisHTML, theoremRowsHTML, theoremsView, trialBarRowsHTML,
 	trialBarsSVG, updatedText, type TrialBar, type TheoremsView,
@@ -100,6 +101,9 @@ export function liveTheorems() {
 	} catch {}
 	// until the first read has run, the build's copy says it is updating (styles/theorems.css)
 	const read = () => document.documentElement?.setAttribute('data-p2m-read', '');
+	try {
+		showBuiltDays();
+	} catch {}
 	if (!known || !window.fetch) return read();
 	const k = known;
 	const chart = mountAcceptedChart(document.querySelector<HTMLElement>('[data-p2m-chart]'));
