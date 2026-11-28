@@ -83,7 +83,7 @@ export interface LiveCounters {
 const liveCounts = ['requests', 'prompt_tokens', 'cached_tokens', 'completion_tokens', 'model_s'] as const;
 
 /** Who served a task's model calls (gateway tasks_served.go, `served_by`): a row per public name and class of node.
- * `name` is the node's owner's public username (the leaderboard's opt-in), null for one without; never anything else
+ * `name` is the node's owner's public username (the one opt-in for the leaderboard, the BOINC statistics and this), null for one without; never anything else
  * about the node. */
 export interface ServedRow {
 	name: string | null;

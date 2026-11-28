@@ -3,7 +3,7 @@ title: Privacy
 description: Who handles your data on AIs@home and its BOINC project, and what a volunteer's GPU can see.
 ---
 
-*Last changed: 2026-11-25.*
+*Last changed: 2026-11-28.*
 
 AIs@home is an experiment: open-weight AI running on volunteers' GPUs instead of a big company's data centre. This page
 covers the chat (chat.aisathome.org), the API, the website, running a node, and our BOINC project
@@ -110,7 +110,8 @@ connected, what it served (as for any node), holds and model-check results. No n
 address is used in memory to limit registrations and nodes per address, and is not stored.
 
 **Your username, if you set one, is public**, together with your credit: on the [leaderboard](/network/) and in our
-statistics files in BOINC's format, which other sites can copy. Without a username you appear in totals only.
+statistics files in BOINC's format, which other sites can copy. It also names your nodes on the proof pages, where they
+say which GPU served each task. Without a username you appear in totals only, and your nodes are not named.
 
 **Your choices:** whether your API keys allow volunteer nodes for agents.
 

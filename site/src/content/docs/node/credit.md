@@ -59,7 +59,8 @@ rate your node earns at, and fades when the node is off.
 You are **anonymous by default**: your credit counts in the totals only, and nobody sees
 your name or an id. To appear on the leaderboard and in the statistics files, set a
 **username** on your account page. Setting it is your consent to show it publicly with your
-credit; clear it to disappear again from the next update. Usernames are unique, 3 to 32
+credit, and as the name of your nodes on the proof pages ("served by"); clear it to disappear
+again from the next update. Usernames are unique, 3 to 32
 characters, and cannot be web addresses.
 
 ## Statistics files
