@@ -101,11 +101,13 @@ test('the headline numbers, the submissions and the trials table as HTML: escape
 	const v = scienceView(h, records());
 	const k = kpisHTML(v.kpis);
 	assert.equal(k.n, 4);
-	assert.match(k.html, /<div data-kpi="accepted"><dt>proofs accepted by prove2me, of 8 submitted<\/dt><dd>8<\/dd><\/div>/);
-	assert.match(k.html, /<dt>open leaves proved, of 26 tried<\/dt><dd>6<\/dd>/);
-	assert.match(k.html, /<dt>runs proved, of 54 in trials 1 to 8<\/dt><dd>17<\/dd>/);
+	// the model's proofs: 8 accepted, 2 of them reuses, never counted as proofs
+	assert.match(k.html, /<div data-kpi="accepted"><dt>proofs by the model accepted by prove2me, of 8 submitted \(2 of them reuses\)<\/dt><dd>6<\/dd><\/div>/);
+	assert.match(k.html, /<dt>open leaves with an accepted proof, of 26 tried<\/dt><dd>6<\/dd>/);
+	assert.match(k.html, /<dt>open leaves closed by reuse of a proof already on prove2me \(not counted as proofs\)<\/dt><dd>2<\/dd>/);
+	assert.match(k.html, /<dt>runs that passed our own check, of 54 in trials 1 to 8<\/dt><dd>17<\/dd>/);
 	const small = smallNumbersHTML(v, 21, (a) => ({ O04: 'p2m-7f145a', F01: 'p2m-a146ce' })[a] ?? a);
-	assert.match(small, /^Small numbers: 6 open leaves proved so far\. That shows the model can do it, not yet how often\./);
+	assert.match(small, /^Small numbers: 6 open leaves with an accepted proof so far\. That shows the model can do it, not yet how often\./);
 	assert.match(small, /11 of 16 runs succeeded/);
 	const t8row = trialRowHTML(row(v, '8'));
 	assert.match(t8row, /^<tr data-trial="8" data-source="live" data-status="running">/);
@@ -252,8 +254,8 @@ test('the home page’s line and the /science/ card', () => {
 		'proofs by Qwen3.8 27B accepted on prove2me so far: it proved 6 of the 26 open lemmas it tried and closed 2 more by reusing a proof already there. prove2me states theorems from research papers in Lean 4 and checks every proof by machine. Trial 8 is running.',
 	);
 	assert.deepEqual(cardNumbers(v), [
-		{ key: 'accepted', value: '8', label: 'proofs accepted by prove2me, of 8 submitted' },
-		{ key: 'open', value: '6 of 26', label: 'open leaves proved; 2 more closed by reuse' },
+		{ key: 'accepted', value: '6', label: 'proofs by the model accepted by prove2me, of 8 submitted' },
+		{ key: 'open', value: '6 of 26', label: 'open leaves with an accepted proof; 2 more closed by reuse' },
 		{ key: 'trial', value: 'Trial 8', label: 'running since 16 November 2026' },
 	]);
 	const done = scienceView(h, { ...records(), campaigns: records().campaigns.map((c) => (c.id === 't8' ? { ...c, status: 'finished' as const, ended_at: '2026-11-19T00:00:00Z' } : c)) });
@@ -377,7 +379,10 @@ test('live on the home page and /science/: a leaf proved by its in-place task co
 	assert.ok(v.kpis.openProvedLeaves.some((l) => l.leaf === 'p2m-a5e581'));
 	// the same count as the prove2me page, which reads every task
 	const page = scienceView(h, (await fetchRecords(gateway))!);
-	assert.deepEqual([v.kpis.openProved, v.kpis.openTried, v.kpis.accepted], [page.kpis.openProved, page.kpis.openTried, page.kpis.accepted]);
-	assert.match(homeLine(v, 'M'), new RegExp(`it proved ${before.openProved + 1} of the ${before.openTried + 1} open lemmas`));
-	assert.equal(cardNumbers(v).find((n) => n.key === 'open')!.value, `${before.openProved + 1} of ${before.openTried + 1}`);
+	assert.deepEqual([v.kpis.openProved, v.kpis.openTried, v.kpis.openAccepted, v.kpis.proofs], [page.kpis.openProved, page.kpis.openTried, page.kpis.openAccepted, page.kpis.proofs]);
+	// the home line and the card count prove2me's acceptance, not our check: the leaf is tried, not yet accepted
+	assert.equal(v.kpis.openAccepted, before.openAccepted);
+	assert.match(homeLine(v, 'M'), new RegExp(`it proved ${before.openAccepted} of the ${before.openTried + 1} open lemmas`));
+	assert.equal(cardNumbers(v).find((n) => n.key === 'open')!.value, `${before.openAccepted} of ${before.openTried + 1}`);
+	assert.match(smallNumbersHTML(v), new RegExp(`^Small numbers: ${before.openAccepted} open leaves with an accepted proof so far \\(${v.kpis.openProved - before.openAccepted} more passed our own check without an accepted proof\\)\\.`));
 });

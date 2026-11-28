@@ -3,10 +3,10 @@
 // (prove2me-theorems.ts). When the gateway does not answer, the page keeps what it shows.
 // SPDX-License-Identifier: Apache-2.0
 import { mountAcceptedChart } from '../data/prove2me-chart';
-import { fetchRecords, getJSON, scienceView, type History, type Records } from '../data/prove2me-records';
+import { fetchRecords, getJSON, type History } from '../data/prove2me-records';
 import {
-	costsHTML, ctaHTML, headlineHTML, proofsOnly, selectionText, theoremFactsHTML, theoremKpisHTML, theoremRowsHTML, theoremsView, trialBarRowsHTML, trialBarsSVG,
-	updatedText, type TrialBar, type TheoremsView,
+	costsHTML, ctaHTML, headlineHTML, listCountText, selectionText, theoremFactsHTML, theoremKpisHTML, theoremRowsHTML, theoremsView, trialBarRowsHTML,
+	trialBarsSVG, updatedText, type TrialBar, type TheoremsView,
 } from '../data/prove2me-theorems';
 
 /** What the build left in the page for the script: the history (trials 1 to 5), the leaves with a page, the model's name,
@@ -54,7 +54,7 @@ function draw(v: TheoremsView, known: Known) {
 	if (sel) sel.textContent = selectionText(v);
 	set('[data-th-costs]', costsHTML(v));
 	set('[data-th-rows]', theoremRowsHTML(v, new Set(known.pages)));
-	document.querySelectorAll<HTMLElement>('[data-th-count]').forEach((e) => (e.textContent = String(v.theorems.length)));
+	document.querySelectorAll<HTMLElement>('[data-th-count]').forEach((e) => (e.textContent = listCountText(v)));
 	if (known.leaf) {
 		const t = v.theorems.find((x) => x.leaf === known.leaf);
 		if (t) {
@@ -79,9 +79,10 @@ export function liveTheorems() {
 	const k = known;
 	const chart = mountAcceptedChart(document.querySelector<HTMLElement>('[data-p2m-chart]'));
 	let bars: ((b: TrialBar[]) => void) | null = null;
-	const charts = (live: Records, v: TheoremsView) => {
+	// both charts from the view the numbers come from: its series and its bars (one computation, theoremsView)
+	const charts = (v: TheoremsView) => {
 		if (!document.querySelector('[data-p2m-chart], [data-th-bars]')) return;
-		chart.update(proofsOnly(scienceView(k.history, live)));
+		chart.show(v.series);
 		bars ??= mountBars(v.perTrial);
 		bars(v.perTrial);
 	};
@@ -91,7 +92,7 @@ export function liveTheorems() {
 		try {
 			const v = theoremsView(k.history, live);
 			draw(v, k);
-			charts(live, v);
+			charts(v);
 		} catch {
 			// keep what the page shows
 		}

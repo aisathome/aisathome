@@ -4,14 +4,17 @@
 // three costs are computed from the records, by the build and again by the browser every minute, with the same
 // renderers (every value escaped), so the two never say different things.
 //
-// A reuse (the gateway's `reuse` record on a result: the accepted proof is a theorem someone else had proved) is
-// listed, marked as such, and never counted as a proof by the model or in the costs.
+// One definition of a proof runs through the page: a submission by the model that prove2me accepted (`counts.proofs`).
+// The headline is it; the open leaves, the submissions line, the charts, the per-trial bars and the costs all count the
+// same proofs. A reuse (the gateway's `reuse` record on a result: the accepted proof is a theorem someone else had
+// proved) is listed, marked as such, and never counted as a proof by the model or in the costs. Our own check passing is
+// not prove2me's acceptance and is not counted here (the prove2me page has it, labelled as ours).
 //
 // SPDX-License-Identifier: Apache-2.0
 import { FROZEN_THROUGH, day, hhmm, theoremURL } from './prove2me-current';
 import { compact } from './prove2me-live';
 import { acceptedSeries, type AcceptedSeries } from './prove2me-chart';
-import { allRuns, scienceView, type History, type Records, type RunRec, type ScienceView, type SubRec } from './prove2me-records';
+import { allRuns, scienceView, type History, type Records, type RunRec, type SubRec } from './prove2me-records';
 import { nice } from './pressure-chart';
 import { plainTitle } from './prove2me-view';
 import type { TheoremCard } from './og-card';
@@ -76,21 +79,25 @@ export interface TheoremsView {
 	theorems: TheoremRow[];
 	counts: {
 		submitted: number;
+		/** Every accepted submission, proofs and reuses: `proofs + reused`. Never shown as a count of proofs. */
 		accepted: number;
 		rejected: number;
 		pending: number;
 		error: number;
-		/** Accepted proofs by the model; accepted reuses. */
+		/** Accepted proofs by the model (the headline); accepted reuses. */
 		proofs: number;
 		reused: number;
 		openTried: number;
-		openProved: number;
+		/** Open leaves tried with an accepted proof by the model. */
+		openAccepted: number;
 		/** From SELECTED_FROM on: the open leaves tried, and how many of them prove2me accepted a proof by the model of. */
 		selected: { from: number; to: number; tried: number; accepted: number };
 	};
 	costs: {
-		/** The median and 90th percentile of a proof's own model hours (MEDIAN_FROM on); null with no proof. */
-		median: { value: number; p90: number; n: number; from: number; to: number } | null;
+		/** The median and 90th percentile of a proof's own model hours (MEDIAN_FROM on); null with no proof. `n` of the
+		 * `of` proofs: those of trials before MEDIAN_FROM (`early`, their trials) and those without a recorded run
+		 * (`noRun`) are left out. */
+		median: { value: number; p90: number; n: number; of: number; early: { n: number; trials: number[] }; noRun: number; from: number; to: number } | null;
 		/** All-in from SELECTED_FROM on: every model hour of those trials over their accepted proofs. */
 		recent: CostLine;
 		/** All-in over every trial and outline probe round. */
@@ -102,10 +109,6 @@ export interface TheoremsView {
 	/** Every trial with a run, oldest first. */
 	perTrial: TrialBar[];
 }
-
-/** The view the accepted-proofs chart draws: the prove2me page's view with its accepted reuses left out, so the chart's
- * count ends at the headline's. */
-export const proofsOnly = (v: ScienceView): ScienceView => ({ ...v, submissions: v.submissions.filter((s) => s.kind !== 'reuse') });
 
 const sum = <T>(xs: T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
 /** The q-quantile of sorted values (linear between neighbours). */
@@ -143,8 +146,10 @@ export function theoremsView(h: History, live: Records | null): TheoremsView {
 	const real = v.trials.filter((t) => !t.probe && t.all.runs > 0);
 	const firstTrial = Math.min(...real.map((t) => t.number), lastTrial);
 
-	const own = proofs.filter((t) => t.trial >= MEDIAN_FROM && t.hours !== null).map((t) => t.hours!).sort((a, b) => a - b);
-	const ownTrials = proofs.filter((t) => t.trial >= MEDIAN_FROM && t.hours !== null).map((t) => t.trial);
+	const counted = proofs.filter((t) => t.trial >= MEDIAN_FROM && t.hours !== null);
+	const own = counted.map((t) => t.hours!).sort((a, b) => a - b);
+	const ownTrials = counted.map((t) => t.trial);
+	const early = proofs.filter((t) => t.trial < MEDIAN_FROM);
 	const line = (from: number): CostLine => {
 		const hours = sum(v.trials.filter((t) => t.number >= from), (t) => t.model_min) / 60;
 		const n = proofs.filter((t) => t.trial >= from).length;
@@ -164,16 +169,22 @@ export function theoremsView(h: History, live: Records | null): TheoremsView {
 			proofs: proofs.length,
 			reused: theorems.length - proofs.length,
 			openTried: v.kpis.openTried,
-			openProved: v.kpis.openProved,
+			openAccepted: v.kpis.openAccepted,
 			selected: { from: SELECTED_FROM, to: lastTrial, tried: selectedOpen.size, accepted: proofs.filter((t) => t.trial >= SELECTED_FROM && selectedOpen.has(t.leaf)).length },
 		},
 		costs: {
-			median: own.length ? { value: quantile(own, 0.5), p90: quantile(own, 0.9), n: own.length, from: Math.min(...ownTrials), to: Math.max(...ownTrials) } : null,
+			median: own.length
+				? {
+						value: quantile(own, 0.5), p90: quantile(own, 0.9), n: own.length, of: proofs.length,
+						early: { n: early.length, trials: [...new Set(early.map((t) => t.trial))].sort((a, b) => a - b) },
+						noRun: proofs.length - own.length - early.length, from: Math.min(...ownTrials), to: Math.max(...ownTrials),
+					}
+				: null,
 			recent: line(SELECTED_FROM),
 			overall: line(firstTrial),
 		},
 		lastTrial,
-		series: acceptedSeries(proofsOnly(v)),
+		series: acceptedSeries(v),
 		perTrial: real
 			.map((t) => ({ trial: t.number, tried: t.open.runs, accepted: proofs.filter((p) => p.trial === t.number).length }))
 			.sort((a, b) => a.trial - b.trial),
@@ -199,18 +210,24 @@ export const shortName = (t: Pick<TheoremRow, 'title' | 'theorem' | 'leaf'>) => 
 export const headTitle = (t: Pick<TheoremRow, 'title' | 'theorem' | 'leaf'>) => esc(`${shortName(t)} (${t.leaf}) - prove2me theorem - AIs@home`);
 const relationWord = (r?: string) => (r === 'part' ? 'part of' : r === 'import' ? 'imports' : 'same statement as');
 
-/** " (1 rejected, 1 not judged)": the submissions not accepted, by verdict. */
-const notAccepted = (c: TheoremsView['counts']) => {
-	const parts = [c.rejected ? `${c.rejected} rejected` : '', c.error ? `${c.error} not judged` : '', c.pending ? `${c.pending} waiting` : ''].filter(Boolean);
-	return parts.length ? ` (${parts.join(', ')})` : '';
-};
+/** "64 submissions: 59 accepted proofs, 3 reuses, 1 rejected, 1 not judged": every submission once, by what became of it. */
+export function submissionsText(c: TheoremsView['counts']): string {
+	const parts = [
+		plural(c.proofs, 'accepted proof'),
+		c.reused ? plural(c.reused, 'reuse') : '',
+		c.rejected ? `${c.rejected} rejected` : '',
+		c.error ? `${c.error} not judged` : '',
+		c.pending ? `${c.pending} waiting` : '',
+	].filter(Boolean);
+	return `${plural(c.submitted, 'submission')}: ${parts.join(', ')}`;
+}
 
 /** The numbers under the headline (the dl's children; the headline has the model's proofs); `--kpis` is their number. */
 export function theoremKpisHTML(v: TheoremsView): { html: string; n: number } {
 	const c = v.counts;
 	const cells = [
-		`<div data-kpi="submitted"><dt>submissions accepted, of ${c.submitted}${notAccepted(c)}</dt><dd>${c.accepted}</dd></div>`,
-		`<div data-kpi="open"><dt>open leaves proved, of ${c.openTried} tried</dt><dd>${c.openProved}</dd></div>`,
+		`<div data-kpi="open"><dt>open leaves with an accepted proof, of ${c.openTried} tried</dt><dd>${c.openAccepted}</dd></div>`,
+		`<div data-kpi="submitted"><dt>${esc(submissionsText(c).replace(/^\d+ submissions?: /, 'submissions: '))}</dt><dd>${c.submitted}</dd></div>`,
 		c.reused ? `<div data-kpi="reused"><dt>${c.reused === 1 ? 'leaf' : 'leaves'} closed by reuse (not counted as proofs)</dt><dd>${c.reused}</dd></div>` : '',
 	].filter(Boolean);
 	return { html: cells.join(''), n: cells.length };
@@ -229,6 +246,17 @@ export function selectionText(v: TheoremsView): string {
 	);
 }
 
+/** Which proofs the median counts, and why that is fewer than the headline when it is: "57 of the 59 proofs, trials 6 to
+ * 16 (the 2 of trials 3 and 5 are left out: before trial 6 the gateway’s task records are not the source)". */
+export function medianScope(m: NonNullable<TheoremsView['costs']['median']>): string {
+	const out = [
+		m.early.n ? `the ${plural(m.early.n, 'proof')} of ${m.early.trials.length === 1 ? 'trial' : 'trials'} ${m.early.trials.join(m.early.trials.length === 2 ? ' and ' : ', ')} ${m.early.n === 1 ? 'is' : 'are'} left out: before trial ${MEDIAN_FROM} the gateway’s task records are not the source` : '',
+		m.noRun ? `${plural(m.noRun, 'proof')} without a recorded run` : '',
+	].filter(Boolean);
+	const n = m.n === m.of ? plural(m.n, 'proof') : `${m.n} of the ${plural(m.of, 'proof')}`;
+	return `${n}, ${trials(m.from, m.to)}${out.length ? ` (${out.join('; ')})` : ''}`;
+}
+
 /** The three costs (the dl's children). */
 export function costsHTML(v: TheoremsView): string {
 	const m = v.costs.median, r = v.costs.recent, o = v.costs.overall;
@@ -237,7 +265,7 @@ export function costsHTML(v: TheoremsView): string {
 	return [
 		cell(
 			'median', m ? gpuH(m.value) : '–', 'GPU-hours per proof, median',
-			m ? `Each accepted proof’s own tasks in the trial that proved it; ${plural(m.n, 'proof')}, ${trials(m.from, m.to)}; 90% took at most ${gpuH(m.p90)}.` : 'No accepted proof yet.',
+			m ? `Each accepted proof’s own tasks in the trial that proved it; ${medianScope(m)}; 90% took at most ${gpuH(m.p90)}.` : 'No accepted proof yet.',
 		),
 		cell(
 			'recent', gpuH(r.perProof), `GPU-hours per proof, all-in, ${trials(r.from, r.to)}`,
@@ -301,8 +329,8 @@ export function headline(v: TheoremsView, model: string): { number: number; what
 		number: c.proofs,
 		what: `Lean 4 ${c.proofs === 1 ? 'proof' : 'proofs'} written by ${model}, an open-weight model on consumer GPUs, and accepted by prove2me’s machine check.`,
 		scope:
-			`Out of ${c.openTried} open leaves tried and ${c.submitted} submissions` +
-			`${c.reused ? `; ${c.reused} more ${c.reused === 1 ? 'leaf was' : 'leaves were'} closed by reuse and not counted` : ''}. ` +
+			`Proofs of ${c.openAccepted} of the ${c.openTried} open leaves tried. ${submissionsText(c)}` +
+			`${c.reused ? `; a reuse is not counted as a proof` : ''}. ` +
 			`From trial ${c.selected.from} on, we chose only leaves we judged easy or moderate.`,
 	};
 }
@@ -333,6 +361,12 @@ export function ctaHTML(t?: Pick<TheoremRow, 'kind' | 'hours'>): string {
 		(hours ? `<p class="th-cta-hours" data-th-cta-hours>${esc(hours)}</p>` : '') +
 		`<p class="th-cta-go"><a href="${esc(CONTRIBUTE.url)}" data-th-contribute>${esc(CONTRIBUTE.label)}</a> <span class="th-cta-req">${esc(CONTRIBUTE.requirement)}</span></p>`
 	);
+}
+
+/** The line over the list: every accepted leaf, the proofs and the reuses apart. */
+export function listCountText(v: TheoremsView): string {
+	const c = v.counts;
+	return `${plural(v.theorems.length, 'leaf', 'leaves')}, newest first: ${c.proofs} proved by the model${c.reused ? `, ${c.reused} closed by reuse` : ''}.`;
 }
 
 /** What the per-trial chart says, for its aria-label. */
@@ -413,7 +447,7 @@ export function listCardOf(v: TheoremsView): TheoremCard {
 	return {
 		kicker: `Proved theorems · as of ${day(v.updated)}`,
 		title: `${v.counts.proofs} Lean proofs by an open model, accepted by prove2me`,
-		mono: `${v.counts.accepted} of ${v.counts.submitted} submissions accepted`,
+		mono: `${v.counts.proofs} of ${v.counts.submitted} submissions accepted as proofs`,
 		facts: [
 			{ label: 'GPU-h per proof, median', value: gpuH(v.costs.median?.value ?? null) },
 			{ label: `All-in, trials ${v.costs.recent.from}+`, value: gpuH(v.costs.recent.perProof) },
@@ -438,6 +472,7 @@ export function theoremsJSON(v: TheoremsView, site: string, model: string) {
 			all_in: 'Every model hour of the trials in range (failed leaves, calibration leaves and outline probes included) over the proofs by the model accepted from them.',
 			selection: `From trial ${SELECTED_FROM} on, the trials ran only leaves judged easy or moderate.`,
 			reuse: 'A leaf closed by reuse: the accepted proof is a theorem someone else had already proved on prove2me. Never counted as a proof by the model or in the costs.',
+			counts: 'proofs: submissions by the model that prove2me accepted (the headline); reused: accepted reuses; accepted: proofs + reused; openAccepted: open leaves tried with an accepted proof by the model; submitted = proofs + reused + rejected + error + pending.',
 		},
 		counts: v.counts,
 		costs: v.costs,

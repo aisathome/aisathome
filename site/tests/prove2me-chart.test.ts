@@ -1,5 +1,5 @@
 // The home page's prove2me chart (src/data/prove2me-chart.ts) on fixed data: the build's committed history and the
-// gateway's records as served on 2026-11-18 (tests/fixtures), 8 accepted results by then.
+// gateway's records as served on 2026-11-18 (tests/fixtures), 8 accepted results by then: 6 proofs and 2 reuses.
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,11 +18,14 @@ const records = (): Records => ({
 	tasks: { updated: fixture.tasks.updated, tasks: fixture.tasks.tasks as unknown as PublicTask[] },
 });
 
-test('the series is every accepted submission, oldest first, from the first trial to the data’s time', () => {
+test('the series is every accepted proof by the model (no reuse), oldest first, from the first trial to the data’s time', () => {
 	const v = scienceView(h, records());
 	const s = acceptedSeries(v)!;
-	assert.equal(s.accepted.length, v.kpis.accepted);
-	assert.equal(s.accepted.filter((a) => a.kind === 'reuse').length, v.kpis.reused);
+	assert.equal(v.kpis.reused, 2);
+	assert.equal(s.accepted.length, v.kpis.proofs);
+	assert.equal(s.accepted.length, v.kpis.accepted - v.kpis.reused);
+	const reuseTitles = v.submissions.filter((x) => x.kind === 'reuse').map((x) => x.title);
+	assert.ok(!s.accepted.some((a) => reuseTitles.includes(a.title)));
 	assert.ok(s.accepted.every((a, i) => i === 0 || Date.parse(s.accepted[i - 1].at) <= Date.parse(a.at)));
 	assert.equal(s.start, v.trials.find((t) => !t.probe)!.start);
 	assert.ok(Date.parse(s.end) >= Date.parse(s.accepted[s.accepted.length - 1].at), 'the line stops before the last proof');
@@ -31,17 +34,17 @@ test('the series is every accepted submission, oldest first, from the first tria
 });
 
 test('the build’s own history draws too, and nothing accepted draws nothing', () => {
-	assert.equal(acceptedSeries(scienceView(h, null))!.accepted.length, scienceView(h, null).kpis.accepted);
+	assert.equal(acceptedSeries(scienceView(h, null))!.accepted.length, scienceView(h, null).kpis.proofs);
 	const v = scienceView(h, null);
 	assert.equal(acceptedSeries({ ...v, submissions: v.submissions.map((x) => ({ ...x, verdict: 'pending' })) }), null);
 });
 
-test('the SVG: one point per proof, hollow for a reuse, the count at the end, sized as asked, no projection', () => {
+test('the SVG: one point per proof, the count at the end, sized as asked, no projection', () => {
 	const s = acceptedSeries(scienceView(h, records()))!;
 	const svg = acceptedChartSVG(s, 400);
 	assert.match(svg, /^<svg viewBox="0 0 400 200" width="400" height="200" role="img" aria-label="[^"]+"/);
 	assert.equal((svg.match(/<circle /g) ?? []).length, s.accepted.length);
-	assert.equal((svg.match(/class="pt reuse"/g) ?? []).length, s.accepted.filter((a) => a.kind === 'reuse').length);
+	assert.doesNotMatch(svg, /class="pt reuse"|closed by reusing/);
 	assert.match(svg, new RegExp(`class="tick end-n">${s.accepted.length}<`));
 	// the step line ends at the right edge of the plot (the data's time), never beyond
 	const pts = svg.match(/<polyline points="([^"]+)"/)![1].split(' ').map((p) => Number(p.split(',')[0]));
@@ -53,13 +56,13 @@ test('the SVG: one point per proof, hollow for a reuse, the count at the end, si
 
 test('titles and links are escaped; the table lists newest first with the running total', () => {
 	const s = acceptedSeries(scienceView(h, records()))!;
-	const evil = { ...s, accepted: [...s.accepted, { at: s.end, trial: 9, kind: 'proof' as const, title: '<img src=x onerror=alert(1)>', url: 'https://prove2.me/theorems/"x' }] };
+	const evil = { ...s, accepted: [...s.accepted, { at: s.end, trial: 9, title: '<img src=x onerror=alert(1)>', url: 'https://prove2.me/theorems/"x' }] };
 	const svg = acceptedChartSVG(evil);
 	const rows = acceptedRowsHTML(evil);
 	assert.ok(!svg.includes('<img') && !rows.includes('<img') && !rows.includes('/"x'));
 	const totals = [...acceptedRowsHTML(s).matchAll(/<td class="num">(\d+)<\/td><\/tr>/g)].map((m) => Number(m[1]));
 	assert.deepEqual(totals, s.accepted.map((_, i) => s.accepted.length - i));
-	assert.match(acceptedSummary(s), new RegExp(`^${s.accepted.length} proofs accepted by prove2me from `));
+	assert.match(acceptedSummary(s), new RegExp(`^${s.accepted.length} proofs by the model accepted by prove2me from .*\\. Leaves closed by reuse are not counted\\.$`));
 });
 
 /** The figure of components/AcceptedChart.astro as far as mountAcceptedChart touches it: the SVG box, the table body
@@ -94,15 +97,15 @@ test('live: a read with nothing accepted hides the chart (never the old proofs u
 		chartA.update(v);
 		assert.equal(a.fig.hidden, false);
 		assert.match(a.box.innerHTML, /^<svg viewBox="0 0 500 200"/);
-		assert.equal((a.box.innerHTML.match(/<circle /g) ?? []).length, v.kpis.accepted);
-		assert.equal((a.rows.innerHTML.match(/<tr>/g) ?? []).length, v.kpis.accepted);
+		assert.equal((a.box.innerHTML.match(/<circle /g) ?? []).length, v.kpis.proofs);
+		assert.equal((a.rows.innerHTML.match(/<tr>/g) ?? []).length, v.kpis.proofs);
 		// built with nothing accepted: the figure is there, hidden, and the live records fill it
 		const b = fakeFigure(null, true);
 		const chartB = mountAcceptedChart(b.fig as unknown as HTMLElement);
 		assert.equal(b.box.innerHTML, '');
 		chartB.update(v);
 		assert.equal(b.fig.hidden, false);
-		assert.equal((b.box.innerHTML.match(/<circle /g) ?? []).length, v.kpis.accepted);
+		assert.equal((b.box.innerHTML.match(/<circle /g) ?? []).length, v.kpis.proofs);
 	} finally {
 		g.window = had.window;
 		g.requestAnimationFrame = had.raf;

@@ -249,14 +249,25 @@ export interface History {
 	/** The leaves of each finished outline probe round of the build's data, by the trials table's label ("6p"). */
 	probeLeaves: Record<string, string[]>;
 }
+/** The headline numbers. One definition of a proof runs through every page: a submission by the model that prove2me
+ * accepted (`proofs`). A reuse is accepted too but is never a proof (`reused`); `accepted` is the two together, and our
+ * own check (`openProved`, `proved`) is not prove2me's acceptance. */
 export interface Kpis {
+	/** Every accepted submission: the proofs and the reuses. Not a count of proofs. */
 	accepted: number;
+	/** The model's own proofs that prove2me accepted (accepted submissions that are not reuses). */
+	proofs: number;
 	submitted: number;
+	/** Accepted reuses (a leaf closed by a theorem someone else had proved). */
 	reused: number;
+	/** Open leaves tried with a proof by the model that prove2me accepted. */
+	openAccepted: number;
+	/** Open leaves tried whose run passed our own full check, accepted by prove2me or not; `openProvedLeaves` them. */
 	openProved: number;
 	openTried: number;
 	openProvedLeaves: { leaf: string; alias: string }[];
 	runs: number;
+	/** Runs that passed our own full check. */
 	proved: number;
 	calibrationRuns: number;
 	calibrationProved: number;
@@ -491,12 +502,17 @@ export function scienceView(h: History, live: Records | null): ScienceView {
 	const openProvedLeaves = [...new Map(open.filter((r) => r.proved).map((r) => [r.leaf, { leaf: r.leaf, alias: r.alias }])).values()];
 	const probes = trials.filter((t) => t.probe);
 	const real = trials.filter((t) => !t.probe && t.all.runs > 0);
+	const accepted = submissions.filter((s) => s.verdict === 'accepted');
+	const proofLeaves = new Set(accepted.filter((s) => s.kind !== 'reuse').map((s) => s.leaf));
+	const openLeaves = new Set(open.map((r) => r.leaf));
 	const kpis: Kpis = {
-		accepted: submissions.filter((s) => s.verdict === 'accepted').length,
+		accepted: accepted.length,
+		proofs: accepted.filter((s) => s.kind !== 'reuse').length,
 		submitted: submissions.length,
-		reused: submissions.filter((s) => s.kind === 'reuse' && s.verdict === 'accepted').length,
+		reused: accepted.filter((s) => s.kind === 'reuse').length,
+		openAccepted: [...openLeaves].filter((l) => proofLeaves.has(l)).length,
 		openProved: openProvedLeaves.length,
-		openTried: new Set(open.map((r) => r.leaf)).size,
+		openTried: openLeaves.size,
 		openProvedLeaves,
 		runs: runs.length,
 		proved: runs.filter((r) => r.proved).length,
