@@ -1,0 +1,1 @@
+{"type":"request","req_id":"r-0001","body":{"model":"qwen3.8-27b-q3","messages":[{"role":"user","content":"Hi"}],"stream":true,"max_tokens":64}}

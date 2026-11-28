@@ -1,0 +1,1 @@
+{"type":"hello","node_id":"n-1a2b3c4d","protocol":"0.1","agent":"aisathome-node/0.3.0","models":[{"name":"qwen3.8-27b-q3","roles":["fast","agent"],"slots":2,"ctx":81920}]}
