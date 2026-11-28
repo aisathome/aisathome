@@ -356,7 +356,9 @@ func TestDownloadCancel(t *testing.T) {
 	s.before = func(w http.ResponseWriter, r *http.Request, n int) bool {
 		cancel()
 		<-r.Context().Done()
-		return true
+		// No answer at all: a handler that returns sends an empty 200, and the client's transport
+		// takes a response that races its cancel ("the server has 0 bytes").
+		panic(http.ErrAbortHandler)
 	}
 	dest := filepath.Join(t.TempDir(), "model.gguf")
 	if err := Download(ctx, s.model(), dest, s.opts()); !errors.Is(err, context.Canceled) || len(s.requests()) != 1 {
