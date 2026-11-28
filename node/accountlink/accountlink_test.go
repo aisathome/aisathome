@@ -59,7 +59,7 @@ func TestWait(t *testing.T) {
 		status int
 		poll   protocol.LinkPoll
 	}
-	run := func(steps []step) (protocol.LinkPoll, error, []time.Duration) {
+	run := func(steps []step) (protocol.LinkPoll, []time.Duration, error) {
 		i := 0
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var req protocol.LinkPollRequest
@@ -76,10 +76,10 @@ func TestWait(t *testing.T) {
 		var slept []time.Duration
 		c := &Client{Base: srv.URL, Sleep: func(_ context.Context, d time.Duration) error { slept = append(slept, d); return nil }}
 		p, err := c.Wait(context.Background(), protocol.LinkStart{DeviceCode: "dev", Interval: 5, ExpiresIn: 600})
-		return p, err, slept
+		return p, slept, err
 	}
 	tok := "nt-n-1a2b3c4d." + strings.Repeat("A", 43)
-	p, err, slept := run([]step{{200, protocol.LinkPoll{Status: "pending", Interval: 5}}, {503, protocol.LinkPoll{}},
+	p, slept, err := run([]step{{200, protocol.LinkPoll{Status: "pending", Interval: 5}}, {503, protocol.LinkPoll{}},
 		{200, protocol.LinkPoll{Status: "slow_down", Interval: 10}}, {200, protocol.LinkPoll{Status: "approved", Token: tok, NodeID: "n-1a2b3c4d"}}})
 	if err != nil || p.Token != tok {
 		t.Fatalf("approved: %+v %v", p, err)
@@ -87,13 +87,13 @@ func TestWait(t *testing.T) {
 	if want := []time.Duration{5 * time.Second, 5 * time.Second, 5 * time.Second, 10 * time.Second}; len(slept) != 4 || slept[3] != want[3] || slept[0] != want[0] {
 		t.Errorf("slept %v, want %v", slept, want)
 	}
-	if _, err, _ := run([]step{{200, protocol.LinkPoll{Status: "denied"}}}); !errors.Is(err, ErrDenied) {
+	if _, _, err := run([]step{{200, protocol.LinkPoll{Status: "denied"}}}); !errors.Is(err, ErrDenied) {
 		t.Errorf("denied: %v", err)
 	}
-	if _, err, _ := run([]step{{200, protocol.LinkPoll{Status: "expired"}}}); !errors.Is(err, ErrExpired) {
+	if _, _, err := run([]step{{200, protocol.LinkPoll{Status: "expired"}}}); !errors.Is(err, ErrExpired) {
 		t.Errorf("expired: %v", err)
 	}
-	if _, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: "ak-not-a-node-token"}}}); err == nil {
+	if _, _, err := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: "ak-not-a-node-token"}}}); err == nil {
 		t.Error("an approval without a node token was taken")
 	}
 	// The token goes into token.env (a systemd EnvironmentFile): only the exact form the gateway issues
@@ -107,19 +107,19 @@ func TestWait(t *testing.T) {
 		"nt-n-1a2b3c4d." + strings.Repeat("A", 44),
 		"nt-n-1a2b3c4d.secret",
 	} {
-		p, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: bad, NodeID: "n-1a2b3c4d"}}})
+		p, _, err := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: bad, NodeID: "n-1a2b3c4d"}}})
 		if err == nil || p.Token != "" {
 			t.Errorf("approval with token %q taken: %+v %v", bad, p, err)
 		}
 	}
-	if _, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: tok, NodeID: "n-ffffffff"}}}); err == nil {
+	if _, _, err := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: tok, NodeID: "n-ffffffff"}}}); err == nil {
 		t.Error("an approval naming another node id than its token carries was taken")
 	}
-	if p, err, _ := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: tok}}}); err != nil || p.NodeID != "n-1a2b3c4d" {
+	if p, _, err := run([]step{{200, protocol.LinkPoll{Status: "approved", Token: tok}}}); err != nil || p.NodeID != "n-1a2b3c4d" {
 		t.Errorf("approval without a node id: %+v %v", p, err)
 	}
 	// A gateway that never answers usefully: Wait gives up after the code's life.
-	if _, err, slept := run([]step{{500, protocol.LinkPoll{}}}); !errors.Is(err, ErrExpired) || len(slept) < 100 {
+	if _, slept, err := run([]step{{500, protocol.LinkPoll{}}}); !errors.Is(err, ErrExpired) || len(slept) < 100 {
 		t.Errorf("lost gateway: %v after %d polls", err, len(slept))
 	}
 }

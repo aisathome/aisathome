@@ -39,7 +39,7 @@ func TestCleanNotice(t *testing.T) {
 	if s, err := CleanNotice("  Planned   maintenance  today "); err != nil || s != "Planned maintenance today" {
 		t.Fatalf("%q %v", s, err)
 	}
-	for _, bad := range []string{"", " ", "a\nb", "a\rb", "a\x00b", "a​b", "\xff", strings.Repeat("a", 301)} {
+	for _, bad := range []string{"", " ", "a\nb", "a\rb", "a\x00b", "a\u200bb", "\xff", strings.Repeat("a", 301)} {
 		if _, err := CleanNotice(bad); err == nil {
 			t.Fatalf("%q accepted", bad)
 		}

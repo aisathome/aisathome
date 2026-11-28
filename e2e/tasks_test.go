@@ -300,7 +300,7 @@ func TestTaskInterruptionsKeepTries(t *testing.T) {
 		t.Fatalf("another runner takes the held task: HTTP %d", code)
 	}
 	clk.Add(5 * time.Minute)
-	if code, task, lease = claim("ip-10-0-1-5", "T5-NS-2.a-A"); code != 200 || task["tries"] != 1.0 || task["interruptions"] != 6.0 {
+	if code, task, _ = claim("ip-10-0-1-5", "T5-NS-2.a-A"); code != 200 || task["tries"] != 1.0 || task["interruptions"] != 6.0 {
 		t.Fatalf("taken back after an expiry: HTTP %d %v", code, task)
 	}
 	// It expires again and the runner does not come back: another runner after the window
