@@ -88,6 +88,7 @@ func CheckDriver(g GPU, req DriverReq) error {
 	native := slices.Contains(req.Native, g.Cap)
 	if !native {
 		if req.PTXFrom == "" || !VersionAtLeast(g.Cap, req.PTXFrom) {
+			//lint:ignore ST1005 this refusal is the sentence the local setup page shows as it is, not text wrapped in another error.
 			return fmt.Errorf("GPU %d (%s) has compute capability %s; the node's llama-server supports %s. This card cannot run it.",
 				g.Index, g.Name, g.Cap, supported(req))
 		}

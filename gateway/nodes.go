@@ -116,6 +116,8 @@ type nodeRef struct {
 	node *AccountNode
 }
 
+//lint:file-ignore ST1005 errNodesClosed and errNetworkFull are the sentences a person is shown as they are, not text that is wrapped in another error.
+
 var (
 	errNodesClosed = errors.New("New nodes are not being accepted right now. Please try again later.")
 	errNetworkFull = errors.New("The network is full for now: no new nodes are being added. Please try again later.")

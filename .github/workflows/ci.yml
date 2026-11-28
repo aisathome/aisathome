@@ -42,6 +42,22 @@ jobs:
           if git grep -n -i -E "$pat" | sed -E 's#[a-z]+://[^ )>"]*##g' | grep -i -E "$pat"; then exit 1; fi
       - name: go vet
         run: go vet ./...
+      - name: staticcheck
+        # honnef.co/go/tools 2026.2.2, by exact version (go install checks it against the Go
+        # checksum database). The Linux and Windows builds in one run (-matrix), so code only
+        # Windows uses is not reported unused. A finding kept on purpose says why where it is
+        # (//lint:ignore or //lint:file-ignore).
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          printf 'linux: GOOS=linux\nwindows: GOOS=windows\n' | "$RUNNER_TEMP/bin/staticcheck" -matrix ./...
+      - name: govulncheck
+        # golang.org/x/vuln, by exact version, against the Go vulnerability database on the day it runs:
+        # a new advisory for a function the code calls fails the check, for the Linux and the
+        # Windows build.
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          "$RUNNER_TEMP/bin/govulncheck" ./...
+          GOOS=windows "$RUNNER_TEMP/bin/govulncheck" ./...
       - name: save the Go caches (main only)
         if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

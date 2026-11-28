@@ -25,6 +25,8 @@ var reservedNames = []string{"anonymous", "admin", "administrator", "maintainer"
 // domainLike catches web addresses written without a scheme ("example.com", "x.y.org").
 var domainLike = regexp.MustCompile(`(?i)[\p{L}\p{N}-]+\.\p{L}{2,}`)
 
+//lint:file-ignore ST1005 The username errors are the sentences the account page shows as they are, not text that is wrapped in another error.
+
 var (
 	errUsernameLength = errors.New("A username has 3 to 32 characters.")
 	errUsernameChars  = errors.New("A username may use letters, digits, spaces and - _ . ' only.")

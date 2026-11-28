@@ -80,6 +80,8 @@ var (
 	linkMissAddr  = []rule{{30, time.Hour}}
 )
 
+//lint:file-ignore ST1005 The link errors are the sentences the approval page shows as they are, not text that is wrapped in another error.
+
 var (
 	errLinkBusy    = errors.New("too many link codes asked from this address; wait a few minutes and try again")
 	errLinkFull    = errors.New("too many nodes are linking right now; try again in a few minutes")

@@ -30,6 +30,7 @@ A running gateway applies changes within a few seconds.
 // piped; everything else goes to msg.
 func runKeys(args []string, out, msg io.Writer) error {
 	if len(args) == 0 {
+		//lint:ignore ST1005 the usage text is returned so the command prints it as it is.
 		return errors.New(keysUsage)
 	}
 	cmd := args[0]
@@ -93,6 +94,7 @@ func runKeys(args []string, out, msg io.Writer) error {
 		}
 		fmt.Fprintf(msg, "revoked key %s of %s\n", r.Prefix, r.User)
 	default:
+		//lint:ignore ST1005 the usage text is returned so the command prints it as it is.
 		return errors.New(keysUsage)
 	}
 	return nil
