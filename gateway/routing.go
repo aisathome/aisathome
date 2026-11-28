@@ -683,6 +683,9 @@ func (g *Gateway) unavailable(w http.ResponseWriter, rt *route, why string) {
 	want := rt.want
 	reason := ""
 	defer func() {
+		if reason != "" {
+			g.countRefusal(rt, want, reason) // failures.go
+		}
 		if reason != "" && g.log != nil {
 			g.log.Info("request refused", "reason", reason, "model", want, "personal_data", rt.pii,
 				"class", rt.class, "project", rt.project, "session_model", rt.model)

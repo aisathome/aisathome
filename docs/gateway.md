@@ -730,6 +730,7 @@ aisathome-gateway accounts node-revoke n-1a2b3c4d # delete one node token (a nod
 aisathome-gateway accounts node-clear n-1a2b3c4d  # let a held node serve again
 aisathome-gateway accounts guard-log [n-1a2b3c4d] # recent stops, holds and flags with what matched (14 days)
 aisathome-gateway accounts node-checks [7] [n-1a2b3c4d] # answer checks and signals per node over the last days
+aisathome-gateway accounts node-failures [7] [n-1a2b3c4d] # how attempts ended per node and model (tier): cut, context exceeded, parse errors, failures, refusals
 aisathome-gateway accounts routing own-only       # emergency: every request, waiting ones too, only to its sender's own nodes (no stranger's node serves anything, science neither); "any" to undo
 aisathome-gateway accounts ban gh:12345           # also deletes the account's node tokens
 ```
@@ -792,6 +793,19 @@ The operations page (`/account/ops`, card "Answer checks") shows per node since 
 answers, failed checks by rule, credit voided, answers at `max_tokens`, bad tool calls, discarded and
 degenerate answers. `accounts node-checks [days] [node]` gives the same from the usage log over days
 (default 7), with credit and output tok/s (median, 99th percentile, max).
+
+**Failures per node and tier** (`gateway/failures.go`). The usage log holds only attempts that produced
+output, and does not tell a cut at `max_tokens` from one at the end of the context, so it cannot say whether
+a smaller model or context (a 16 GB node: `qwen3.8-27b-q3`, 81,920 tokens) makes requests fail. The gateway
+also counts, per UTC day, node and model (with the context the node announced), how each attempt ended: an
+answer (`ok`), cut by `finish_reason` `length` at `max_tokens` or before it (the node's context was full),
+an engine error event in the stream (context exceeded, a tool call llama-server could not parse, other),
+another failure by category (`context_length_exceeded` before generation, `engine returned 500`, `node
+stalled`, ...), cancelled, preempted, blocked; answers with an unusable tool call; and the requests refused
+before any node (`too_long`, with the session's model when the request continues one: a session that began on
+a 16 GB node stays on its model). Counts only, never text, error messages, users or operators; kept 35 days in
+`state_dir/failures.json` (saved every 5 s and on close). `accounts node-failures [days] [node]` prints them
+per node, per model and by category.
 
 The card "Funnel" shows, for today and the 7 UTC days before it, totals only: from `site_stats_file`
 (above) the site's visitors, views of the node pages and install starts (distinct clients fetching

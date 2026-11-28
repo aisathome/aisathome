@@ -86,6 +86,9 @@ type relay struct {
 	sent                  delivered     // what reached the client, as the node sent it (credit)
 	bufHeld               int64         // this request's share of g.buffered and of tokBuf
 	tokBuf                *atomic.Int64 // what the node token's requests buffer together
+	engineErr             string        // the category of an error event in the engine's stream (failures.go), or ""
+	final                 *usageRecord  // the attempt's committed usage record, or nil (failures.go)
+	reportedOut           int           // the output tokens the node reported at the end, unclamped (failures.go)
 }
 
 // run sends one request to a node and relays the result. started reports whether any
@@ -160,6 +163,7 @@ func (g *Gateway) run(w http.ResponseWriter, r *http.Request, req *chatReq, n *n
 		// One line per attempt, also failed ones: which node a request went to, for the
 		// operator (the usage log has only metered attempts). No user, no request content.
 		g.log.Info("chat request", "req", reqID, "node", n.id, "ok", err == nil)
+		g.countAttempt(rl, err) // how it ended, per node and model (failures.go)
 		close(p.done)
 		p.finish() // what its queue still holds no longer counts
 		if rl.stopping {
@@ -368,6 +372,7 @@ func (rl *relay) undelivered(rec *usageRecord) {
 func (rl *relay) commit(rec *usageRecord) {
 	g, n, req := rl.g, rl.n, rl.req
 	rec.Discarded, req.discarded = req.discarded, nil
+	rl.final = rec
 	rec.Signals = signalsOf(&rl.mt.genOut, rec.facts.out, rec.facts.reasoning, rec.Usage.DurationMs)
 	g.checkAnswer(rec, req.body, rl.maxTokens) // in enforce mode a failed answer's credit is voided here
 	if n.anon {
@@ -505,6 +510,9 @@ func (rl *relay) onChunk(m protocol.Msg) error {
 	if et := chunkTimings(m.Data); et != nil {
 		rl.timings = et
 	}
+	if k := engineErrorKind(m.Data); k != "" && rl.engineErr == "" {
+		rl.engineErr = k
+	}
 	if hasText(m.Data) {
 		rl.relayed++
 		if rl.firstText.IsZero() {
@@ -597,6 +605,7 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	if m.Usage != nil {
 		u = *m.Usage
 	}
+	rl.reportedOut = u.CompletionTokens // as the node reported it, before clamping (failures.go)
 	// Every check runs before the slot is freed: a node a check stops is held first (block),
 	// so no waiting request (another user's prompt) can be sent to it in between. Its slot is
 	// freed when run returns.
