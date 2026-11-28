@@ -48,7 +48,8 @@ Run what CI runs for the parts you touched:
 ```bash
 gofmt -l .                                    # must print nothing
 go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...   # CI also checks the Windows build (ci.yml)
+# staticcheck as CI runs it: the Linux and Windows builds at once, so code only Windows uses counts as used
+printf 'linux: GOOS=linux\nwindows: GOOS=windows\n' | go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -matrix ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 go test -race ./...                           # e2e included (it needs the release tags: git fetch --tags)
 ./node/packaging/linux/install_test.sh        # the Linux installer
