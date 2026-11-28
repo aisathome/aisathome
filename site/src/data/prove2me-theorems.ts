@@ -310,14 +310,14 @@ export function theoremRowsHTML(v: TheoremsView, pages: ReadonlySet<string>): st
 		.join('');
 }
 
-/** Where the page's numbers are from: the browser's live read, the build's read of the gateway, or the committed copy the
- * build fell back on. */
+/** Where the page's numbers are from, short (2026-11-28): the browser's live read, the build's read of the gateway, or the
+ * committed copy the build fell back on. */
 export function updatedText(v: TheoremsView, from: 'live' | 'build' | 'saved' = 'live'): string {
 	const at = `${day(v.updated)}, ${hhmm(v.updated)}`;
-	if (from === 'live') return `Live from the gateway’s records, updated ${at}. The page reads them again every minute.`;
+	if (from === 'live') return `Live, updated ${hhmm(v.updated)}.`;
 	return from === 'saved'
-		? `From a saved copy of the gateway’s records of ${at}: the site’s build could not reach the gateway. The page reads the records live when it can.`
-		: `From the gateway’s records at the site’s build, ${at}. The page reads them again every minute.`;
+		? `From a saved copy of the gateway’s records of ${at}: the site’s build could not reach the gateway.`
+		: `As of the site’s build, ${at}.`;
 }
 
 // ---- the headline, the call to action and the per-trial chart

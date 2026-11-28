@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fixture from './fixtures/prove2me-records-2026-11-18.json';
 import type { PublicTask } from '../src/data/prove2me-current';
 import { parseCampaigns, parseResults, type Records } from '../src/data/prove2me-records';
-import { benchDocs, nowAll, nowBlocksHTML, nowHead } from '../src/data/prove2me-now';
+import { benchDocs, holesDone, nowAll, nowBlocksHTML, nowHead, shortTitle } from '../src/data/prove2me-now';
 
 const records = (): Records => ({
 	updated: fixture.tasks.updated,
@@ -66,4 +66,54 @@ test('every value is escaped', () => {
 	const html = nowBlocksHTML(nowAll(null, live), live.tasks);
 	assert.ok(!html.includes('<img') && !html.includes('<b>'));
 	assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+});
+
+test('a leaf is one row: id, short title, its line, holes solved and GPU-hours; the rest opens under it, closed', () => {
+	const live = records();
+	const t8 = live.campaigns.find((c) => c.id === 't8')!;
+	const titles = Object.fromEntries(t8.items.map((i) => [i.id, i.title]));
+	const html = nowBlocksHTML(nowAll(null, live), live.tasks, { titles });
+	const rows = html.split(/<li(?=[^>]*data-current-leaf)/).slice(1);
+	assert.equal(rows.length, 6);
+	for (const r of rows) {
+		assert.match(r, /<details class="now-leaf" data-leaf-detail="[^"]+"><summary class="now-row"><span class="leaf">p2m-[0-9a-f]{6}<\/span><span class="now-title" data-now-title/);
+		assert.ok(!/<details class="now-leaf"[^>]* open/.test(r), 'closed until opened');
+		// the outlines, the holes and the task table sit after the row, not in it
+		const [summary] = r.split('</summary>');
+		assert.ok(!summary.includes('data-leaf-plan') && !summary.includes('data-leaf-tasks') && !summary.includes('<a '));
+	}
+	// trial 8's p2m-527634 (N12), proved by outline 1 with its 8 holes: all solved, its GPU-hours from its tasks
+	const n12 = rows.find((r) => r.includes('data-current-leaf="N12"'))!;
+	assert.match(n12, /data-leaf-summary>Proved: outline 1 assembled</);
+	assert.match(n12, /data-now-holes="8\/8">8 of 8 holes solved</);
+	assert.match(n12, /data-now-hours="[\d.]+">\d+\.\d\d GPU-h</);
+	assert.match(n12, new RegExp(`data-now-title title="[^"]+">${shortTitle(titles['p2m-527634'], '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<`));
+	// a running leaf says "so far"
+	assert.match(rows.find((r) => r.includes('data-state="running"'))!, /GPU-h so far</);
+});
+
+test('a short title: prove2me’s title without TeX, cut; else the Lean name', () => {
+	assert.equal(shortTitle('Lemma $x \\le y$', 'T.x'), 'Lemma x ≤ y');
+	assert.equal(shortTitle('', 'Some.lean_name'), 'Some.lean_name');
+	const long = shortTitle('a'.repeat(100), 'T', 70);
+	assert.equal(long.length, 70);
+	assert.ok(long.endsWith('…'));
+	assert.equal(holesDone(null), null);
+	assert.equal(holesDone({ summary: '', outlines: [{ gen: 1, state: 'writing', text: '', reason: '', cost: '', holes: [] }] }), null);
+	assert.deepEqual(
+		holesDone({
+			summary: '',
+			outlines: [
+				{
+					gen: 2, state: 'in_progress', text: '', reason: '', cost: '',
+					holes: [
+						{ hole: 1, label: 'Hole 1', kind: 'lemma', state: 'solved', text: '', title: '' },
+						{ hole: 2, label: 'Hole 2', kind: 'lemma', state: 'working', text: '', title: '' },
+						{ hole: null, label: 'Assembly', kind: 'assembly', state: 'queued', text: '', title: '' },
+					],
+				},
+			],
+		}),
+		{ solved: 1, total: 2, text: '1 of 2 holes solved' },
+	);
 });

@@ -266,6 +266,18 @@ const command = (text) => text.match(/data-node-start-linux[\s\S]*?<pre[\s\S]*?<
 if (!command(nodePage)?.includes('node.sh | sh')) errors.push('node/index.html: the start does not show the one-line install');
 else if (command(nodePage) !== command(home)) errors.push('node/index.html: the one-line install differs from the home page\'s');
 
+// The proved theorems page is easy to find (2026-11-28): the prove2me page, /science/ and the home page link it, the
+// theorems page links back to the work, and the prove2me page leads with the theorems page's headline number.
+const page = (f) => (existsSync(join(dist, f)) ? readFileSync(join(dist, f), 'utf8') : '');
+const theoremsHref = 'href="/science/prove2me/theorems/"';
+for (const [f, sel] of [['science/prove2me/index.html', 'data-p2m-theorems-link="headline"'], ['science/index.html', 'data-card-link="theorems"'], ['index.html', 'data-home-theorems-link']])
+	if (!new RegExp(`<a ${theoremsHref} ${sel}`).test(page(f))) errors.push(`${f}: no link to the proved theorems page (${sel})`);
+const thPage = page('science/prove2me/theorems/index.html');
+if (!/<a href="\/science\/prove2me\/" data-th-work-link/.test(thPage)) errors.push('science/prove2me/theorems/index.html: no link back to the prove2me page');
+const lead = (text, re) => text.match(re)?.[1];
+const thN = lead(thPage, /data-th-headline-n>(\d+)</), p2mN = lead(page('science/prove2me/index.html'), /data-p2m-hl-n>(\d+)</);
+if (!thN || thN !== p2mN) errors.push(`science/prove2me/: its headline (${p2mN}) is not the proved theorems page's (${thN})`);
+
 if (errors.length) {
 	console.error(errors.join('\n'));
 	console.error(`\n${errors.length} problem(s) in ${html.length} pages`);
