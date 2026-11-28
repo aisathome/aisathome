@@ -55,7 +55,9 @@ ip link set lo up || die "cannot bring up the sandbox's loopback"
 # units). Then the folders the installer writes.
 sandbox_etc() {
   local h="$tmp/host-etc" e="$tmp/etc" f
-  mkdir -p "$h"; mount --bind /etc "$h" && mount -o remount,bind,ro "$h" || die "cannot mount a view of /etc"
+  mkdir -p "$h"
+  # shellcheck disable=SC2015 # die if either mount fails
+  mount --bind /etc "$h" && mount -o remount,bind,ro "$h" || die "cannot mount a view of /etc"
   rm -rf "$e"; mkdir -p "$e/systemd/system"
   for f in "$h"/* "$h"/.[!.]*; do
     [[ -e "$f" || -L "$f" ]] || continue
@@ -138,9 +140,11 @@ case "$*" in
 esac
 SH
 # journalctl: llama-server's log as $st/journal has it (none: a clean start).
+# shellcheck disable=SC2016 # a stub script: its $ are for the stub
 printf '#!/bin/sh\ncat "$HANDOFF_STATE/journal" 2>/dev/null\nexit 0\n' > "$tmp/stubs/journalctl"
 # sleep: none while $st/fast-sleep is there (the installer's 3-minute wait for an engine that never answers
 # /health), the real one otherwise.
+# shellcheck disable=SC2016 # a stub script: its $ are for the stub
 printf '#!/bin/sh\n[ -e "$HANDOFF_STATE/fast-sleep" ] && exit 0\nexec /bin/sleep "$@"\n' > "$tmp/stubs/sleep"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/useradd"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/stubs/userdel"
@@ -352,6 +356,7 @@ never_sent() { ! grep -qF -- "$3" "$st/$2.log" 2>/dev/null || fail "$1: gateway 
 # error), as its systemd unit runs it.
 agent_accepts() {
   local log="$tmp/agent.log" rc
+  # shellcheck disable=SC1091 # the token file the install wrote
   ( set -a; . "$conf/token.env"; set +a; AISATHOME_UI_PORT=off timeout 2 "$node_bin" -config "$conf/node.json" ) > "$log" 2>&1; rc=$?
   [[ $rc -eq 124 ]] || { out="$(cat "$log")"; fail "$1: the agent did not start with the installed files (exit $rc)"; }
 }
@@ -650,6 +655,7 @@ done
 # The state folder is the agent's (0751: the engine passes through to models/ only), models/ the engine's,
 # and llama-server runs as its own user.
 [[ "$(stat -c %a /var/lib/aisathome-node)" = 751 && "$(stat -c %a "$models_dir")" = 750 ]] || fail "folder modes: $(stat -c '%n %a' /var/lib/aisathome-node "$models_dir")"
+# shellcheck disable=SC2015 # fail unless both lines are there
 grep -qx "User=aisathome-llama" /etc/systemd/system/aisathome-llama.service && grep -qx "User=aisathome" /etc/systemd/system/aisathome-node.service ||
   fail "the engine does not run as its own user"
 

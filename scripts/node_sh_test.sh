@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # (whole file) the single-quoted $ are in stub scripts and in node.sh lines it matches
 # Tests for site/public/node.sh (the one-line install without an account, and the update of a node that
 # is there already) against a fake release: it checks the bundle against SHA256SUMS, runs the installer's
 # checks first, asks at the terminal (here a file) and, only on yes, installs a new node with --anonymous
