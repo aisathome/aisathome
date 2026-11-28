@@ -60,8 +60,8 @@ export function nodeJsonLdProblems(data, origin) {
 	return p;
 }
 
-// robots.txt (seo.ts): the crawlers named explicitly, and the training crawlers, whose policy is the owner's call
-// (2026-11-28) and which stay under "*".
+// robots.txt (seo.ts): the crawlers named explicitly, and the training crawlers, which stay under "*": changing their
+// policy is a decision of its own.
 const PRIVATE = ['/account', '/v1/', '/stats/', '/__login'];
 const SEARCH_CRAWLERS = ['Googlebot', 'Bingbot', 'OAI-SearchBot', 'ChatGPT-User', 'PerplexityBot', 'Perplexity-User', 'Claude-SearchBot', 'Claude-User', 'ClaudeBot'];
 const TRAINING_CRAWLERS = ['GPTBot', 'Google-Extended', 'CCBot'];
@@ -93,7 +93,7 @@ export function robotsProblems(text, origin) {
 	const named = (a) => groups.filter((g) => g.agents.some((x) => x.toLowerCase() === a.toLowerCase()));
 	if (named('*').length !== 1) p.push('not exactly one group for every crawler (User-agent: *)');
 	for (const a of SEARCH_CRAWLERS) if (named(a).length !== 1) p.push(`${a} is not named in exactly one group`);
-	for (const a of TRAINING_CRAWLERS) if (named(a).length) p.push(`names ${a}: the training crawlers' policy is the owner's call`);
+	for (const a of TRAINING_CRAWLERS) if (named(a).length) p.push(`names ${a}: the training crawlers' policy is a decision of its own`);
 	for (const g of groups) {
 		const who = g.agents.join(', ');
 		const disallows = g.rules.filter(([k]) => k === 'disallow').map(([, v]) => v);

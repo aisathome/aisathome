@@ -89,14 +89,14 @@ export function nodeJsonLd(base = origin) {
 export const jsonLdScript = (data: unknown) => JSON.stringify(data).replace(/</g, '\\u003c');
 
 // The crawlers of the search engines and AI answer engines, named in robots.txt so they are allowed explicitly, with the
-// same rules as every other crawler (owner, 2026-11-28): the search indexes (Google, Bing, which ChatGPT search and
-// Copilot also read), the AI search indexes and the fetches a person's question makes (OpenAI, Perplexity, Anthropic),
-// and ClaudeBot, which the site welcomed by name before.
+// same rules as every other crawler: the search indexes (Google, Bing, which ChatGPT search and Copilot also read), the
+// AI search indexes and the fetches a person's question makes (OpenAI, Perplexity, Anthropic), and ClaudeBot, which the
+// site welcomed by name before.
 export const searchCrawlers = [
 	'Googlebot', 'Bingbot', 'OAI-SearchBot', 'ChatGPT-User', 'PerplexityBot', 'Perplexity-User', 'Claude-SearchBot', 'Claude-User', 'ClaudeBot',
 ];
 // Crawlers that collect text to train models. They fall under "User-agent: *" (allowed, like every crawler) and are
-// not named: whether to keep them is the owner's call, so robots.txt's checks refuse a group that names one.
+// not named: changing that is a decision of its own, so robots.txt's checks refuse a group that names one.
 export const trainingCrawlers = ['GPTBot', 'Google-Extended', 'CCBot'];
 
 /** /robots.txt: everything public is open to every crawler, AI crawlers included; the search and answer engines'
