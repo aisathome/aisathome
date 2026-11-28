@@ -193,9 +193,11 @@ type fakeBOINC struct {
 	works         map[string]string // work unit → credential file
 	models        map[string]string // work unit → its model's URL
 	validatedApps []string          // Validate's apps
+	validatedFor  map[int64]string  // Validate's app by work unit id
 	cancelled     []string
 	stageErr      error
 	createErr     error
+	failApp       string // create_work fails for this app only
 	cancelErr     error
 	storeErr      error
 	// sendOnCancel: BOINC sends the work unit to this host while cancel_jobs runs.
@@ -252,6 +254,10 @@ func (f *fakeBOINC) Validate(_ context.Context, id int64, app string) (string, e
 	defer f.mu.Unlock()
 	f.validated = append(f.validated, id)
 	f.validatedApps = append(f.validatedApps, app)
+	if f.validatedFor == nil {
+		f.validatedFor = map[int64]string{}
+	}
+	f.validatedFor[id] = app
 	if f.validateErr != nil {
 		return "", f.validateErr
 	}
@@ -340,6 +346,9 @@ func (f *fakeBOINC) CreateWork(_ context.Context, name, cred string, t Tier) err
 	}
 	if f.createErr != nil {
 		return f.createErr
+	}
+	if f.failApp != "" && t.App == f.failApp {
+		return errors.New("create_work: no such app")
 	}
 	if _, ok := f.staged[cred]; !ok {
 		return errors.New("create_work: input file not staged")

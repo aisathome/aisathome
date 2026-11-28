@@ -302,10 +302,10 @@ create:
 			if err := b.createPilot(ctx, t); err != nil {
 				if s := statusOf(err); s == http.StatusConflict || s == http.StatusTooManyRequests {
 					b.log.Info("bridge: no more pilots now", "why", err)
-				} else {
-					errs = append(errs, err)
+					break create // the connector is full: no tier gets more
 				}
-				break create
+				errs = append(errs, err)
+				break // this tier failed (its app, say); the next tier still gets its pilots
 			}
 		}
 	}
