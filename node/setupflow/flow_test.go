@@ -332,6 +332,7 @@ type fakeLinker struct {
 	info    protocol.LinkInfo
 	release chan protocol.LinkPoll
 	err     error
+	late    bool // Wait answers from release even after a cancel, like a poll already on its way back
 }
 
 func (l *fakeLinker) Start(_ context.Context, info protocol.LinkInfo) (protocol.LinkStart, error) {
@@ -341,6 +342,9 @@ func (l *fakeLinker) Start(_ context.Context, info protocol.LinkInfo) (protocol.
 }
 
 func (l *fakeLinker) Wait(ctx context.Context, _ protocol.LinkStart) (protocol.LinkPoll, error) {
+	if l.late {
+		return <-l.release, l.err
+	}
 	select {
 	case p := <-l.release:
 		return p, l.err
@@ -454,10 +458,23 @@ func TestSetupLink(t *testing.T) {
 
 	// Cancel: the waiting link is gone, and a late approval changes nothing.
 	l = e.linker()
-	e.f.Link("")
+	l.late = true
+	if err := e.f.Link(""); err != nil {
+		t.Fatal(err)
+	}
 	e.f.LinkCancel()
 	if e.f.State().Link != nil {
 		t.Fatal("the cancelled link is still shown")
+	}
+	before, _ := os.ReadFile(e.cfg)
+	l.release <- protocol.LinkPoll{Status: protocol.LinkApproved, Token: "nt-n-0000000e.late", NodeID: "n-0000000e"}
+	select {
+	case <-e.reload:
+		t.Fatal("a late approval reloaded the node")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if after, _ := os.ReadFile(e.cfg); string(after) != string(before) || e.f.State().Link != nil {
+		t.Fatalf("a late approval changed the node: %s, link %+v", after, e.f.State().Link)
 	}
 }
 
