@@ -62,7 +62,7 @@ cd harness && python3 -m unittest discover -s tests -t .
 # the node's setup page in a browser (Playwright; once: playwright install chromium)
 cd e2e/browser && uv run --with-requirements requirements.txt pytest
 
-cd site && npm ci && npm run build && npm run check
+cd site && npm ci && npm test && npm run typecheck && npm run build && npm run check
 ```
 
 The Windows jobs (node tests, the agent as a real service with `llama-server` on the CPU, and the
@@ -108,8 +108,8 @@ What we expect of tests:
 3. Open the pull request with what it changes, why, and how you tested it.
 4. **CI must pass.** The required checks are `check` (gofmt, vet, staticcheck, govulncheck, the
    internal-references lint, `go test -race`, the installer and bundle tests, the e2e tests and
-   the browser test) and `site` (build and `npm run check`). The Windows and harness jobs run on
-   every push too and should be green.
+   the browser test) and `site` (tests, `astro check`, build and `npm run check`). The Windows
+   and harness jobs run on every push too and should be green.
 5. A maintainer reviews and merges, usually with "Rebase and merge". Gateway changes go live
    after a run on a staging gateway; node changes ship with the next tagged release.
 

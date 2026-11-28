@@ -8,6 +8,7 @@
     "preview": "astro preview",
     "astro": "astro",
     "check": "node scripts/check-dist.mjs",
+    "typecheck": "astro check",
     "test": "node scripts/test.mjs",
     "records": "node scripts/prove2me-records.mjs"
   },
@@ -28,5 +29,9 @@
   "private": true,
   "engines": {
     "node": ">=22.12"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "typescript": "6.0.3"
   }
 }
