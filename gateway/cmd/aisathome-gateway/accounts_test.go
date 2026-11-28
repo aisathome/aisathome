@@ -143,8 +143,12 @@ func TestAccountsNodeCommands(t *testing.T) {
 	// nodes without an account: their own limit and switch
 	run("nodes", "anon", "limit", "7")
 	run("nodes", "anon", "close")
-	if out := run("nodes"); !strings.Contains(out, "0 of 7 nodes without an account") || !strings.Contains(out, "new ones are closed") {
+	if out := run("nodes"); !strings.Contains(out, "0 of 7 nodes without an account") || !strings.Contains(out, "new ones are closed") ||
+		!strings.Contains(out, "new nodes are open") {
 		t.Fatalf("nodes anon limit and close:\n%s", out)
+	}
+	if store.Refresh(); !store.Settings().AnonClosed || store.Settings().MaxAnonNodes != 7 {
+		t.Fatalf("nodes anon limit and close not saved: %+v", store.Settings())
 	}
 	run("nodes", "anon", "limit", "default")
 	run("nodes", "anon", "open")

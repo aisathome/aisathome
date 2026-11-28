@@ -431,11 +431,18 @@ func (s *AccountStore) isHeld(nodeID string) bool {
 	return s.held[nodeID]
 }
 
-// NodeHolds lists the holds in the accounts file.
+// NodeHolds returns a copy of the holds in the accounts file, evidence included.
 func (s *AccountStore) NodeHolds() []NodeHold {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Clone(s.f.NodeHolds)
+	l := slices.Clone(s.f.NodeHolds)
+	for i := range l {
+		if e := l[i].Evidence; e != nil {
+			c := *e
+			l[i].Evidence = &c
+		}
+	}
+	return l
 }
 
 // nodeTotal counts node tokens over all accounts.
