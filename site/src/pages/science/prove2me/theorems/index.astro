@@ -8,7 +8,7 @@
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { p2m } from '../../../../data/prove2me';
 import {
-	THEOREMS_PATH, costsHTML, ctaHTML, headlineHTML, selectionText, theoremKpisHTML, theoremRowsHTML, trialBarRowsHTML, trialBarsSVG, updatedText,
+	THEOREMS_PATH, costsHTML, ctaHTML, headlineHTML, listCountText, selectionText, theoremKpisHTML, theoremRowsHTML, trialBarRowsHTML, trialBarsSVG, updatedText,
 } from '../../../../data/prove2me-theorems';
 import AcceptedChart from '../../../../components/AcceptedChart.astro';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
@@ -56,7 +56,7 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 	<aside class="th-cta not-content" data-th-cta set:html={ctaHTML()} />
 
 	<h2 id="progress">Progress</h2>
-	<AcceptedChart series={view.series} proofsOnly class="th-accepted-chart" />
+	<AcceptedChart series={view.series} class="th-accepted-chart" />
 	<figure class="th-bars not-content" data-th-bars data-source="build" hidden={!view.perTrial.length}>
 		<figcaption>Each trial: open leaves tried, and proofs prove2me accepted</figcaption>
 		<ul class="legend" aria-hidden="true">
@@ -92,7 +92,7 @@ const imageAlt = `${view.counts.proofs} Lean proofs by ${p2m.model} accepted by 
 
 	<h2 id="theorems">Every accepted leaf</h2>
 	<p>
-		<span data-th-count>{view.theorems.length}</span> leaves, newest first. Each statement is on prove2me for now; plain-English statements
+		<span data-th-count>{listCountText(view)}</span> Each statement is on prove2me for now; plain-English statements
 		are not written yet. A leaf accepted since the site’s last build appears here at once, and gets its own page at the next build.
 	</p>
 	<div class="th-wrap not-content">

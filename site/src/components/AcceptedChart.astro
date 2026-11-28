@@ -1,39 +1,36 @@
 ---
-// The chart of proofs prove2me accepted, counted up over time (src/data/prove2me-chart.ts), with its legend, a text
-// alternative (the SVG's aria-label) and its numbers in a table. On the home page and on /science/prove2me/. The build
+// The chart of the model's proofs prove2me accepted, counted up over time (src/data/prove2me-chart.ts), with its legend, a text
+// alternative (the SVG's aria-label) and its numbers in a table. On the home page, /science/prove2me/ and the proved
+// theorems page. The build
 // draws it at a default width; the page's script mounts it (mountAcceptedChart), which draws it again at its real width
 // and with the gateway's newer records. With nothing to draw (no proof accepted yet) the figure is there but hidden, so
 // the live records can fill it; a live read with nothing accepted hides it again. Extra attributes go on the figure
-// (the home page keeps data-home-p2m-chart). `proofsOnly`: the series has no reuses (the proved theorems page counts the
-// model's proofs alone), so the caption says so and the legend has no reuse mark.
+// (the home page keeps data-home-p2m-chart). A reuse is never in the series (prove2me-chart.ts acceptedSeries).
 import { acceptedChartSVG, acceptedRowsHTML, type AcceptedSeries } from '../data/prove2me-chart';
 
 interface Props {
 	series: AcceptedSeries | null;
-	proofsOnly?: boolean;
 	[attr: string]: unknown;
 }
-const { series, proofsOnly = false, class: cls, ...attrs } = Astro.props;
+const { series, class: cls, ...attrs } = Astro.props;
 ---
 
 <figure class:list={['p2m-chart not-content', cls as string | undefined]} data-p2m-chart data-source="build" hidden={!series} {...attrs}>
-	<figcaption>{proofsOnly ? 'Proofs by the model accepted by prove2me, counted up' : 'Proofs accepted by prove2me, counted up'}</figcaption>
+	<figcaption>Proofs by the model accepted by prove2me, counted up</figcaption>
 	<ul class="legend" aria-hidden="true">
 		<li><span class="swatch dot"></span>Proof</li>
-		{!proofsOnly && <li><span class="swatch dot hollow"></span>Closed by reusing a proof</li>}
 		<li><span class="swatch dash"></span>A trial starts (its number above)</li>
 	</ul>
 	<div class="p2m-svg" data-p2m-chart-svg set:html={series ? acceptedChartSVG(series) : ''} />
 	<details class="p2m-chart-table">
 		<summary>The numbers</summary>
-		<div class="p2m-chart-wrap" tabindex="0" role="region" aria-label="Proofs accepted by prove2me, newest first">
+		<div class="p2m-chart-wrap" tabindex="0" role="region" aria-label="Proofs by the model accepted by prove2me, newest first">
 			<table>
 				<thead>
 					<tr>
 						<th scope="col">Accepted (UTC)</th>
 						<th scope="col" class="num">Trial</th>
 						<th scope="col">Lemma</th>
-						<th scope="col">How</th>
 						<th scope="col" class="num">Total</th>
 					</tr>
 				</thead>
@@ -45,7 +42,7 @@ const { series, proofsOnly = false, class: cls, ...attrs } = Astro.props;
 </figure>
 
 <style>
-	/* In the network page's chart style; --chart-bg is what the chart sits on (hollow points are filled with it). */
+	/* In the network page's chart style; --chart-bg is what the chart sits on (the points' outline). */
 	.p2m-chart {
 		--c-line: #199e70;
 		--chart-bg: var(--sl-color-bg);
@@ -58,7 +55,6 @@ const { series, proofsOnly = false, class: cls, ...attrs } = Astro.props;
 	.legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0 0 0.5rem; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
 	.legend li { display: flex; align-items: center; gap: 0.4rem; margin: 0; }
 	.swatch.dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--c-line); }
-	.swatch.dot.hollow { background: transparent; border: 2px solid var(--c-line); }
 	.swatch.dash { width: 0; height: 0.9rem; border-left: 1px dashed var(--sl-color-gray-3); }
 	.p2m-svg { width: 100%; }
 	.p2m-svg :global(svg) { display: block; width: 100%; height: auto; overflow: visible; }
@@ -69,7 +65,6 @@ const { series, proofsOnly = false, class: cls, ...attrs } = Astro.props;
 	.p2m-svg :global(.trial) { stroke: var(--sl-color-gray-4); stroke-width: 1; stroke-dasharray: 3 3; }
 	.p2m-svg :global(.step) { fill: none; stroke: var(--c-line); stroke-width: 2.5; stroke-linejoin: round; }
 	.p2m-svg :global(.pt) { fill: var(--c-line); stroke: var(--chart-bg); stroke-width: 1.5; }
-	.p2m-svg :global(.pt.reuse) { fill: var(--chart-bg); stroke: var(--c-line); stroke-width: 2; }
 	.p2m-chart-table { margin-top: 0.5rem; }
 	.p2m-chart-table summary { cursor: pointer; font-size: 0.9rem; color: var(--sl-color-gray-2); }
 	.p2m-chart-wrap { max-height: 18rem; overflow: auto; }

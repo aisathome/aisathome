@@ -596,21 +596,22 @@ def _records_page(pages, records, doc=404, campaigns=None, results=None, width=N
 
 def test_the_numbers_submissions_and_trials_come_live_from_the_records(pages, site, data, records):
     """With the gateway's campaigns, results and tasks (as on 2026-11-18): the headline numbers count trials 1 to 5 from
-    the build and trial 6 on from the records (8 of 8 accepted, 6 of 26 open leaves, 17 of 54 runs); the submissions
+    the build and trial 6 on from the records (8 of 8 accepted: 6 proofs and 2 reuses, never counted as proofs; 6 of 26
+    open leaves with an accepted proof; 17 of 54 runs passed our own check); the submissions
     list gains trial 8's; the trials table's rows from trial 6 on are live, trial 8 running, tokens computed leading,
     the All row counting them; each trial's list from trial 6 on has its generated facts, the campaign's own text as
     plain text and every leaf; "Working on now" is the newest trial campaign (no data document)."""
     page = _records_page(pages, records, site=site)
     kpis = page.locator("[data-p2m-kpis][data-source=live]")
     expect(kpis).to_be_visible()
-    expect(kpis.locator("[data-kpi=accepted] dd")).to_have_text("8")
-    expect(kpis.locator("[data-kpi=accepted] dt")).to_have_text("proofs accepted by prove2me, of 8 submitted")
+    expect(kpis.locator("[data-kpi=accepted] dd")).to_have_text("6")
+    expect(kpis.locator("[data-kpi=accepted] dt")).to_have_text("proofs by the model accepted by prove2me, of 8 submitted (2 of them reuses)")
     expect(kpis.locator("[data-kpi=open] dd")).to_have_text("6")
-    expect(kpis.locator("[data-kpi=open] dt")).to_have_text("open leaves proved, of 26 tried")
+    expect(kpis.locator("[data-kpi=open] dt")).to_have_text("open leaves with an accepted proof, of 26 tried")
     expect(kpis.locator("[data-kpi=reused] dd")).to_have_text("2")
-    expect(kpis.locator("[data-kpi=runs] dt")).to_have_text("runs proved, of 54 in trials 1 to 8")
+    expect(kpis.locator("[data-kpi=runs] dt")).to_have_text("runs that passed our own check, of 54 in trials 1 to 8")
     expect(kpis.locator("[data-kpi=runs] dd")).to_have_text("17")
-    expect(page.locator("[data-p2m-small]")).to_contain_text("Small numbers: 6 open leaves proved so far.")
+    expect(page.locator("[data-p2m-small]")).to_contain_text("Small numbers: 6 open leaves with an accepted proof so far.")
     expect(page.locator("[data-p2m-updated]")).to_have_text(re.compile(r"^Live from the gateway’s records, updated 18 November 2026, 14:58 UTC$"))
 
     subs = page.locator("[data-p2m-submissions][data-source=live] tbody tr")
@@ -684,14 +685,15 @@ def test_a_campaigns_text_is_plain_text(pages, site, records):
 @pytest.mark.parametrize("broken", ["campaigns", "results", "campaigns not a list"])
 def test_the_numbers_stay_the_builds_when_the_records_fail(pages, site, data, records, broken):
     """When the campaigns or the results fail (the tasks answer), the headline numbers, the submissions, the trials
-    table and every leaf stay the build's (the records at the build: 8 of 8 accepted, 17 runs proved); the task table
+    table and every leaf stay the build's (the records at the build: 6 proofs and 2 reuses accepted of 8, 17 runs passed
+    our own check); the task table
     still takes the tasks."""
     kw = {"campaigns": 500} if broken == "campaigns" else {"results": 500} if broken == "results" else {"campaigns": {"campaigns": {}}}
     page = _records_page(pages, records, site=site, **kw)
     page.wait_for_timeout(1500)
     kpis = page.locator("[data-p2m-kpis]")
     expect(kpis).to_have_attribute("data-source", "build")
-    expect(kpis.locator("[data-kpi=accepted] dd")).to_have_text("8")
+    expect(kpis.locator("[data-kpi=accepted] dd")).to_have_text("6")
     expect(kpis.locator("[data-kpi=runs] dd")).to_have_text("17")
     expect(page.locator("[data-p2m-trials]")).to_have_attribute("data-source", "build")
     expect(page.locator("[data-p2m-scorecard]")).to_have_attribute("data-source", "build")
@@ -706,8 +708,8 @@ def test_without_javascript_the_page_is_the_builds(pages, site, data, records):
     (trials 1 to 5 the frozen data's), with tokens computed in the tables; nothing to push by hand."""
     page = pages(js=False)
     page.goto(site + PAGE)
-    expect(page.locator("[data-p2m-kpis] [data-kpi=accepted] dd")).to_have_text("8")
-    expect(page.locator("[data-p2m-kpis] [data-kpi=open] dt")).to_have_text("open leaves proved, of 26 tried")
+    expect(page.locator("[data-p2m-kpis] [data-kpi=accepted] dd")).to_have_text("6")
+    expect(page.locator("[data-p2m-kpis] [data-kpi=open] dt")).to_have_text("open leaves with an accepted proof, of 26 tried")
     rows = page.locator("[data-p2m-trials] tbody tr")
     assert [r.get_attribute("data-trial") for r in rows.all()] == ["1", "2", "3", "4", "5", "6p", "6", "7p", "7", "8"]
     expect(page.locator("[data-p2m-trials] thead")).to_contain_text("Tokens computed")
@@ -722,18 +724,18 @@ def test_without_javascript_the_page_is_the_builds(pages, site, data, records):
 
 
 def test_home_and_science_overview_read_the_records(pages, site, records):
-    """The home page's prove2me line and the /science/ card: the records' numbers (8 accepted, 6 of 26 open leaves,
-    trial 8 running); the build's when the gateway fails."""
+    """The home page's prove2me line and the /science/ card: the records' numbers (6 proofs accepted, the 2 reuses apart;
+    6 of 26 open leaves; trial 8 running); the build's when the gateway fails."""
     page = _records_page(pages, records, path="/", site=site)
     line = page.locator("[data-home-prove2me][data-source=live]")
-    expect(line.locator("[data-home-p2m-accepted]")).to_have_text("8")
+    expect(line.locator("[data-home-p2m-accepted]")).to_have_text("6")
     expect(line.locator("[data-home-p2m-text]")).to_have_text(
         "proofs by Qwen3.8 27B accepted on prove2me so far: it proved 6 of the 26 open lemmas it tried and closed 2 more by "
         "reusing a proof already there. prove2me states theorems from research papers in Lean 4 and checks every proof by machine. "
         "Trial 8 is running.")
     page = _records_page(pages, records, path="/science/", site=site)
     card = page.locator("[data-project=prove2me][data-source=live]")
-    expect(card.locator("[data-number=accepted] dd")).to_have_text("8")
+    expect(card.locator("[data-number=accepted] dd")).to_have_text("6")
     expect(card.locator("[data-number=open] dd")).to_have_text("6 of 26")
     expect(card.locator("[data-number=trial] dt")).to_have_text("running since 16 November 2026")
     page = _page(pages)
@@ -744,20 +746,21 @@ def test_home_and_science_overview_read_the_records(pages, site, records):
 
 def test_home_chart_of_accepted_proofs(pages, site, records):
     """The home page's science section comes before the live strip and the node block, and carries a chart of the
-    proofs prove2me accepted: one point per accepted proof (8 with the records of 2026-11-18), its total at the end, a
-    text alternative, and the same proofs in its table, newest first. Without JavaScript the build's chart is there."""
+    proofs prove2me accepted: one point per accepted proof by the model (6 with the records of 2026-11-18; their 2 reuses
+    are not proofs), its total at the end, a text alternative, and the same proofs in its table, newest first. Without
+    JavaScript the build's chart is there."""
     page = _records_page(pages, records, path="/", site=site)
     expect(page.locator("[data-home-prove2me][data-source=live]")).to_be_attached()
     fig = page.locator("[data-home-p2m-chart]")
     expect(fig).to_have_attribute("data-source", "live")
     svg = fig.locator("svg[role=img]")
-    assert svg.get_attribute("aria-label").startswith("8 proofs accepted by prove2me from ")
-    expect(svg.locator("circle")).to_have_count(8)
-    expect(svg.locator("text.end-n")).to_have_text("8")
+    assert svg.get_attribute("aria-label").startswith("6 proofs by the model accepted by prove2me from ")
+    expect(svg.locator("circle")).to_have_count(6)
+    expect(svg.locator("text.end-n")).to_have_text("6")
     fig.locator("summary").click()
     rows = fig.locator("tbody tr")
-    expect(rows).to_have_count(8)
-    expect(rows.first.locator("td").last).to_have_text("8")
+    expect(rows).to_have_count(6)
+    expect(rows.first.locator("td").last).to_have_text("6")
     order = page.evaluate("""() => [...document.querySelectorAll('[data-home-science], [data-live-stats], [data-home-node], [data-home-devlog]')]
         .map((e) => e.matches('[data-home-science]') ? 'science' : e.matches('[data-live-stats]') ? 'live' : e.matches('[data-home-node]') ? 'node' : 'devlog')""")
     assert order == ["science", "live", "node", "devlog"], order
@@ -773,7 +776,8 @@ def test_home_chart_of_accepted_proofs(pages, site, records):
 
 def test_prove2me_page_chart_of_accepted_proofs(pages, site, records):
     """/science/prove2me/ has the home page's chart of accepted proofs right under its headline numbers (before the
-    submissions): with the gateway's records (8 accepted on 2026-11-18) it redraws to 8 points and 8 table rows, the
+    submissions): with the gateway's records (6 proofs accepted on 2026-11-18, and 2 reuses that are not proofs) it
+    redraws to 6 points and 6 table rows, the
     same count as the headline number; it fits a phone; without JavaScript the build's chart is there."""
     page = _records_page(pages, records, site=site)
     expect(page.locator("[data-p2m-kpis][data-source=live]")).to_be_attached()
@@ -781,11 +785,11 @@ def test_prove2me_page_chart_of_accepted_proofs(pages, site, records):
     expect(fig).to_have_count(1)
     expect(fig).to_have_attribute("data-source", "live")
     svg = fig.locator("svg[role=img]")
-    assert svg.get_attribute("aria-label").startswith("8 proofs accepted by prove2me from ")
-    expect(svg.locator("circle")).to_have_count(8)
-    expect(svg.locator("text.end-n")).to_have_text("8")
+    assert svg.get_attribute("aria-label").startswith("6 proofs by the model accepted by prove2me from ")
+    expect(svg.locator("circle")).to_have_count(6)
+    expect(svg.locator("text.end-n")).to_have_text("6")
     fig.locator("summary").click()
-    expect(fig.locator("tbody tr")).to_have_count(8)
+    expect(fig.locator("tbody tr")).to_have_count(6)
     order = page.evaluate("""() => [...document.querySelectorAll('[data-p2m-kpis], figure[data-p2m-chart], [data-p2m-submissions]')]
         .map((e) => e.matches('[data-p2m-kpis]') ? 'kpis' : e.matches('figure') ? 'chart' : 'submissions')""")
     assert order == ["kpis", "chart", "submissions"], order
@@ -814,7 +818,8 @@ def _serve_tasks(page, tasks):
 
 def _with_inplace_proof(records):
     """The records with trial 11's p2m-a5e581 shape added to trial 8: an outline with its holes in place and the in-place
-    task proved (its own file passed the full check), no assembly. Open leaves proved: 7 of 27 instead of 6 of 26."""
+    task proved (its own file passed the full check), no assembly, nothing submitted yet. Open leaves tried: 27 instead
+    of 26; with an accepted proof: still 6 (our own check is not prove2me's acceptance)."""
     rec = json.loads(json.dumps(records))
     t8 = next(c for c in rec["campaigns"]["campaigns"] if c["id"] == "t8")
     t8["items"].append({"id": "p2m-a5e581", "title": "Alice’s marginal is uniform", "role": "open",
@@ -832,11 +837,13 @@ def test_home_and_science_count_a_leaf_its_in_place_task_proved(pages, site, rec
     """Code review: the home page and /science/ asked the gateway for outline and assembly tasks only, so a leaf proved
     by its in-place task (outcome `proved` on a `rest` task, as trial 11's p2m-a5e581) dropped out of their count of open
     leaves proved while the prove2me page counted it. With a gateway that filters by role as the real one does, all three
-    say 7 of 27."""
+    count it as tried (27); none counts it as proved, which takes prove2me's acceptance (6 of 27), and the prove2me
+    page says it passed our own check."""
     rec = _with_inplace_proof(records)
-    for path, sel, want in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-text]", re.compile(r"it proved 7 of the 27 open lemmas")),
-                            ("/science/", "[data-project=prove2me][data-source=live] [data-number=open] dd", "7 of 27"),
-                            (PAGE, "[data-p2m-kpis][data-source=live] [data-kpi=open] dd", "7")):
+    for path, sel, want in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-text]", re.compile(r"it proved 6 of the 27 open lemmas")),
+                            ("/science/", "[data-project=prove2me][data-source=live] [data-number=open] dd", "6 of 27"),
+                            (PAGE, "[data-p2m-kpis][data-source=live] [data-kpi=open] dt", "open leaves with an accepted proof, of 27 tried"),
+                            (PAGE, "[data-p2m-small]", re.compile(r"^Small numbers: 6 open leaves with an accepted proof so far \(1 more passed our own check without an accepted proof\)\."))):
         page = _page(pages, live=(404, rec["tasks"]), records={"campaigns": rec["campaigns"], "results": rec["results"]})
         _serve_tasks(page, rec["tasks"])
         page.goto(site + path)
@@ -853,19 +860,20 @@ def _pending(records, n=None):
 
 def test_home_and_science_refresh_every_minute(pages, site, records):
     """The home page's prove2me line and chart and the /science/ card read the gateway's records again every minute
-    (as the live strip and the prove2me page do): a proof prove2me accepts after the page opened shows without a reload."""
+    (as the live strip and the prove2me page do): a proof prove2me accepts after the page opened shows without a reload. The first 7 results
+    accepted are 5 proofs and the 2 reuses, which are not counted; the 8th makes 6."""
     for path, sel in (("/", "[data-home-prove2me][data-source=live] [data-home-p2m-accepted]"),
                       ("/science/", "[data-project=prove2me][data-source=live] [data-number=accepted] dd")):
         page = _page(pages, live=(404, records["tasks"]), records={"campaigns": records["campaigns"], "results": _pending(records, 7)})
         page.clock.install()
         page.goto(site + path)
-        expect(page.locator(sel)).to_have_text("7")
+        expect(page.locator(sel)).to_have_text("5")
         page.unroute("**/v1/projects/prove2me/results?*")
         _serve(page, "**/v1/projects/prove2me/results?*", records["results"])
         page.clock.run_for(60_000)
-        expect(page.locator(sel)).to_have_text("8", timeout=15_000)
+        expect(page.locator(sel)).to_have_text("6", timeout=15_000)
         if path == "/":
-            expect(page.locator("[data-home-p2m-chart] svg[role=img] circle")).to_have_count(8)
+            expect(page.locator("[data-home-p2m-chart] svg[role=img] circle")).to_have_count(6)
 
 
 @pytest.mark.parametrize("path", ("/", PAGE))
@@ -885,10 +893,10 @@ def test_the_chart_hides_when_nothing_is_accepted_and_comes_back(pages, site, re
     page.unroute("**/v1/projects/prove2me/results?*")
     _serve(page, "**/v1/projects/prove2me/results?*", records["results"])
     page.clock.run_for(60_000)
-    expect(page.locator(head)).to_have_text("8", timeout=15_000)
+    expect(page.locator(head)).to_have_text("6", timeout=15_000)
     expect(fig).to_be_visible()
-    expect(fig.locator("svg[role=img] circle")).to_have_count(8)
-    expect(fig.locator("tbody tr")).to_have_count(8)
+    expect(fig.locator("svg[role=img] circle")).to_have_count(6)
+    expect(fig.locator("tbody tr")).to_have_count(6)
     assert fig.locator("svg").bounding_box()["width"] > 200, "drawn at its real width once shown"
 
 # ---- the status block at the top: the whole queue as one bar in parts per trial, a line per open trial, the numbers
@@ -923,7 +931,7 @@ def _status_page(pages, site, records, width=None):
 def test_the_status_block_shows_the_whole_queue(pages, site, records, width, theme):
     """Trials 8 and 9 open: the head names both with their scaffolds; the bar is the whole queue, a part per trial named
     under it (Trial 8 · 11, Trial 9 · 5), each part's running and waiting tasks; the sentence above says it in words; a
-    line per trial with every state and its leaves; 2 nodes online, 1 of 2 slots busy, 8 of 8 proofs accepted. No
+    line per trial with every state and its leaves; 2 nodes online, 1 of 2 slots busy, 6 proofs accepted of 8 submitted (the 2 reuses are not proofs). No
     percentage; at 390 px nothing scrolls sideways."""
     page = _status_page(pages, site, _two_open(records), width)
     page.evaluate("t => { document.documentElement.dataset.theme = t }", theme)
@@ -947,7 +955,7 @@ def test_the_status_block_shows_the_whole_queue(pages, site, records, width, the
     expect(lines.nth(1)).to_have_text("Trial 9, 7 tasks: 2 ended otherwise, 1 running, 4 waiting; 0 of 6 leaves proved.")
     expect(box.locator("[data-num=nodes] dd")).to_have_text("2")
     expect(box.locator("[data-num=slots] dd")).to_have_text("1 of 2")
-    expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
+    expect(box.locator("[data-num=accepted] dd")).to_have_text("6 of 8")
     expect(box.locator("[data-st=updated]")).to_contain_text("updated 14:58 UTC")
     assert "%" not in box.inner_text()
     assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
@@ -993,7 +1001,7 @@ def test_the_status_block_keeps_the_builds_copy_when_the_gateway_fails(pages, si
         expect(box.locator("[data-st-bar] > .grp[data-trial=t8]")).to_have_count(1)
         expect(box.locator("[data-st-trials] li")).to_have_count(1)
         expect(box.locator("[data-num=nodes]")).to_be_hidden()
-        expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
+        expect(box.locator("[data-num=accepted] dd")).to_have_text("6 of 8")
         expect(box.locator("[data-st=updated]")).to_have_text(
             "As of the gateway’s records at the site’s last build, 18 Nov, 14:58 UTC. The page refreshes it every minute when it can reach the gateway.")
 
@@ -1031,7 +1039,7 @@ def test_a_bench_is_shown_as_a_trial(pages, site, records):
     lines = box.locator("[data-st-trials] li")
     expect(lines).to_have_count(2)
     expect(lines.nth(1)).to_have_text("Bench v13, 4 tasks: 1 proved, 2 running, 1 waiting.")
-    expect(box.locator("[data-num=accepted] dd")).to_have_text("8 of 8")
+    expect(box.locator("[data-num=accepted] dd")).to_have_text("6 of 8")
 
     now = page.locator("[data-p2m-now][data-source=live][data-trial='t8 bench-v13']")
     expect(now).to_be_visible()
@@ -1101,3 +1109,68 @@ def test_the_submissions_show_the_newest_five_and_scroll(pages, site, records, w
         "Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the "
         "model. Every accepted proof with what it cost, one page each: proved theorems.")
     expect(caption.locator("a")).to_have_attribute("href", "/science/prove2me/theorems/")
+
+
+# ---- the proved theorems page: one count of proofs, as built and as redrawn live
+
+THEOREMS = "/science/prove2me/theorems/"
+
+
+def _theorems_counts(page) -> dict:
+    """Every number the proved theorems page shows, read from the page, checked against each other: the headline is the
+    list's proofs (reuses left out), and the scope line, the KPIs, the chart, the per-trial bars, the all-in cost and the
+    line over the list count the same proofs and the same reuses."""
+    n = int(page.locator("[data-th-headline-n]").inner_text())
+    scope = " ".join(page.locator("[data-th-scope]").inner_text().split())
+    m = re.search(r"Proofs of (\d+) of the (\d+) open leaves tried\. (\d+) submissions?: (.*?)(?:; a reuse is not counted as a proof)?\. From trial", scope)
+    assert m, scope
+    open_acc, tried, submitted, parts = int(m[1]), int(m[2]), int(m[3]), m[4]
+    got = {k: 0 for k in ("proof", "reuse", "rejected", "not judged", "waiting")}
+    for p in parts.split(", "):
+        pm = re.fullmatch(r"(\d+) (accepted proofs?|reuses?|rejected|not judged|waiting)", p)
+        assert pm, p
+        got["proof" if pm[2].startswith("accepted") else "reuse" if pm[2].startswith("reuse") else pm[2]] = int(pm[1])
+    proofs = page.locator("[data-th-rows] tr[data-kind=proof]").count()
+    reuses = page.locator("[data-th-rows] tr[data-kind=reuse]").count()
+    assert n == proofs == got["proof"], (n, proofs, got)
+    assert got["reuse"] == reuses, (got, reuses)
+    assert sum(got.values()) == submitted, (got, submitted)
+    kpis = page.locator("[data-th-kpis]")
+    expect(kpis.locator("[data-kpi=open] dd")).to_have_text(str(open_acc))
+    expect(kpis.locator("[data-kpi=open] dt")).to_have_text(f"open leaves with an accepted proof, of {tried} tried")
+    expect(kpis.locator("[data-kpi=submitted] dd")).to_have_text(str(submitted))
+    expect(kpis.locator("[data-kpi=submitted] dt")).to_have_text(f"submissions: {parts}")
+    if reuses:
+        expect(kpis.locator("[data-kpi=reused] dd")).to_have_text(str(reuses))
+        expect(kpis.locator("[data-kpi=reused] dt")).to_contain_text("not counted as proofs")
+    chart = page.locator("[data-p2m-chart] svg[role=img]")
+    expect(chart.locator("circle")).to_have_count(n)
+    expect(chart.locator("text.end-n")).to_have_text(str(n))
+    assert chart.get_attribute("aria-label").startswith(f"{n} proof"), chart.get_attribute("aria-label")
+    bars = page.locator("[data-th-bars] svg[role=img]").get_attribute("aria-label")
+    assert re.search(rf": {n} accepted of \d+ open leaves tried in all\.$", bars), bars
+    overall = page.locator("[data-th-costs] [data-cost=overall] .sub").inner_text()
+    assert re.search(rf"over {n} accepted proofs?\.$", overall), overall
+    expect(page.locator("[data-th-count]")).to_have_text(
+        f"{proofs + reuses} leaves, newest first: {n} proved by the model" + (f", {reuses} closed by reuse." if reuses else "."))
+    return {"proofs": n, "reuses": reuses, "open": open_acc, "tried": tried, "submitted": submitted}
+
+
+def test_the_theorems_page_has_one_count_of_proofs_as_built_and_live(pages, site, records):
+    """The owner on 2026-11-28: the page's numbers did not agree (a headline of the model's proofs beside KPIs that
+    counted the reuses, and open leaves our own check passed). One count now: without JavaScript (the build's, from the
+    records of 2026-11-18: 6 proofs, 2 reuses) and after the live redraw from newer records (one proof since recorded as
+    a reuse, as N18's backfill was), every number on the page agrees with the headline, and a reuse is never a proof."""
+    still = pages(js=False)
+    still.goto(site + THEOREMS)
+    built = _theorems_counts(still)
+    assert built == {"proofs": 6, "reuses": 2, "open": 6, "tried": 26, "submitted": 8}, built
+    res = json.loads(json.dumps(records["results"]))
+    r = next(x for x in res["results"] if x["item"] == "p2m-d00cfc")
+    r["reuse"] = {"name": "Someone.else_theorem", "author": "someone", "relation": "same"}
+    page = _records_page(pages, records, results=res, path=THEOREMS, site=site)
+    expect(page.locator("[data-th-rows]")).to_have_attribute("data-source", "live")
+    expect(page.locator("[data-p2m-chart]")).to_have_attribute("data-source", "live")
+    live = _theorems_counts(page)
+    # a leaf closed by reuse is credited as a reuse, never as a run: it leaves the open leaves tried too
+    assert live == {"proofs": 5, "reuses": 3, "open": 5, "tried": 25, "submitted": 8}, live
