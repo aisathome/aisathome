@@ -110,6 +110,8 @@ func TestLoadConfigTiers(t *testing.T) {
 		{`"name": "standard"`, `"name": "big"`},
 		{`"name": "standard"`, `"name": "Standard!"`},
 		{`"app": "pilot_std"`, `"app": "pilot std"`},
+		{`"app": "pilot_std"`, `"app": "Pilot"`}, // the same app in BOINC's database
+		{`"name": "standard", "app": "pilot_std"`, `"name": "standard", "node_tier": "Big!", "app": "pilot_std"`},
 		{`https://example.org/q3.gguf`, `http://example.org/q3.gguf`},
 	} {
 		if !strings.Contains(good, bad.from) {

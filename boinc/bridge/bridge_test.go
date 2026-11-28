@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -770,10 +769,13 @@ func TestTieredCreditRunsEachWorkUnitsValidatorApp(t *testing.T) {
 	if err := r.b.Credit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	apps := slices.Clone(r.boinc.validatedApps)
-	slices.Sort(apps)
-	if !slices.Equal(apps, []string{"pilot", "pilot_std"}) {
-		t.Errorf("validator apps %v", r.boinc.validatedApps)
+	if len(r.boinc.validatedApps) != 2 {
+		t.Errorf("validator runs %v", r.boinc.validatedApps)
+	}
+	for _, id := range r.gw.ids() {
+		if got, want := r.boinc.validatedFor[r.boinc.wuIDs[id]], r.boinc.jobs[id].App; got != want {
+			t.Errorf("work unit %s of app %s validated with --app %q", id, want, got)
+		}
 	}
 }
 
@@ -795,6 +797,23 @@ func TestTieredCheckWantsTheGatewaysTiers(t *testing.T) {
 		r.gw.demand = Demand{Tiers: c.tiers}
 		if err := r.b.Check(ctx); (err == nil) != c.ok {
 			t.Errorf("gateway tiers %v: %v", c.tiers, err)
+		}
+	}
+}
+
+func TestTieredDemandGoesOnPastAFailingTier(t *testing.T) {
+	r := tiered(t)
+	r.boinc.failApp = "pilot" // the big tier's app is broken
+	r.gw.demand = Demand{Wanted: 2, Tiers: map[string]TierDemand{"big": {Wanted: 1}, "standard": {Wanted: 1}}}
+	if err := r.b.Demand(ctx); err == nil {
+		t.Error("no error for the failing tier")
+	}
+	if len(r.boinc.works) != 1 {
+		t.Fatalf("work units %v: the standard tier must still get its pilot", r.boinc.works)
+	}
+	for id := range r.boinc.works {
+		if r.boinc.jobs[id].App != "pilot_std" {
+			t.Errorf("work unit %s in %s", id, r.boinc.jobs[id].App)
 		}
 	}
 }

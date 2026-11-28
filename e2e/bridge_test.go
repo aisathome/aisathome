@@ -32,6 +32,7 @@ type boincSim struct {
 	jobs   map[string]bridge.Job
 	staged map[string][]byte
 	works  map[string]string   // work unit → credential file
+	models map[string]string   // work unit → its model's URL
 	users  map[string]*simUser // by account key
 	ids    map[string]int64    // work unit ids
 	valid  []int64             // work units the validator ran on
@@ -96,6 +97,10 @@ func (s *boincSim) CreateWork(_ context.Context, name, cred string, t bridge.Tie
 	defer s.mu.Unlock()
 	s.works[name] = cred
 	s.ids[name] = int64(len(s.ids) + 1)
+	if s.models == nil {
+		s.models = map[string]string{}
+	}
+	s.models[name] = t.Model.URL
 	s.jobs[name] = bridge.Job{App: t.App, HasResult: true, ServerState: bridge.ServerStateUnsent}
 	return nil
 }
@@ -380,9 +385,9 @@ func TestBridgeTiersEndToEnd(t *testing.T) {
 	for id := range sim.works {
 		p := a.pilotRecord(t, id)
 		tier, _ := p["tier"].(string)
-		byTier[tier] = sim.jobs[id].App
+		byTier[tier] = sim.jobs[id].App + " " + sim.models[id]
 	}
-	if len(sim.works) != 2 || byTier["big"] != "pilot" || byTier["standard"] != "pilot_std" {
+	if len(sim.works) != 2 || byTier["big"] != "pilot "+big.URL || byTier["standard"] != "pilot_std "+std.URL {
 		t.Fatalf("work units %v, apps by tier %v", sim.works, byTier)
 	}
 	// Both projects' work is done: neither tier wants its unsent pilot.
