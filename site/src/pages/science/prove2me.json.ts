@@ -5,5 +5,7 @@ import type { APIRoute } from 'astro';
 import { recordsLicense } from '../../data/licence';
 import { p2m } from '../../data/prove2me';
 
+const { project, ...rest } = p2m;
+
 export const GET: APIRoute = () =>
-	new Response(JSON.stringify({ project: p2m.project, license: recordsLicense, ...p2m }, null, '\t') + '\n', { headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+	new Response(JSON.stringify({ project, license: recordsLicense, ...rest }, null, '\t') + '\n', { headers: { 'Content-Type': 'application/json; charset=utf-8' } });

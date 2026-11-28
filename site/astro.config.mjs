@@ -20,7 +20,7 @@ const shareImage = [
 	['og:image:width', '1200'],
 	['og:image:height', '630'],
 	['og:image:alt', 'AIs@home: open-weight AI on volunteers’ GPUs. Non-commercial, open source.'],
-].map(([property, content]) => ({ tag: 'meta', attrs: { property, content } }));
+].map(([property, content]) => ({ tag: /** @type {const} */ ('meta'), attrs: { property, content } }));
 
 export default defineConfig({
 	site,

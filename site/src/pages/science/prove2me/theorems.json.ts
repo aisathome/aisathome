@@ -11,6 +11,6 @@ import { buildTheorems } from '../../../data/prove2me-theorems-build';
 export const GET: APIRoute = async ({ site }) => {
 	const { view } = await buildTheorems();
 	const origin = (site?.origin ?? 'https://aisathome.org').replace(/\/$/, '');
-	const data = theoremsJSON(view, origin, p2m.model);
-	return new Response(JSON.stringify({ about: data.about, license: recordsLicense, ...data }, null, '\t') + '\n', { headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+	const { about, ...data } = theoremsJSON(view, origin, p2m.model);
+	return new Response(JSON.stringify({ about, license: recordsLicense, ...data }, null, '\t') + '\n', { headers: { 'Content-Type': 'application/json; charset=utf-8' } });
 };

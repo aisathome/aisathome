@@ -18,11 +18,11 @@ const sizeLabel = { easy: 'easy', medium: 'medium', hard: 'hard' };
 // A partly known sum shows the sum; the attempts it misses are in its hover text and in "How to read this".
 const notRecorded = (n: number) => (n > 0 ? `; ${plural(n, 'attempt')} not recorded` : '');
 function tokCell(v: number | null, out: number | null, missing: number) {
-	const a = v === null ? { 'data-unknown': '' } : { 'data-tokens': v, title: `${exact(v)} Qwen tokens${out !== null ? `, ${exact(out)} of them written` : ''}${notRecorded(missing)}` };
+	const a: Record<string, string | number> = v === null ? { 'data-unknown': '' } : { 'data-tokens': v, title: `${exact(v)} Qwen tokens${out !== null ? `, ${exact(out)} of them written` : ''}${notRecorded(missing)}` };
 	return `<td class="num tok" data-label="Qwen tokens"${attrs(a)}>${v === null ? 'not recorded' : compact(v)}</td>`;
 }
 function minCell(v: number | null, missing: number) {
-	const a = v === null ? { 'data-unknown': '' } : { 'data-minutes': v, title: `${v.toFixed(1)} GPU minutes${notRecorded(missing)}` };
+	const a: Record<string, string | number> = v === null ? { 'data-unknown': '' } : { 'data-minutes': v, title: `${v.toFixed(1)} GPU minutes${notRecorded(missing)}` };
 	return `<td class="num min" data-label="GPU minutes"${attrs(a)}>${v === null ? 'not recorded' : v.toFixed(1)}</td>`;
 }
 

@@ -66,7 +66,11 @@ const PRIVATE = ['/account', '/v1/', '/stats/', '/__login'];
 const SEARCH_CRAWLERS = ['Googlebot', 'Bingbot', 'OAI-SearchBot', 'ChatGPT-User', 'PerplexityBot', 'Perplexity-User', 'Claude-SearchBot', 'Claude-User', 'ClaudeBot'];
 const TRAINING_CRAWLERS = ['GPTBot', 'Google-Extended', 'CCBot'];
 
-/** robots.txt's groups (RFC 9309): consecutive User-agent lines, then their rules. */
+/**
+ * robots.txt's groups (RFC 9309): consecutive User-agent lines, then their rules.
+ * @param {string} text
+ * @returns {{ agents: string[], rules: [string, string][] }[]}
+ */
 export function robotsGroups(text) {
 	const groups = [];
 	let cur = null;
