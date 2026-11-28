@@ -1,0 +1,328 @@
+/* The prove2me page (/science/prove2me/) and its record page (/science/prove2me/record/): global, since the build and
+   the browser draw parts of both as HTML (prove2me-view.ts, prove2me-live.ts, task-table.ts). SPDX-License-Identifier: Apache-2.0 */
+/* The status block at the top: the current trial's tasks as one bar (each part also as words in the legend), the
+   numbers and a few lines. */
+.p2m-status { margin: 0 0 1.5rem; padding: 1rem 1.25rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+.p2m-status h2 { margin: 0; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+.p2m-status p { margin: 0.4rem 0 0; }
+.p2m-status [hidden] { display: none !important; }
+.p2m-st-head { font-weight: 600; color: var(--sl-color-white); }
+/* The whole queue: one part per trial or bench (the parts alternate in tone and are named under the bar), each with
+   its running tasks hatched and its waiting ones outlined; the sentence above says it all in words. */
+.p2m-st-queue { font-size: 0.9rem; color: var(--sl-color-gray-2); }
+.p2m-queue { margin: 0.5rem 0 0; }
+.p2m-bar, .p2m-qlabels { display: flex; gap: 4px; }
+.p2m-bar { height: 1.25rem; }
+.p2m-bar .grp, .p2m-qlabels > span { flex: 1 1 0; min-width: 4.5rem; }
+.p2m-bar .grp { display: flex; gap: 2px; --q: var(--sl-color-accent); }
+.p2m-bar .grp-1 { --q: var(--sl-color-gray-2); }
+.p2m-bar .seg { flex: 1 1 0; min-width: 6px; border-radius: 0.2rem; }
+.p2m-status .q-running { background: repeating-linear-gradient(135deg, var(--q, var(--sl-color-gray-2)) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
+.p2m-status .q-queued { background: transparent; box-shadow: inset 0 0 0 1.5px var(--q, var(--sl-color-gray-2)); }
+.p2m-qlabels { margin-top: 0.2rem; font-size: 0.75rem; color: var(--sl-color-gray-2); }
+.p2m-qlabels > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border-top: 1px solid var(--sl-color-gray-4); padding-top: 0.1rem; }
+.p2m-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin: 0.35rem 0 0; padding: 0; list-style: none; font-size: 0.8rem; color: var(--sl-color-gray-2); }
+.p2m-legend li { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0; }
+.p2m-legend .sw { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 0.15rem; }
+.p2m-st-trials { margin: 0.6rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--sl-color-gray-2); }
+.p2m-st-trials li { margin: 0.15rem 0 0; padding-left: 0.6rem; border-left: 3px solid var(--sl-color-gray-5); }
+.p2m-st-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.5rem 1rem; margin: 0.8rem 0 0; }
+.p2m-st-nums div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+.p2m-st-nums dd { margin: 0; font: 700 1.25rem/1.2 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+.p2m-st-nums dt { font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+.p2m-st-updated { font-size: 0.8rem; color: var(--sl-color-gray-3); }
+/* Global: the build and the browser draw parts of the page as HTML (prove2me-view.ts, prove2me-live.ts), which
+   scoped styles would miss; every class here is the page's own (p2m-, tt-) or under main. */
+.p2m-note, main :is(.caps, .sub, .meta) { color: var(--sl-color-gray-3); }
+/* The headline: the proved theorems page's number, what it is out of, and the way there. */
+.p2m-headline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; margin: 0 0 1.25rem; padding: 0.9rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+.p2m-headline p { margin: 0; }
+.p2m-hl-n { font: 900 2.6rem/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--sl-color-white); }
+.p2m-hl-text { flex: 1 1 16rem; min-width: 0; }
+.p2m-hl-what { color: var(--sl-color-gray-2); }
+.p2m-hl-go { margin-top: 0.3rem !important; }
+.p2m-hl-go a { font-weight: 700; color: var(--sl-color-accent-high); }
+@media (max-width: 40rem) { .p2m-headline { flex-direction: column; align-items: flex-start; } .p2m-hl-text { flex: none; } }
+/* How to read this: four lines, and the full method collapsed under them. */
+.p2m-method { margin-top: 0.75rem; }
+.p2m-method > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-kpis { display: grid; grid-template-columns: repeat(var(--kpis, 3), 1fr); gap: 0.5rem; margin: 0.75rem 0 1rem; }
+.p2m-kpis div { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.5rem 0.75rem; border-top: 3px solid var(--sl-color-accent); border-radius: 0.3rem; background: var(--b-surface); }
+.p2m-kpis dd { margin: 0; font: 900 1.6rem/1.1 var(--font-display); color: var(--sl-color-white); }
+.p2m-kpis dt { margin-top: 0.25rem; font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+@media (max-width: 40rem) { .p2m-kpis { grid-template-columns: 1fr; } }
+/* The chart of accepted proofs under the numbers (components/AcceptedChart.astro): no wider than reads well. */
+.p2m-accepted-chart { max-width: 46rem; margin-block: 1.5rem 2rem !important; }
+
+.p2m-live[hidden] { display: none !important; }
+.p2m-live { margin: 1.25rem 0; padding: 1rem 1.25rem; border-radius: 0.5rem; background: var(--b-band, var(--b-surface)); }
+.p2m-live h3 { margin: 0; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-3); }
+.p2m-live-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem 1rem; margin: 0.6rem 0 0; }
+.p2m-live-list div { display: flex; flex-direction: column-reverse; justify-content: flex-end; }
+.p2m-live-list dd { margin: 0; font: 700 1.25rem/1.2 var(--font-display); color: var(--sl-color-white); }
+.p2m-live-list dt { font-size: 0.75rem; line-height: 1.25; color: var(--sl-color-gray-2); }
+.p2m-note { margin: 0.6rem 0 0; font-size: 0.8rem; }
+
+.p2m-wrap { overflow-x: auto; margin-top: 1rem; }
+.p2m-subs-scroll { max-height: min(26rem, 85vh); overflow-y: auto; overscroll-behavior: contain; }
+.p2m-subs-scroll:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+.p2m-subs-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--sl-color-bg); }
+.p2m-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.p2m-table :is(th, td) { padding: 0.45rem 0.75rem 0.45rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+.p2m-table :is(th, td):last-child { padding-right: 0; }
+.p2m-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+.p2m-table tbody th, .p2m-table tfoot th { white-space: nowrap; font-weight: 600; }
+.p2m-table tfoot :is(th, td) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+.p2m-table a { color: var(--sl-color-accent-high); }
+.p2m-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p2m-table .thm { min-width: 14rem; }
+.p2m-table td.result { min-width: 8rem; }
+.p2m-table .tok { cursor: help; }
+.p2m-table .nowrap { white-space: nowrap; }
+.p2m-table .thm a { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
+.p2m-table .sub { display: block; margin-top: 0.15rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.p2m-table .proved, .p2m-table .verdict-accepted { font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-table .unscored { font-style: italic; color: var(--sl-color-gray-3); }
+
+.p2m-score { font-size: 0.85rem; }
+.p2m-score thead th { white-space: normal; vertical-align: bottom; }
+.p2m-list { margin-top: 0.75rem; }
+.p2m-list > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-filters { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.6rem 0 0.2rem; }
+.p2m-filters button { padding: 0.15rem 0.6rem; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
+.p2m-filters button[aria-pressed='true'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-white); }
+.p2m-filters .sep { width: 0.75rem; }
+.p2m-lt thead button { all: unset; cursor: pointer; }
+.p2m-lt thead button:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+.p2m-lt thead th[aria-sort] button { color: var(--sl-color-white); }
+.p2m-lt .sort-mark { display: inline-block; min-width: 1em; margin-left: 0.2em; color: var(--sl-color-accent-high); }
+.p2m-lt tbody th { font: 600 0.82rem var(--font-mono, monospace); }
+.p2m-lt tbody th .sub { font-family: var(--sl-font, inherit); font-weight: 400; cursor: help; }
+.p2m-lt tbody tr[hidden] { display: none; }
+.p2m-lt .thm { min-width: 12rem; }
+
+/* The task table (task-table.ts renders it as HTML, outside this page's style scope): five columns, rows grouped by
+   leaf (its cell on the first row in sight of a group), two drop-downs and the Show switch. */
+.tt-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem; margin: 0.6rem 0 0.2rem; }
+.tt-select { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+.tt-select select { max-width: 11rem; padding: 0.15rem 0.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 0.3rem; background: var(--sl-color-bg); color: var(--sl-color-white); font: inherit; font-size: 0.8rem; }
+.tt-show { display: inline-flex; border: 1px solid var(--sl-color-gray-5); border-radius: 1rem; overflow: hidden; }
+.tt-show button { padding: 0.15rem 0.6rem; border: 0; background: none; color: var(--sl-color-gray-2); font: inherit; font-size: 0.8rem; cursor: pointer; }
+.tt-show button + button { border-left: 1px solid var(--sl-color-gray-5); }
+.tt-show button[aria-pressed='true'] { background: var(--sl-color-accent-low); color: var(--sl-color-white); }
+.tt-count { font-size: 0.85rem; color: var(--sl-color-gray-3); }
+.tt-wrap { overflow-x: auto; margin-top: 0.5rem; }
+.tt-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.tt-table :is(th, td) { padding: 0.3rem 0.6rem 0.3rem 0; text-align: left; vertical-align: baseline; }
+.tt-table :is(th, td):last-child { padding-right: 0; }
+.tt-table thead th { border-bottom: 1px solid var(--sl-color-gray-5); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); white-space: nowrap; }
+.tt-table tbody tr[data-first] { border-top: 1px solid var(--sl-color-gray-5); }
+.tt-table tbody tr:not([data-first]) .tt-group > * { visibility: hidden; }
+.tt-table tbody th { font-weight: 400; }
+.tt-table .tt-group { width: 9rem; max-width: 9rem; }
+.tt-table .tt-leaf { display: block; font: 600 0.8rem var(--font-mono, monospace); white-space: nowrap; color: var(--sl-color-white); }
+.tt-table .tt-leaf[title] { cursor: help; }
+.tt-table .tt-thm { display: block; overflow: hidden; font: 0.72rem var(--font-mono, monospace); white-space: nowrap; text-overflow: ellipsis; color: var(--sl-color-accent-high); }
+.tt-table .tt-round { display: block; font-size: 0.72rem; color: var(--sl-color-gray-3); }
+.tt-table .tt-task { color: var(--sl-color-white); }
+.tt-table .tt-note > span { display: block; font-size: 0.75rem; color: var(--sl-color-gray-3); }
+.tt-table a { color: var(--sl-color-accent-high); }
+.tt-table .tt-r-proved, .tt-table .tt-r-running { font-weight: 600; color: var(--sl-color-accent-high); }
+.tt-table tr[data-state='cancelled'] .tt-r { font-style: italic; color: var(--sl-color-gray-3); }
+.tt-table .tt-work { min-width: 6.5rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+.tt-table .tt-time { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+.tt-table tr[hidden] { display: none; }
+.tt-table tr:target { outline: 2px solid var(--sl-color-accent); outline-offset: -2px; }
+
+/* The trials: one row per trial, newest first; a trial's row opens to its list. On a wide screen a head names the
+   columns and each cell's unit is for screen readers only; on a phone the head goes and the units show. */
+.p2m-trials { margin-top: 1rem; }
+.p2m-trow { display: grid; grid-template-columns: 1rem 7.5rem 5.5rem 4.5rem 3.75rem 4.75rem minmax(0, 1fr); gap: 0.2rem 0.6rem; align-items: baseline; margin: 0; padding: 0.5rem 0; font-size: 0.9rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-2); }
+.p2m-trow > .tr-name { grid-column: 2; font-weight: 700; color: var(--sl-color-white); }
+.p2m-trow > :is(.tr-leaves, .tr-accepted, .tr-per-proof, .tr-trials) { text-align: right; }
+.p2m-trow .tr-run { font-size: 0.75rem; font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-trow .tr-accepted { font-weight: 600; color: var(--sl-color-white); }
+.p2m-trow .u { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.p2m-thead { padding: 0 0 0.3rem; border-bottom: 1px solid var(--sl-color-gray-5); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+.p2m-thead > .tr-name { font-weight: 600; color: var(--sl-color-gray-3); }
+.p2m-thead > :nth-child(n + 4) { text-align: right; }
+.p2m-trial, .p2m-trial-rows > .p2m-trow { border-bottom: 1px solid var(--sl-color-gray-5); }
+.p2m-trial > summary { cursor: pointer; list-style: none; }
+.p2m-trial > summary::-webkit-details-marker { display: none; }
+.p2m-trial > summary::before { content: '▸'; grid-column: 1; grid-row: 1; color: var(--sl-color-accent-high); }
+.p2m-trial[open] > summary::before { content: '▾'; }
+.p2m-trial > summary:hover .tr-name { color: var(--sl-color-accent-high); }
+.p2m-trial > summary:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+.p2m-trial > :not(summary) { margin-left: 1.6rem; }
+.p2m-trial > :last-child { margin-bottom: 1rem; }
+.p2m-tprobe { font-size: 0.82rem; color: var(--sl-color-gray-3); }
+.p2m-tprobe > .tr-name { font-weight: 600; color: var(--sl-color-gray-2); }
+.p2m-tprobe > .tr-wide { grid-column: 4 / -1; }
+.p2m-tall > .tr-trials { grid-column: 3; text-align: left; }
+.p2m-tall .tr-trials .u { position: static; width: auto; height: auto; clip-path: none; }
+.p2m-tall .tr-more { grid-column: 2 / -1; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+.p2m-tall .tok, .p2m-trial .tok { cursor: help; }
+@media (max-width: 40rem) {
+	.p2m-trow { display: flex; flex-wrap: wrap; gap: 0.15rem 0.75rem; padding-left: 1.25rem; position: relative; }
+	.p2m-trial > summary::before { position: absolute; left: 0; }
+	.p2m-trow > .tr-name { flex: 1 0 100%; }
+	.p2m-trow > :is(.tr-leaves, .tr-accepted, .tr-per-proof, .tr-trials) { text-align: left; }
+	.p2m-trow .u { position: static; width: auto; height: auto; clip-path: none; }
+	.p2m-tall > .tr-scaffold { display: none; }
+	.p2m-tall .tr-more { flex: 1 0 100%; }
+	.p2m-trial > :not(summary) { margin-left: 0; }
+	.p2m-trow.p2m-thead { display: none; }
+}
+.p2m-trial-tasks { margin-top: 0.75rem; }
+.p2m-trial-tasks .caps { margin: 0 0 0.25rem; }
+main .caps { font-size: 0.85rem; }
+
+/* Global: the live list is built by the script, outside this page's style scope. */
+.p2m-now { margin: 1rem 0 0; padding: 1rem 1.25rem; border-left: 4px solid var(--sl-color-accent); border-radius: 0.4rem; background: var(--b-surface); }
+.p2m-now p { margin: 0.5rem 0 0; }
+.p2m-now p[hidden] { display: none; }
+.p2m-now .head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+.p2m-now .now-trial + .now-trial { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--sl-color-gray-5); }
+.p2m-now [data-now-leaves] { margin: 0.75rem 0 0; padding: 0; list-style: none; }
+.p2m-now [data-now-leaves] > li + li { margin-top: 0.9rem; }
+.p2m-now li:target, .p2m-now li.target { outline: 2px solid var(--sl-color-accent); outline-offset: 0.3rem; border-radius: 0.2rem; }
+.p2m-now .leaf { font: 700 0.9rem var(--font-mono, monospace); margin-right: 0.4rem; color: var(--sl-color-white); }
+.p2m-now .alias { margin-right: 0.5rem; font-size: 0.8rem; color: var(--sl-color-gray-3); cursor: help; }
+.p2m-now .thm-name { font: 0.82rem var(--font-mono, monospace); overflow-wrap: anywhere; color: var(--sl-color-accent-high); }
+.p2m-now .meta { display: block; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+.p2m-now .meta > span + span::before { content: ' · '; }
+.p2m-now .state { display: block; font-size: 0.85rem; font-weight: 600; color: var(--sl-color-gray-2); }
+.p2m-now .state-running { color: var(--sl-color-accent-high); }
+/* A leaf's row: id, short title, its line, holes solved and GPU-hours; it opens to the rest. */
+.p2m-now [data-now-leaves] > li + li { margin-top: 0; }
+.p2m-now [data-now-leaves] > li { border-top: 1px solid var(--sl-color-gray-5); }
+.p2m-now [data-now-leaves] > li:last-child { border-bottom: 1px solid var(--sl-color-gray-5); }
+.p2m-now .now-row { display: grid; grid-template-columns: 1rem 7.5rem minmax(0, 1fr) auto; gap: 0.1rem 0.6rem; align-items: baseline; padding: 0.45rem 0; cursor: pointer; list-style: none; }
+.p2m-now .now-row::-webkit-details-marker { display: none; }
+.p2m-now .now-row::before { content: '▸'; grid-column: 1; grid-row: 1; color: var(--sl-color-accent-high); }
+.p2m-now .now-leaf[open] > .now-row::before { content: '▾'; }
+.p2m-now .now-row:focus-visible { outline: 2px solid var(--sl-color-accent); outline-offset: 2px; }
+.p2m-now .now-row .leaf { grid-column: 2; grid-row: 1; margin: 0; }
+.p2m-now .now-title { grid-column: 3; grid-row: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--sl-color-white); }
+.p2m-now .now-row .state { grid-column: 3; grid-row: 2; font-weight: 500; }
+.p2m-now .now-nums { grid-column: 4; grid-row: 1 / span 2; display: flex; flex-direction: column; align-items: flex-end; font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--sl-color-gray-2); }
+.p2m-now .now-row:hover .now-title { color: var(--sl-color-accent-high); }
+.p2m-now .now-more { margin: 0 0 0.75rem 1.6rem; }
+.p2m-now .now-id { margin: 0 !important; }
+@media (max-width: 40rem) {
+	.p2m-now .now-row { grid-template-columns: 1rem minmax(0, 1fr); }
+	.p2m-now .now-row .leaf, .p2m-now .now-title, .p2m-now .now-row .state, .p2m-now .now-nums { grid-column: 2; grid-row: auto; }
+	.p2m-now .now-title { white-space: normal; overflow-wrap: anywhere; }
+	.p2m-now .now-nums { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem; }
+	.p2m-now .now-nums > span + span::before { content: '· '; }
+	.p2m-now .now-more { margin-left: 0; }
+}
+.p2m-now .probes { margin: 0 0 0.9rem; padding: 0 0 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+.p2m-now .probes[hidden] { display: none; }
+.p2m-now .probes-head { margin: 0; font-weight: 600; color: var(--sl-color-white); }
+.p2m-now [data-probes-list] { margin: 0.4rem 0 0; padding: 0; list-style: none; }
+.p2m-now [data-probes-list] > li + li { margin-top: 0.35rem; }
+.p2m-now [data-probes-list] .leaf[title] { cursor: help; }
+/* A leaf's outlines (prove2me-outlines.ts renders them as HTML): newest first, a heading line each, one row per hole. */
+.p2m-plan { margin: 0.35rem 0 0; font-size: 0.85rem; }
+.p2m-plan .p2m-sum { margin: 0 0 0.3rem; font-weight: 600; color: var(--sl-color-gray-2); }
+.p2m-outline + .p2m-outline { margin-top: 0.5rem; }
+.p2m-ohead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.3rem; margin: 0; }
+.p2m-oname { font-weight: 700; color: var(--sl-color-white); }
+.p2m-ostate::before { content: '· '; color: var(--sl-color-gray-3); }
+.p2m-ostate { color: var(--sl-color-gray-2); }
+.p2m-outline[data-outline-state='in_progress'] .p2m-ostate, .p2m-outline[data-outline-state='writing'] .p2m-ostate, .p2m-outline[data-outline-state='proved'] .p2m-ostate { font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-ocost { margin-left: auto; font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--sl-color-gray-3); }
+.p2m-holes { margin: 0.2rem 0 0; padding: 0 0 0 0.9rem; list-style: none; border-left: 2px solid var(--sl-color-gray-5); }
+.p2m-holes li { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 0 0.5rem; margin: 0; padding: 0.1rem 0; }
+.p2m-hname { white-space: nowrap; color: var(--sl-color-gray-2); }
+.p2m-htext { overflow-wrap: anywhere; color: var(--sl-color-gray-2); }
+.p2m-holes li[data-hole-state='running'] .p2m-htext, .p2m-holes li[data-hole-state='proved'] .p2m-htext { font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-holes li:is([data-hole-state='prepass'], [data-hole-state='index'], [data-hole-state='ledger']) .p2m-htext { color: var(--sl-color-accent-high); }
+.p2m-holes li:is([data-hole-state='not_tried'], [data-hole-state='cancelled'], [data-hole-state='waiting'], [data-hole-state='queued'], [data-hole-state='unknown']) .p2m-htext { color: var(--sl-color-gray-3); }
+.p2m-holes li:is([data-hole-state='false'], [data-hole-state='failed']) .p2m-htext { font-weight: 600; color: var(--sl-color-white); }
+/* a hole's states (failed and cancelled share the rules above; the assembly keeps its own); its tooltip has the detail */
+.p2m-holes li[data-hole-state='solved'] .p2m-htext { font-weight: 600; color: var(--sl-color-accent-high); }
+.p2m-holes li[data-hole-state='working'] .p2m-htext { color: var(--sl-color-accent-high); }
+.p2m-holes li[title] { cursor: help; }
+.p2m-trial-leaf { margin-top: 0.9rem; }
+.p2m-tleaf { margin: 0; font: 700 0.85rem var(--font-mono, monospace); color: var(--sl-color-white); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks { margin-top: 0.35rem; font-size: 0.85rem; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks > summary { cursor: pointer; font-weight: 600; color: var(--sl-color-accent-high); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks-wrap { overflow-x: auto; margin-top: 0.4rem; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td) { padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: left; vertical-align: baseline; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td):last-child { padding-right: 0; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tbody th { white-space: nowrap; font-weight: 600; color: var(--sl-color-white); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tfoot :is(th, td) { font-weight: 700; color: var(--sl-color-white); border-bottom: 0; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .tok { cursor: help; }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .sub { display: block; font-size: 0.75rem; font-weight: 400; white-space: normal; color: var(--sl-color-gray-3); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .proved { font-weight: 600; color: var(--sl-color-accent-high); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .running { color: var(--sl-color-accent-high); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .cancelled { font-style: italic; color: var(--sl-color-gray-3); }
+:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks p.outline-note { margin: 0.35rem 0 0; font-size: 0.8rem; color: var(--sl-color-gray-3); }
+
+/* Phones: each row as a small card instead of a wide table. */
+@media (max-width: 40rem) {
+	.p2m-table, .p2m-table :is(tbody, tfoot) { display: block; }
+	.p2m-table thead { display: none; }
+	.p2m-table tbody tr, .p2m-table tfoot tr { display: grid; grid-template-columns: 1fr; gap: 0.2rem; padding: 0.6rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+	.p2m-table :is(th, td) { padding: 0; border: 0; }
+	.p2m-table .num { text-align: left; }
+	.p2m-table .thm { min-width: 0; }
+	.p2m-table td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+	.p2m-table tfoot td:empty { display: none; }
+	.p2m-lt thead { display: block; }
+	.p2m-lt thead tr { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; padding: 0 0 0.5rem; }
+	.p2m-lt thead th { padding: 0; border: 0; }
+	.p2m-lt thead th.nosort { display: none; }
+	.p2m-lt tbody tr[hidden] { display: none; }
+	/* a task as a small card: its leaf (first of a group), the task, the result, then the work and when it finished */
+	.tt-table, .tt-table tbody { display: block; }
+	.tt-table thead { display: none; }
+	.tt-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.1rem 0.75rem; padding: 0.4rem 0; border-top: 1px dashed var(--sl-color-gray-5); }
+	.tt-table tbody tr[data-first] { margin-top: 0.4rem; border-top: 1px solid var(--sl-color-gray-4); }
+	.tt-table tbody tr[hidden] { display: none; }
+	.tt-table tbody :is(th, td) { padding: 0; }
+	.tt-table .tt-group { grid-column: 1 / -1; width: auto; max-width: none; }
+	.tt-table .tt-thm { white-space: normal; overflow-wrap: anywhere; }
+	.tt-table tbody tr:not([data-first]) .tt-group { display: none; }
+	.tt-table tbody th, .tt-table .tt-r { grid-column: 1 / -1; }
+	.tt-table .tt-time { text-align: right; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks table, :is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot) { display: block; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks thead { display: none; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(tbody, tfoot) tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0.15rem 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks :is(th, td) { padding: 0; border: 0; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tr > th, :is(.p2m-now, .p2m-trial-tasks) .p2m-tasks td.result { grid-column: 1 / -1; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks .num { text-align: left; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks td[data-label]::before { content: attr(data-label) ': '; color: var(--sl-color-gray-3); font-weight: 400; }
+	:is(.p2m-now, .p2m-trial-tasks) .p2m-tasks tfoot td:empty { display: none; }
+}
+
+/* A section's part drawn in the browser when it opens (2026-11-28, prove2me-view.ts lazyHTML): without JavaScript a
+   line linking the record page; while it loads one line, "Loading…", in the same place, so nothing above it moves. */
+.p2m-lazy { min-height: 1.6rem; }
+.p2m-lazy-note { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--sl-color-gray-3); }
+.p2m-lazy-note a { color: var(--sl-color-accent-high); }
+.p2m-lazy[aria-busy='true'] .p2m-lazy-note { font-style: italic; }
+
+/* Until the page's first read of the gateway has run (the script sets data-p2m-read on the root), the parts that say
+   what runs now (the status block, "Working on now", a trial's "running") do not present the build's copy as current:
+   their time line says "As of the last build, … · updating…" in place of its own (one line for one line, so nothing
+   moves) and the rest is dimmed; a trial's "running" mark waits. Only with scripting: without it the page is the
+   build's and its own lines say so. After the read a part that stayed the build's (the gateway did not answer) shows
+   its own line again. */
+.p2m-pending, [data-p2m-fresh] .p2m-pending { display: none; }
+@media (scripting: enabled) {
+	:root:not([data-p2m-read]) [data-p2m-fresh]:not([data-source='live']) .p2m-pending { display: block; }
+	:root:not([data-p2m-read]) [data-p2m-fresh]:not([data-source='live']) :is([data-st='updated']:not(.p2m-pending), [data-now-asof]) { display: none; }
+	:root:not([data-p2m-read]) [data-p2m-status]:not([data-source='live']) > :not(h2, .p2m-pending),
+	:root:not([data-p2m-read]) [data-p2m-now]:not([data-source='live']) > :not(.p2m-pending) { opacity: 0.55; }
+	:root:not([data-p2m-read]) [data-p2m-trials]:not([data-source='live']) .tr-run { visibility: hidden; }
+}
+.p2m-pending { font-style: italic; }
+
+/* The record page (/science/prove2me/record/): everything drawn, nothing to filter without a script. */
+.p2m-record :is(.tt-filters, .tt-count, .p2m-filters, [data-p2m-list-count]) { display: none; }
