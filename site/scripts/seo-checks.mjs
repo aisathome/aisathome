@@ -60,19 +60,109 @@ export function nodeJsonLdProblems(data, origin) {
 	return p;
 }
 
-/** /robots.txt: open to every crawler, AI crawlers included; only the gateway's paths are left out. */
+// robots.txt (seo.ts): the crawlers named explicitly, and the training crawlers, whose policy is the owner's call
+// (2026-11-28) and which stay under "*".
+const PRIVATE = ['/account', '/v1/', '/stats/', '/__login'];
+const SEARCH_CRAWLERS = ['Googlebot', 'Bingbot', 'OAI-SearchBot', 'ChatGPT-User', 'PerplexityBot', 'Perplexity-User', 'Claude-SearchBot', 'Claude-User', 'ClaudeBot'];
+const TRAINING_CRAWLERS = ['GPTBot', 'Google-Extended', 'CCBot'];
+
+/** robots.txt's groups (RFC 9309): consecutive User-agent lines, then their rules. */
+export function robotsGroups(text) {
+	const groups = [];
+	let cur = null;
+	for (const raw of text.split('\n')) {
+		const l = raw.replace(/#.*/, '').trim();
+		const m = l.match(/^([A-Za-z-]+)\s*:\s*(.*)$/);
+		if (!m) continue;
+		const [key, value] = [m[1].toLowerCase(), m[2].trim()];
+		if (key === 'user-agent') {
+			if (!cur || cur.rules.length) groups.push((cur = { agents: [], rules: [] }));
+			cur.agents.push(value);
+		} else if (key === 'allow' || key === 'disallow') {
+			if (cur) cur.rules.push([key, value]);
+		}
+	}
+	return groups;
+}
+
+/** /robots.txt: open to every crawler, AI crawlers included; only the gateway's paths are left out, the same in every
+ * group; the search and answer engines' crawlers named; the training crawlers left to "*". */
 export function robotsProblems(text, origin) {
 	const p = [];
-	const lines = text.split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean);
-	const agents = lines.filter((l) => /^user-agent:/i.test(l)).map((l) => l.split(':')[1].trim());
-	if (agents.join() !== '*') p.push(`user agents ${agents} (one group for every crawler expected)`);
-	for (const l of lines.filter((l) => /^disallow:/i.test(l))) {
-		const path = l.slice(l.indexOf(':') + 1).trim();
-		if (!['/account', '/v1/', '/stats/', '/__login'].includes(path)) p.push(`disallows ${path || '(nothing)'}`);
+	const groups = robotsGroups(text);
+	const named = (a) => groups.filter((g) => g.agents.some((x) => x.toLowerCase() === a.toLowerCase()));
+	if (named('*').length !== 1) p.push('not exactly one group for every crawler (User-agent: *)');
+	for (const a of SEARCH_CRAWLERS) if (named(a).length !== 1) p.push(`${a} is not named in exactly one group`);
+	for (const a of TRAINING_CRAWLERS) if (named(a).length) p.push(`names ${a}: the training crawlers' policy is the owner's call`);
+	for (const g of groups) {
+		const who = g.agents.join(', ');
+		const disallows = g.rules.filter(([k]) => k === 'disallow').map(([, v]) => v);
+		for (const path of disallows) if (!PRIVATE.includes(path)) p.push(`disallows ${path || '(nothing)'} for ${who}`);
+		for (const path of PRIVATE) if (!disallows.includes(path)) p.push(`does not disallow ${path} for ${who}`);
+		if (!g.rules.some(([k, v]) => k === 'allow' && v === '/')) p.push(`no "Allow: /" for ${who}`);
 	}
+	const lines = text.split('\n').map((l) => l.replace(/#.*/, '').trim());
 	const maps = lines.filter((l) => /^sitemap:/i.test(l)).map((l) => l.slice(l.indexOf(':') + 1).trim());
 	if (maps.join() !== `${origin}/sitemap-index.xml`) p.push(`sitemap ${maps}`);
 	return p;
+}
+
+// ---- the proved theorems' JSON-LD (theorems-jsonld.ts)
+
+const LIST = '/science/prove2me/theorems/';
+const STATEMENT = /^https:\/\/prove2\.me\/theorems\/[0-9a-f-]{36}$/;
+const isoTime = (v) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d)$/.test(v) && !Number.isNaN(Date.parse(v));
+const isOrg = (o, origin) => o?.['@type'] === 'Organization' && o.name === 'AIs@home' && o.url === `${origin}/` && o['@id'] === `${origin}/#organization`;
+const text = (v, min = 1) => typeof v === 'string' && v.trim().length >= min;
+
+/** The list's Dataset (Google's Dataset fields: name, a description of 50 to 5000 characters, url, creator,
+ * distribution); no licence while the site states none for the records. */
+export function datasetJsonLdProblems(d, origin) {
+	const p = [];
+	if (d?.['@context'] !== 'https://schema.org') p.push('@context is not https://schema.org');
+	if (d?.['@type'] !== 'Dataset') p.push(`@type is ${d?.['@type']}, not Dataset`);
+	if (!text(d?.name)) p.push('no name');
+	if (!text(d?.description, 50) || d.description.length > 5000) p.push('description is not 50 to 5000 characters');
+	if (d?.url !== `${origin}${LIST}`) p.push(`url is ${d?.url}`);
+	if (d?.['@id'] !== `${origin}${LIST}#dataset`) p.push(`@id is ${d?.['@id']}`);
+	if (!isOrg(d?.creator, origin)) p.push('creator is not the AIs@home Organization');
+	const dist = Array.isArray(d?.distribution) ? d.distribution : [];
+	if (!dist.some((x) => x?.['@type'] === 'DataDownload' && x.encodingFormat === 'application/json' && x.contentUrl === `${origin}/science/prove2me/theorems.json`)) p.push('no DataDownload of theorems.json');
+	if (!isoTime(d?.dateModified)) p.push(`dateModified is ${d?.dateModified}`);
+	if ('license' in (d ?? {})) p.push('names a licence the site does not state');
+	if (namesAPerson(d)) p.push('names a person or contact');
+	return p;
+}
+
+/** One proof page's CreativeWork: about the prove2me theorem, based on its statement, made by AIs@home, part of the list's
+ * Dataset. */
+export function proofJsonLdProblems(d, origin, leaf) {
+	const p = [];
+	const url = `${origin}${LIST}${leaf}/`;
+	if (d?.['@context'] !== 'https://schema.org') p.push('@context is not https://schema.org');
+	if (d?.['@type'] !== 'CreativeWork') p.push(`@type is ${d?.['@type']}, not CreativeWork`);
+	if (!text(d?.name) || !text(d?.description, 50)) p.push('no name or a short description');
+	if (d?.url !== url || d?.['@id'] !== `${url}#proof`) p.push(`url or @id is not ${url}`);
+	if (d?.about?.['@type'] !== 'Thing' || !text(d.about.name) || d.about.identifier !== leaf) p.push('about is not the leaf\'s theorem');
+	if (d?.about?.url !== undefined && !STATEMENT.test(d.about.url)) p.push(`about.url ${d.about.url} is not a prove2me theorem`);
+	for (const u of [d?.isBasedOn ?? []].flat()) if (!STATEMENT.test(u)) p.push(`isBasedOn ${u} is not a prove2me theorem`);
+	if (d?.about?.url && ![d?.isBasedOn ?? []].flat().includes(d.about.url)) p.push('isBasedOn lacks the statement');
+	if (!isOrg(d?.creator, origin)) p.push('creator is not the AIs@home Organization');
+	if (!isoTime(d?.dateCreated)) p.push(`dateCreated is ${d?.dateCreated}`);
+	if (d?.isPartOf?.['@id'] !== `${origin}${LIST}#dataset`) p.push('isPartOf is not the list\'s Dataset');
+	if (namesAPerson(d)) p.push('names a person or contact');
+	return p;
+}
+
+/** Every application/ld+json script of a built page, parsed; a script that does not parse is an Error in the list. */
+export function jsonLdScripts(html) {
+	return [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => {
+		try {
+			return JSON.parse(m[1]);
+		} catch (e) {
+			return e;
+		}
+	});
 }
 
 /** /llms.txt in the llmstxt.org shape (an H1, a quoted summary, H2 sections of links), with the site's own claims. */

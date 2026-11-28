@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { homeJsonLd, homeTitle, jsonLdScript, llmsTxt, nodeJsonLd, origin, robotsTxt } from '../src/data/seo';
+import { homeJsonLd, homeTitle, jsonLdScript, llmsTxt, nodeJsonLd, origin, robotsTxt, searchCrawlers, trainingCrawlers } from '../src/data/seo';
 import { nodeRelease } from '../src/data/node-release';
-import { jsonLdProblems, llmsProblems, nodeJsonLdProblems, robotsProblems } from '../scripts/seo-checks.mjs';
+import { jsonLdProblems, llmsProblems, nodeJsonLdProblems, robotsGroups, robotsProblems } from '../scripts/seo-checks.mjs';
 
 test('the home JSON-LD is an Organization and a WebSite, on the given domain', () => {
 	assert.deepEqual(jsonLdProblems(homeJsonLd(), origin), []);
@@ -49,7 +49,27 @@ test('a "</script>" in the JSON-LD cannot close its script element', () => {
 test('robots.txt lets every crawler in, AI crawlers too, and names the sitemap', () => {
 	assert.deepEqual(robotsProblems(robotsTxt(), origin), []);
 	assert.ok(robotsProblems('User-agent: GPTBot\nDisallow: /\n', origin).length > 0);
-	assert.ok(robotsProblems(robotsTxt().replace('Disallow: /stats/', 'Disallow: /science/'), origin).includes('disallows /science/'));
+	assert.ok(robotsProblems(robotsTxt().replace('Disallow: /stats/', 'Disallow: /science/'), origin).includes('disallows /science/ for ' + searchCrawlers.join(', ')));
+});
+
+test('robots.txt names the search and AI answer crawlers, with the same rules as every other crawler', () => {
+	const groups = robotsGroups(robotsTxt());
+	assert.deepEqual(groups.map((g) => g.agents), [searchCrawlers, ['*']]);
+	assert.deepEqual(groups[0].rules, groups[1].rules);
+	for (const a of ['OAI-SearchBot', 'ChatGPT-User', 'PerplexityBot', 'Perplexity-User', 'Claude-SearchBot', 'Claude-User', 'ClaudeBot', 'Googlebot', 'Bingbot']) {
+		assert.ok(searchCrawlers.includes(a), a);
+		assert.ok(robotsProblems(robotsTxt().replace(`User-agent: ${a}\n`, ''), origin).includes(`${a} is not named in exactly one group`), a);
+	}
+	// a named group that forgot the private paths would let those crawlers into the account pages
+	const loose = robotsTxt().replace(/^(User-agent: ClaudeBot\n)Disallow: \/account\n/m, '$1');
+	assert.ok(robotsProblems(loose, origin).some((p) => p.startsWith('does not disallow /account for Googlebot')));
+});
+
+test('robots.txt leaves the training crawlers under "*": their policy is the owner\'s call', () => {
+	for (const a of trainingCrawlers) {
+		assert.ok(!robotsGroups(robotsTxt()).some((g) => g.agents.includes(a)), a);
+		assert.ok(robotsProblems(`${robotsTxt()}\nUser-agent: ${a}\nDisallow: /\n`, origin).some((p) => p.startsWith(`names ${a}`)), a);
+	}
 });
 
 test('llms.txt has the llmstxt.org shape, the main links and only the site’s own claims', () => {

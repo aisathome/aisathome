@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
-import { jsonLdProblems, llmsProblems, nodeJsonLdProblems, pngSize, robotsProblems } from './seo-checks.mjs';
+import { datasetJsonLdProblems, jsonLdProblems, jsonLdScripts, llmsProblems, nodeJsonLdProblems, pngSize, proofJsonLdProblems, robotsProblems } from './seo-checks.mjs';
 
 const dist = new URL('../dist/', import.meta.url).pathname;
 const files = (dir) => readdirSync(dir).flatMap((f) => {
@@ -260,6 +260,20 @@ else {
 		for (const p of nodeJsonLdProblems(JSON.parse(nodeLd[0][1]), origin)) errors.push(`node/index.html: JSON-LD: ${p}`);
 	} catch (e) {
 		errors.push(`node/index.html: JSON-LD does not parse: ${e.message}`);
+	}
+}
+// The proved theorems (src/data/theorems-jsonld.ts): the list's Dataset and each proof page's CreativeWork, once each.
+const theoremsDir = join(dist, 'science', 'prove2me', 'theorems');
+if (existsSync(join(theoremsDir, 'index.html'))) {
+	const one = (page, check) => {
+		const lds = jsonLdScripts(readFileSync(join(dist, page), 'utf8'));
+		if (lds.length !== 1) errors.push(`${page}: ${lds.length} JSON-LD scripts (one expected)`);
+		else if (lds[0] instanceof Error) errors.push(`${page}: JSON-LD does not parse: ${lds[0].message}`);
+		else for (const p of check(lds[0])) errors.push(`${page}: JSON-LD: ${p}`);
+	};
+	one('science/prove2me/theorems/index.html', (d) => datasetJsonLdProblems(d, origin));
+	for (const leaf of readdirSync(theoremsDir).filter((f) => existsSync(join(theoremsDir, f, 'index.html')))) {
+		one(`science/prove2me/theorems/${leaf}/index.html`, (d) => proofJsonLdProblems(d, origin, leaf));
 	}
 }
 const command = (text) => text.match(/data-node-start-linux[\s\S]*?<pre[\s\S]*?<\/pre>/)?.[0].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ');
