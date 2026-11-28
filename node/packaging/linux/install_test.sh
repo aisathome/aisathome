@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2329
+# (for the whole file: this test loads install.sh's functions with eval and sets the globals and
+# stub functions they read, which shellcheck does not see (SC2034, SC2329); each case runs in a
+# subshell or $(...) on purpose, so its PATH and variables stay in it (SC2030, SC2031); and the
+# single-quoted $ are in the stub scripts it writes and the installer lines it greps for (SC2016).)
 # Tests for install.sh that need no root, GPU or network: tiers, overrides, input
 # validation, the prebuilt bundle's driver and GPU checks (fake nvidia-smi), the tier's free
 # GPU memory check, the speed test (fake llama-server), free disk space
@@ -78,6 +83,7 @@ run() {
   out="$(env -i PATH="$PATH" AISATHOME_TEST_UI_DROPIN="$tmp/no-dropin" AISATHOME_TEST_MODELS_DIR="$tmp/no-models" "${env[@]}" \
     bash "$installer" "$@" 2>&1)"; code=$?
 }
+# shellcheck disable=SC2001 # indents every line of $out, which ${out//...} cannot
 fail() { echo "FAIL: $1"; echo "$out" | sed 's/^/    /'; fails=$((fails + 1)); }
 has() { [[ "$out" == *"$2"* ]] || fail "$1: missing '$2'"; }
 lacks() { [[ "$out" != *"$2"* ]] || fail "$1: unexpected '$2'"; }
@@ -715,6 +721,7 @@ majors() {
       [[ $in = 1 ]] || continue
       read -r maj name <<<"$line"
       # a glob, like systemd's fnmatch
+      # shellcheck disable=SC2053 # $pat is the glob
       if [[ "$name" == $pat ]]; then echo "$maj"; fi
     done < "$2"
   done < <(sed -n 's/^DeviceAllow=char-\([^ ]*\) .*/\1/p' <<<"$1") | sort -un | paste -sd' ' -

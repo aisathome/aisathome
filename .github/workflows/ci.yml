@@ -40,6 +40,12 @@ jobs:
           pat="$pat"'|owner,? 20[0-9]{2}|decision 00[0-9]{2}|GDPR[ ]decision|backlog [0-9]|coordinat[o]r'
           pat="$pat"'|Co-Authored[-]By|Generated with \[Claude|code-review[s][.]d|bin/code-revie[w]'
           if git grep -n -i -E "$pat" | sed -E 's#[a-z]+://[^ )>"]*##g' | grep -i -E "$pat"; then exit 1; fi
+      - name: shellcheck
+        # Every tracked *.sh, by the shell its first line names (koalaman/shellcheck v0.11.0, by
+        # digest). A finding kept on purpose says why where it is (# shellcheck disable=...).
+        run: |
+          git ls-files -z '*.sh' | xargs -0 docker run --rm -v "$PWD":/mnt:ro -w /mnt \
+            docker.io/koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d -f gcc
       - name: go vet
         run: go vet ./...
       - name: staticcheck

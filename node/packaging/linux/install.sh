@@ -762,6 +762,7 @@ UNIT
   systemctl enable --now aisathome-node-restart.path aisathome-node-control.path
   # "aisathome-node status" on PATH, with this UI port.
   install -d -m 0755 /usr/local/bin
+  # shellcheck disable=SC2016 # the wrapper's own $ and "$@", written as they are
   printf '#!/bin/sh\nexport AISATHOME_UI_PORT="${AISATHOME_UI_PORT:-%s}"\nexec /opt/aisathome-node/bin/aisathome-node "$@"\n' \
     "$ui_port" > /usr/local/bin/aisathome-node
   chmod 0755 /usr/local/bin/aisathome-node
@@ -997,6 +998,7 @@ PY
   if [[ $rc = 3 ]]; then
     echo "model: copying $1 to $models_dir/$2 (another filesystem)" >&2
     [[ ! -e "$models_dir/$2.part" && ! -L "$models_dir/$2.part" ]] || as_engine unlink -- "$models_dir/$2.part"
+    # shellcheck disable=SC2016 # $1 is the inner sh's argument
     { as_engine sh -c 'cat > "$1"' sh "$models_dir/$2.part" < "$1" && as_engine mv -f -- "$models_dir/$2.part" "$models_dir/$2"; } ||
       die "cannot copy $1 to $models_dir/$2"
     unlink -- "$1"
@@ -1037,6 +1039,7 @@ preflight() {
   [[ -z "$node_config" ]] || a+=(-node-config "$node_config")
   [[ -z "$gateway_url" ]] || a+=(-gateway-url "$gateway_url")
   [[ -z "$node_id" ]] || a+=(-node-id "$node_id")
+  # shellcheck disable=SC2209 # acct=link is the word "link", not the link command
   if [[ $anonymous = 1 ]]; then acct=anonymous; elif [[ $link = 1 ]]; then acct=link; elif [[ $keep_token = 1 ]]; then acct=keep; elif [[ $token_stdin = 1 ]]; then acct=token; fi
   workdir
   j="$("$node_bin" config preflight -json -conf-dir "$conf" -out "$work" -account "$acct" \
@@ -1058,6 +1061,7 @@ preflight() {
 # lock themselves: nothing else changes token.env or node.json between this install's decision, its writes
 # and a rollback of them.
 take_lock() {
+  # shellcheck disable=SC2174 # $conf is /etc/aisathome-node: /etc is there, so -m covers the one folder made
   mkdir -p -m 0750 "$conf"
   exec 8>"$conf/node.lock"
   flock -w 60 8 || die "another install or aisathome-node link is changing this node; run the installer again when it is done"

@@ -9,6 +9,7 @@
 # once it holds a slot; a slot directory without one (an older host) is polled as before.
 d=$1; shift
 t0=$(date +%s)
+# shellcheck disable=SC2010 # counts names; the host names the slot files slot.<i>, with no odd characters
 n=$(ls "$d" 2>/dev/null | grep -c '^slot\.[0-9]*$')
 [ "$n" -ge 1 ] || { echo "buildslot: no slot files in $d" >&2; exit 125; }
 if [ -f "$d/turnstile" ]; then

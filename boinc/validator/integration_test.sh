@@ -29,7 +29,7 @@ expect() { # expect <what> <want> <got>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1: got '$3', want '$2'"; fails=$((fails + 1)); fi
 }
 
-for i in $(seq 60); do my -e 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
+for _ in $(seq 60); do my -e 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
 my -e "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db"
 my "$db" < "$BOINC/db/schema.sql"
 my "$db" < "$BOINC/db/constraints.sql"
@@ -98,6 +98,7 @@ run 4
 expect "a result an interrupted run claimed: not granted again" "0 0 1" "$(q 'SELECT validate_state, granted_credit, opaque FROM result WHERE id = 4')"
 expect "its work unit untouched" "1 0 0" "$(q 'SELECT need_validate, error_mask, canonical_resultid FROM workunit WHERE id = 4')"
 expect "totals unchanged by it" "1123.25 1123.25" "$(q 'SELECT h.total_credit, u.total_credit FROM host h, user u WHERE h.id = 1 AND u.id = 1')"
+# shellcheck disable=SC2015 # echo does not fail
 grep -q 'claimed by an earlier run' "$proj/validator.log" && echo "ok   and the log says so" || { echo "FAIL no log line for the claimed result"; fails=$((fails + 1)); }
 
 echo 0 > "$proj/credit/p-00000000000a" # final at last: withheld
