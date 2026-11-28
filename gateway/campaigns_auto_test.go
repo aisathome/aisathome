@@ -13,12 +13,12 @@ import (
 // lab without it, on a test clock that tasks, reopens and sweeps share.
 func autoRig(t *testing.T, af *CampaignAutoFinish) *taskRig {
 	t.Helper()
-	g := newTestGateway(t, Config{StateDir: t.TempDir(), Projects: []Project{
+	r := &taskRig{t: t, now: time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC)}
+	g := newTestGateway(t, Config{TasksNow: r.clock, StateDir: t.TempDir(), Projects: []Project{
 		{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true, Kinds: []string{"p2m-v7"}, CampaignAutoFinish: af},
 		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
-	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC)}
-	g.tasks.now = r.clock
+	r.g = g
 	t.Cleanup(func() { g.Close() })
 	return r
 }
@@ -267,9 +267,8 @@ func TestCampaignAutoFinishGuards(t *testing.T) {
 func TestCampaignAutoFinishSweepsAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	projects := []Project{{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, CampaignAutoFinish: p2mAuto()}}
-	g := newTestGateway(t, Config{StateDir: dir, Projects: projects})
 	now := time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC)
-	g.tasks.now = func() time.Time { return now }
+	g := newTestGateway(t, Config{StateDir: dir, Projects: projects, TasksNow: func() time.Time { return now }})
 	if _, _, err := g.sci.putCampaign(&Campaign{Project: "prove2me", ID: "t11", Status: CampaignRunning}, nil, now, nil); err != nil {
 		t.Fatal(err)
 	}

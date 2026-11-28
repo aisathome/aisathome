@@ -42,8 +42,8 @@ func (r *taskRig) advance(d time.Duration) {
 
 func newTaskRig(t *testing.T, dir string) *taskRig {
 	t.Helper()
-	r := &taskRig{t: t, g: statusGateway(t, dir), now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
-	r.g.tasks.now = r.clock
+	r := &taskRig{t: t, now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
+	r.g = statusGateway(t, dir, Config{TasksNow: r.clock})
 	t.Cleanup(func() { r.g.Close() })
 	return r
 }
