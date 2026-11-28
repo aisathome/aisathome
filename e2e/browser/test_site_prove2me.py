@@ -1096,5 +1096,8 @@ def test_the_submissions_show_the_newest_five_and_scroll(pages, site, records, w
         const l = b.querySelector('tbody tr:last-child').getBoundingClientRect(), r = b.getBoundingClientRect();
         return b.scrollTop + b.clientHeight >= b.scrollHeight - 2 && l.bottom <= r.bottom + 3 && l.top >= r.top - 1; }""")
     assert page.evaluate("document.documentElement.scrollWidth") <= width, "the page scrolls sideways"
-    expect(page.locator("h2#submissions ~ p.caps").first).to_have_text(
-        "Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the model.")
+    caption = page.locator("h2#submissions ~ p.caps").first
+    expect(caption).to_have_text(
+        "Closed by reuse: the proof imports a theorem someone else had already proved; these are not counted as proved by the "
+        "model. Every accepted proof with what it cost, one page each: proved theorems.")
+    expect(caption.locator("a")).to_have_attribute("href", "/science/prove2me/theorems/")
