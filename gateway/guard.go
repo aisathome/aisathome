@@ -473,21 +473,17 @@ var (
 	flatEscapes = strings.NewReplacer(`\\\r\n`, "", `\\\n`, "", `\\n`, " ", `\r`, " ", `\n`, " ", `\t`, " ", `\"`, `"`)
 )
 
-// callText is the text the rules read: every key, string and number of the arguments, decoded,
-// in order (a key given twice shows both values, whichever one a client takes), as one line.
-// Not the JSON itself: in `"cd x\ncat y"` the escape puts the words "ncat" and "nc" where the
-// command has none (2 of 4,535 recorded calls, one being Python's `\nc = open(...)`), and
-// quoting could hide a pattern. Arguments that do not parse are read as they came.
-func callText(name, args string) string {
-	text, _ := callTexts(name, args)
-	return text
-}
-
 // shellLines is flatLines keeping line ends, each as one "\n" where flatLines puts its space, so
 // the two texts have the same length and offsets.
 var shellLines = strings.NewReplacer("\\\r\n", "", "\\\n", "", "\r\n", "\n", "\n", "\n", "\r", "\n")
 
-// callTexts is callText and, at the same offsets, the text as the shell reads it: line ends kept,
+// callTexts returns text, what the rules read: every key, string and number of the arguments,
+// decoded, in order (a key given twice shows both values, whichever one a client takes), as one
+// line. Not the JSON itself: in `"cd x\ncat y"` the escape puts the words "ncat" and "nc" where
+// the command has none (2 of 4,535 recorded calls, one being Python's `\nc = open(...)`), and
+// quoting could hide a pattern. Arguments that do not parse are read as they came.
+//
+// shell is the same text, at the same offsets, as the shell reads it: line ends kept,
 // and each key, string and number of the arguments ending in a line end instead of a space, so a
 // command ends with its string: the description after it is no argument of its last command
 // (code review, 2026-11-21). shell is "" for arguments that do not parse.

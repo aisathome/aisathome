@@ -173,12 +173,6 @@ func jsonErr(w http.ResponseWriter, code int, msg string) {
 	writeJ(w, code, map[string]any{"error": map[string]any{"message": msg}})
 }
 
-func (f *fakeGW) state(id string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.pilots[id].State
-}
-
 func (f *fakeGW) ids() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

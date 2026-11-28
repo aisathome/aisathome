@@ -801,15 +801,6 @@ func (g *Gateway) hasOwnNodes(id string) bool {
 	return g.accounts != nil && id != "" && g.accounts.confirmedNodes(id)
 }
 
-// hasNodes reports whether account id has registered nodes (they may be offline).
-func (g *Gateway) hasNodes(id string) bool {
-	if g.accounts == nil || id == "" {
-		return false
-	}
-	a, _, ok := g.accounts.Get(id)
-	return ok && len(a.Nodes) > 0
-}
-
 // personalDataError refuses a request that looks like it carries personal data (piiKind) when none of
 // the requester's own nodes can take it: every other node is a stranger's. The user rule of the terms,
 // and what was found, so a false positive can be told apart (never the value). 400: sending it again
