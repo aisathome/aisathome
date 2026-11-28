@@ -66,11 +66,14 @@ func cases() []golden {
 			VerificationURIComplete: "https://aisathome.org/link?code=KXQT-4821", ExpiresIn: 600, Interval: 5}},
 		{"http/link-poll-request.json", &LinkPollRequest{DeviceCode: "dev-secret"}},
 		{"http/link-poll-pending.json", &LinkPoll{Status: LinkPending, Interval: 5}},
-		{"http/link-poll-approved.json", &LinkPoll{Status: LinkApproved, Token: "nt-n-1a2b3c4d.secret", NodeID: "n-1a2b3c4d"}},
+		{"http/link-poll-approved.json", &LinkPoll{Status: LinkApproved, Token: "nt-n-1a2b3c4d.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", NodeID: "n-1a2b3c4d"}},
 		{"http/register-request.json", &RegisterRequest{AcceptTerms: true, Agent: "aisathome-node/0.9.0"}},
-		{"http/register.json", &Register{Token: "nt-a-0f1e2d3c.secret", NodeID: "a-0f1e2d3c"}},
+		{"http/register.json", &Register{Token: "nt-a-0f1e2d3c.ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8", NodeID: "a-0f1e2d3c"}},
 		{"http/self.json", &NodeSelf{NodeID: "a-0f1e2d3c", Anonymous: true, ScienceOnly: true, State: SelfHeld, ChecksPassed: 1, ChecksNeeded: 3,
 			Message: "This node is held.", DeleteAt: &deleteAt}},
+		// fields without omitempty are there when zero too
+		{"http/self-checking.json", &NodeSelf{NodeID: "a-0f1e2d3c", Anonymous: true, ScienceOnly: true, State: SelfChecking, ChecksNeeded: 3}},
+		{"http/self-serving.json", &NodeSelf{NodeID: "n-1a2b3c4d", State: SelfServing}},
 	}
 	return append(append(c, common("v2")...), common("v1")...)
 }
