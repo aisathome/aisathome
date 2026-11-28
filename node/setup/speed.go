@@ -146,6 +146,7 @@ func CheckSpeed(g GPU, s Speed, minTPS float64) error {
 	if s.TPS >= minTPS {
 		return nil
 	}
+	//lint:ignore ST1005 this refusal is the sentence the local setup page shows as it is, not text wrapped in another error.
 	return fmt.Errorf("GPU %d (%s) writes %.1f tokens/s after a %d-token prompt; the network needs at least %g, so the setup stopped the node (users would wait too long on long prompts). "+
 		"If other programs used the GPU during the test (BOINC GPU tasks, games, video), stop them; if the card's clocks or power limit are locked or lowered (a mining or overclocking tool such as MSI Afterburner, or nvidia-smi -lgc / -pl), undo that. Then run the setup again.",
 		g.Index, g.Name, s.TPS, s.PromptTokens, minTPS)

@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+//lint:ignore U1000 proc.go's field sys has this type on every platform; only Windows keeps something in it (proc_windows.go).
 type sysProc struct{}
 
 // startSys starts the engine in its own process group, so a stop reaches anything it started,

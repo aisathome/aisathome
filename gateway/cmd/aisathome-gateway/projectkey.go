@@ -23,6 +23,7 @@ The key itself is never printed: give the file to the project's runner.
 // runProjectKey implements the project-key subcommand.
 func runProjectKey(args []string, out io.Writer) error {
 	if len(args) != 1 || args[0] == "" || args[0][0] == '-' {
+		//lint:ignore ST1005 the usage text is returned so the command prints it as it is.
 		return errors.New(projectKeyUsage)
 	}
 	b := make([]byte, 32)

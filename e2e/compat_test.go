@@ -88,6 +88,7 @@ func buildRelease(t *testing.T, root, ref string) string {
 	bin := filepath.Join(dir, "aisathome-node")
 	goBin, err := exec.LookPath("go")
 	if err != nil { // go test does not need go on PATH; the toolchain that runs it does
+		//lint:ignore SA1019 a test binary runs where go test built it, so the GOROOT it was built with is the toolchain's.
 		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
 	}
 	build := exec.Command(goBin, "build", "-trimpath", "-ldflags", "-X github.com/aisathome/aisathome/node.Version="+ref,

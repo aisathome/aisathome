@@ -48,6 +48,8 @@ Run what CI runs for the parts you touched:
 ```bash
 gofmt -l .                                    # must print nothing
 go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...   # CI also checks the Windows build (ci.yml)
+go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 go test -race ./...                           # e2e included (it needs the release tags: git fetch --tags)
 ./node/packaging/linux/install_test.sh        # the Linux installer
 ./scripts/node_sh_test.sh                     # the one-line install without an account (site/public/node.sh)
@@ -103,10 +105,10 @@ What we expect of tests:
 2. Keep your branch current by rebasing onto `main`, not by merging `main` into it: `main` has
    a linear history.
 3. Open the pull request with what it changes, why, and how you tested it.
-4. **CI must pass.** The required checks are `check` (gofmt, vet, the internal-references lint,
-   `go test -race`, the installer and bundle tests, the e2e tests and the browser test) and
-   `site` (build and `npm run check`). The Windows and harness jobs run on every push too and
-   should be green.
+4. **CI must pass.** The required checks are `check` (gofmt, vet, staticcheck, govulncheck, the
+   internal-references lint, `go test -race`, the installer and bundle tests, the e2e tests and
+   the browser test) and `site` (build and `npm run check`). The Windows and harness jobs run on
+   every push too and should be green.
 5. A maintainer reviews and merges, usually with "Rebase and merge". Gateway changes go live
    after a run on a staging gateway; node changes ship with the next tagged release.
 
