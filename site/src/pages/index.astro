@@ -108,7 +108,7 @@ const icons: Record<string, string> = {
 			<div class="sci-body">
 				<div class="sci-words">
 					<p class="sci-text" data-home-prove2me data-source="build">
-						<strong class="sci-count" data-home-p2m-accepted>{p2mView.kpis.accepted}</strong>{' '}
+						<strong class="sci-count" data-home-p2m-accepted>{p2mView.kpis.proofs}</strong>{' '}
 						<span data-home-p2m-text>{homeLine(p2mView, p2m.model)}</span>{' '}
 						<a href="/science/prove2me/" data-home-p2m-link>prove2me trials: Qwen’s Lean proofs <span aria-hidden="true">→</span></a>
 					</p>
@@ -251,7 +251,7 @@ const icons: Record<string, string> = {
 			if (!known) return;
 			const v = await liveSummary(known.history);
 			if (!v) return;
-			box.querySelector<HTMLElement>('[data-home-p2m-accepted]')!.textContent = String(v.kpis.accepted);
+			box.querySelector<HTMLElement>('[data-home-p2m-accepted]')!.textContent = String(v.kpis.proofs);
 			box.querySelector<HTMLElement>('[data-home-p2m-text]')!.textContent = homeLine(v, known.model);
 			box.dataset.source = 'live';
 			chart.update(v);

@@ -44,10 +44,10 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** The KPIs' cells (the dl's children); `--kpis` is their number. */
 export function kpisHTML(k: Kpis): { html: string; n: number } {
 	const cells = [
-		`<div data-kpi="accepted"><dt>${k.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of ${k.submitted} submitted</dt><dd>${k.accepted}</dd></div>`,
-		`<div data-kpi="open"><dt>open leaves proved, of ${k.openTried} tried</dt><dd>${k.openProved}</dd></div>`,
-		k.reused > 0 ? `<div data-kpi="reused"><dt>${k.reused === 1 ? 'open leaf' : 'open leaves'} closed by reuse of a proof already on prove2me</dt><dd>${k.reused}</dd></div>` : '',
-		`<div data-kpi="runs"><dt>runs proved, of ${k.runs} in trials 1 to ${k.lastTrial}</dt><dd>${k.proved}</dd></div>`,
+		`<div data-kpi="accepted"><dt>${k.proofs === 1 ? 'proof' : 'proofs'} by the model accepted by prove2me, of ${k.submitted} submitted${k.reused ? ` (${k.reused} of them ${k.reused === 1 ? 'a reuse' : 'reuses'})` : ''}</dt><dd>${k.proofs}</dd></div>`,
+		`<div data-kpi="open"><dt>open leaves with an accepted proof, of ${k.openTried} tried</dt><dd>${k.openAccepted}</dd></div>`,
+		k.reused > 0 ? `<div data-kpi="reused"><dt>${k.reused === 1 ? 'open leaf' : 'open leaves'} closed by reuse of a proof already on prove2me (not counted as proofs)</dt><dd>${k.reused}</dd></div>` : '',
+		`<div data-kpi="runs"><dt>runs that passed our own check, of ${k.runs} in trials 1 to ${k.lastTrial}</dt><dd>${k.proved}</dd></div>`,
 	].filter(Boolean);
 	return { html: cells.join(''), n: cells.length };
 }
@@ -58,7 +58,9 @@ export function smallNumbersHTML(v: ScienceView, _f01Tasks?: number, _idOf?: (al
 	const k = v.kpis;
 	const hours = k.hours + (k.probeHours > 0 ? k.probeHours : 0);
 	return esc(
-		`Small numbers: ${k.openProved} open leaves proved so far. That shows the model can do it, not yet how often. ` +
+		`Small numbers: ${k.openAccepted} open leaves with an accepted proof so far` +
+			`${k.openProved > k.openAccepted ? ` (${k.openProved - k.openAccepted} more passed our own check without an accepted proof)` : ''}. ` +
+			`That shows the model can do it, not yet how often. ` +
 			`On calibration leaves, which others had proved before, ${k.calibrationProved} of ${k.calibrationRuns} runs succeeded. ` +
 			`All runs together took ${Math.round(hours)} GPU-hours.`,
 	);
@@ -287,7 +289,7 @@ export function homeLine(v: ScienceView, model: string): string {
 	const k = v.kpis;
 	const cur = v.current ? ` Trial ${v.current.number} ${v.current.status === 'preparing' ? 'is being prepared' : 'is running'}.` : '';
 	return (
-		`${k.accepted === 1 ? 'proof' : 'proofs'} by ${model} accepted on prove2me so far: it proved ${k.openProved} of the ${k.openTried} open lemmas it tried` +
+		`${k.proofs === 1 ? 'proof' : 'proofs'} by ${model} accepted on prove2me so far: it proved ${k.openAccepted} of the ${k.openTried} open lemmas it tried` +
 		`${k.reused ? ` and closed ${k.reused} more by reusing a proof already there` : ''}. prove2me states theorems from research papers in Lean 4 and checks every proof by machine.${cur}`
 	);
 }
@@ -297,8 +299,8 @@ export function cardNumbers(v: ScienceView): { key: string; value: string; label
 	const k = v.kpis;
 	const c = v.current;
 	return [
-		{ key: 'accepted', value: String(k.accepted), label: `${k.accepted === 1 ? 'proof' : 'proofs'} accepted by prove2me, of ${k.submitted} submitted` },
-		{ key: 'open', value: `${k.openProved} of ${k.openTried}`, label: `open leaves proved${k.reused ? `; ${k.reused} more closed by reuse` : ''}` },
+		{ key: 'accepted', value: String(k.proofs), label: `${k.proofs === 1 ? 'proof' : 'proofs'} by the model accepted by prove2me, of ${k.submitted} submitted` },
+		{ key: 'open', value: `${k.openAccepted} of ${k.openTried}`, label: `open leaves with an accepted proof${k.reused ? `; ${k.reused} more closed by reuse` : ''}` },
 		...(c ? [{ key: 'trial', value: `Trial ${c.number}`, label: c.status === 'preparing' ? 'being prepared' : c.start ? `running since ${day(c.start)}` : 'running' }] : []),
 	];
 }

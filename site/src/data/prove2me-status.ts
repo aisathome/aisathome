@@ -74,6 +74,7 @@ export interface StatusView {
 	/** The whole queue now: tasks running and waiting per open trial or bench (every one with any), oldest trial first,
 	 * the benches after; null without the gateway's task list. */
 	queue: { label: string; running: number; queued: number }[] | null;
+	/** `accepted`: the model's proofs prove2me accepted (reuses left out, as on the rest of the page). */
 	submissions: { submitted: number; accepted: number; pending: number };
 	nodes: Nodes | null;
 }
@@ -159,7 +160,7 @@ export function statusView(live: Records | null, nodes: Nodes | null, fallback: 
 		trials,
 		lastEnded: ended ? { number: trialOf(ended.id)!.number, end: ended.ended_at } : null,
 		queue,
-		submissions: { submitted: rs.length, accepted: rs.filter((r) => r.state === 'accepted').length, pending: rs.filter((r) => r.state === 'pending').length },
+		submissions: { submitted: rs.length, accepted: rs.filter((r) => r.state === 'accepted' && r.labels.kind !== 'reuse').length, pending: rs.filter((r) => r.state === 'pending').length },
 		nodes,
 	};
 }
@@ -176,7 +177,7 @@ export function builtStatus(h: History): StatusView {
 		trials: c ? [{ label: `t${c.number}`, number: c.number, probe: false, status: c.status, scaffold: c.scaffold, start: c.start, counts: none, leaves: null, bench: false }] : [],
 		lastEnded: c || !last ? null : { number: last.number, end: last.end },
 		queue: null,
-		submissions: { submitted: subs.length, accepted: subs.filter((s) => s.verdict === 'accepted').length, pending: subs.filter((s) => s.verdict === 'pending').length },
+		submissions: { submitted: subs.length, accepted: subs.filter((s) => s.verdict === 'accepted' && s.kind !== 'reuse').length, pending: subs.filter((s) => s.verdict === 'pending').length },
 		nodes: null,
 	};
 }

@@ -1,4 +1,6 @@
-// The home page's prove2me chart: proofs prove2me accepted, counted up over time, with the start of each trial marked.
+// The prove2me chart (home page, /science/prove2me/, the proved theorems): the model's proofs prove2me accepted, counted
+// up over time, with the start of each trial marked. A reuse (accepted, but a theorem someone else had proved) is never
+// a proof, so it is not in the series: the count at the end is every page's proof count.
 // Pure: an SVG string and table rows from a ScienceView, so the build draws it (the page works without JavaScript) and
 // the browser draws it again at its real width and with the gateway's newer records. The look follows the network
 // page's charts (pressure-chart.ts): gridlines at 0, half and the top, the first and last date under the plot, a title
@@ -12,7 +14,6 @@ export interface Accepted {
 	/** When prove2me accepted it (its verdict), or when it was submitted when the verdict has no time. */
 	at: string;
 	trial: number;
-	kind: 'proof' | 'reuse';
 	title: string;
 	url: string;
 }
@@ -41,11 +42,12 @@ const when = (iso: string) => {
 	return `${shortDay(iso)} ${d.getUTCFullYear()}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`;
 };
 
-/** The chart's data from a view: its accepted submissions and its trials. Null when there is nothing to draw. */
+/** The chart's data from a view: its accepted proofs by the model (reuses left out) and its trials. Null when there is
+ * nothing to draw. */
 export function acceptedSeries(v: ScienceView): AcceptedSeries | null {
 	const accepted = v.submissions
-		.filter((s) => s.verdict === 'accepted')
-		.map((s) => ({ at: s.verdict_at || s.submitted_at, trial: s.trial, kind: s.kind, title: plainTitle(s.title), url: s.url }))
+		.filter((s) => s.verdict === 'accepted' && s.kind !== 'reuse')
+		.map((s) => ({ at: s.verdict_at || s.submitted_at, trial: s.trial, title: plainTitle(s.title), url: s.url }))
 		.filter((a) => Number.isFinite(ms(a.at)))
 		.sort((a, b) => ms(a.at) - ms(b.at));
 	const trials = v.trials
@@ -62,10 +64,9 @@ export function acceptedSeries(v: ScienceView): AcceptedSeries | null {
 /** What the chart says, for its aria-label and caption. */
 export function acceptedSummary(s: AcceptedSeries): string {
 	const n = s.accepted.length;
-	const reused = s.accepted.filter((a) => a.kind === 'reuse').length;
 	const first = s.trials[0].number, lastTrial = s.trials[s.trials.length - 1].number;
-	return `${n} ${n === 1 ? 'proof' : 'proofs'} accepted by prove2me from ${shortDay(s.accepted[0].at)} to ${shortDay(s.end)}` +
-		`${reused ? ` (${reused} of them by reusing a proof already there)` : ''}, over trials ${first} to ${lastTrial}, which started ${shortDay(s.start)}.`;
+	return `${n} ${n === 1 ? 'proof' : 'proofs'} by the model accepted by prove2me from ${shortDay(s.accepted[0].at)} to ${shortDay(s.end)}, ` +
+		`over trials ${first} to ${lastTrial}, which started ${shortDay(s.start)}. Leaves closed by reuse are not counted.`;
 }
 
 const H = 200, L = 30, R = 30, T = 22, B = 24;
@@ -111,7 +112,7 @@ export function acceptedChartSVG(s: AcceptedSeries, W = 640): string {
 		pts.push(`${xx},${y(n)}`);
 		n += 1;
 		pts.push(`${xx},${y(n)}`);
-		dots.push(`<circle cx="${xx}" cy="${y(n)}" r="3.5" class="${a.kind === 'reuse' ? 'pt reuse' : 'pt'}"><title>${esc(`${n}. ${when(a.at)}, trial ${a.trial}: ${a.title}${a.kind === 'reuse' ? ' (closed by reusing a proof already there)' : ''}`)}</title></circle>`);
+		dots.push(`<circle cx="${xx}" cy="${y(n)}" r="3.5" class="pt"><title>${esc(`${n}. ${when(a.at)}, trial ${a.trial}: ${a.title}`)}</title></circle>`);
 	}
 	pts.push(`${(W - R).toFixed(1)},${y(n)}`);
 	out.push(`<polyline points="${pts.join(' ')}" class="step"/>`, ...dots,
@@ -119,22 +120,23 @@ export function acceptedChartSVG(s: AcceptedSeries, W = 640): string {
 	return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(acceptedSummary(s))}" xmlns="http://www.w3.org/2000/svg">${out.join('')}</svg>`;
 }
 
-/** The table under the chart, newest first: when, trial, the lemma (its prove2me page), how, and the count so far. */
+/** The table under the chart, newest first: when, trial, the lemma (its prove2me page) and the count so far. */
 export function acceptedRowsHTML(s: AcceptedSeries): string {
 	return s.accepted
 		.map((a, i) => ({ a, n: i + 1 }))
 		.reverse()
 		.map(({ a, n }) => `<tr><td>${esc(shortDay(a.at))}</td><td class="num">${a.trial}</td>` +
 			`<td class="lemma">${a.url ? `<a href="${esc(a.url)}">${esc(a.title)}</a>` : esc(a.title)}</td>` +
-			`<td>${a.kind === 'reuse' ? 'reuse' : 'proof'}</td><td class="num">${n}</td></tr>`)
+			`<td class="num">${n}</td></tr>`)
 		.join('');
 }
 
 /** In the browser: draws the chart in a figure of components/AcceptedChart.astro again at its real width (the build's
  * copy is scaled) and on every resize; `update` redraws it and its table from a newer view (the gateway's records),
  * showing a figure the build left hidden (nothing accepted at the build), and hides it when the view has nothing to draw
- * (so it never keeps proofs the headline no longer counts). */
-export function mountAcceptedChart(fig: HTMLElement | null): { update: (v: ScienceView) => void } {
+ * (so it never keeps proofs the headline no longer counts). `show` does the same from a series already made (the proved
+ * theorems page passes its view's own, so the chart and the headline come from one computation). */
+export function mountAcceptedChart(fig: HTMLElement | null): { update: (v: ScienceView) => void; show: (s: AcceptedSeries | null) => void } {
 	const box = fig?.querySelector<HTMLElement>('[data-p2m-chart-svg]');
 	const rows = fig?.querySelector<HTMLElement>('[data-p2m-chart-rows]');
 	let series: AcceptedSeries | null = null;
@@ -152,19 +154,18 @@ export function mountAcceptedChart(fig: HTMLElement | null): { update: (v: Scien
 		cancelAnimationFrame(frame);
 		frame = requestAnimationFrame(draw);
 	});
-	return {
-		update(v) {
-			if (!fig || !box || !rows) return;
-			series = acceptedSeries(v);
-			fig.dataset.source = 'live';
-			fig.hidden = !series;
-			if (!series) {
-				box.innerHTML = '';
-				rows.innerHTML = '';
-				return;
-			}
-			draw(); // after unhiding: a hidden figure has no width
-			rows.innerHTML = acceptedRowsHTML(series); // every value escaped
-		},
+	const show = (next: AcceptedSeries | null) => {
+		if (!fig || !box || !rows) return;
+		series = next;
+		fig.dataset.source = 'live';
+		fig.hidden = !series;
+		if (!series) {
+			box.innerHTML = '';
+			rows.innerHTML = '';
+			return;
+		}
+		draw(); // after unhiding: a hidden figure has no width
+		rows.innerHTML = acceptedRowsHTML(series); // every value escaped
 	};
+	return { update: (v) => show(acceptedSeries(v)), show };
 }

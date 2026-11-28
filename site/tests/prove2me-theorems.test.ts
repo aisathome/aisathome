@@ -42,6 +42,7 @@ test('a reuse is a reuse: listed and marked, never a proof by the model nor in t
 	// a leaf without a page of its own (accepted since the build) links to prove2me only
 	assert.doesNotMatch(rows, /href="\/science\/prove2me\/theorems\/p2m-f181df\/"/);
 	assert.match(theoremKpisHTML(v).html, /leaves closed by reuse \(not counted as proofs\)<\/dt><dd>3</);
+	assert.match(theoremKpisHTML(v).html, new RegExp(`<dt>submissions: ${v.counts.proofs} accepted proofs, 3 reuses, `));
 	// the same result without its reuse record counts as a proof (the gateway's record decides, not a file of ours)
 	const noRecord: Records = { ...live(), results: live().results.map((r) => (r.item === 'p2m-faf1e3' ? { ...r, reuse: null, labels: { alias: 'N18', kind: 'proof', trial: 't9' } } : r)) };
 	assert.equal(theoremsView(h, noRecord).counts.reused, 2);
@@ -120,7 +121,7 @@ test('the headline is the model’s accepted proofs, with what they are out of r
 	const hl = headline(v, 'Qwen3.8 27B');
 	assert.equal(hl.number, v.counts.proofs);
 	assert.ok(hl.number >= own && hl.number <= own + 1); // the build's history may add O04 (trial 3)
-	assert.match(hl.scope, new RegExp(`^Out of ${v.counts.openTried} open leaves tried and ${v.counts.submitted} submissions; 3 more leaves were closed by reuse and not counted\\. From trial ${SELECTED_FROM} on, we chose only leaves we judged easy or moderate\\.$`));
+	assert.match(hl.scope, new RegExp(`^Proofs of ${v.counts.openAccepted} of the ${v.counts.openTried} open leaves tried\\. ${v.counts.submitted} submissions: ${v.counts.proofs} accepted proofs, 3 reuses, 1 rejected(, 1 not judged)?; a reuse is not counted as a proof\\. From trial ${SELECTED_FROM} on, we chose only leaves we judged easy or moderate\\.$`));
 	const html = headlineHTML(v, 'Qwen3.8 27B');
 	assert.match(html, new RegExp(`<p class="th-hero-n" data-th-headline-n>${v.counts.proofs}</p>`));
 	assert.match(html, /<a href="#counts">What the count means →<\/a>/);
@@ -137,7 +138,6 @@ test('the charts’ series come from the records: the count of accepted proofs o
 	assert.ok(s);
 	// the model's proofs only, oldest first, ending at the headline's number
 	assert.equal(s.accepted.length, v.counts.proofs);
-	assert.ok(s.accepted.every((a) => a.kind === 'proof'));
 	assert.ok(s.accepted.every((a, i) => i === 0 || a.at >= s.accepted[i - 1].at));
 	// the gateway's accepted proofs, by verdict time, are all in it
 	const rawTimes = snap.results.results.filter((x) => x.state === 'accepted' && !x.reuse).map((x) => (x as unknown as { verdict_at: string }).verdict_at).sort();

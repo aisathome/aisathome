@@ -42,12 +42,12 @@ test('one trial open: the queue is its running and waiting tasks; its line has e
 	assert.deepEqual(v.trials[0].counts, t8);
 	assert.deepEqual(v.trials[0].leaves, { proved: 2, of: 6 }); // the trials table's count of trial 8
 	assert.deepEqual(v.queue, [{ label: 't8', running: 2, queued: 9 }]);
-	assert.deepEqual(v.submissions, { submitted: 8, accepted: 8, pending: 0 });
+	assert.deepEqual(v.submissions, { submitted: 8, accepted: 6, pending: 0 }); // 2 of the 8 accepted are reuses, not proofs
 	const tx = statusTexts(v, at);
 	assert.equal(tx.head, 'Trial 8 is running, scaffold v9, since 16 Nov.');
 	assert.equal(tx.queue, '11 tasks in the queue: 2 running, 9 waiting.');
 	assert.deepEqual(tx.lines, ['Trial 8, 46 tasks: 14 proved, 18 ended otherwise, 3 stopped, 2 running, 9 waiting; 2 of 6 leaves proved.']);
-	assert.deepEqual(tx.nums, { nodes: '2', slots: '1 of 2', accepted: '8 of 8' });
+	assert.deepEqual(tx.nums, { nodes: '2', slots: '1 of 2', accepted: '6 of 8' });
 	assert.match(tx.updated, /^Live from the gateway, updated 14:58 UTC/);
 	// no percentage anywhere: there is no fixed total of work
 	assert.ok(![tx.head, tx.queue, ...tx.lines, tx.updated, ...Object.values(tx.nums)].some((x) => x.includes('%')));
