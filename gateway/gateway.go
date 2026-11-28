@@ -37,6 +37,7 @@ type Gateway struct {
 	projects atomic.Pointer[projectTable]
 	hist     *history         // daily snapshots for the network page (history.go)
 	press    *pressure        // hourly and daily network pressure (pressure.go)
+	fails    *failureCounts   // how attempts ended, per node and model and day (failures.go)
 	pstatus  *projectStatuses // runners' latest status, for the operations page (projstatus.go)
 	pubq     publicQueues     // built public views of task queues (queue_public.go)
 	ptasks   publicTaskList   // the built list of GET /v1/tasks (tasks_public.go)
@@ -190,7 +191,7 @@ func New(cfg Config, log *slog.Logger) (*Gateway, error) {
 	// and what it opens is closed again when a later one fails; background work starts last, once
 	// nothing can fail any more, so a gateway that does not start leaves no goroutine or file behind.
 	g := &Gateway{cfg: cfg, log: log, node: map[string]*nodeConn{}, tokens: copyTokens(cfg.NodeTokens),
-		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), press: newPressure(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
+		known: map[string]time.Time{}, waiting: map[*route]struct{}{}, science: map[*sciRun]struct{}{}, hist: newHistory(), press: newPressure(), fails: newFailureCounts(), flaps: map[string]*flapState{}, bodyBy: map[string]int64{}, wake: make(chan struct{}), counting: make(chan struct{}, countSlots), lim: newLimiter(), start: time.Now(),
 		budget: newBudgets(), stop: make(chan struct{}), pcache: newPrefixCache(), binds: newSessionBinds(), discards: newDiscardTracker(), credit: newCreditLedger(), knownSrc: known, installs: installs,
 		pstatus: newProjectStatuses(cfg.StateDir, log),
 		tasks:   newTaskStore(cfg.StateDir, log)}
@@ -278,6 +279,8 @@ func (g *Gateway) setup(cfg Config) (err error) {
 		g.hist.load(log)
 		g.press.path = filepath.Join(cfg.StateDir, pressureFile)
 		g.press.load(log, time.Now())
+		g.fails.path = filepath.Join(cfg.StateDir, FailuresFile)
+		g.fails.load(log, time.Now())
 		g.glog.path = filepath.Join(cfg.StateDir, GuardLogFile)
 		g.glog.load(log, time.Now())
 	}
@@ -339,6 +342,9 @@ func (g *Gateway) startBackground() {
 			}
 			if err := g.mc.save(); err != nil {
 				log.Warn("saving the model check's results failed", "err", err)
+			}
+			if err := g.fails.save(); err != nil {
+				log.Warn("saving the failure counts failed", "err", err)
 			}
 		})
 		g.every(pressureSaveEvery, func() {
@@ -407,5 +413,5 @@ func (g *Gateway) Close() error {
 	g.closed = true
 	g.closeMu.Unlock()
 	g.bg.Wait()
-	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.glog.save(time.Now()), g.mc.save(), g.closeFiles())
+	return errors.Join(g.budget.save(), g.credit.save(), g.hist.save(), g.press.save(), g.glog.save(time.Now()), g.mc.save(), g.fails.save(), g.closeFiles())
 }

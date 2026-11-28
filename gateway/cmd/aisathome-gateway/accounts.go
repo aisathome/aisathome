@@ -75,6 +75,12 @@ const accountsUsage = `usage: aisathome-gateway accounts [-config gateway.json |
                        from the usage log (needs -config with usage_log): answers, failed
                        checks by rule, credit voided, output tok/s, answers cut at
                        max_tokens, bad tool calls, discarded answers, degenerate texts
+  node-failures [days] [node]
+                       how attempts ended per node and model (the tier) over the last UTC days
+                       (default 7), as of the gateway's last save (needs -config with
+                       state_dir): answers, cut at max_tokens or at the context, context
+                       exceeded, tool calls the engine could not parse, bad tool calls, other
+                       failures by category, and requests refused before any node; counts only
   credit-adjust        the credit corrections: applied (as of the gateway's last save) and
                        pending (needs -config with state_dir)
   credit-adjust <node> <credit> "<reason>"
@@ -169,6 +175,12 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			return errors.New("credit-adjust needs -config with a state_dir: the gateway keeps its ledger there")
 		}
 		return creditAdjust(out, cfg.StateDir, a[1:], time.Now())
+	}
+	if a := fs.Args(); len(a) > 0 && a[0] == "node-failures" {
+		if cfg == nil || cfg.StateDir == "" {
+			return errors.New("node-failures needs -config with a state_dir: the gateway keeps its failure counts there")
+		}
+		return nodeFailures(out, cfg.StateDir, a[1:], time.Now())
 	}
 	if a := fs.Args(); len(a) > 0 && a[0] == "node-checks" {
 		if cfg == nil || cfg.UsageLog == "" {
