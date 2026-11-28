@@ -29,6 +29,9 @@ const [campaigns, results, tasks] = await Promise.all([
 	all('/v1/projects/prove2me/results?limit=500', 'results'),
 	all('/v1/tasks?project=prove2me&limit=500', 'tasks'),
 ]);
+// who served a task (served_by) names volunteers by their public username: shown live only, never committed, so a
+// username its owner clears is gone from the site with the gateway's next list (prove2me-build.ts withoutServed)
+for (const t of tasks.tasks) delete t.served_by;
 const source = `Public GET /v1/projects/prove2me/campaigns, /v1/projects/prove2me/results and /v1/tasks?project=prove2me from ${base}, ${tasks.updated}`;
 writeFileSync(out, `${JSON.stringify({ source, campaigns, results, tasks }, null, '\t')}\n`);
 console.log(`${out}: ${campaigns.campaigns.length} campaigns, ${results.results.length} results, ${tasks.tasks.length} tasks, as of ${tasks.updated}`);
