@@ -105,7 +105,7 @@ func (f *AccountsFile) anonCount() int {
 // RegisterAnon makes a node without an account: an unclaimed "ax:" account with one node, and the node's
 // token (shown once).
 func (s *AccountStore) RegisterAnon(now time.Time) (token, nodeID string, err error) {
-	err = s.Update(func(f *AccountsFile) error {
+	err = s.update(func(f *AccountsFile) error {
 		switch {
 		case f.Settings.NodesClosed || f.Settings.AnonClosed:
 			return errAnonClosed
@@ -151,7 +151,7 @@ func (s *AccountStore) anonSeen(account, nodeID string, now time.Time) error {
 	if fresh {
 		return nil
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		if a := f.find(account); a != nil && isAnon(a.ID) {
 			for i := range a.Nodes {
 				if a.Nodes[i].ID == nodeID {
@@ -214,7 +214,7 @@ func (s *AccountStore) expireAnon(now time.Time, live func(id string) bool) ([]s
 		return nil, nil
 	}
 	var gone []string
-	err := s.Update(func(f *AccountsFile) error {
+	err := s.update(func(f *AccountsFile) error {
 		keep := f.Accounts[:0]
 		held := heldAt(f)
 		for _, a := range f.Accounts {

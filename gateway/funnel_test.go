@@ -35,7 +35,7 @@ func TestFunnelCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Update(func(f *AccountsFile) error { f.Funnel = &Funnel{Since: t0}; return nil })
+	s.EditForTest(func(f *AccountsFile) error { f.Funnel = &Funnel{Since: t0}; return nil })
 
 	ownTok, _, _, _ := s.addNodeVia("gh:1", "", t0, nil, false, "")
 	linkTok, linkID, _, _ := s.addNodeVia("gh:2", "", t0, nil, false, ViaNodeLink)
@@ -153,7 +153,7 @@ func TestOpsFunnelCard(t *testing.T) {
 		g.accounts.SignIn(id, now)
 		g.accounts.SetStatus(id, StatusActive)
 	}
-	g.accounts.Update(func(f *AccountsFile) error { f.Funnel.Since = now.AddDate(0, 0, -2); return nil })
+	g.accounts.EditForTest(func(f *AccountsFile) error { f.Funnel.Since = now.AddDate(0, 0, -2); return nil })
 	ownTok, ownID, _, _ := g.accounts.addNodeVia("gh:1", "", now, nil, false, "")
 	tok, id, _, _ := g.accounts.addNodeVia("gh:2", "", now, nil, false, ViaNodeLink)
 	g.accounts.RegisterAnon(now)

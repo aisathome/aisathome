@@ -74,7 +74,7 @@ func (s *AccountStore) SetUsername(id, name string) error {
 	if err != nil {
 		return err
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil || a.Status != StatusActive {
 			return errors.New("only active accounts can set a username")
@@ -93,7 +93,7 @@ func (s *AccountStore) SetUsername(id, name string) error {
 
 // ClearUsername removes an account's username (operator: an offensive or impersonating name).
 func (s *AccountStore) ClearUsername(id string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return errors.New("no such account")

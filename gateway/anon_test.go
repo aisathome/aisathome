@@ -67,7 +67,7 @@ func TestRegisterAnon(t *testing.T) {
 		t.Fatalf("counts: nodes %d, anonymous %d", f.nodeCount(), f.anonCount())
 	}
 	// Another unclaimed account (a connector's BOINC user) still holds no node token.
-	s.Update(func(f *AccountsFile) error {
+	s.EditForTest(func(f *AccountsFile) error {
 		f.Accounts = append(f.Accounts, &Account{ID: "cx:00", Status: StatusUnclaimed,
 			Nodes: []AccountNode{{ID: "n-00000001", Hash: keyHash("nt-n-00000001.x")}}})
 		return nil
@@ -83,18 +83,19 @@ func TestRegisterAnon(t *testing.T) {
 		t.Fatal("a banned node without an account still connects")
 	}
 
-	for name, set := range map[string]func(*AccountSettings){
-		"anon_closed":  func(st *AccountSettings) { st.AnonClosed = true },
-		"nodes_closed": func(st *AccountSettings) { st.NodesClosed = true },
+	for name, set := range map[string]func(*AccountStore) error{
+		"anon_closed":  func(s *AccountStore) error { return s.SetAnonClosed(true) },
+		"nodes_closed": func(s *AccountStore) error { return s.SetNodesClosed(true) },
 	} {
 		s := testStore(t)
-		s.Update(func(f *AccountsFile) error { set(&f.Settings); return nil })
+		set(s)
 		if _, _, err := s.RegisterAnon(t0); !errors.Is(err, errAnonClosed) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	s = testStore(t)
-	s.Update(func(f *AccountsFile) error { f.Settings.MaxAnonNodes = 2; f.Settings.MaxNodes = 1; return nil })
+	s.SetMaxAnonNodes(2)
+	s.SetMaxNodes(1)
 	for i := 0; i < 2; i++ {
 		if _, _, err := s.RegisterAnon(t0); err != nil {
 			t.Fatalf("anonymous node %d with max_nodes 1: %v", i+1, err)
@@ -220,7 +221,7 @@ func TestAnonRetention(t *testing.T) {
 	if len(gone) != 1 || gone[0] != live {
 		t.Fatalf("a hold a day old: %v", gone)
 	}
-	if hs := s.nodeHolds(); len(hs) != 0 {
+	if hs := s.NodeHolds(); len(hs) != 0 {
 		t.Fatalf("the deleted node's hold stays: %+v", hs)
 	}
 	_, live, _ = s.RegisterAnon(t0)
@@ -275,7 +276,7 @@ func TestAnonRoutes(t *testing.T) {
 	}
 	// Its account never counts as having accepted the operator terms, even with a record.
 	s := testStore(t)
-	s.Update(func(f *AccountsFile) error {
+	s.EditForTest(func(f *AccountsFile) error {
 		f.Accounts = append(f.Accounts, &Account{ID: "ax:01", Status: StatusUnclaimed,
 			OperatorTerms: &Acceptance{Version: OperatorTermsVersion, At: now}})
 		return nil

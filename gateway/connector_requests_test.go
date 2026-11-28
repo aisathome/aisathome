@@ -40,7 +40,7 @@ func newLinkRig(t *testing.T, mod func(*Config)) *pilotRig {
 // addAccount adds an account with id and status.
 func (r *pilotRig) addAccount(id, status string) {
 	r.t.Helper()
-	if err := r.g.accounts.Update(func(f *AccountsFile) error {
+	if err := r.g.accounts.EditForTest(func(f *AccountsFile) error {
 		f.Accounts = append(f.Accounts, &Account{ID: id, Status: status, Created: r.clock(), Held: status == StatusWaitlisted})
 		return nil
 	}); err != nil {
@@ -937,7 +937,7 @@ func TestClaimCarriesOperatorTerms(t *testing.T) {
 		r.bind(pid, user)
 		p, _ := r.g.sci.pilot("boinc", pid)
 		r.addAccount("gh:42", StatusActive)
-		r.g.accounts.Update(func(f *AccountsFile) error {
+		r.g.accounts.EditForTest(func(f *AccountsFile) error {
 			for _, x := range []struct {
 				id  string
 				src Account
@@ -1204,7 +1204,7 @@ func TestConnectorReview3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cli.Update(func(f *AccountsFile) error {
+	cli.EditForTest(func(f *AccountsFile) error {
 		f.Accounts = append(f.Accounts, &Account{ID: "cx:" + strings.Repeat("9", 32), Status: StatusUnclaimed, Created: r.clock(),
 			Links: []AccountLink{{Connector: "boinc", User: "9", Linked: r.clock()}}})
 		return nil

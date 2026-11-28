@@ -149,7 +149,7 @@ func TestOperatorTermsPersist(t *testing.T) {
 	if a.OperatorTerms.Version != OperatorTermsVersion || !a.OperatorTerms.At.Equal(now) || a.OperatorTerms.Via != ViaAccountPage {
 		t.Fatalf("record: %+v", a.OperatorTerms)
 	}
-	s2.Update(func(f *AccountsFile) error { f.find("gh:1").OperatorTerms.Version = "older"; return nil })
+	s2.EditForTest(func(f *AccountsFile) error { f.find("gh:1").OperatorTerms.Version = "older"; return nil })
 	if s2.operatorTerms("gh:1") {
 		t.Fatal("an older version still counts")
 	}
@@ -159,7 +159,7 @@ func TestOperatorTermsPersist(t *testing.T) {
 		t.Fatal("withdrawal not recorded")
 	}
 	// A file written while the opt-in to transfers existed (staging, 2026-11-19) still loads.
-	s2.Update(func(f *AccountsFile) error { return nil })
+	s2.EditForTest(func(f *AccountsFile) error { return nil })
 }
 
 func TestConnectorTermsMapsTheUser(t *testing.T) {
@@ -315,7 +315,7 @@ func TestAcceptOnNodeCreate(t *testing.T) {
 	if add(t0.Add(time.Hour), true) {
 		t.Fatal("an acceptance of the current version was renewed")
 	}
-	s.Update(func(f *AccountsFile) error { f.find("gh:1").OperatorTerms.Version = "older"; return nil })
+	s.EditForTest(func(f *AccountsFile) error { f.find("gh:1").OperatorTerms.Version = "older"; return nil })
 	if !add(t0.Add(2*time.Hour), true) || !s.operatorTerms("gh:1") {
 		t.Fatal("an outdated acceptance was not renewed by a new node")
 	}

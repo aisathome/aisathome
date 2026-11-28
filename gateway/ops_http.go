@@ -372,7 +372,7 @@ func (g *Gateway) opsData(project string, now time.Time) opsData {
 	}
 	recorded := map[string]bool{}
 	if g.accounts != nil {
-		for _, p := range g.accounts.nodeHolds() {
+		for _, p := range g.accounts.NodeHolds() {
 			recorded[p.Node] = true
 		}
 	}

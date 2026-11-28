@@ -11,7 +11,7 @@ import (
 )
 
 func addAccount(s *AccountStore, id string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.EditForTest(func(f *AccountsFile) error {
 		f.Accounts = append(f.Accounts, &Account{ID: id})
 		return nil
 	})

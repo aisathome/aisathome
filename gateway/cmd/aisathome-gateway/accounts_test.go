@@ -44,6 +44,9 @@ func TestAccountsCommand(t *testing.T) {
 	if err := runAccounts([]string{"-file", file, "limit", "x"}, &bytes.Buffer{}, &msg); err == nil {
 		t.Fatal("limit x accepted")
 	}
+	if err := runAccounts([]string{"-file", file, "add", "test:e2e-1"}, &bytes.Buffer{}, &msg); err == nil || !strings.Contains(err.Error(), "exists") {
+		t.Fatalf("adding an existing account: %v", err)
+	}
 }
 
 // signup goes through the same path as a first sign-in: the waitlist when the network is
@@ -137,6 +140,18 @@ func TestAccountsNodeCommands(t *testing.T) {
 			t.Fatalf("%v accepted", bad)
 		}
 	}
+	// nodes without an account: their own limit and switch
+	run("nodes", "anon", "limit", "7")
+	run("nodes", "anon", "close")
+	if out := run("nodes"); !strings.Contains(out, "0 of 7 nodes without an account") || !strings.Contains(out, "new ones are closed") {
+		t.Fatalf("nodes anon limit and close:\n%s", out)
+	}
+	run("nodes", "anon", "limit", "default")
+	run("nodes", "anon", "open")
+	if err := store.Refresh(); err != nil || store.Settings().MaxAnonNodes != 0 || store.Settings().AnonClosed {
+		t.Fatalf("nodes anon default and open: %v %+v", err, store.Settings())
+	}
+
 	// ban deletes the account's node tokens
 	store.Refresh()
 	store.AddNode("gh:1", "", time.Now(), nil)
@@ -208,7 +223,7 @@ func TestAccountsListLimitsAndUsedToday(t *testing.T) {
 	})
 	list := func(now time.Time) map[string]string {
 		var out bytes.Buffer
-		if err := listAccounts(&out, store.Snapshot(), &cfg, now); err != nil {
+		if err := listAccounts(&out, store, &cfg, now); err != nil {
 			t.Fatal(err)
 		}
 		rows := map[string]string{}
@@ -258,14 +273,14 @@ func TestAccountsListLimitsAndUsedToday(t *testing.T) {
 		t.Fatalf("without a state file: %q\n%s", r["gh:1"], r["out"])
 	}
 	os.WriteFile(filepath.Join(state, gateway.BudgetsFile), []byte(`{"used": {`), 0o600)
-	if err := listAccounts(&bytes.Buffer{}, store.Snapshot(), &cfg, time.Now()); err == nil {
+	if err := listAccounts(&bytes.Buffer{}, store, &cfg, time.Now()); err == nil {
 		t.Fatal("a corrupt state file listed as zeros")
 	}
 	// Without a state_dir the use is unknown and the list says so.
 	noState := cfg
 	noState.StateDir = ""
 	out.Reset()
-	listAccounts(&out, store.Snapshot(), &noState, time.Now())
+	listAccounts(&out, store, &noState, time.Now())
 	if strings.Contains(out.String(), "USED TODAY") || !strings.Contains(out.String(), "no state_dir") {
 		t.Fatalf("without state_dir:\n%s", out.String())
 	}
@@ -378,7 +393,7 @@ func TestAccountsListTotalUsage(t *testing.T) {
 	}
 	// A log that exists but cannot be read is an error, not a column of dashes.
 	cfg := gateway.Config{UsageLog: dir, Accounts: &gateway.AccountsConfig{File: file, SessionSecret: usageFixtureSecret}}
-	if err := listAccounts(&bytes.Buffer{}, store.Snapshot(), &cfg, time.Now()); err == nil {
+	if err := listAccounts(&bytes.Buffer{}, store, &cfg, time.Now()); err == nil {
 		t.Fatal("an unreadable usage log listed")
 	}
 }
@@ -442,6 +457,9 @@ func TestAccountsContacts(t *testing.T) {
 	if _, err := run("contacts", "gh:3"); err == nil || !strings.Contains(err.Error(), "no contact address") {
 		t.Fatalf("contacts gh:3: %v", err)
 	}
+	if _, err := run("contacts", "gh:9"); err == nil || !strings.Contains(err.Error(), "no account gh:9") {
+		t.Fatalf("contacts of no account: %v", err)
+	}
 	if _, err := run("contact-clear", "gh:1"); err != nil {
 		t.Fatal(err)
 	}
@@ -489,11 +507,11 @@ func TestAccountsNotice(t *testing.T) {
 func TestAccountsPilotCommands(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "accounts.json")
 	store, _ := gateway.OpenAccountStore(file)
-	store.Update(func(f *gateway.AccountsFile) error {
-		f.Accounts = append(f.Accounts, &gateway.Account{ID: "gh:1", Status: gateway.StatusActive},
-			&gateway.Account{ID: "gh:2", Status: gateway.StatusActive})
-		return nil
-	})
+	for _, id := range []string{"gh:1", "gh:2"} {
+		if err := store.AddAccount(id, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	run := func(args ...string) error {
 		return runAccounts(append([]string{"-file", file}, args...), &bytes.Buffer{}, &bytes.Buffer{})
 	}
@@ -509,8 +527,7 @@ func TestAccountsPilotCommands(t *testing.T) {
 		}
 	}
 	store.Refresh()
-	snap := store.Snapshot()
-	a := snap.Find("gh:1")
+	a, _, _ := store.Get("gh:1")
 	if !a.PilotChatOff || len(a.Links) != 1 || a.Links[0].Connector != "boinc" || a.Links[0].User != "678" {
 		t.Fatalf("gh:1: %+v", a)
 	}

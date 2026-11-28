@@ -362,7 +362,7 @@ func (s *AccountStore) dropOldEvidence(now time.Time) error {
 	if !found {
 		return nil
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		for i := range f.NodeHolds {
 			if old(f.NodeHolds[i]) {
 				f.NodeHolds[i].Evidence = nil

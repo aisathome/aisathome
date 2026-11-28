@@ -328,10 +328,7 @@ func TestPilotBind(t *testing.T) {
 		t.Error("the unclaimed account's id is derived from the user id")
 	}
 	// A linked account gets its user's pilots.
-	r.g.accounts.Update(func(f *AccountsFile) error {
-		f.Accounts = append(f.Accounts, &Account{ID: "gh:42", Status: StatusActive, Created: r.clock()})
-		return nil
-	})
+	r.g.accounts.AddAccount("gh:42", r.clock())
 	if err := r.g.accounts.Link("gh:42", "boinc", "42", r.clock()); err != nil {
 		t.Fatal(err)
 	}
@@ -781,7 +778,7 @@ func TestPilotDemand(t *testing.T) {
 	// In own-only mode no pilot can serve (a pilot is nobody's own node): none are wanted for science.
 	// "trusted-only", the switch's name before 2026-11-20, still in an accounts file, is the same.
 	for _, mode := range []string{RoutingOwnOnly, routingTrustedOnly} {
-		r.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = mode; return nil })
+		r.g.accounts.SetRouting(mode)
 		if d = demand(); num(d["science"].(map[string]any), "pilots") != 0 || num(d["science"].(map[string]any), "slots_online") != 0 {
 			t.Fatalf("science pilots wanted in %s mode: %v", mode, d)
 		}
@@ -791,10 +788,7 @@ func TestPilotDemand(t *testing.T) {
 // An account's own API key reads and sets its "chat on pilots" switch; other keys cannot.
 func TestAccountSettingsAPI(t *testing.T) {
 	r := newPilotRig(t, nil)
-	r.g.accounts.Update(func(f *AccountsFile) error {
-		f.Accounts = append(f.Accounts, &Account{ID: "gh:7", Status: StatusActive, Created: r.clock()})
-		return nil
-	})
+	r.g.accounts.AddAccount("gh:7", r.clock())
 	key, err := r.g.accounts.AddKey("gh:7", 3, r.clock(), false, nil)
 	if err != nil {
 		t.Fatal(err)

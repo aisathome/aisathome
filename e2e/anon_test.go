@@ -106,7 +106,7 @@ func TestAnonNodeServesScienceOnly(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			// The rig's clock for nodes without an account started before the funnel's counters did.
-			a.store.Update(func(f *gateway.AccountsFile) error { f.Funnel.Since = time.Now().Add(-time.Hour); return nil })
+			a.store.EditForTest(func(f *gateway.AccountsFile) error { f.Funnel.Since = time.Now().Add(-time.Hour); return nil })
 			reg := anonClient(a, "")
 			if _, err := reg.Register(ctx, false); err == nil || !strings.Contains(err.Error(), "18 or older") {
 				t.Fatalf("register without accepting the terms: %v", err)
@@ -312,7 +312,7 @@ func TestAnonRegisterLimits(t *testing.T) {
 		t.Fatalf("a 4th from one address: %v", err)
 	}
 	clk.add(24 * time.Hour)
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxAnonNodes = 4; return nil })
+	a.store.SetMaxAnonNodes(4)
 	if _, err := reg.Register(ctx, true); err != nil {
 		t.Fatalf("a day later: %v", err)
 	}
@@ -320,15 +320,12 @@ func TestAnonRegisterLimits(t *testing.T) {
 		t.Fatalf("over the pool: %v", err)
 	}
 	// A full pool takes nothing from the address's count: with room again, it registers.
-	a.store.Update(func(f *gateway.AccountsFile) error {
-		f.Settings.MaxAnonNodes = 5
-		f.Settings.AnonClosed = true
-		return nil
-	})
+	a.store.SetMaxAnonNodes(5)
+	a.store.SetAnonClosed(true)
 	if _, err := reg.Register(ctx, true); err == nil || !strings.Contains(err.Error(), "not being accepted") {
 		t.Fatalf("anon_closed: %v", err)
 	}
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.AnonClosed = false; return nil })
+	a.store.SetAnonClosed(false)
 	if _, err := reg.Register(ctx, true); err != nil {
 		t.Fatalf("open again: %v", err)
 	}

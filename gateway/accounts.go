@@ -318,7 +318,7 @@ type AccountStore struct {
 // OpenAccountStore opens (or starts) the accounts file at path.
 func OpenAccountStore(path string) (*AccountStore, error) {
 	s := &AccountStore{path: path}
-	if err := s.Update(func(f *AccountsFile) error { f.startFunnel(time.Now()); return nil }); err != nil {
+	if err := s.update(func(f *AccountsFile) error { f.startFunnel(time.Now()); return nil }); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -339,8 +339,9 @@ func readAccounts(path string) (AccountsFile, [32]byte, error) {
 	return f, sha256.Sum256(raw), nil
 }
 
-// Update changes the accounts file under its lock and lets waiting accounts in afterwards.
-func (s *AccountStore) Update(fn func(*AccountsFile) error) error {
+// update changes the accounts file under its lock and lets waiting accounts in afterwards. Only the
+// store's own operations call it, each doing one thing; callers use those operations.
+func (s *AccountStore) update(fn func(*AccountsFile) error) error {
 	unlock, err := lockFile(s.path + ".lock")
 	if err != nil {
 		return err
@@ -366,10 +367,14 @@ func (s *AccountStore) Update(fn func(*AccountsFile) error) error {
 	return nil
 }
 
+// EditForTest changes the accounts file directly, as update does, for tests that set up a state no
+// operation makes (a backdated time, a record from an older release). Never call it outside tests.
+func (s *AccountStore) EditForTest(fn func(*AccountsFile) error) error { return s.update(fn) }
+
 // Refresh rereads the file if someone else (the CLI) changed it. A broken file keeps the
 // accounts in use.
 func (s *AccountStore) Refresh() error {
-	unlock, err := lockFile(s.path + ".lock") // never apply a read that an Update overtook
+	unlock, err := lockFile(s.path + ".lock") // never apply a read that an update overtook
 	if err != nil {
 		return err
 	}
@@ -416,7 +421,7 @@ func (s *AccountStore) Get(id string) (Account, int, bool) {
 	return *a, s.f.position(id), true
 }
 
-// Snapshot returns a copy of the whole file (for the CLI and tests).
+// Snapshot returns a copy of the whole file, for tests that check what it holds.
 func (s *AccountStore) Snapshot() AccountsFile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -424,6 +429,16 @@ func (s *AccountStore) Snapshot() AccountsFile {
 	var f AccountsFile
 	json.Unmarshal(raw, &f)
 	return f
+}
+
+// Accounts returns a copy of every account, in the file's order (the CLI's listings).
+func (s *AccountStore) Accounts() []Account {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, _ := json.Marshal(s.f.Accounts)
+	var l []Account
+	json.Unmarshal(raw, &l)
+	return l
 }
 
 // keyAccount returns the active account that owns key, and whether the key allows volunteer
@@ -453,7 +468,7 @@ func (s *AccountStore) active(id string) bool {
 // SignIn returns the account for id, creating it (waitlisted, then let in if there is room)
 // unless sign-up is closed.
 func (s *AccountStore) SignIn(id string, now time.Time) (Account, error) {
-	err := s.Update(func(f *AccountsFile) error {
+	err := s.update(func(f *AccountsFile) error {
 		if f.find(id) != nil {
 			return nil
 		}
@@ -479,7 +494,7 @@ func (s *AccountStore) SignInEmail(macs []EmailMAC, now time.Time) (Account, err
 		return Account{}, errors.New("no email hash")
 	}
 	var id string
-	err := s.Update(func(f *AccountsFile) error {
+	err := s.update(func(f *AccountsFile) error {
 		for _, a := range f.Accounts {
 			if emailMatch(a.EmailMACs, macs) {
 				id = a.ID
@@ -540,7 +555,7 @@ func (s *AccountStore) AddKey(id string, max int, now time.Time, agents bool, va
 	if err != nil {
 		return "", err
 	}
-	err = s.Update(func(f *AccountsFile) error {
+	err = s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		switch {
 		case a == nil || a.Status != StatusActive:
@@ -559,7 +574,7 @@ func (s *AccountStore) AddKey(id string, max int, now time.Time, agents bool, va
 
 // RevokeKey removes the account's key with prefix.
 func (s *AccountStore) RevokeKey(id, prefix string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return errors.New("no such account")
@@ -579,7 +594,7 @@ func (s *AccountStore) RevokeKey(id, prefix string) error {
 // address are deleted (the gateway drops its connected nodes within seconds). An account that is merely
 // waitlisted keeps its node tokens, but they work only while it is active.
 func (s *AccountStore) SetStatus(id, status string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return fmt.Errorf("no account %s", id)
@@ -595,6 +610,63 @@ func (s *AccountStore) SetStatus(id, status string) error {
 		}
 		return nil
 	})
+}
+
+// AddAccount creates the account id, active from now (operator).
+func (s *AccountStore) AddAccount(id string, now time.Time) error {
+	return s.update(func(f *AccountsFile) error {
+		if f.find(id) != nil {
+			return fmt.Errorf("%s exists", id)
+		}
+		now := now.UTC()
+		f.Accounts = append(f.Accounts, &Account{ID: id, Status: StatusActive, Created: now, Activated: &now})
+		return nil
+	})
+}
+
+// setSetting changes one of the operator's switches.
+func (s *AccountStore) setSetting(set func(*AccountSettings)) error {
+	return s.update(func(f *AccountsFile) error { set(&f.Settings); return nil })
+}
+
+// SetMaxActive sets how many accounts may be active; the rest wait.
+func (s *AccountStore) SetMaxActive(n int) error {
+	return s.setSetting(func(st *AccountSettings) { st.MaxActive = n })
+}
+
+// SetClosed closes or opens sign-up.
+func (s *AccountStore) SetClosed(closed bool) error {
+	return s.setSetting(func(st *AccountSettings) { st.Closed = closed })
+}
+
+// SetNodesClosed stops or allows new node tokens.
+func (s *AccountStore) SetNodesClosed(closed bool) error {
+	return s.setSetting(func(st *AccountSettings) { st.NodesClosed = closed })
+}
+
+// SetMaxNodes sets the node tokens over all accounts (0: DefaultMaxNodes).
+func (s *AccountStore) SetMaxNodes(n int) error {
+	return s.setSetting(func(st *AccountSettings) { st.MaxNodes = n })
+}
+
+// SetMaxNodesPerAccount sets the node tokens per account (0: DefaultMaxNodesPerAccount).
+func (s *AccountStore) SetMaxNodesPerAccount(n int) error {
+	return s.setSetting(func(st *AccountSettings) { st.MaxNodesPerAccount = n })
+}
+
+// SetAnonClosed stops or allows new nodes without an account.
+func (s *AccountStore) SetAnonClosed(closed bool) error {
+	return s.setSetting(func(st *AccountSettings) { st.AnonClosed = closed })
+}
+
+// SetMaxAnonNodes sets the pool of nodes without an account (0: DefaultMaxAnonNodes).
+func (s *AccountStore) SetMaxAnonNodes(n int) error {
+	return s.setSetting(func(st *AccountSettings) { st.MaxAnonNodes = n })
+}
+
+// SetRouting sets the routing switch: RoutingOwnOnly, or "" for normal routing.
+func (s *AccountStore) SetRouting(routing string) error {
+	return s.setSetting(func(st *AccountSettings) { st.Routing = routing })
 }
 
 // newAPIKey returns an "ak-" key, the form the gateway's redaction recognises.

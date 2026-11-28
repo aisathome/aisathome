@@ -190,7 +190,7 @@ func TestUsernameUniqueAndActiveOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Update(func(f *AccountsFile) error { f.Settings.MaxActive = 2; return nil })
+	s.SetMaxActive(2)
 	for _, id := range []string{"gh:1", "gh:2", "gh:3"} {
 		s.SignIn(id, time.Now())
 	}
@@ -232,7 +232,7 @@ func TestFmtCredit(t *testing.T) {
 // The exports hold only accounts with a username, in db_dump's format, with a stable ETag.
 func TestExports(t *testing.T) {
 	s, _ := OpenAccountStore(filepath.Join(t.TempDir(), "a.json"))
-	s.Update(func(f *AccountsFile) error { f.Settings.MaxActive = 10; return nil })
+	s.SetMaxActive(10)
 	for _, id := range []string{"gh:1", "gh:2"} {
 		s.SignIn(id, time.Now())
 		s.AddNode(id, "private label", time.Now(), nil)

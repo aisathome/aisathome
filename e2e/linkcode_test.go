@@ -384,7 +384,7 @@ func TestLinkLimitsAndWaitlist(t *testing.T) {
 		t.Fatalf("after the waitlisted approval: %+v", p)
 	}
 
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = 1; return nil })
+	a.store.SetMaxNodesPerAccount(1)
 	if tok, _, _ := a.addNode(t, s1, "first"); tok == "" {
 		t.Fatal("first node")
 	}
@@ -403,7 +403,7 @@ func TestLinkLimitsAndWaitlist(t *testing.T) {
 	if p := linkPoll(t, a, st.DeviceCode); !waiting(p) {
 		t.Fatalf("after the refused approval: %+v", p)
 	}
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = 0; return nil })
+	a.store.SetMaxNodesPerAccount(0)
 
 	// Science only, as chosen: approving does not accept the terms.
 	if resp, _ := a.post(t, "/account/operator", s1, "action=withdraw"); resp.StatusCode != http.StatusSeeOther {

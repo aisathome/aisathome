@@ -702,7 +702,7 @@ func TestEmailWaitlistAndClosedSignUp(t *testing.T) {
 	if r, _ := e.get(t, "/account/auth", s); r.StatusCode == http.StatusOK {
 		t.Fatal("a waiting email account reached the chat")
 	}
-	e.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Closed = true; return nil })
+	e.store.SetClosed(true)
 	if s, r := e.signInEmail(t, "new@example.org", 2); s != "" || r.StatusCode != http.StatusForbidden {
 		t.Fatalf("new email account with sign-up closed: %d", r.StatusCode)
 	}

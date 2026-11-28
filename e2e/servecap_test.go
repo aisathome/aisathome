@@ -90,7 +90,7 @@ func TestServeCapacityNoAcceptedNode(t *testing.T) {
 	}
 
 	// The emergency switch: no stranger's node serves people's requests, whatever their terms.
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = gateway.RoutingOwnOnly; return nil })
+	a.store.SetRouting(gateway.RoutingOwnOnly)
 	waitUntil(t, "own-only in /v1/stats", func() bool { _, s := statsNodes(t, a.rig); return s.Chat == 0 })
 	if got, code, _ := servedBy(t, a.rig, keyB, 1); len(got) != 0 || code != 503 {
 		t.Fatalf("chat under own-only: %v %d", got, code)

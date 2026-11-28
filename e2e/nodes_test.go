@@ -111,7 +111,7 @@ func TestNodeTokensOnAccountPage(t *testing.T) {
 	}
 	// At most max_nodes_per_account (3 here): the form gives way to a message that says why,
 	// and the store refuses a fourth.
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = 3; return nil })
+	a.store.SetMaxNodesPerAccount(3)
 	a.addNode(t, s, "")
 	a.addNode(t, s, "")
 	waitFor(t, func() bool {
@@ -126,7 +126,7 @@ func TestNodeTokensOnAccountPage(t *testing.T) {
 	s2, _ := a.signIn(t, 2)
 	_, page = a.get(t, "/account", s2)
 	once := nodeOnceRe.FindStringSubmatch(page)[1]
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodes = 3; return nil })
+	a.store.SetMaxNodes(3)
 	if _, page := a.post(t, "/account/nodes", s2, "once="+once); !strings.Contains(page, "The network is full for now") ||
 		nodeTokenRe.MatchString(page) {
 		t.Fatalf("over max_nodes: %s", page)
@@ -135,11 +135,8 @@ func TestNodeTokensOnAccountPage(t *testing.T) {
 		_, page := a.get(t, "/account", s2)
 		return strings.Contains(page, "network is full for now")
 	})
-	a.store.Update(func(f *gateway.AccountsFile) error {
-		f.Settings.MaxNodes = 10
-		f.Settings.NodesClosed = true
-		return nil
-	})
+	a.store.SetMaxNodes(10)
+	a.store.SetNodesClosed(true)
 	waitFor(t, func() bool { _, page := a.get(t, "/account", s2); return strings.Contains(page, "not being accepted") })
 	if _, _, err := a.store.AddNode("gh:2", "", time.Now(), nil); err == nil {
 		t.Fatal("a node token was created while nodes are closed")
@@ -436,7 +433,7 @@ func TestRoutingOwnOnly(t *testing.T) {
 			a.startNode(ctx, "stranger", "node-token", countEngine(t, &stranger), 4)
 			a.startTokenNode(ctx, token, countEngine(t, &own), 4, 32768)
 			a.waitNodes(t, 3)
-			a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = mode; return nil })
+			a.store.SetRouting(mode)
 			time.Sleep(2500 * time.Millisecond) // the gateway rereads the file every 2 s
 			for i := 0; i < 6; i++ {
 				if code, body := ask(t, a.rig, "user-key", chatBody); code != 503 || !strings.Contains(body, "only on its sender's own nodes") {
@@ -449,7 +446,7 @@ func TestRoutingOwnOnly(t *testing.T) {
 			if home.Load()+stranger.Load() != 0 || own.Load() != 6 {
 				t.Fatalf("own-only: own %d, home %d, stranger %d", own.Load(), home.Load(), stranger.Load())
 			}
-			a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = ""; return nil })
+			a.store.SetRouting("")
 			waitFor(t, func() bool { ask(t, a.rig, "user-key", chatBody); return stranger.Load() > 0 })
 		})
 	}

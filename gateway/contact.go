@@ -48,7 +48,7 @@ func (s *AccountStore) SetContact(id, addr, source string, now time.Time) error 
 	if source != ContactGoogle && source != ContactGitHub && source != ContactEmail {
 		return errors.New("unknown contact source")
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil || a.Status == StatusBanned {
 			return errors.New("no such account")
@@ -62,7 +62,7 @@ func (s *AccountStore) SetContact(id, addr, source string, now time.Time) error 
 // ClearContact deletes the account's contact address (the user turned it off, or asked the
 // operator to).
 func (s *AccountStore) ClearContact(id string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return errors.New("no such account")
@@ -214,7 +214,7 @@ func (s *AccountStore) SetNotice(text string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		f.Settings.Notice = &Notice{Text: text, Set: now.UTC()}
 		return nil
 	})
@@ -222,7 +222,7 @@ func (s *AccountStore) SetNotice(text string, now time.Time) error {
 
 // ClearNotice removes the notice (operator).
 func (s *AccountStore) ClearNotice() error {
-	return s.Update(func(f *AccountsFile) error { f.Settings.Notice = nil; return nil })
+	return s.update(func(f *AccountsFile) error { f.Settings.Notice = nil; return nil })
 }
 
 // notice is the current notice, if there is one that passes CleanNotice (the file may have been

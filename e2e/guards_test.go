@@ -48,7 +48,7 @@ func TestAgentConsentAndProbation(t *testing.T) {
 	s1, _ := a.signIn(t, 1)
 	ownToken, _, _ := a.addNode(t, s1, "") // the requester's own node: it serves its agents without consent
 	a.post(t, "/account/nodes/pref", s1, "pref=any")
-	a.store.Update(func(f *gateway.AccountsFile) error { // its own node's probation does not matter
+	a.store.EditForTest(func(f *gateway.AccountsFile) error { // its own node's probation does not matter
 		old := time.Now().Add(-8 * 24 * time.Hour)
 		f.Find("gh:1").FirstNode = &old
 		return nil
@@ -75,7 +75,7 @@ func TestAgentConsentAndProbation(t *testing.T) {
 		t.Fatalf("tool requests reached a volunteer node: without consent or in probation (%d)", vol.Load())
 	}
 	// Probation over: consenting keys' agents may use the node (within its share).
-	a.store.Update(func(f *gateway.AccountsFile) error {
+	a.store.EditForTest(func(f *gateway.AccountsFile) error {
 		old := time.Now().Add(-8 * 24 * time.Hour)
 		f.Find("gh:2").FirstNode = &old
 		return nil
@@ -453,7 +453,7 @@ func TestAgentWithoutConsentPointsToTheBox(t *testing.T) {
 	a := nodeRig(t, nil)
 	s2, _ := a.signIn(t, 2)
 	token, _, _ := a.addNode(t, s2, "")
-	a.store.Update(func(f *gateway.AccountsFile) error {
+	a.store.EditForTest(func(f *gateway.AccountsFile) error {
 		old := time.Now().Add(-8 * 24 * time.Hour)
 		f.Find("gh:2").FirstNode = &old
 		return nil

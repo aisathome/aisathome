@@ -47,7 +47,7 @@ func (s *AccountStore) pilotAccount(connector, user string, now time.Time) (id s
 		return id, unclaimed, nil
 	}
 	s.mu.Unlock()
-	err = s.Update(func(f *AccountsFile) error {
+	err = s.update(func(f *AccountsFile) error {
 		t := now.UTC()
 		a := f.linkOwner(connector, user)
 		if a == nil {
@@ -93,7 +93,7 @@ func (s *AccountStore) pilotAccountState(id, connector, user string) (first time
 
 // SetPilotChat turns an account's "chat on pilots" switch on or off.
 func (s *AccountStore) SetPilotChat(id string, on bool) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil || !runsPilots(a.Status) {
 			return fmt.Errorf("no active, waitlisted or unclaimed account %s", id)
@@ -112,7 +112,7 @@ func (s *AccountStore) Link(id, connector, user string, now time.Time) error {
 	if !extIDRe.MatchString(user) || !projectID.MatchString(connector) {
 		return errors.New("connector: lower-case letters, digits, dashes; user: 1-64 letters, digits, '.', '_', ':' or '-'")
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return fmt.Errorf("no account %s", id)
@@ -130,7 +130,7 @@ func (s *AccountStore) Link(id, connector, user string, now time.Time) error {
 
 // Unlink removes a link (operator).
 func (s *AccountStore) Unlink(id, connector, user string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return fmt.Errorf("no account %s", id)
@@ -165,7 +165,7 @@ var errClaimInactive = errors.New("a closed account cannot link a connector's us
 // keep, if set, is called with the unclaimed account's id before it is deleted, inside the file's lock
 // (so on the file as it is then, not the cached copy): an error stops the merge, nothing is written.
 func (s *AccountStore) claimLink(target, connector, user string, link AccountLink, now time.Time, keep func(id string) error) (from string, err error) {
-	err = s.Update(func(f *AccountsFile) error {
+	err = s.update(func(f *AccountsFile) error {
 		from = ""
 		t := f.find(target)
 		o := f.linkOwner(connector, user)
@@ -270,7 +270,7 @@ func (s *AccountStore) linkHolder(connector, user string) (id, status string) {
 // setLinkOwnEmail records that account id's link to connector's user now has the person's own
 // address at the connector (a set_email request done). A link that is gone is no error.
 func (s *AccountStore) setLinkOwnEmail(id, connector, user string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		if a := f.find(id); a != nil {
 			for i := range a.Links {
 				if l := &a.Links[i]; l.Connector == connector && l.User == user {
