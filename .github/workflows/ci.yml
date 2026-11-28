@@ -508,9 +508,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: test and build the website (site/)
+      - name: test, typecheck and build the website (site/)
+        # typecheck: astro check (TypeScript, strict as tsconfig.json says) over the pages, src/, tests/
+        # and scripts/; it fails on an error.
         working-directory: site
-        run: npm ci --no-audit --no-fund && npm test && npm run build && npm run check
+        run: npm ci --no-audit --no-fund && npm test && npm run typecheck && npm run build && npm run check
 
   changelog:
     # CHANGELOG.md entries come as files in changelog.d/ (changelog.d/README.md): they must be
