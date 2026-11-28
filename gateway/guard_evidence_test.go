@@ -374,7 +374,7 @@ func TestHoldEvidenceRetention(t *testing.T) {
 	ev := &GuardEvidence{Where: "tool call bash", Fragment: "FRAGMENT"}
 	store.HoldNode(NodeHold{Node: "n-old", Rule: ruleDownloadExec, At: now.Add(-EvidenceKeep), Req: "r1", Evidence: ev})
 	store.HoldNode(NodeHold{Node: "n-new", Rule: ruleDownloadExec, At: now.Add(-EvidenceKeep + time.Hour), Req: "r2", Evidence: ev})
-	holds := store.nodeHolds()
+	holds := store.NodeHolds()
 	if holds[0].CurrentEvidence(now) != nil || holds[1].CurrentEvidence(now) == nil {
 		t.Fatal("shown: an old hold's evidence, or not a recent one's")
 	}

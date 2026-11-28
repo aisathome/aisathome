@@ -212,7 +212,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 	}
 	switch a[0] {
 	case "list":
-		return listAccounts(out, store.Snapshot(), cfg, time.Now())
+		return listAccounts(out, store, cfg, time.Now())
 	case "limit":
 		if err := need(1); err != nil {
 			return err
@@ -221,12 +221,12 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		if err != nil || n < 0 {
 			return fmt.Errorf("limit must be a number ≥ 0")
 		}
-		return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxActive = n; return nil })
+		return store.SetMaxActive(n)
 	case "close", "open":
 		if err := need(0); err != nil {
 			return err
 		}
-		return store.Update(func(f *gateway.AccountsFile) error { f.Settings.Closed = a[0] == "close"; return nil })
+		return store.SetClosed(a[0] == "close")
 	case "add":
 		if err := need(1); err != nil {
 			return err
@@ -234,14 +234,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		if !strings.HasPrefix(a[1], "gh:") && !strings.HasPrefix(a[1], "google:") && !strings.HasPrefix(a[1], "test:") {
 			return fmt.Errorf("an id looks like gh:12345, google:<sub> or test:<name>")
 		}
-		return store.Update(func(f *gateway.AccountsFile) error {
-			if f.Find(a[1]) != nil {
-				return fmt.Errorf("%s exists", a[1])
-			}
-			now := time.Now().UTC()
-			f.Accounts = append(f.Accounts, &gateway.Account{ID: a[1], Status: gateway.StatusActive, Created: now, Activated: &now})
-			return nil
-		})
+		return store.AddAccount(a[1], time.Now())
 	case "signup":
 		if err := need(1); err != nil {
 			return err
@@ -257,14 +250,14 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		return nil
 	case "nodes":
 		if len(a) == 1 || a[1] == "list" {
-			return listNodes(out, store.Snapshot(), time.Now())
+			return listNodes(out, store, time.Now())
 		}
 		switch a[1] {
 		case "close", "open":
 			if len(a) != 2 {
 				return errors.New("nodes close|open takes no argument")
 			}
-			return store.Update(func(f *gateway.AccountsFile) error { f.Settings.NodesClosed = a[1] == "close"; return nil })
+			return store.SetNodesClosed(a[1] == "close")
 		case "limit":
 			if len(a) != 3 {
 				return errors.New("nodes limit takes one argument")
@@ -273,7 +266,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 			if err != nil || n < 1 {
 				return fmt.Errorf("the node limit must be a number ≥ 1 (use nodes close for none)")
 			}
-			return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodes = n; return nil })
+			return store.SetMaxNodes(n)
 		case "per-account":
 			if len(a) != 3 {
 				return errors.New("nodes per-account takes one argument")
@@ -285,11 +278,11 @@ func runAccounts(args []string, out, msg io.Writer) error {
 					return fmt.Errorf("the per-account node limit must be a number ≥ 1, or default")
 				}
 			}
-			return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxNodesPerAccount = n; return nil })
+			return store.SetMaxNodesPerAccount(n)
 		case "anon":
 			switch {
 			case len(a) == 3 && (a[2] == "close" || a[2] == "open"):
-				return store.Update(func(f *gateway.AccountsFile) error { f.Settings.AnonClosed = a[2] == "close"; return nil })
+				return store.SetAnonClosed(a[2] == "close")
 			case len(a) == 4 && a[2] == "limit":
 				n := 0
 				if a[3] != "default" {
@@ -298,7 +291,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 						return fmt.Errorf("the limit on nodes without an account must be a number ≥ 1, or default (nodes anon close for none)")
 					}
 				}
-				return store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxAnonNodes = n; return nil })
+				return store.SetMaxAnonNodes(n)
 			}
 			return errors.New("nodes anon takes close, open, or limit <n>|default")
 		}
@@ -328,7 +321,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		if len(a) == 2 {
 			only = a[1]
 		}
-		return listContacts(out, store.Snapshot(), only)
+		return listContacts(out, store, only)
 	case "contact-clear":
 		if err := need(1); err != nil {
 			return err
@@ -337,7 +330,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 	case "notice":
 		switch {
 		case len(a) == 1:
-			n := store.Snapshot().Settings.Notice
+			n := store.Settings().Notice
 			if n == nil {
 				fmt.Fprintln(out, "no notice")
 				return nil
@@ -362,7 +355,7 @@ func runAccounts(args []string, out, msg io.Writer) error {
 		if a[1] == gateway.RoutingOwnOnly {
 			routing = gateway.RoutingOwnOnly
 		}
-		return store.Update(func(f *gateway.AccountsFile) error { f.Settings.Routing = routing; return nil })
+		return store.SetRouting(routing)
 	case "chat-on-pilots":
 		if err := need(2); err != nil {
 			return err
@@ -391,15 +384,15 @@ func runAccounts(args []string, out, msg io.Writer) error {
 }
 
 // listContacts prints the opted-in addresses (of one account with only), oldest consent first.
-func listContacts(out io.Writer, f gateway.AccountsFile, only string) error {
-	var rows []*gateway.Account
-	for _, x := range f.Accounts {
+func listContacts(out io.Writer, store *gateway.AccountStore, only string) error {
+	var rows []gateway.Account
+	for _, x := range store.Accounts() {
 		if x.ContactEmail != "" && x.Status != gateway.StatusBanned && (only == "" || x.ID == only) {
 			rows = append(rows, x)
 		}
 	}
 	if only != "" && len(rows) == 0 {
-		if f.Find(only) == nil {
+		if _, _, ok := store.Get(only); !ok {
 			return fmt.Errorf("no account %s", only)
 		}
 		return fmt.Errorf("%s has no contact address", only)
@@ -417,7 +410,7 @@ func listContacts(out io.Writer, f gateway.AccountsFile, only string) error {
 	return nil
 }
 
-func consentTime(a *gateway.Account) time.Time {
+func consentTime(a gateway.Account) time.Time {
 	if a.ContactConsentAt == nil {
 		return time.Time{}
 	}
@@ -536,15 +529,16 @@ func printModelCheck(out io.Writer, st *gateway.ModelCheckState, node string, no
 
 // listNodes prints every account's node tokens, the held nodes, what their guard matched and the
 // node settings.
-func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
+func listNodes(out io.Writer, store *gateway.AccountStore, now time.Time) error {
+	holds, settings := store.NodeHolds(), store.Settings()
 	held := map[string]gateway.NodeHold{}
-	for _, p := range f.NodeHolds {
+	for _, p := range holds {
 		held[p.Node] = p
 	}
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "NODE\tACCOUNT\tNAME\tCREATED\tHELD")
 	total, anon := 0, 0
-	for _, a := range f.Accounts {
+	for _, a := range store.Accounts() {
 		for _, n := range a.Nodes {
 			if strings.HasPrefix(a.ID, "ax:") {
 				anon++
@@ -559,46 +553,47 @@ func listNodes(out io.Writer, f gateway.AccountsFile, now time.Time) error {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", n.ID, a.ID, n.Name, n.Created.Format("2006-01-02"), p)
 		}
 	}
-	for _, q := range f.NodeHolds { // held nodes of config tokens, or of revoked tokens
+	for _, q := range holds { // held nodes of config tokens, or of revoked tokens
 		if _, ok := held[q.Node]; ok {
 			fmt.Fprintf(tw, "%s\t%s\t\t\t%s\n", q.Node, q.Operator, holdLine(q))
 		}
 	}
 	tw.Flush()
-	if len(f.NodeHolds) > 0 {
+	if len(holds) > 0 {
 		fmt.Fprintln(out, "\nWhat the guards matched (a piece of the node's answer, secrets redacted, kept 14 days):")
-		for _, q := range f.NodeHolds {
+		for _, q := range holds {
 			fmt.Fprintf(out, "  %s  %s\n", q.Node, q.Rule)
 			fmt.Fprint(out, evidenceLines(q.CurrentEvidence(now), q.Req))
 		}
 	}
 	state, routing := "open", "any"
-	if f.Settings.NodesClosed {
+	if settings.NodesClosed {
 		state = "closed"
 	}
-	if f.Settings.OwnOnly() { // also "trusted-only", its name before 2026-11-20
+	if settings.OwnOnly() { // also "trusted-only", its name before 2026-11-20
 		routing = gateway.RoutingOwnOnly
 	}
-	perAccount := strconv.Itoa(f.Settings.MaxNodesPerAccountOrDefault())
-	if f.Settings.MaxNodesPerAccount == 0 {
+	perAccount := strconv.Itoa(settings.MaxNodesPerAccountOrDefault())
+	if settings.MaxNodesPerAccount == 0 {
 		perAccount += " (default)"
 	}
 	anonState := "open"
-	if f.Settings.AnonClosed || f.Settings.NodesClosed {
+	if settings.AnonClosed || settings.NodesClosed {
 		anonState = "closed"
 	}
-	fmt.Fprintf(out, "\n%d of %d nodes without an account (science only, ids a-…); new ones are %s\n", anon, f.Settings.MaxAnonNodesOrDefault(), anonState)
+	fmt.Fprintf(out, "\n%d of %d nodes without an account (science only, ids a-…); new ones are %s\n", anon, settings.MaxAnonNodesOrDefault(), anonState)
 	// The summary stays the last line: the browser tests (and scripts) read it there.
 	fmt.Fprintf(out, "%d of %d node tokens; up to %s per account; new nodes are %s; routing %s\n", total,
-		f.Settings.MaxNodesOrDefault(), perAccount, state, routing)
+		settings.MaxNodesOrDefault(), perAccount, state, routing)
 	return nil
 }
 
 // listAccounts prints the accounts, the sign-up state and, with a config, the per-account
 // limits, each account's use today and its use over all time.
-func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, now time.Time) error {
-	ids := make([]string, len(f.Accounts))
-	for i, x := range f.Accounts {
+func listAccounts(out io.Writer, store *gateway.AccountStore, cfg *gateway.Config, now time.Time) error {
+	accounts, settings := store.Accounts(), store.Settings()
+	ids := make([]string, len(accounts))
+	for i, x := range accounts {
 		ids[i] = x.ID
 	}
 	var used map[string]int64 // nil: unknown, the column is left out
@@ -623,7 +618,7 @@ func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, no
 		head = append(head, "REQUESTS", "TOKENS", "LAST USED")
 	}
 	fmt.Fprintln(tw, strings.Join(head, "\t"))
-	for _, x := range f.Accounts {
+	for _, x := range accounts {
 		if x.Status == gateway.StatusActive {
 			active++
 		}
@@ -639,7 +634,7 @@ func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, no
 	}
 	tw.Flush()
 	state := "open"
-	if f.Settings.Closed {
+	if settings.Closed {
 		state = "closed"
 	}
 	fmt.Fprintln(out)
@@ -657,7 +652,7 @@ func listAccounts(out io.Writer, f gateway.AccountsFile, cfg *gateway.Config, no
 		fmt.Fprintln(out, totalsNote)
 	}
 	// The summary stays the last line: the browser tests (and scripts) read it there.
-	fmt.Fprintf(out, "%d of %d active, %d accounts in total; sign-up is %s\n", active, f.Settings.MaxActive, len(f.Accounts), state)
+	fmt.Fprintf(out, "%d of %d active, %d accounts in total; sign-up is %s\n", active, settings.MaxActive, len(accounts), state)
 	return nil
 }
 

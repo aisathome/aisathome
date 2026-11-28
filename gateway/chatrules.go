@@ -107,7 +107,7 @@ var errNoOperator = errors.New("no such account")
 
 // AcceptOperatorTerms records that account id accepted the operator terms (version) at at.
 func (s *AccountStore) AcceptOperatorTerms(id, version, via string, at time.Time) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil || (a.Status != StatusActive && a.Status != StatusUnclaimed) {
 			return errNoOperator
@@ -119,7 +119,7 @@ func (s *AccountStore) AcceptOperatorTerms(id, version, via string, at time.Time
 
 // WithdrawOperatorTerms removes account id's acceptance: its nodes serve science only from then on.
 func (s *AccountStore) WithdrawOperatorTerms(id string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil {
 			return errNoOperator
@@ -167,7 +167,7 @@ func (s *AccountStore) operatorTerms(id string) bool {
 // changes nothing: applied says whether it was recorded, terms whether the account has accepted the
 // current terms afterwards.
 func (s *AccountStore) connectorTerms(connector, user, version string, at, now time.Time) (unclaimed, applied, terms bool, err error) {
-	err = s.Update(func(f *AccountsFile) error {
+	err = s.update(func(f *AccountsFile) error {
 		a := f.linkOwner(connector, user)
 		if a == nil {
 			id := newUnclaimedID()

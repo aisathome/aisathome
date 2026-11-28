@@ -66,7 +66,7 @@ func newAcctRigNodes(t *testing.T, maxActive int, mod func(*gateway.AccountsConf
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxActive = maxActive; return nil })
+	store.SetMaxActive(maxActive)
 	r := newRigCfg(t, func(c *gateway.Config) {
 		c.Accounts = &gateway.AccountsConfig{File: file, PublicURL: "https://site.test", CookieDomain: "site.test",
 			SessionSecret: strings.Repeat("s", 32), GitHubClientID: "gh-id", GitHubClientSecret: "gh-secret",
@@ -213,13 +213,13 @@ func TestWaitlistAndCap(t *testing.T) {
 		t.Fatal("a waitlisted account reached the chat")
 	}
 	// The operator raises the limit (CLI edits the file); the oldest waiting account gets in.
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxActive = 2; return nil })
+	a.store.SetMaxActive(2)
 	waitFor(t, func() bool { r, _ := a.get(t, "/account/auth", s2); return r.StatusCode == http.StatusOK })
 	if r, _ := a.get(t, "/account/auth", s3); r.StatusCode == http.StatusOK {
 		t.Fatal("account 3 got in although the limit is 2")
 	}
 	// Closed sign-up: no new accounts, existing ones keep working.
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.Closed = true; return nil })
+	a.store.SetClosed(true)
 	waitFor(t, func() bool { _, r := a.signIn(t, 4); return r.StatusCode == http.StatusForbidden })
 	if r, _ := a.get(t, "/account/auth", s1); r.StatusCode != http.StatusOK {
 		t.Fatal("closing sign-up locked out an existing account")
@@ -546,13 +546,13 @@ func TestWaitlistPlaceSkipsHeldAccounts(t *testing.T) {
 	a.signIn(t, 1) // active
 	s2, _ := a.signIn(t, 2)
 	s3, _ := a.signIn(t, 3)
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Find("gh:2").Held = true; return nil })
+	a.store.EditForTest(func(f *gateway.AccountsFile) error { f.Find("gh:2").Held = true; return nil })
 	// gh:3 is next to be let in, so place 1 (once the gateway has reread the file).
 	waitFor(t, func() bool { _, p := a.get(t, "/account", s3); return strings.Contains(p, "Place <strong>1</strong>") })
 	if _, page := a.get(t, "/account", s2); !strings.Contains(page, "on hold") || strings.Contains(page, "Place <strong>") {
 		t.Fatalf("a held account should see that it is on hold: %s", page)
 	}
-	a.store.Update(func(f *gateway.AccountsFile) error { f.Settings.MaxActive = 2; return nil })
+	a.store.SetMaxActive(2)
 	waitFor(t, func() bool { r, _ := a.get(t, "/account/auth", s3); return r.StatusCode == http.StatusOK })
 	if r, _ := a.get(t, "/account/auth", s2); r.StatusCode == http.StatusOK {
 		t.Fatal("a held account was let in")

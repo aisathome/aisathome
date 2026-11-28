@@ -142,7 +142,7 @@ func TestPublicTasksServedBy(t *testing.T) {
 		NodeTokens: map[string]NodeToken{"node-token": {Operator: "op1", OperatorTerms: OperatorTermsVersion}},
 		Projects:   []Project{{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true, Kinds: []string{"p2m-v7"}}}})
 	defer g.Close()
-	g.accounts.Update(func(f *AccountsFile) error { f.Settings.MaxActive = 10; return nil })
+	g.accounts.SetMaxActive(10)
 	for _, id := range []string{"gh:1", "gh:2"} {
 		if _, err := g.accounts.SignIn(id, time.Now()); err != nil {
 			t.Fatal(err)

@@ -228,7 +228,7 @@ func (s *AccountStore) addNode(id, name string, now time.Time, valid func(seq in
 // addNodeVia is addNode for a node that came by via (AccountNode.Via): ViaNodeLink for an approved link,
 // whose acceptance of the operator terms, if it records one, says so (ViaNodeLinked).
 func (s *AccountStore) addNodeVia(id, name string, now time.Time, valid func(seq int) bool, terms bool, via string) (token, nodeID string, recorded bool, err error) {
-	err = s.Update(func(f *AccountsFile) error {
+	err = s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		switch {
 		case a == nil || a.Status != StatusActive:
@@ -286,7 +286,7 @@ func (s *AccountStore) addNodeVia(id, name string, now time.Time, valid func(seq
 
 // RevokeNode deletes a node token. account "" finds the node in any account (operator).
 func (s *AccountStore) RevokeNode(account, nodeID string) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		for _, a := range f.Accounts {
 			if account != "" && a.ID != account {
 				continue
@@ -304,7 +304,7 @@ func (s *AccountStore) RevokeNode(account, nodeID string) error {
 
 // HoldNode stops a node until ClearNode (a guard fired on its answer).
 func (s *AccountStore) HoldNode(p NodeHold) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		for _, q := range f.NodeHolds {
 			if q.Node == p.Node {
 				return nil
@@ -328,7 +328,7 @@ var errHoldChanged = errors.New("this node's hold changed since the page was loa
 // then, the one the operator saw (the ops page), so a newer hold is never cleared unseen.
 func (s *AccountStore) clearHold(nodeID string, at time.Time) (NodeHold, error) {
 	var lifted NodeHold
-	err := s.Update(func(f *AccountsFile) error {
+	err := s.update(func(f *AccountsFile) error {
 		for i, p := range f.NodeHolds {
 			if p.Node == nodeID {
 				if !at.IsZero() && !p.At.Equal(at) {
@@ -350,7 +350,7 @@ func (s *AccountStore) SetNodePref(id, pref string) error {
 	if pref != NodePrefOwn && pref != NodePrefOnly && pref != NodePrefAny {
 		return errors.New("unknown node preference")
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil || a.Status != StatusActive {
 			return errors.New("only active accounts can set this")
@@ -391,7 +391,7 @@ func (s *AccountStore) nodeLive(tokenHash string) (first time.Time, unconfirmed,
 // ConfirmNode records that account id confirmed its linked node nodeID as its own machine (once; a second
 // confirmation keeps the first time).
 func (s *AccountStore) ConfirmNode(id, nodeID string, now time.Time) error {
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		a := f.find(id)
 		if a == nil || a.Status != StatusActive {
 			return errors.New("only active accounts can confirm nodes")
@@ -431,8 +431,8 @@ func (s *AccountStore) isHeld(nodeID string) bool {
 	return s.held[nodeID]
 }
 
-// nodeHolds lists the holds in the accounts file.
-func (s *AccountStore) nodeHolds() []NodeHold {
+// NodeHolds lists the holds in the accounts file.
+func (s *AccountStore) NodeHolds() []NodeHold {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.f.NodeHolds)
@@ -503,7 +503,7 @@ func (g *Gateway) holds() []NodeHold {
 		for _, p := range g.unrec.list() {
 			byNode[p.Node] = p
 		}
-		for _, p := range g.accounts.nodeHolds() {
+		for _, p := range g.accounts.NodeHolds() {
 			byNode[p.Node] = p
 		}
 	} else {

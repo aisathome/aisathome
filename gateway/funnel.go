@@ -108,7 +108,7 @@ func (s *AccountStore) firstConnect(tokenHash string, now time.Time) error {
 	if done {
 		return nil
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		for _, a := range f.Accounts {
 			for i := range a.Nodes {
 				n := &a.Nodes[i]
@@ -157,7 +157,7 @@ func (s *AccountStore) linkAnon(claim, nodeID string, now time.Time) error {
 	if !isAnon(claim) {
 		return fmt.Errorf("not a node without an account")
 	}
-	return s.Update(func(f *AccountsFile) error {
+	return s.update(func(f *AccountsFile) error {
 		connected, found := false, false
 		for i, a := range f.Accounts {
 			if a.ID == claim {

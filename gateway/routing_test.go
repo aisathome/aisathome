@@ -359,7 +359,7 @@ func newOwnRig(t *testing.T) *stickyRig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { g.Close() })
-	if err := g.accounts.Update(func(f *AccountsFile) error {
+	if err := g.accounts.EditForTest(func(f *AccountsFile) error {
 		f.Accounts = append(f.Accounts, &Account{ID: "gh:1", Status: StatusActive, Created: time.Now(),
 			Nodes: []AccountNode{{ID: "n-00000001", Created: time.Now()}}})
 		f.Accounts = append(f.Accounts, &Account{ID: "gh:2", Status: StatusActive, Created: time.Now()})
@@ -562,7 +562,7 @@ func TestOwnOnlyReachesWaitingRequests(t *testing.T) {
 		got <- n
 	}()
 	time.Sleep(100 * time.Millisecond)
-	if err := s.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = RoutingOwnOnly; return nil }); err != nil {
+	if err := s.g.accounts.SetRouting(RoutingOwnOnly); err != nil {
 		t.Fatal(err)
 	}
 	s.g.sweepNodes()
@@ -578,7 +578,7 @@ func TestOwnOnlyReachesWaitingRequests(t *testing.T) {
 		got <- n
 	}()
 	time.Sleep(100 * time.Millisecond)
-	s.g.accounts.Update(func(f *AccountsFile) error { f.Settings.Routing = ""; return nil })
+	s.g.accounts.SetRouting("")
 	s.g.sweepNodes()
 	if n := <-got; n != vol {
 		t.Fatalf("after the switch was turned off: %v", n)
