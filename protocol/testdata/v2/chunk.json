@@ -1,0 +1,1 @@
+{"type":"chunk","req_id":"r-0001","data":{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1764331200,"model":"qwen3.8-27b-q3","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}}
