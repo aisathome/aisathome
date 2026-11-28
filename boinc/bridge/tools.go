@@ -62,6 +62,16 @@ func (t *ExecTools) Unstage(ctx context.Context, name string) error {
 	return nil
 }
 
+// tierArg is the pilot's --tier for a tier of a tiered bridge: the model in the work unit decides the
+// engine's context and model name, not the app version's job.xml (whose own --tier comes first and
+// is overridden). Nothing for a bridge without tiers.
+func tierArg(t Tier) string {
+	if nt := t.nodeTier(); nt != "" {
+		return " --tier " + nt
+	}
+	return ""
+}
+
 func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string, tier Tier) error {
 	if !appNameRe.MatchString(tier.App) {
 		return fmt.Errorf("create_work: app %q", tier.App)
@@ -70,7 +80,7 @@ func (t *ExecTools) CreateWork(ctx context.Context, name, credentialFile string,
 		"--wu_template", t.cfg.WUTemplate, "--result_template", t.cfg.ResultTemplate,
 		// The wrapper refuses options it does not know and hands the task what follows
 		// --passthrough_child (the pilot app's job.xml).
-		"--command_line", "--passthrough_child --gateway " + t.cfg.PilotGateway}
+		"--command_line", "--passthrough_child --gateway " + t.cfg.PilotGateway + tierArg(tier)}
 	if t.cfg.TargetHost > 0 {
 		args = append(args, "--target_host", strconv.FormatInt(t.cfg.TargetHost, 10))
 	}

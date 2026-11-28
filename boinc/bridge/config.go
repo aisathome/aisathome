@@ -96,6 +96,18 @@ type Tier struct {
 	Name  string     `json:"name"`
 	App   string     `json:"app"`
 	Model RemoteFile `json:"model"`
+	// NodeTier is the node's engine tier for the model (the pilot's --tier, node/setup: "standard" or
+	// "big"); default Name. The work unit's command line names it, so the pilot runs the model with
+	// its own tier's context and model name whatever the app version's job.xml says.
+	NodeTier string `json:"node_tier,omitempty"`
+}
+
+// nodeTier is the pilot's --tier for t ("" without tiers: job.xml's).
+func (t Tier) nodeTier() string {
+	if t.NodeTier != "" {
+		return t.NodeTier
+	}
+	return t.Name
 }
 
 // RemoteFile is a file clients download from its own URL, with BOINC's size and MD5.
@@ -163,10 +175,14 @@ func (c *Config) check() error {
 			if !appNameRe.MatchString(t.App) {
 				bad("tiers[%d].app: a BOINC app name", i)
 			}
-			if names[t.Name] || apps[t.App] {
+			if t.NodeTier != "" && !tierNameRe.MatchString(t.NodeTier) {
+				bad("tiers[%d].node_tier: the node's tier (standard or big)", i)
+			}
+			// BOINC's database compares app names without case: Pilot and pilot are one app.
+			if names[t.Name] || apps[strings.ToLower(t.App)] {
 				bad("tiers[%d]: every tier has its own name and app", i)
 			}
-			names[t.Name], apps[t.App] = true, true
+			names[t.Name], apps[strings.ToLower(t.App)] = true, true
 			checkModel(fmt.Sprintf("tiers[%d].model", i), t.Model, bad)
 		}
 	} else {
