@@ -14,6 +14,7 @@ import { day, submissionText, theoremURL, trialQueue, type CurrentDoc, type Task
 import { leafTokensText, liveLeaves, taskTableHTML, type LiveLeaf } from './prove2me-live';
 import { leafPlan, leafPlanHTML, type LeafPlan } from './prove2me-outlines';
 import { texText } from './tex-text';
+import { lazyHTML } from './prove2me-view';
 import { nowDocs, type Records } from './prove2me-records';
 import { benchName, isBench } from './prove2me-status';
 
@@ -76,6 +77,10 @@ export interface NowCtx {
 	reuses?: Record<string, string>;
 	/** prove2me's title of a leaf by its id (the campaigns' items and the build's leaves), for the row's short title. */
 	titles?: Record<string, string>;
+	/** Whether a leaf's outlines and task table are drawn in its row (by the trial's id and the leaf's alias); without
+	 * it every row's are. The page draws them for the rows that are open only (2026-11-28), the rest when opened
+	 * (nowLeafPartsHTML); the record page draws them all. */
+	full?: (trial: string, alias: string) => boolean;
 }
 
 /** A leaf's short title for its row: prove2me's title in plain text, cut to `max` characters; else its Lean name. */
@@ -96,6 +101,22 @@ export function holesDone(p: LeafPlan | null): { solved: number; total: number; 
 /** GPU-hours as the theorems page writes them: two decimals under 10, one above. */
 const gpuText = (h: number) => `${h < 10 ? h.toFixed(2) : h.toFixed(1)} GPU-h`;
 
+/** A leaf's outlines and holes (leafPlan): closed by reuse, the theorem its accepted proof imports (the document's,
+ * else the build's). */
+function planOf(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, live: LiveLeaf | undefined, ctx: NowCtx): LeafPlan | null {
+	if (!live) return null;
+	const theorem = l?.theorem || live.theorem || '';
+	const reuseSub = doc.submissions.find((s) => s.leaf === l?.id && s.kind === 'reuse');
+	const reuse = reuseSub ? reuseSub.reuses?.theorem ?? ctx.reuses?.[theorem] ?? 'a theorem already proved on prove2me' : undefined;
+	return leafPlan(live.detail, l?.outlines ?? [], reuse);
+}
+
+/** What a leaf's row opens to besides its line: the outlines with every hole, and the task table. */
+const partsHTML = (alias: string, plan: LeafPlan, live: LiveLeaf) => leafPlanHTML(alias, plan) + taskTableHTML(alias, live.detail, 'Every task');
+
+/** The leaves of a block with their tasks (liveLeaves over the block's trial). */
+const liveOf = (doc: CurrentDoc, tasks: TasksView) => liveLeaves(trialQueue(tasks, doc), doc.trial.id, doc.leaves.map((l) => l.alias));
+
 function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, live: LiveLeaf | undefined, ctx: NowCtx, taken: Set<string>): string {
 	const bench = isBenchDoc(doc);
 	const alias = l?.alias ?? live!.leaf;
@@ -113,10 +134,7 @@ function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, 
 		meta.push(`<span data-tokens="${d.total}" data-computed="${d.computed}" data-exact="${d.exact}">${esc(leafTokensText(d, state === 'running' || state === 'queued'))}</span>`);
 	for (const s of doc.submissions.filter((s) => s.leaf === l?.id))
 		meta.push(`<span data-submission="${esc(s.verdict)}">${esc(`${submissionText(s)} (${day(s.verdict_at ?? s.submitted_at, false)})`)}</span>`);
-	// closed by reuse: the theorem the accepted proof imports (the document's, else the build's)
-	const reuseSub = doc.submissions.find((s) => s.leaf === l?.id && s.kind === 'reuse');
-	const reuse = reuseSub ? reuseSub.reuses?.theorem ?? ctx.reuses?.[theorem] ?? 'a theorem already proved on prove2me' : undefined;
-	const plan = live ? leafPlan(live.detail, l?.outlines ?? [], reuse) : null;
+	const plan = planOf(doc, l, live, ctx);
 	const words = state === 'planned' || !plan ? 'Not started yet' : plan.summary;
 	const holes = holesDone(plan);
 	const minutes = d ? d.rows.reduce((a, r) => a + (r.minutes ?? 0), 0) : 0;
@@ -139,7 +157,7 @@ function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, 
 		(theorem ? (theoremURL.test(url) ? `<a class="thm-name" href="${esc(url)}">${esc(theorem)}</a>` : `<span class="thm-name">${esc(theorem)}</span>`) : '') +
 		`</p>` +
 		`<span class="meta">${meta.join('')}</span>` +
-		(live && plan ? leafPlanHTML(alias, plan) + taskTableHTML(alias, live.detail, 'Every task') : '') +
+		(live && plan ? (ctx.full?.(doc.trial.id, alias) ?? true ? partsHTML(alias, plan, live) : lazyHTML('now', alias, `leaf-${leafID}`, `${leafID}’s outlines, holes and tasks`)) : '') +
 		`</div>`;
 	return (
 		`<li${id(`leaf-${leafID}`)} data-current-leaf="${esc(alias)}"${l ? ` data-leaf-id="${esc(l.id)}"` : ''} data-state="${esc(state)}">` +
@@ -150,7 +168,7 @@ function leafHTML(doc: CurrentDoc, l: CurrentDoc['leaves'][number] | undefined, 
 
 function blockHTML(doc: CurrentDoc, tasks: TasksView, ctx: NowCtx, taken: Set<string>): string {
 	const t = doc.trial;
-	const live = liveLeaves(trialQueue(tasks, doc), t.id, doc.leaves.map((l) => l.alias));
+	const live = liveOf(doc, tasks);
 	const items = [
 		...doc.leaves.map((l) => leafHTML(doc, l, live.find((x) => x.leaf === l.alias), ctx, taken)),
 		...live.filter((x) => !doc.leaves.some((l) => l.alias === x.leaf)).map((x) => leafHTML(doc, undefined, x, ctx, taken)),
@@ -172,4 +190,14 @@ function blockHTML(doc: CurrentDoc, tasks: TasksView, ctx: NowCtx, taken: Set<st
 export function nowBlocksHTML(docs: CurrentDoc[], tasks: TasksView, ctx: NowCtx = {}): string {
 	const taken = new Set<string>();
 	return docs.map((d) => blockHTML(d, tasks, ctx, taken)).join('');
+}
+
+/** A leaf's outlines and task table, drawn when its row opens: the block of trial `trial`, the leaf `alias`; null when
+ * the block or the leaf has none (any more). The same parts as a row drawn in full. */
+export function nowLeafPartsHTML(docs: CurrentDoc[], tasks: TasksView, ctx: NowCtx, trial: string, alias: string): string | null {
+	const doc = docs.find((d) => d.trial.id === trial);
+	if (!doc) return null;
+	const live = liveOf(doc, tasks).find((x) => x.leaf === alias);
+	const plan = planOf(doc, doc.leaves.find((l) => l.alias === alias), live, ctx);
+	return live && plan ? partsHTML(alias, plan, live) : null;
 }

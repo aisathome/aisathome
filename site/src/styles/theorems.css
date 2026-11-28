@@ -94,3 +94,11 @@ main .th-note { font-size: 0.85rem; }
 .th-bars-table :is(th, td) { padding: 0.25rem 1rem 0.25rem 0; border-bottom: 1px solid var(--sl-color-gray-5); text-align: right; font-variant-numeric: tabular-nums; }
 .th-bars-table thead th { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--sl-color-gray-3); }
 @media (max-width: 40rem) { .th-hero-n { font-size: 3.5rem; } }
+
+/* Until the page's first read of the gateway has run (data-p2m-read on the root), the build's "As of the site's build"
+   line gives way to "As of the last build, … · updating…" (one line for one line). Without scripting the build's line. */
+.th-pending { display: none; font-style: italic; }
+@media (scripting: enabled) {
+	:root:not([data-p2m-read]) .th-pending { display: block; }
+	:root:not([data-p2m-read]) [data-th-updated][data-source='build'] { display: none; }
+}

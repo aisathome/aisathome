@@ -4,8 +4,8 @@
 // the gateway's records, prove2me-records.ts) alike, so the two never say different things.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { day, hhmm, theoremURL } from './prove2me-current';
-import { compact, leafOutcomeLabel, leafOutcomes, leafRoleLabel, taskTableHTML } from './prove2me-live';
+import { FROZEN_THROUGH, day, hhmm, theoremURL } from './prove2me-current';
+import { compact, fromStatic, leafDetail, leafOutcomeLabel, leafOutcomes, leafRoleLabel, taskTableHTML, type Outline, type StaticTask } from './prove2me-live';
 import { leafPlan, leafPlanHTML } from './prove2me-outlines';
 import { attemptOf, provesLeaf } from './prove2me-outcomes';
 import type { Kpis, LeavesView, ScienceView, SubRec, TrialDetail, TrialSum } from './prove2me-records';
@@ -230,9 +230,9 @@ export function trialFacts(d: TrialDetail): string {
 	return `Trial ${t.number} ${when} on scaffold ${t.scaffold || '?'}${leaves}${proved}${acc}${reuse}.`;
 }
 
-/** A trial's list: its facts and text, its budget, a row per leaf and, under them, each leaf's outlines and tasks. */
-export function trialDetailHTML(d: TrialDetail): string {
-	const t = d.sum;
+/** A trial's list (opened, 2026-11-28 drawn only then: lazyHTML): a row per leaf and, under them, each leaf's outlines
+ * and tasks. */
+export function trialListHTML(d: TrialDetail): string {
 	const rows = d.leaves
 		.map((l) => {
 			// as the build's earlier trials: the outcome first (the outline that proved it), the leaf's line under it
@@ -265,19 +265,153 @@ export function trialDetailHTML(d: TrialDetail): string {
 		)
 		.join('');
 	return (
-		`<details class="p2m-trial" id="trial-${t.number}" data-p2m-trial="${t.number}" data-trial="${esc(t.label)}" data-source="${t.source}"${t.status !== 'finished' ? ` data-status="${t.status}"` : ''}>` +
+		(rows
+			? `<div class="p2m-wrap not-content"><table class="p2m-table p2m-leaves"><thead><tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">Tasks</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Tokens computed</th></tr></thead><tbody>${rows}</tbody></table></div>`
+			: '') +
+		(plans
+			? `<div class="p2m-trial-tasks not-content" data-p2m-trial-tasks="${d.sum.number}"><p class="caps">Each leaf’s outlines, newest first, with what became of every hole; under each, every task (outline, hole, try and assembly) with its counts, as in “Working on now”.</p>${plans}</div>`
+			: '')
+	);
+}
+
+/** A trial's row and what stays under it closed: its facts and text, its budget; its list (trialListHTML) only with
+ * `list`, else the place the browser draws it in when the row opens. */
+export function trialDetailHTML(d: TrialDetail, list = true, open = false): string {
+	const t = d.sum;
+	return (
+		`<details${open ? ' open' : ''} class="p2m-trial" id="trial-${t.number}" data-p2m-trial="${t.number}" data-trial="${esc(t.label)}" data-source="${t.source}"${t.status !== 'finished' ? ` data-status="${t.status}"` : ''}>` +
 		`<summary class="p2m-trow">${trialSummaryHTML(t, d.accepted)}</summary>` +
 		`<p data-trial-facts>${esc(trialFacts(d))}</p>` +
 		trialNumbersHTML(t) +
 		(d.text.trim() ? `<div data-trial-text>${plainHTML(d.text)}</div>` : '') +
 		(d.budget ? `<p class="caps">Budget per leaf: ${esc(d.budget)}.</p>` : '') +
-		(rows
-			? `<div class="p2m-wrap not-content"><table class="p2m-table p2m-leaves"><thead><tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th><th scope="col" class="num">Tasks</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Tokens computed</th></tr></thead><tbody>${rows}</tbody></table></div>`
-			: '') +
-		(plans
-			? `<div class="p2m-trial-tasks not-content" data-p2m-trial-tasks="${t.number}"><p class="caps">Each leaf’s outlines, newest first, with what became of every hole; under each, every task (outline, hole, try and assembly) with its counts, as in “Working on now”.</p>${plans}</div>`
-			: '') +
+		(list ? trialListHTML(d) : trialLazyHTML(t.number)) +
 		`</details>`
+	);
+}
+
+// ---- the parts the browser draws when they are opened (2026-11-28: the page was 2.4 MB of HTML, 1.9 MB of it in
+// sections that start closed). Without JavaScript each such place links the same part on the record page
+// (/science/prove2me/record/), which the build draws in full with the same renderers.
+
+export const RECORD_PATH = '/science/prove2me/record/';
+/** The build's data for those parts (pages/science/prove2me/record.json.ts). */
+export const RECORD_JSON = '/science/prove2me/record.json';
+
+/** The place of a part drawn when opened: `what` and a link to it on the record page (`anchor`). */
+export function lazyHTML(kind: 'trial' | 'now' | 'leaves' | 'tasks', key: string, anchor: string, what: string): string {
+	return (
+		`<div class="p2m-lazy" data-lazy="${kind}" data-lazy-key="${esc(key)}">` +
+		`<p class="p2m-lazy-note">${esc(what)}: <a href="${RECORD_PATH}#${esc(anchor)}" data-p2m-record-link="${kind}">on the record page</a>.</p></div>`
+	);
+}
+export const trialLazyHTML = (n: number) => lazyHTML('trial', String(n), `trial-${n}`, `Trial ${n}’s leaves, with each leaf’s outlines and tasks`);
+
+/** A frozen trial's leaf (trials 1 to 5, from the build's history; prove2me-page.ts frozenTrials), as its list shows it. */
+export interface FrozenLeaf {
+	leaf: string;
+	/** The leaf's id (p2m-...), when the build knows it. */
+	id: string | null;
+	theorem: string;
+	url: string;
+	title: string;
+	group: string;
+	earlier: number[];
+	outcome: string;
+	scored: boolean;
+	/** The result in words (prove2me.ts outcomeLabel) and, for a run not scored, why. */
+	result: string;
+	why: string;
+	rounds: number;
+	minutes: number;
+	computed: number;
+	withCache: number;
+	tokTitle: string;
+	/** From trial 5 (v5): the run's tasks and outlines; null before. */
+	tasks: StaticTask[] | null;
+	outlines: Outline[];
+	/** A leaf closed by reuse: the theorem it imports. */
+	reuse?: string;
+}
+export interface FrozenTrial {
+	trial: number;
+	/** The trial in the history's words, and its budget per leaf. */
+	summary: string;
+	caps: string;
+	v5: boolean;
+	leaves: FrozenLeaf[];
+}
+const groupLabel: Record<string, string> = { calibration: 'Calibration', open: 'Open' };
+
+/** A frozen trial's row and what stays under it closed (its words, counts and budget); its list only with `list`. */
+export function frozenTrialHTML(f: FrozenTrial, t: TrialSum, accepted: number, list = true, open = false): string {
+	return (
+		`<details${open ? ' open' : ''} class="p2m-trial" id="trial-${f.trial}" data-p2m-trial="${f.trial}" data-trial="${esc(t.label)}" data-source="build">` +
+		`<summary class="p2m-trow">${trialSummaryHTML(t, accepted)}</summary>` +
+		`<p>${esc(f.summary)}</p>` +
+		trialNumbersHTML(t) +
+		`<p class="caps">Budget per leaf: ${esc(f.caps)}.</p>` +
+		(list ? frozenListHTML(f) : trialLazyHTML(f.trial)) +
+		`</details>`
+	);
+}
+
+/** Every trial's row, newest first (trialsNewestFirst): trials 1 to 5 from the history (`frozen`), the later ones from
+ * their records (`details`), a trial with neither and a probe round as a plain row. Their lists drawn with `list`
+ * (the record page; the page draws a list when it opens), and open with `open`. */
+export function trialRowsHTML(v: ScienceView, frozen: FrozenTrial[], details: TrialDetail[], list: boolean, open = false): string {
+	return trialsNewestFirst(v)
+		.map((t) => {
+			if (t.probe) return trialPlainRowHTML(t);
+			const built = details.find((d) => d.sum.number === t.number);
+			if (built) return trialDetailHTML(built, list, open);
+			const f = t.number <= FROZEN_THROUGH ? frozen.find((x) => x.trial === t.number) : undefined;
+			return f ? frozenTrialHTML(f, t, acceptedOf(v, t.number), list, open) : trialPlainRowHTML(t, acceptedOf(v, t.number));
+		})
+		.join('');
+}
+
+/** A frozen trial's list: a row per leaf and, from trial 5, each leaf's outlines and tasks. */
+export function frozenListHTML(f: FrozenTrial): string {
+	const rows = f.leaves
+		.map((r) => {
+			const e = r.earlier;
+			return (
+				`<tr data-leaf="${esc(r.leaf)}" data-outcome="${esc(r.outcome)}" data-scored="${r.scored}">` +
+				`<th scope="row">${esc(r.id ?? r.leaf)}${r.id ? `<span class="sub" data-alias title="The id the trials used">${esc(r.leaf)}</span>` : ''}</th>` +
+				`<td class="thm">${link(r.url, r.theorem)}<span class="sub">${esc(plainTitle(r.title))}</span></td>` +
+				`<td data-label="Kind">${esc(groupLabel[r.group] ?? r.group)}${e.length ? `<span class="sub">tried before in trial${e.length > 1 ? 's' : ''} ${esc(e.join(' and '))}</span>` : ''}</td>` +
+				`<td data-label="Result" class="result ${r.outcome === 'proved' ? 'proved' : r.scored ? 'failed' : 'unscored'}">${esc(r.result)}${!r.scored && r.why ? `<span class="sub">${esc(r.why)}</span>` : ''}</td>` +
+				(r.tasks
+					? `<td data-label="Tasks" class="num">${r.tasks.length}<span class="sub">${r.rounds === 1 ? '1 outline' : `${r.rounds} outlines`}</span></td>`
+					: `<td data-label="Rounds" class="num">${r.rounds}</td>`) +
+				`<td data-label="Model min" class="num">${r.minutes.toFixed(1)}</td>` +
+				`<td data-label="Tokens computed" class="num tok" data-tokens="${r.computed}" data-with-cache="${r.withCache}" title="${esc(r.tokTitle)}">${esc(compact(r.computed))}</td>` +
+				`</tr>`
+			);
+		})
+		.join('');
+	const plans = f.v5
+		? f.leaves
+				.filter((r) => r.tasks?.length)
+				.map((r) => {
+					const d = leafDetail(r.tasks!.map(fromStatic), r.outlines);
+					const name = named(r.id ?? r.leaf, r.leaf);
+					return (
+						`<div class="p2m-trial-leaf" data-trial-leaf="${esc(r.leaf)}"><p class="p2m-tleaf">${esc(name)}</p>` +
+						leafPlanHTML(r.leaf, leafPlan(d, [], r.reuse), true) +
+						taskTableHTML(r.leaf, d, `${name}: every task`) +
+						`</div>`
+					);
+				})
+				.join('')
+		: '';
+	return (
+		`<div class="p2m-wrap not-content"><table class="p2m-table p2m-leaves"><thead><tr><th scope="col">Leaf</th><th scope="col">Theorem</th><th scope="col">Kind</th><th scope="col">Result</th>` +
+		`<th scope="col" class="num">${f.v5 ? 'Tasks' : 'Rounds'}</th><th scope="col" class="num">Model min</th><th scope="col" class="num">Tokens computed</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+		(f.v5
+			? `<div class="p2m-trial-tasks not-content" data-p2m-trial-tasks="${f.trial}"><p class="caps">Each leaf’s outlines, newest first, with what became of every hole; under each, every task (outline, hole, try and assembly) with its counts, as in “Working on now”.</p>${plans}</div>`
+			: '')
 	);
 }
 
@@ -346,6 +480,33 @@ export function leafRowsHTML(v: LeavesView): string {
 			);
 		})
 		.join('');
+}
+
+const leafCols: { key: string; label: string; num?: boolean }[] = [
+	{ key: 'leaf', label: 'Leaf' },
+	{ key: 'theorem', label: 'Theorem' },
+	{ key: '', label: 'Role' },
+	{ key: '', label: 'Trials' },
+	{ key: 'outcome', label: 'Outcome' },
+	{ key: 'first', label: 'First tried' },
+	{ key: 'minutes', label: 'Model min', num: true },
+	{ key: 'tokens', label: 'Tokens computed', num: true },
+];
+
+/** The list of every leaf as it opens: its filters, "Showing N of M" and the table (the browser filters and sorts it). */
+export function leafListHTML(v: LeavesView): string {
+	const head = leafCols
+		.map((c) =>
+			c.key
+				? `<th scope="col"${c.num ? ' class="num"' : ''} data-sort-col="${c.key}"><button type="button" data-leaf-sort="${c.key}">${esc(c.label)}<span class="sort-mark" aria-hidden="true"></span></button></th>`
+				: `<th scope="col" class="nosort">${esc(c.label)}</th>`,
+		)
+		.join('');
+	return (
+		`<div class="p2m-filters not-content" role="group" aria-label="Filter the leaves" data-p2m-filters>${leafFiltersHTML(v)}</div>` +
+		`<p class="caps" data-p2m-list-count>Showing ${v.leaves.length} of ${v.leaves.length}</p>` +
+		`<div class="p2m-wrap not-content"><table class="p2m-table p2m-lt" data-p2m-leaf-table><thead><tr>${head}</tr></thead><tbody>${leafRowsHTML(v)}</tbody></table></div>`
+	);
 }
 
 // ---- the home page's line and the /science/ card
