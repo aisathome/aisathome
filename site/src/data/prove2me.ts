@@ -196,7 +196,8 @@ export interface Prove2me {
 	tasks: TaskTableRow[];
 }
 
-export const p2m = raw as Prove2me;
+// through unknown: a JSON import types every string as string, not as the unions Prove2me names
+export const p2m = raw as unknown as Prove2me;
 
 /** Links go to prove2me's theorem pages only. */
 export const theoremURL = /^https:\/\/prove2\.me\/theorems\/[0-9a-f-]{36}$/;

@@ -18,7 +18,7 @@ test('/node/ describes the node software once: the release, the GitHub download,
 	assert.deepEqual(nodeJsonLdProblems(nodeJsonLd(), origin), []);
 	const staging = 'https://staging.aisathome.org';
 	assert.deepEqual(nodeJsonLdProblems(nodeJsonLd(staging), staging), []);
-	const app = nodeJsonLd()['@graph'].find((n) => n['@type'] === 'SoftwareApplication') as Record<string, string>;
+	const app = nodeJsonLd()['@graph'].find((n) => n['@type'] === 'SoftwareApplication') as Record<string, unknown>;
 	assert.equal(app.softwareVersion, nodeRelease.version.replace(/^v/, ''));
 	assert.equal(app.releaseNotes, `https://github.com/aisathome/aisathome/releases/tag/${nodeRelease.version}`);
 	assert.ok(!jsonLdProblems(homeJsonLd(), origin).length && !homeJsonLd()['@graph'].some((n) => n['@type'] === 'SoftwareApplication'));

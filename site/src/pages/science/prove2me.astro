@@ -507,8 +507,9 @@ const cacheShare = Math.round((100 * (view.kpis.withCache - view.kpis.computed))
 		}
 		box.hidden = !round;
 		nowBox.dataset.probes = round?.trial ?? '';
-		if (!round || !taskKnown) return;
-		const rows = taskTableRows({ updated: tasks.updated, tasks: round.tasks }, doc, taskKnown.leafIds, taskKnown.holes);
+		const known = taskKnown;
+		if (!round || !known) return;
+		const rows = taskTableRows({ updated: tasks.updated, tasks: round.tasks }, doc, known.leafIds, known.holes);
 		const n = new Set(rows.map((r) => r.labels.leaf || r.labels.alias)).size;
 		box.querySelector<HTMLElement>('[data-probes-head]')!.textContent = `Choosing trial ${round.forTrial}’s leaves: ${n} outline probe${n === 1 ? '' : 's'}`;
 		const items = rows.map((r) => {
@@ -519,7 +520,7 @@ const cacheShare = Math.round((100 * (view.kpis.withCache - view.kpis.computed))
 			const leaf = el('span', 'leaf', id);
 			if (r.labels.alias && r.labels.alias !== id) leaf.title = r.labels.alias;
 			li.append(leaf);
-			const info = taskKnown.leaves[r.labels.leaf];
+			const info = known.leaves[r.labels.leaf];
 			if (info) {
 				const a = el(theoremURL.test(info.url) ? 'a' : 'span', 'thm-name', info.theorem);
 				if (a instanceof HTMLAnchorElement) a.href = info.url;

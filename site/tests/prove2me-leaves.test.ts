@@ -38,7 +38,7 @@ test('from the build alone: the export’s own leaves and scorecard, row for row
 	);
 	const t = p.totals;
 	assert.deepEqual([v.all.leaves, v.all.runs, v.all.proved, v.all.accepted, v.all.reused], [t.leaves, t.runs, t.proved, t.accepted - t.reused, t.reused]);
-	assert.equal(v.all.hours.toFixed(1), (t.model_hours + t.probes.model_hours).toFixed(1));
+	assert.equal(v.all.hours.toFixed(1), (t.model_hours + t.probes!.model_hours).toFixed(1));
 	assert.equal(v.probes!.leaves, 11);
 	assert.equal(v.notScored, t.runs - t.scored);
 });
