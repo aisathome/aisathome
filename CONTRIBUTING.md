@@ -59,10 +59,12 @@ python3 scripts/changelog.py check            # your changelog.d/ fragment
 
 cd harness && python3 -m unittest discover -s tests -t .
 
-# the node's setup page in a browser (Playwright; once: playwright install chromium)
-cd e2e/browser && uv run --with-requirements requirements.txt pytest
-
 cd site && npm ci && npm test && npm run typecheck && npm run build && npm run check
+
+# the node's setup page and the website's pages in a browser (Playwright; once: playwright install
+# chromium), against site/dist built from the tests' fixed records, as CI builds it
+(cd site && P2M_RECORDS=tests/fixtures/prove2me-records-2026-11-18.json npm run build)
+cd e2e/browser && uv run --with-requirements requirements.txt pytest
 ```
 
 The Windows jobs (node tests, the agent as a real service with `llama-server` on the CPU, and the
