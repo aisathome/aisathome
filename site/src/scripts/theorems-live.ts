@@ -11,21 +11,29 @@ import {
 } from '../data/prove2me-theorems';
 
 /** What the build left in the page for the script: the history (trials 1 to 5), the leaves with a page, the model's name,
- * this page's leaf and, for a proof, the trial that proved it (its tasks). */
-type Known = { history: History; pages: string[]; model?: string; leaf?: string; trial?: number };
+ * this page's leaf. */
+type Known = { history: History; pages: string[]; model?: string; leaf?: string };
 
-/** A proof page's tasks from the records (prove2me-proof.ts), the reader's open or closed table kept; the build's copy
- * stays when the records have no list of the trial (trials 1 to 5 are the build's). */
-function drawTasks(live: Records, known: Known) {
+/** A proof page's tasks from the records (prove2me-proof.ts), the reader's open or closed table kept: the trial that
+ * proved it as the records say now (a proof since recorded as a reuse has no run: its tasks go). The build's copy stays
+ * when the records have no list of the trial (trials 1 to 5 are the build's). */
+function drawTasks(live: Records, v: TheoremsView, known: Known) {
 	const box = document.querySelector<HTMLElement>('[data-th-tasks]');
-	if (!box || !known.leaf || !known.trial) return;
-	const l = proofLeaf(known.history, live, [], { leaf: known.leaf, trial: known.trial });
+	if (!box || !known.leaf) return;
+	const t = v.theorems.find((x) => x.leaf === known.leaf);
+	if (t?.kind === 'reuse') {
+		box.innerHTML = '';
+		box.dataset.source = 'live';
+		return;
+	}
+	if (!t) return;
+	const l = proofLeaf(known.history, live, [], { leaf: t.leaf, trial: t.trial });
 	if (!l) return;
 	const open = box.querySelector<HTMLDetailsElement>('details[data-leaf-tasks]')?.open;
 	box.innerHTML = proofTasksHTML(l); // every value escaped (prove2me-live.ts, prove2me-outlines.ts)
 	box.dataset.source = 'live';
-	const t = box.querySelector<HTMLDetailsElement>('details[data-leaf-tasks]');
-	if (t && open !== undefined) t.open = open;
+	const table = box.querySelector<HTMLDetailsElement>('details[data-leaf-tasks]');
+	if (table && open !== undefined) table.open = open;
 }
 
 /** The per-trial chart, drawn at its real width; `update` with a newer view. */
@@ -108,7 +116,7 @@ export function liveTheorems() {
 			const v = theoremsView(k.history, live);
 			draw(v, k);
 			charts(v);
-			drawTasks(live, k);
+			drawTasks(live, v, k);
 		} catch {
 			// keep what the page shows
 		}

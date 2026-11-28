@@ -8,7 +8,7 @@ import raw from '../src/data/science/prove2me.json';
 import snapshot from '../src/data/science/prove2me-records.json';
 import type { Prove2me } from '../src/data/prove2me';
 import { builtDetail, historyOf, type Records } from '../src/data/prove2me-records';
-import { recordsOf } from '../src/data/prove2me-build';
+import { recordsOf, withoutServed } from '../src/data/prove2me-build';
 import { parseTasks, servedOf, type ServedRow } from '../src/data/prove2me-current';
 import { servedLabel, taskTableHTML } from '../src/data/prove2me-live';
 import { proofLeaf, proofTasksHTML, servedSummary } from '../src/data/prove2me-proof';
@@ -97,7 +97,8 @@ test('who served: named by username only, otherwise the kind of GPU; summed over
 	const ran = mine.filter((t) => t.role !== 'assembly' && (t.steps ?? 0) > 0 && ![a.id, b.id, c.id].includes(t.id)).length;
 	assert.equal(s.unknown, ran);
 	const html = proofTasksHTML(l);
-	assert.match(html, /Served by <strong data-named>O&#39;Neil \(2 GPUs\)<\/strong> \(25 calls\), <strong>a volunteer’s GPU<\/strong> \(4\) and <strong>a volunteer’s GPU through BOINC<\/strong> \(2\)/);
+	// over several tasks one GPU and two look alike: the summary counts no GPUs
+	assert.match(html, /Served by <strong data-named>O&#39;Neil<\/strong> \(25 calls\), <strong>volunteers’ GPUs<\/strong> \(4\) and <strong>volunteers’ GPUs through BOINC<\/strong> \(2\)/);
 	const cell = (id: string) => new RegExp(`<tr data-task="${id}"[^>]*>.*?</tr>`).exec(html)![0];
 	assert.match(cell(a.id), /<td data-label="Served by" class="served" data-served="22" title="O&#39;Neil: 20 model calls; a volunteer’s GPU through BOINC: 2 model calls"><span class="srv" data-named>O&#39;Neil <span class="calls">\(20\)<\/span><\/span><span class="srv">a volunteer’s GPU through BOINC <span class="calls">\(2\)<\/span><\/span><\/td>/);
 	assert.match(cell(b.id), /<span class="srv" data-named>O&#39;Neil \(2 GPUs\)<\/span><\/td>/);
@@ -116,4 +117,19 @@ test('a proof of a trial the gateway has no list of: the build’s tasks (trial 
 	const o04 = h.submissions.find((s) => s.trial === 3 && s.verdict === 'accepted')!;
 	assert.equal(proofLeaf(h, live(), [builtDetail(p2m, h, 3)].filter((d) => !!d), { leaf: o04.leaf, trial: 3 }), null);
 	assert.equal(proofTasksHTML(null), '');
+});
+
+test('the build never names anyone: its records lose served_by, its copy says the GPUs show live', () => {
+	const [a] = mine.filter((t) => t.role === 'outline');
+	const rec = withServed({ [a.id]: [{ name: 'ada', class: 'volunteer', nodes: 1, requests: 3 }] });
+	assert.ok(rec.tasks.tasks.some((t) => t.served_by));
+	const built = withoutServed(rec);
+	assert.ok(built.tasks.tasks.every((t) => !('served_by' in t)));
+	assert.ok(rec.tasks.tasks.some((t) => t.served_by), 'the records it was given are left as they were');
+	const html = proofTasksHTML(proofLeaf(h, built, [], { leaf: LEAF, trial: TRIAL }), false);
+	assert.doesNotMatch(html, /ada/);
+	assert.match(html, /data-th-served="later">Which GPU served each task shows here once the page has read the gateway’s records\./);
+	assert.match(html, /class="served none" data-served="" title="Shown once the page has read the gateway’s records">–/);
+	// the committed fallback copy holds none either
+	assert.ok((snapshot as unknown as { tasks: { tasks: object[] } }).tasks.tasks.every((t) => !('served_by' in t)));
 });
