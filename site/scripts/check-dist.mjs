@@ -299,6 +299,29 @@ const lead = (text, re) => text.match(re)?.[1];
 const thN = lead(thPage, /data-th-headline-n>(\d+)</), p2mN = lead(page('science/prove2me/index.html'), /data-p2m-hl-n>(\d+)</);
 if (!thN || thN !== p2mN) errors.push(`science/prove2me/: its headline (${p2mN}) is not the proved theorems page's (${thN})`);
 
+// The prove2me page's weight (2026-11-28): what starts closed (each trial's list, each leaf's outlines and tasks, every
+// leaf, every task) is drawn in the browser when it opens, from the gateway's records and record.json; the page was
+// 2.4 MB of HTML. Without JavaScript each closed part links its place on the record page, which has them all.
+const P2M_HTML_BUDGET = 300_000;
+const p2mFile = join(dist, 'science/prove2me/index.html');
+if (existsSync(p2mFile) && statSync(p2mFile).size > P2M_HTML_BUDGET) errors.push(`science/prove2me/index.html: ${statSync(p2mFile).size} bytes, over its budget of ${P2M_HTML_BUDGET}`);
+const p2mPage = page('science/prove2me/index.html');
+const recordPage = page('science/prove2me/record/index.html');
+if (!recordPage) errors.push('science/prove2me/record/index.html: missing');
+else {
+	const ids = new Set([...recordPage.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+	for (const [, anchor, kind] of p2mPage.matchAll(/<a href="\/science\/prove2me\/record\/#([^"]+)" data-p2m-record-link="([^"]+)"/g))
+		if (!ids.has(anchor)) errors.push(`science/prove2me/: its ${kind} link goes to #${anchor}, which the record page does not have`);
+	for (const [, n] of p2mPage.matchAll(/<details class="p2m-trial" id="trial-(\d+)"/g)) if (!ids.has(`trial-${n}`)) errors.push(`science/prove2me/record/: no trial ${n}`);
+}
+try {
+	const rec = JSON.parse(page('science/prove2me/record.json') || 'null');
+	if (!rec || !Array.isArray(rec.tasks?.rows) || !Array.isArray(rec.frozen) || !Array.isArray(rec.details) || !rec.leaves || !rec.now) errors.push('science/prove2me/record.json: not the record');
+	else if (rec.frozen.length === 0 || rec.tasks.rows.length === 0) errors.push('science/prove2me/record.json: no frozen trials or no tasks');
+} catch (e) {
+	errors.push(`science/prove2me/record.json: does not parse: ${e.message}`);
+}
+
 if (errors.length) {
 	console.error(errors.join('\n'));
 	console.error(`\n${errors.length} problem(s) in ${html.length} pages`);
