@@ -60,7 +60,17 @@ public campaigns, results and tasks (`/v1/projects/prove2me/campaigns`, `/result
 and every minute; the build's copy stays when they fail. What a task's outcome means (a leaf proved,
 the holes in place, `closed_by`, an outcome in words) lives in `prove2me-outcomes.ts`. Unit tests on
 fixed data are `tests/prove2me-*.test.ts`; the page in a browser against fixed gateway answers is
-`e2e/browser/test_site_prove2me.py` (needs `site/dist`).
+`e2e/browser/test_site_prove2me.py` (the live parts) and `test_site_prove2me_content.py` (what the pages say and show,
+the overview and the home page's line too; both need `site/dist`).
+
+What the site's pages say is checked in a browser here, against `site/dist` built from the fixed records (as CI's
+browser job builds it): `e2e/browser/test_site_pages.py` (the dev log, the privacy notice, the node docs, the footer,
+the about page, the live strip, the menu, the credit tiles), `test_site_tauceti.py` (the Tau Ceti page) and
+`test_site_network.py` (the network page's history and pressure). A change of a page's wording or structure changes its
+test in the same pull request:
+
+    cd site && npm ci && P2M_RECORDS=tests/fixtures/prove2me-records-2026-11-18.json npm run build
+    cd ../e2e/browser && uv run --with-requirements requirements.txt pytest -q
 
 Proved theorems (`/science/prove2me/theorems/`; one page per accepted leaf at `/science/prove2me/theorems/<leaf>/`, and
 `theorems.json` and `<leaf>.json`): every proof prove2me accepted, the denominator and three costs, computed from the same
