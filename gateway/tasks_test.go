@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,13 +17,33 @@ import (
 type taskRig struct {
 	t   *testing.T
 	g   *Gateway
-	now time.Time
+	mu  sync.Mutex // now: the gateway's own goroutines (its tickers) read the clock too
+	now time.Time  // written only with setNow or advance
+}
+
+// clock is the rig's time, as the gateway's task store reads it.
+func (r *taskRig) clock() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.now
+}
+
+func (r *taskRig) setNow(t time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = t
+}
+
+func (r *taskRig) advance(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = r.now.Add(d)
 }
 
 func newTaskRig(t *testing.T, dir string) *taskRig {
 	t.Helper()
 	r := &taskRig{t: t, g: statusGateway(t, dir), now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
-	r.g.tasks.now = func() time.Time { return r.now }
+	r.g.tasks.now = r.clock
 	t.Cleanup(func() { r.g.Close() })
 	return r
 }
@@ -153,19 +174,19 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	r := newTaskRig(t, "")
 	r.create("T-A", "p2m-v7")
 	id, lease := r.claim("w1", 60)
-	r.now = r.now.Add(59 * time.Second)
+	r.advance(59 * time.Second)
 	if w := r.lease(id, "heartbeat", "w1", lease, nil); w.Code != 200 {
 		t.Fatalf("heartbeat in time: HTTP %d %s", w.Code, w.Body)
 	}
-	r.now = r.now.Add(59 * time.Second) // 118 s after the claim, 59 s after the heartbeat
+	r.advance(59 * time.Second) // 118 s after the claim, 59 s after the heartbeat
 	if r.state("T-A") != TaskLeased {
 		t.Fatal("a heartbeat did not extend the lease")
 	}
 	if w := r.lease(id, "heartbeat", "w2", lease, nil); w.Code != http.StatusConflict {
 		t.Errorf("another worker's heartbeat with the lease: HTTP %d", w.Code)
 	}
-	r.now = r.now.Add(time.Second) // exactly the TTL after the heartbeat
-	r.g.tasks.sweepAll()           // the background check, without any call
+	r.advance(time.Second) // exactly the TTL after the heartbeat
+	r.g.tasks.sweepAll()   // the background check, without any call
 	if r.state("T-A") != TaskQueued {
 		t.Fatalf("expired lease: state %s, want queued", r.state("T-A"))
 	}
@@ -191,9 +212,9 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	// 3; the last one expires too and nobody takes it back: the task fails instead of going
 	// round for ever.
 	for _, w := range []string{"w2", "w3"} {
-		r.now = r.now.Add(61 * time.Second)
+		r.advance(61 * time.Second)
 		r.g.tasks.sweepAll()
-		r.now = r.now.Add(affinityWindow)
+		r.advance(affinityWindow)
 		if id, _ := r.claim(w, 60); id != "T-A" {
 			t.Fatalf("%s claimed %q", w, id)
 		}
@@ -201,7 +222,7 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	if task := r.g.tasks.get("lab", "T-A"); task.Tries != 3 || task.Interruptions != 1 {
 		t.Fatalf("tries %d, interruptions %d, want 3 and 1", task.Tries, task.Interruptions)
 	}
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	r.g.tasks.sweepAll()
 	if r.state("T-A") != TaskQueued { // held for w3 for the window
 		t.Fatalf("the last try expired: %s, want queued for w3", r.state("T-A"))
@@ -209,7 +230,7 @@ func TestTaskLeaseExpiry(t *testing.T) {
 	if id, _ := r.claim("w4", 60); id != "" {
 		t.Fatalf("w4 claimed %s, held for w3", id)
 	}
-	r.now = r.now.Add(affinityWindow)
+	r.advance(affinityWindow)
 	r.g.tasks.sweepAll()
 	task := r.g.tasks.get("lab", "T-A")
 	if task.State != TaskFailed || task.Tries != 3 || !strings.Contains(task.Error, "lease expired on try 3 of 3 and w3 did not take it back") {
@@ -437,7 +458,7 @@ func TestTaskPersistence(t *testing.T) {
 	r.g.Close()
 
 	r2 := newTaskRig(t, dir)
-	r2.now = r.now.Add(time.Minute)
+	r2.setNow(r.now.Add(time.Minute))
 	if r2.state("T-A") != TaskDone || r2.state("T-B") != TaskQueued || r2.state("T-C") != TaskLeased {
 		t.Fatalf("after restart: A %s, B %s, C %s", r2.state("T-A"), r2.state("T-B"), r2.state("T-C"))
 	}
@@ -454,7 +475,7 @@ func TestTaskPersistence(t *testing.T) {
 	// A lease that expired while the gateway was down is returned at the first call.
 	r2.g.Close()
 	r3 := newTaskRig(t, dir)
-	r3.now = r.now.Add(time.Hour)
+	r3.setNow(r.now.Add(time.Hour))
 	if id, _ := r3.claim("w1", 60); id != "T-C" {
 		t.Fatalf("after a long restart claimed %q, want T-C back first", id)
 	}
@@ -473,7 +494,7 @@ func TestTaskBounds(t *testing.T) {
 	}
 	const fin = 260 // past the old cap of 200 finished tasks waiting for the export
 	for i := 0; i < fin; i++ {
-		r.now = r.now.Add(time.Second)
+		r.advance(time.Second)
 		r.call("POST", fmt.Sprintf("%s/T-%d/cancel", tasksPath, i), testProjectKey, map[string]any{})
 	}
 	_, out := r.call("GET", tasksPath+"?state=cancelled", testProjectKey, nil)
@@ -534,7 +555,7 @@ func TestTaskAffinity(t *testing.T) {
 		t.Fatalf("held: %+v", got)
 	}
 	// After the window, anyone.
-	r.now = r.now.Add(affinityWindow)
+	r.advance(affinityWindow)
 	if id, _ := r.claim("w2", 60); id != "A1" {
 		t.Fatalf("after the window w2 claimed %q, want A1", id)
 	}
@@ -549,7 +570,7 @@ func TestTaskAffinity(t *testing.T) {
 	if id, _ := r2.claim("w1", 60); id != "A1" {
 		t.Fatalf("w1 claimed %q, want A1", id)
 	}
-	r2.now = r2.now.Add(61 * time.Second)
+	r2.advance(61 * time.Second)
 	r2.create("F1", "other")
 	if id, _ := r2.claim("w2", 60); id != "F1" {
 		t.Fatalf("w2 claimed %q, want F1 (A1 is held for w1)", id)
@@ -607,7 +628,7 @@ func TestTaskHoldSeconds(t *testing.T) {
 		t.Errorf("heartbeat with hold_seconds: HTTP %d", w.Code)
 	}
 	// an expiry: free at once, as a new try (only a give-back continues a try for another worker)
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	if id, _ := claim("w3", 120); id != "A1" {
 		t.Fatalf("after w2's expiry w3 claimed %q, want A1", id)
 	}
@@ -615,16 +636,16 @@ func TestTaskHoldSeconds(t *testing.T) {
 		t.Fatalf("tries after the expiry: %+v", got)
 	}
 	// hold_seconds 120: held for w3 that long, then free
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	if id, _ := claim("w4", 0); id != "" {
 		t.Fatalf("w4 claimed %q within w3's 120 s hold", id)
 	}
-	r.now = r.now.Add(120 * time.Second)
+	r.advance(120 * time.Second)
 	if id, _ := claim("w4", 0); id != "A1" {
 		t.Fatalf("after w3's hold w4 claimed %q, want A1", id)
 	}
 	// an expiry on the last try with hold 0 fails at the next sweep instead of waiting
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	if id, _ := claim("w5", 0); id != "" {
 		t.Fatalf("w5 claimed %q after the expiry on the last try", id)
 	}
@@ -672,7 +693,7 @@ func TestTaskInterruptions(t *testing.T) {
 		if w.Code != 200 || out["state"] != TaskQueued || out["tries"] != 1.0 || out["interruptions"] != float64(i-1) {
 			t.Fatalf("give-back %d: HTTP %d %s", i, w.Code, w.Body)
 		}
-		r.now = r.now.Add(2 * time.Minute)
+		r.advance(2 * time.Minute)
 		var code int
 		if code, lease = r.takeBack("w1", "T-A"); code != 200 {
 			t.Fatalf("take-back %d: HTTP %d", i, code)
@@ -689,7 +710,7 @@ func TestTaskInterruptions(t *testing.T) {
 	r.lease("T-A", "fail", "w1", lease, map[string]any{"requeue": true, "reason": "spot stop"})
 	r.g.Close()
 	r = newTaskRig(t, dir)
-	r.now = time.Date(2026, 10, 27, 13, 0, 0, 0, time.UTC) // the hold has passed: anyone may claim
+	r.setNow(time.Date(2026, 10, 27, 13, 0, 0, 0, time.UTC)) // the hold has passed: anyone may claim
 	if id, _ := r.claim("w2", 60); id != "T-A" {
 		t.Fatalf("w2 claimed %q", id)
 	}
@@ -698,9 +719,9 @@ func TestTaskInterruptions(t *testing.T) {
 	}
 
 	// An expired lease taken back by the same worker within the window continues the try.
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	r.g.tasks.sweepAll()
-	r.now = r.now.Add(affinityWindow - time.Second)
+	r.advance(affinityWindow - time.Second)
 	if code, _ := r.takeBack("w2", "T-A"); code != 200 {
 		t.Fatalf("w2 takes back within the window: HTTP %d", code)
 	}
@@ -708,9 +729,9 @@ func TestTaskInterruptions(t *testing.T) {
 		t.Fatalf("expired and taken back: tries %d, interruptions %d, want 1 and 12", tries, n)
 	}
 	// Expired, and the same worker comes back only after the window: a new try.
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	r.g.tasks.sweepAll()
-	r.now = r.now.Add(affinityWindow)
+	r.advance(affinityWindow)
 	if code, _ := r.takeBack("w2", "T-A"); code != 200 {
 		t.Fatalf("w2 takes back after the window: HTTP %d", code)
 	}
@@ -723,9 +744,9 @@ func TestTaskInterruptions(t *testing.T) {
 	if code, _ := r.takeBack("w1", "T-B"); code != 200 {
 		t.Fatalf("w1 claims T-B: HTTP %d", code)
 	}
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	r.g.tasks.sweepAll()
-	r.now = r.now.Add(affinityWindow)
+	r.advance(affinityWindow)
 	if code, _ := r.takeBack("w3", "T-B"); code != 200 {
 		t.Fatalf("w3 claims T-B: HTTP %d", code)
 	}
@@ -733,15 +754,15 @@ func TestTaskInterruptions(t *testing.T) {
 		t.Fatalf("another worker after an expiry: tries %d, interruptions %d, want 2 and 0", tries, n)
 	}
 	// The last try expires: its worker taking it back within the window continues it.
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	r.g.tasks.sweepAll()
-	r.now = r.now.Add(affinityWindow)
+	r.advance(affinityWindow)
 	if code, _ := r.takeBack("w4", "T-B"); code != 200 { // try 3 of 3
 		t.Fatalf("w4 claims T-B: HTTP %d", code)
 	}
-	r.now = r.now.Add(61 * time.Second)
+	r.advance(61 * time.Second)
 	r.g.tasks.sweepAll()
-	r.now = r.now.Add(affinityWindow - time.Second)
+	r.advance(affinityWindow - time.Second)
 	r.g.tasks.sweepAll()
 	if r.state("T-B") != TaskQueued {
 		t.Fatalf("the last try expired, inside the window: %s", r.state("T-B"))
@@ -809,15 +830,15 @@ func TestTaskMaxTries(t *testing.T) {
 		if id, _ := r.claim(w, 60); id != "T-A" {
 			t.Fatalf("%s claimed %q", w, id)
 		}
-		r.now = r.now.Add(61 * time.Second)
+		r.advance(61 * time.Second)
 		r.g.tasks.sweepAll()
-		r.now = r.now.Add(affinityWindow - time.Minute)
+		r.advance(affinityWindow - time.Minute)
 		if w == "w3" {
 			if code, out := set("T-A", map[string]any{"max_tries": 5}); code != 200 || out["max_tries"] != 5.0 || out["tries"] != 3.0 {
 				t.Fatalf("raise: HTTP %d %v", code, out)
 			}
 		}
-		r.now = r.now.Add(time.Minute)
+		r.advance(time.Minute)
 	}
 	r.g.tasks.sweepAll()
 	if r.state("T-A") != TaskQueued {

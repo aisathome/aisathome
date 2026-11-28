@@ -20,7 +20,7 @@ func retentionRig(t *testing.T, dir string, days int) *taskRig {
 		{ID: "prove2me", KeySHA256: []string{keyHash(testProjectKey)}, PublicQueue: true, Kinds: []string{"p2m-v7"}, TaskCompactDays: days},
 	}})
 	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)}
-	g.tasks.now = func() time.Time { return r.now }
+	g.tasks.now = r.clock
 	t.Cleanup(func() { g.Close() })
 	return r
 }
@@ -65,15 +65,15 @@ func (r *taskRig) retentionTasks() {
 	r.p2m("", typedNew)
 	r.p2m("", legacyNew)
 	r.p2m("", map[string]any{"id": "t9-C", "kind": "p2m-v7", "created_by": "owner", "role": "outline", "spec": map[string]any{"x": 1}})
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	lease := r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t9-p2m-aaaaaa-s1-h02", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.g.tasks.noteNode("prove2me", "t9-p2m-aaaaaa-s1-h02", nodeClassTrusted)
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.p2m("/t9-p2m-aaaaaa-s1-h02/complete", map[string]any{"worker": "runner-host-7", "lease": lease, "result": retentionResult})
-	r.now = r.now.Add(time.Minute) // distinct ends: the queue view orders finished tasks by them
+	r.advance(time.Minute) // distinct ends: the queue view orders finished tasks by them
 	lease = r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t5-F01-h02", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.p2m("/t5-F01-h02/fail", map[string]any{"worker": "runner-host-7", "lease": lease, "reason": "secret failure"})
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.p2m("/t9-C/cancel", map[string]any{"reason": "secret cancel"})
 }
 
@@ -98,12 +98,12 @@ func TestTaskCompaction(t *testing.T) {
 		t.Fatalf("exported: HTTP %d %s", w.Code, w.Body)
 	}
 
-	r.now = before.UpdatedAt.Add(30*24*time.Hour - time.Minute)
+	r.setNow(before.UpdatedAt.Add(30*24*time.Hour - time.Minute))
 	r.call("GET", p2mTasks, testProjectKey, nil)
 	if got := r.g.tasks.get("prove2me", "t9-p2m-aaaaaa-s1-h02"); got.CompactedAt != nil || got.Spec == nil || len(got.Events) == 0 {
 		t.Fatalf("compacted before 30 days: %+v", got)
 	}
-	r.now = ended.Add(30*24*time.Hour + time.Minute)
+	r.setNow(ended.Add(30*24*time.Hour + time.Minute))
 	r.call("GET", p2mTasks, testProjectKey, nil) // any call with the key opens the queue: compacts it
 
 	check := func(r *taskRig, when string) {
@@ -169,7 +169,7 @@ func TestTaskCompaction(t *testing.T) {
 	// a restart reads the compacted tasks back as they were, and does not compact them again
 	r.g.Close()
 	r2 := retentionRig(t, dir, 0)
-	r2.now = r.now.Add(time.Hour)
+	r2.setNow(r.now.Add(time.Hour))
 	check(r2, "after a restart")
 	if got := r2.g.tasks.get("prove2me", "t9-p2m-aaaaaa-s1-h02"); !got.CompactedAt.Equal(at) {
 		t.Fatalf("compacted again at %s (first at %s)", got.CompactedAt, at)
@@ -180,12 +180,12 @@ func TestTaskCompaction(t *testing.T) {
 func TestTaskCompactDays(t *testing.T) {
 	r := retentionRig(t, t.TempDir(), 2)
 	r.retentionTasks()
-	r.now = r.now.Add(2*24*time.Hour - time.Minute)
+	r.advance(2*24*time.Hour - time.Minute)
 	r.call("GET", p2mTasks, testProjectKey, nil)
 	if r.g.tasks.get("prove2me", "t9-C").CompactedAt != nil {
 		t.Fatal("compacted before 2 days")
 	}
-	r.now = r.now.Add(2 * time.Minute)
+	r.advance(2 * time.Minute)
 	r.call("GET", p2mTasks, testProjectKey, nil)
 	if r.g.tasks.get("prove2me", "t9-C").CompactedAt == nil {
 		t.Fatal("not compacted after 2 days")
@@ -205,7 +205,7 @@ func TestTaskCompactionBounds(t *testing.T) {
 	n := maxCompactPerPass + 50
 	for i := range n {
 		r.p2m("", map[string]any{"id": fmt.Sprintf("t9-%04d", i), "kind": "p2m-v7", "created_by": "owner", "spec": map[string]any{"pad": strings.Repeat("x", 1000)}})
-		r.now = r.now.Add(time.Second)
+		r.advance(time.Second)
 		r.p2m(fmt.Sprintf("/t9-%04d/cancel", i), map[string]any{})
 	}
 	r.p2m("", map[string]any{"id": "t9-open", "kind": "p2m-v7", "created_by": "owner", "spec": map[string]any{"pad": strings.Repeat("x", 1000)}})
@@ -243,7 +243,7 @@ func TestTaskCompactionBounds(t *testing.T) {
 		t.Fatal("not the oldest first")
 	}
 	// age: everything finished; the open task stays whole
-	r.now = r.now.Add(31 * 24 * time.Hour)
+	r.advance(31 * 24 * time.Hour)
 	r.call("GET", p2mTasks, testProjectKey, nil)
 	if c := compacted(); c != n {
 		t.Fatalf("after 31 days %d compacted, want %d", c, n)
@@ -262,9 +262,9 @@ func TestPublicTasksPagesManyTasks(t *testing.T) {
 		id := fmt.Sprintf("t9-%04d", i)
 		r.p2m("", map[string]any{"id": id, "kind": "p2m-v7", "created_by": "owner", "role": "hole", "spec": map[string]any{}})
 		r.p2m("/"+id+"/cancel", map[string]any{})
-		r.now = r.now.Add(time.Second)
+		r.advance(time.Second)
 		if i == n/2 { // the older half is compacted
-			r.now = r.now.Add(31 * 24 * time.Hour)
+			r.advance(31 * 24 * time.Hour)
 		}
 	}
 	r.call("GET", p2mTasks, testProjectKey, nil)

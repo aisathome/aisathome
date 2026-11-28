@@ -49,7 +49,7 @@ func TestTaskRepostCancelledUnrun(t *testing.T) {
 	}
 	r.cancelTask("T-A")
 	before := r.g.tasks.get("lab", "T-A")
-	r.now = r.now.Add(time.Hour)
+	r.advance(time.Hour)
 	other := repost("T-A")
 	delete(other, "repost_cancelled")
 	if w, _ := r.call("POST", tasksPath, testProjectKey, other); w.Code != http.StatusConflict {
@@ -197,7 +197,7 @@ func TestTaskRepostPersists(t *testing.T) {
 	r.g.Close()
 
 	r2 := newTaskRig(t, dir)
-	r2.now = r.now.Add(time.Minute)
+	r2.setNow(r.now.Add(time.Minute))
 	a := r2.g.tasks.get("lab", "T-A")
 	if a == nil || a.State != TaskQueued || string(a.Spec) != `{"scaffold":"v2","task":"T-A"}` || a.Error != "" {
 		t.Fatalf("after restart: %+v", a)
@@ -214,11 +214,11 @@ func TestTaskRepostPublicAndCampaign(t *testing.T) {
 	r.putCamp("prove2me", "t9", CampaignRunning, nil)
 	r.addTask("prove2me", "o1", map[string]string{"trial": "t9"}, 201)
 	r.want(200, "POST", "/v1/projects/prove2me/tasks/o1/cancel", testProjectKey, map[string]any{"reason": "withdrawn"})
-	r.now = r.now.Add(7 * time.Hour)
+	r.advance(7 * time.Hour)
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t9", CampaignFinished, at(r.now.Add(-7*time.Hour)))
 
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	n := map[string]any{"id": "o1", "kind": "p2m-v7", "title": "o1", "created_by": "owner",
 		"spec": map[string]any{"leaf": "o1", "scaffold": "v2"}, "labels": map[string]string{"trial": "t9"}, "repost_cancelled": true}
 	r.want(201, "POST", "/v1/projects/prove2me/tasks", testProjectKey, n)
@@ -229,7 +229,7 @@ func TestTaskRepostPublicAndCampaign(t *testing.T) {
 	if len(page.Tasks) != 1 || page.Tasks[0]["state"] != TaskQueued || page.Tasks[0]["kind"] != "p2m-v7" {
 		t.Fatalf("public tasks: %v", page.Tasks)
 	}
-	r.now = r.now.Add(time.Minute) // past the queue view's cache
+	r.advance(time.Minute) // past the queue view's cache
 	w, _ := r.call("GET", "/v1/projects/prove2me/queue", "", nil)
 	var q struct {
 		Tasks []map[string]any `json:"tasks"`

@@ -19,7 +19,7 @@ func publicRig(t *testing.T) *taskRig {
 		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
 	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)}
-	g.tasks.now = func() time.Time { return r.now }
+	g.tasks.now = r.clock
 	t.Cleanup(func() { g.Close() })
 	return r
 }
@@ -66,12 +66,12 @@ func TestPublicQueueHasPublicFieldsOnly(t *testing.T) {
 
 	// t5-F01 runs, t5-C12 ends with its result, t5-X ends with an outcome that is not a plain word.
 	r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t5-F01", "lease_seconds": 600})
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	lease := r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t5-C12", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.p2m("/t5-C12/complete", map[string]any{"worker": "runner-host-7", "lease": lease, "result": map[string]any{"outcome": "proved",
 		"checks_passed": true, "steps": 12, "prompt_tokens": 120000, "completion_tokens": 3000, "model_min": 4.5, "awake_min": 9,
 		"raw_ref": "raw/2026-11-13/t5-C12", "score": map[string]any{"note": "secret score"}}})
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	lease = r.p2m("/claim", map[string]any{"worker": "runner-host-7", "task": "t5-X", "lease_seconds": 600})["lease"].(map[string]any)["id"]
 	r.p2m("/t5-X/complete", map[string]any{"worker": "runner-host-7", "lease": lease, "result": map[string]any{"outcome": "Lake Build failed: /srv/x",
 		"steps": 1, "prompt_tokens": 10, "completion_tokens": 1, "model_min": 0.1, "awake_min": 1}})

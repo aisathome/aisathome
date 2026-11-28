@@ -256,7 +256,7 @@ func TestLeaseExpiresDuringFailedWrites(t *testing.T) {
 	r.create("T-A", "p2m-v7")
 	id, lease := r.claim("w1", 60)
 	r.diskFull(anyFile)
-	r.now = r.now.Add(2 * time.Minute)
+	r.advance(2 * time.Minute)
 	unavailable(t, r.lease(id, "heartbeat", "w1", lease, nil).Code, "heartbeat")
 	if got := r.g.tasks.get("lab", id); got.State != TaskLeased || !got.Lease.ExpiresAt.Before(r.now) {
 		t.Fatalf("task %+v", got)
@@ -283,7 +283,7 @@ func TestListDuringAFaultStaysCheap(t *testing.T) {
 	r.create("T3.a-A", "p2m-v7")
 	r.create("T4.a-A", "p2m-v7")
 	r.claim("w1", 60)
-	r.now = r.now.Add(2 * time.Minute) // an expired lease: every sweep tries to write
+	r.advance(2 * time.Minute) // an expired lease: every sweep tries to write
 	tries := 0
 	r.g.tasks.write = func(string, []byte) error {
 		tries++

@@ -18,7 +18,7 @@ func autoRig(t *testing.T, af *CampaignAutoFinish) *taskRig {
 		{ID: "lab", KeySHA256: []string{keyHash(otherProjectKey)}},
 	}})
 	r := &taskRig{t: t, g: g, now: time.Date(2026, 11, 24, 18, 0, 0, 0, time.UTC)}
-	g.tasks.now = func() time.Time { return r.now }
+	g.tasks.now = r.clock
 	t.Cleanup(func() { g.Close() })
 	return r
 }
@@ -98,7 +98,7 @@ func TestCampaignAutoFinish(t *testing.T) {
 	r.putCamp("prove2me", "t13", CampaignRunning, nil)  // only open tasks
 	r.putCamp("prove2me", "t9", CampaignPreparing, nil) // never touched
 	r.putCamp("lab", "t11", CampaignRunning, nil)       // a project without campaign_auto_finish
-	r.now = t0.Add(time.Minute)
+	r.setNow(t0.Add(time.Minute))
 	r.addTask("prove2me", "t11-a", map[string]string{"trial": "t11", "leaf": "p2m-aaaaaa"}, 201)
 	r.addTask("prove2me", "t11-b", map[string]string{"trial": "t11"}, 201)
 	r.addTask("prove2me", "t11-c", map[string]string{"trial": "t11"}, 201)
@@ -106,7 +106,7 @@ func TestCampaignAutoFinish(t *testing.T) {
 	r.addTask("prove2me", "t9-a", map[string]string{"trial": "t9"}, 201)
 	r.addTask("prove2me", "x-1", nil, 201) // no campaign
 	r.addTask("lab", "t11-a", map[string]string{"trial": "t11"}, 201)
-	r.now = t0.Add(time.Hour)
+	r.setNow(t0.Add(time.Hour))
 	r.done("prove2me", "t11-a")
 	r.done("prove2me", "t9-a")
 	r.done("prove2me", "x-1")
@@ -114,30 +114,30 @@ func TestCampaignAutoFinish(t *testing.T) {
 	if _, err := r.g.tasks.cancel("prove2me", "t11-b", "not needed", ""); err != nil { // cancelled counts as finished
 		t.Fatal(err)
 	}
-	r.now = t0.Add(2 * time.Hour)
+	r.setNow(t0.Add(2 * time.Hour))
 	lease := r.claimFor("prove2me", "t11-c")
 	if _, err := r.g.tasks.fail("prove2me", "t11-c", "w1", lease, "crashed", false); err != nil { // so does failed
 		t.Fatal(err)
 	}
 	// The proof work is over; its submission (labels: campaign) comes later and is still queued.
-	r.now = t0.Add(3 * time.Hour)
+	r.setNow(t0.Add(3 * time.Hour))
 	r.addTask("prove2me", "t11-a-submit", map[string]string{"campaign": "t11", "leaf": "p2m-aaaaaa"}, 201)
-	r.now = t0.Add(20 * time.Hour)
+	r.setNow(t0.Add(20 * time.Hour))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignRunning, nil) // a queued submission keeps it open
 	subLease := r.claimFor("prove2me", "t11-a-submit")
-	r.now = t0.Add(30 * time.Hour)
+	r.setNow(t0.Add(30 * time.Hour))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignRunning, nil) // a leased one too
-	r.now = t0.Add(31 * time.Hour)
+	r.setNow(t0.Add(31 * time.Hour))
 	if _, err := r.g.tasks.complete("prove2me", "t11-a-submit", "w1", subLease, &TaskResult{Outcome: "accepted"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	end := r.now
-	r.now = end.Add(6*time.Hour - time.Second)
+	r.setNow(end.Add(6*time.Hour - time.Second))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignRunning, nil) // not before the idle time
-	r.now = end.Add(6 * time.Hour)
+	r.setNow(end.Add(6 * time.Hour))
 	r.g.sweepCampaigns(r.now)
 	c := r.wantStatus("prove2me", "t11", CampaignFinished, &end) // ended at the last task's end
 	if !c.UpdatedAt.Equal(r.now) || c.StartedAt == nil || !c.StartedAt.Equal(t0) {
@@ -147,7 +147,7 @@ func TestCampaignAutoFinish(t *testing.T) {
 	r.wantStatus("prove2me", "t13", CampaignRunning, nil)  // only an open one
 	r.wantStatus("prove2me", "t9", CampaignPreparing, nil) // preparing is not running
 	r.wantStatus("lab", "t11", CampaignRunning, nil)       // not configured
-	r.now = r.now.Add(48 * time.Hour)                      // a later sweep changes nothing
+	r.advance(48 * time.Hour)                              // a later sweep changes nothing
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignFinished, &end)
 	if c2 := r.camp("prove2me", "t11"); !c2.UpdatedAt.Equal(c.UpdatedAt) {
@@ -165,11 +165,11 @@ func TestCampaignAutoFinishReopen(t *testing.T) {
 	r.putCamp("lab", "t11", CampaignRunning, nil)
 	r.addTask("prove2me", "t11-a", map[string]string{"trial": "t11"}, 201)
 	r.addTask("lab", "t11-a", map[string]string{"trial": "t11"}, 201)
-	r.now = t0.Add(time.Hour)
+	r.setNow(t0.Add(time.Hour))
 	r.done("prove2me", "t11-a")
 	r.done("lab", "t11-a")
 	first := r.now
-	r.now = first.Add(7 * time.Hour)
+	r.setNow(first.Add(7 * time.Hour))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignFinished, &first)
 	if _, _, err := r.g.sci.putCampaign(&Campaign{Project: "lab", ID: "t11"}, nil, r.now, &campaignPatch{Status: ptr(CampaignFinished)}); err != nil {
@@ -177,7 +177,7 @@ func TestCampaignAutoFinishReopen(t *testing.T) {
 	}
 
 	// The same create again (200) is no new task.
-	r.now = first.Add(8 * time.Hour)
+	r.setNow(first.Add(8 * time.Hour))
 	r.addTask("prove2me", "t11-a", map[string]string{"trial": "t11"}, 200)
 	r.wantStatus("prove2me", "t11", CampaignFinished, &first)
 	// Another project's campaign of the same id, without the config, stays finished.
@@ -193,19 +193,19 @@ func TestCampaignAutoFinishReopen(t *testing.T) {
 		t.Fatalf("reopened: started %v updated %v", c.StartedAt, c.UpdatedAt)
 	}
 	// A second task for the running campaign changes nothing.
-	r.now = r.now.Add(time.Minute)
+	r.advance(time.Minute)
 	r.addTask("prove2me", "t11-z", map[string]string{"trial": "t11"}, 201)
 	if c2 := r.camp("prove2me", "t11"); !c2.UpdatedAt.Equal(c.UpdatedAt) {
 		t.Fatalf("a task for a running campaign rewrote it: %v", c2.UpdatedAt)
 	}
 	r.done("prove2me", "t11-z")
-	r.now = r.now.Add(time.Hour)
+	r.advance(time.Hour)
 	r.done("prove2me", "t11-a-submit-2")
 	second := r.now
-	r.now = second.Add(5 * time.Hour)
+	r.setNow(second.Add(5 * time.Hour))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignRunning, nil)
-	r.now = second.Add(6 * time.Hour)
+	r.setNow(second.Add(6 * time.Hour))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignFinished, &second)
 
@@ -233,18 +233,18 @@ func TestCampaignAutoFinishGuards(t *testing.T) {
 	r.addTask("prove2me", "t11-a", map[string]string{"trial": "t11"}, 201)
 	r.addTask("prove2me", "t12-a", map[string]string{"trial": "t12"}, 201)
 	r.addTask("prove2me", "t13-a", map[string]string{"campaign": "t13"}, 201) // not a configured label
-	r.now = t0.Add(time.Hour)
+	r.setNow(t0.Add(time.Hour))
 	r.done("prove2me", "t11-a")
 	r.done("prove2me", "t12-a")
 	r.done("prove2me", "t13-a")
-	r.now = t0.Add(10 * time.Hour)
+	r.setNow(t0.Add(10 * time.Hour))
 	r.putCamp("prove2me", "t11", CampaignRunning, at(t0)) // put back to running now, its tasks long done
 	r.putCamp("prove2me", "t12", CampaignRunning, at(t0.Add(3*time.Hour)))
 	r.putCamp("prove2me", "t13", CampaignRunning, nil)
-	r.now = t0.Add(12*time.Hour - time.Second)
+	r.setNow(t0.Add(12*time.Hour - time.Second))
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignRunning, nil)
-	r.now = t0.Add(12 * time.Hour) // idle_hours 2 after the campaign's own change
+	r.setNow(t0.Add(12 * time.Hour)) // idle_hours 2 after the campaign's own change
 	r.g.sweepCampaigns(r.now)
 	r.wantStatus("prove2me", "t11", CampaignFinished, at(t0.Add(time.Hour)))
 	r.wantStatus("prove2me", "t12", CampaignFinished, at(t0.Add(3*time.Hour))) // its started_at, not before
