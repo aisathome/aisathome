@@ -212,8 +212,8 @@ gate nothing.
 `project, id, kind, role, state, outcome, try, parent, needs, retry_of, replaces, closed_by, labels,
 hole_id, steps, model_min, tokens, prompt_tokens, cached_tokens, completion_tokens,
 uncached_prompt_tokens, tokens_computed, tokens_with_cache, created_at, started_at, finished_at,
-updated_at, node_classes, live` (`node_classes`: the classes, volunteer or pilot (a connector's pilot, below; `trusted` in tasks from before 2026-11-20), of the nodes that
-served the requests that named the task; `live`: below). A field a task does not have is `null`.
+updated_at, node_classes, served_by, live` (`node_classes`: the classes, volunteer or pilot (a connector's pilot, below; `trusted` in tasks from before 2026-11-20), of the nodes that
+served the requests that named the task; `served_by` and `live`: below). A field a task does not have is `null`.
 Query `project`, `state`, `kind`, `role` (comma-separated), `limit` (1-500, default 100) and `after`
 (the answer's `next`); newest first.
 
@@ -271,6 +271,28 @@ it from zero) and also shows, for a running task, in the project's own `GET
 /v1/projects/{id}/tasks` and task, as `live.in_flight`, which is there whenever that task has a
 `live`: a worker can tell a task that waits on the model from one working without it (its tools,
 its checks after a session) and size its claims by that.
+
+**Who served a task.** `served_by` says whose nodes did a task's model work, from the usage log: the
+calls that named the task (`X-Aisathome-Task`) and ended ok, one row per public name and class of
+node, most calls first:
+
+```json
+"served_by": [{"name": "ada", "class": "volunteer", "nodes": 1, "requests": 38},
+              {"name": null, "class": "pilot", "nodes": 2, "requests": 4}]
+```
+
+| Field | What |
+|---|---|
+| `name` | The node's account's username, the same consent as the leaderboard and the BOINC exports: set one, and your nodes are named here too; clear it (or an operator clears it), and the next build of the list leaves it out. `null` for a node whose account has no username, a node without an account, and a config token's. |
+| `class` | `volunteer` (an account's node, or one without an account), `pilot` (a connector's) or `trusted` (a config token's, before 2026-11-20). |
+| `nodes` | The nodes of the row. The nodes without a name are one row per class. |
+| `requests` | Their calls that ended ok. |
+
+Never node ids, account ids, pseudonyms or anything about the machines. The gateway rebuilds it from
+the whole usage log at start and adds each call as it logs it, so it covers old tasks as far back as
+the log names their task (prove2me's runner has sent the header since 2026-11-14); a task the log
+does not name has `served_by: null`. At most 16 nodes per task (more count as one unnamed node of
+their class).
 
 ### The task queue when the disk fails
 

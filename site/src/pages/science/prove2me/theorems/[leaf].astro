@@ -1,8 +1,9 @@
 ---
 // One proved theorem (/science/prove2me/theorems/<leaf>/): a leaf prove2me accepted a proof of, with its own share card
 // (theorems/<leaf>/og.png) and JSON (theorems/<leaf>.json). Built for every accepted leaf the build's records hold
-// (prove2me-theorems-build.ts); the browser refreshes its facts from the gateway's records every minute. The statement
-// itself is on prove2me until this page has a plain-English one.
+// (prove2me-theorems-build.ts); the browser refreshes its facts and its tasks from the gateway's records every minute.
+// The statement itself is on prove2me until this page has a plain-English one. "The tasks": the leaf's tasks in the
+// trial that proved it and who served each (prove2me-proof.ts).
 // SPDX-License-Identifier: Apache-2.0
 import type { GetStaticPaths } from 'astro';
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
@@ -10,16 +11,22 @@ import { p2m } from '../../../../data/prove2me';
 import { day } from '../../../../data/prove2me-current';
 import { THEOREMS_PATH, ctaHTML, gpuH, headTitle, nameOf, shortName, theoremFactsHTML, theoremPath, theoremReuseHTML, updatedText, type TheoremRow } from '../../../../data/prove2me-theorems';
 import { buildTheorems } from '../../../../data/prove2me-theorems-build';
+import { builtDetail, type TrialDetail } from '../../../../data/prove2me-records';
+import { proofLeaf, proofTasksHTML } from '../../../../data/prove2me-proof';
 import '../../../../styles/theorems.css';
 
 export const getStaticPaths = (async () => (await buildTheorems()).pages.map((t) => ({ params: { leaf: t.leaf }, props: { t } }))) satisfies GetStaticPaths;
 
 const { t } = Astro.props as { t: TheoremRow };
-const { history, view, from, pages } = await buildTheorems();
+const { history, records, view, from, pages } = await buildTheorems();
 const name = nameOf(t);
 const at = t.verdict_at ?? t.submitted_at;
 const reuse = t.kind === 'reuse';
-const known = { history, pages: pages.map((x) => x.leaf), leaf: t.leaf };
+// The leaf's tasks in the trial that proved it, as the prove2me page's list of that trial has them (prove2me-proof.ts):
+// the gateway's campaign from trial 6 on, the build's data before; none for a reuse (no run).
+const built = [builtDetail(p2m, history, t.trial)].filter((d): d is TrialDetail => !!d);
+const proof = reuse ? null : proofLeaf(history, records, built, t);
+const known = { history, pages: pages.map((x) => x.leaf), leaf: t.leaf, ...(reuse ? {} : { trial: t.trial }) };
 const image = new URL(`${theoremPath(t.leaf)}og.png`, Astro.site).href;
 const short = shortName(t);
 const imageAlt = reuse
@@ -45,6 +52,7 @@ const description = reuse
 	headings={[
 		{ depth: 2, slug: 'statement', text: 'Statement' },
 		{ depth: 2, slug: 'proof', text: 'The proof' },
+		...(reuse ? [] : [{ depth: 2, slug: 'tasks', text: 'The tasks' }]),
 	]}
 >
 	<p class="th-kicker">{reuse ? 'Closed by reuse' : 'Accepted by prove2me'} · {day(at)}</p>
@@ -87,6 +95,25 @@ const description = reuse
 		GPU-hours and tokens are those of the leaf’s own tasks in the trial that proved it: the time the model spent generating, on one GPU.
 		What a proof costs across all trials, failed leaves included, is on the <a href={THEOREMS_PATH + '#cost'}>list of proved theorems</a>.
 	</p>
+	{
+		!reuse && (
+			<Fragment>
+				<h2 id="tasks">The tasks</h2>
+				<p>
+					The leaf’s tasks in trial {t.trial}: each outline the model wrote, a task for each hole the outline left, and the assembly
+					that put the proof together, with what became of each, and which GPU did the model’s work. A GPU is named by its owner’s
+					public username, as among the <a href="/network/#board-title">top volunteers</a> on the network page; one without is named only by the kind of
+					GPU it is.
+				</p>
+				<div class="th-tasks not-content" data-th-tasks data-source="build" set:html={proofTasksHTML(proof)} />
+				{!proof && (
+					<p class="th-note" data-th-tasks-none>
+						Trial {t.trial} kept no per-task records; its run is on the <a href={`/science/prove2me/#trial-${t.trial}`}>prove2me page</a>.
+					</p>
+				)}
+			</Fragment>
+		)
+	}
 	<ul>
 		<li><a href={THEOREMS_PATH}>Every proved theorem</a></li>
 		<li><a href={`/science/prove2me/#trial-${t.trial}`}>Trial {t.trial} on the prove2me page</a>, with this leaf’s outlines and tasks</li>

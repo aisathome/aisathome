@@ -3,15 +3,30 @@
 // (prove2me-theorems.ts). When the gateway does not answer, the page keeps what it shows.
 // SPDX-License-Identifier: Apache-2.0
 import { mountAcceptedChart } from '../data/prove2me-chart';
-import { fetchRecords, getJSON, type History } from '../data/prove2me-records';
+import { fetchRecords, getJSON, type History, type Records } from '../data/prove2me-records';
+import { proofLeaf, proofTasksHTML } from '../data/prove2me-proof';
 import {
 	costsHTML, ctaHTML, headlineHTML, listCountText, selectionText, theoremFactsHTML, theoremKpisHTML, theoremRowsHTML, theoremsView, trialBarRowsHTML,
 	trialBarsSVG, updatedText, type TrialBar, type TheoremsView,
 } from '../data/prove2me-theorems';
 
 /** What the build left in the page for the script: the history (trials 1 to 5), the leaves with a page, the model's name,
- * this page's leaf. */
-type Known = { history: History; pages: string[]; model?: string; leaf?: string };
+ * this page's leaf and, for a proof, the trial that proved it (its tasks). */
+type Known = { history: History; pages: string[]; model?: string; leaf?: string; trial?: number };
+
+/** A proof page's tasks from the records (prove2me-proof.ts), the reader's open or closed table kept; the build's copy
+ * stays when the records have no list of the trial (trials 1 to 5 are the build's). */
+function drawTasks(live: Records, known: Known) {
+	const box = document.querySelector<HTMLElement>('[data-th-tasks]');
+	if (!box || !known.leaf || !known.trial) return;
+	const l = proofLeaf(known.history, live, [], { leaf: known.leaf, trial: known.trial });
+	if (!l) return;
+	const open = box.querySelector<HTMLDetailsElement>('details[data-leaf-tasks]')?.open;
+	box.innerHTML = proofTasksHTML(l); // every value escaped (prove2me-live.ts, prove2me-outlines.ts)
+	box.dataset.source = 'live';
+	const t = box.querySelector<HTMLDetailsElement>('details[data-leaf-tasks]');
+	if (t && open !== undefined) t.open = open;
+}
 
 /** The per-trial chart, drawn at its real width; `update` with a newer view. */
 function mountBars(bars: TrialBar[]) {
@@ -93,6 +108,7 @@ export function liveTheorems() {
 			const v = theoremsView(k.history, live);
 			draw(v, k);
 			charts(v);
+			drawTasks(live, k);
 		} catch {
 			// keep what the page shows
 		}

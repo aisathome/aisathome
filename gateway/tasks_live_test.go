@@ -175,7 +175,7 @@ func TestTaskLiveConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 5 {
-				if _, err := r.g.tasks.publicTasks([]string{"prove2me"}); err != nil {
+				if _, err := r.g.tasks.publicTasks([]string{"prove2me"}, nil); err != nil {
 					t.Error(err)
 				}
 				if _, _, err := r.g.tasks.publicList("prove2me"); err != nil {
