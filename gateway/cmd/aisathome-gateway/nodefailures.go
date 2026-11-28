@@ -100,7 +100,7 @@ func nodeFailures(out io.Writer, stateDir string, args []string, now time.Time) 
 		return nodes[i].Node < nodes[j].Node
 	})
 	sort.Slice(models, func(i, j int) bool { return models[i].Model < models[j].Model })
-	header := "NODE\tMODEL\tCTX\tATTEMPTS\tANSWERS\tCUT MAX\tCUT CTX\tCTX EXCEEDED\tPARSE\tBAD CALLS\tOTHER FAILED\tCANCELLED/PREEMPTED"
+	header := "NODE\tMODEL\tCTX\tATTEMPTS\tANSWERS\tCUT MAX\tCUT CTX\tCTX EXCEEDED\tPARSE\tBAD CALLS\tOTHER FAILED\tCANCELLED/PREEMPTED/BLOCKED/BUSY"
 	table := func(title string, rows []*gateway.FailureRow) {
 		fmt.Fprintln(out, title)
 		if len(rows) == 0 {
@@ -118,9 +118,9 @@ func nodeFailures(out io.Writer, stateDir string, args []string, now time.Time) 
 				}
 				return fmt.Sprintf("%d (%.1f%%)", n, 100*float64(n)/float64(c.attempts))
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d/%d\n", r.Node, r.Model, ctxText(r.Ctx), c.attempts,
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d/%d/%d/%d\n", safe(r.Node), safe(r.Model), ctxText(r.Ctx), c.attempts,
 				c.answers, pc(c.lengthMax), pc(c.lengthCtx), pc(c.ctxExceeded), pc(c.parse), pc(c.badCalls), pc(c.otherFailed),
-				c.cancelled, c.preempted)
+				c.cancelled, c.preempted, c.blocked, c.busy)
 		}
 		tw.Flush()
 		fmt.Fprintln(out)
@@ -160,7 +160,7 @@ func nodeFailures(out io.Writer, stateDir string, args []string, now time.Time) 
 }
 
 type failureSummary struct {
-	attempts, answers, lengthMax, lengthCtx, ctxExceeded, parse, badCalls, otherFailed, cancelled, preempted int
+	attempts, answers, lengthMax, lengthCtx, ctxExceeded, parse, badCalls, otherFailed, cancelled, preempted, blocked, busy int
 }
 
 // summarize turns a row's kinds (gateway/failures.go) into the table's columns. bad_tool_calls is an
@@ -190,12 +190,28 @@ func summarize(k map[string]int) failureSummary {
 			s.cancelled += n
 		case kind == "preempted":
 			s.preempted += n
+		case kind == "blocked":
+			s.blocked += n
+		case kind == "gateway_busy":
+			s.busy += n
 		case strings.HasPrefix(kind, "refused:"):
 			continue
 		}
 		s.attempts += n
 	}
 	return s
+}
+
+// safe shows a name from the counts file as printable ASCII only (the gateway writes it so; this guards
+// the terminal against a file written otherwise).
+func safe(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c < 0x20 || c > 0x7e {
+			b[i] = '?'
+		}
+	}
+	return string(b)
 }
 
 func ctxText(ctx int) string {
@@ -226,7 +242,7 @@ func printCounts(out io.Writer, first string, counts map[string]map[string]int) 
 		}
 		sort.Strings(ms)
 		for _, m := range ms {
-			fmt.Fprintf(tw, "%s\t%s\t%d\n", k, m, counts[k][m])
+			fmt.Fprintf(tw, "%s\t%s\t%d\n", safe(k), safe(m), counts[k][m])
 		}
 	}
 	tw.Flush()

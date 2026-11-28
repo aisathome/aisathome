@@ -605,7 +605,10 @@ func (rl *relay) onDone(m protocol.Msg) error {
 	if m.Usage != nil {
 		u = *m.Usage
 	}
-	rl.reportedOut = u.CompletionTokens // as the node reported it, before clamping (failures.go)
+	rl.reportedOut = -1 // no usage: unknown (failures.go)
+	if m.Usage != nil {
+		rl.reportedOut = u.CompletionTokens // as the node reported it, before clamping
+	}
 	// Every check runs before the slot is freed: a node a check stops is held first (block),
 	// so no waiting request (another user's prompt) can be sent to it in between. Its slot is
 	// freed when run returns.

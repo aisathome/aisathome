@@ -238,7 +238,7 @@ func errCategory(msg string) string {
 		return "engine unreachable"
 	case strings.Contains(msg, "engine stalled"):
 		return "engine stalled"
-	case strings.Contains(msg, "ended before the answer was complete"):
+	case strings.Contains(msg, "ended before the answer was complete"), msg == "engine stream ended early": // the category again (onError's error)
 		return "engine stream ended early"
 	case msg == "node paused", msg == "node disconnected", msg == "node stalled", msg == "client too slow",
 		msg == "node sent more output than requested", msg == "context canceled":
