@@ -82,6 +82,29 @@ export interface LiveCounters {
 }
 const liveCounts = ['requests', 'prompt_tokens', 'cached_tokens', 'completion_tokens', 'model_s'] as const;
 
+/** Who served a task's model calls (gateway tasks_served.go, `served_by`): a row per public name and class of node.
+ * `name` is the node's owner's public username (the leaderboard's opt-in), null for one without; never anything else
+ * about the node. */
+export interface ServedRow {
+	name: string | null;
+	class: 'volunteer' | 'pilot' | 'trusted';
+	nodes: number;
+	requests: number;
+}
+const servedClasses = ['volunteer', 'pilot', 'trusted'];
+/** A username as the gateway allows one (3 to 32 characters, no markup); anything else is not shown. */
+const publicName = /^[^<>&"\u0000-\u001f]{3,32}$/u;
+/** A task's `served_by` as the gateway sends it, or null (none recorded, an older gateway, or not what it should be). */
+export function servedOf(v: unknown): ServedRow[] | null {
+	if (!Array.isArray(v) || !v.length || v.length > 50) return null;
+	const ok = v.every(
+		(r) =>
+			r && typeof r === 'object' && (r.name === null || (isStr(r.name) && publicName.test(r.name))) && servedClasses.includes(r.class) &&
+			Number.isInteger(r.nodes) && r.nodes > 0 && Number.isInteger(r.requests) && r.requests > 0,
+	);
+	return ok ? v.map((r) => ({ name: r.name, class: r.class, nodes: r.nodes, requests: r.requests })) : null;
+}
+
 /** One task of GET /v1/tasks (the fields the page uses). */
 export interface PublicTask {
 	project: string;
@@ -113,6 +136,8 @@ export interface PublicTask {
 	finished_at: string | null;
 	updated_at: string;
 	live?: LiveCounters | null;
+	/** Who served its model calls (servedOf); null or absent: not recorded. */
+	served_by?: ServedRow[] | null;
 }
 
 export interface TasksView {
@@ -169,7 +194,8 @@ export function parseTasks(d: unknown): TasksView | null {
 			[t.try, t.steps, t.model_min, t.prompt_tokens, t.cached_tokens, t.completion_tokens, t.uncached_prompt_tokens, t.tokens_computed, t.tokens_with_cache].every(opt) &&
 			(t.live === undefined || t.live === null || (typeof t.live === 'object' && liveCounts.every((k) => opt(t.live![k])))),
 	);
-	return { updated: v.updated, tasks };
+	// served_by never costs a task its place: one that is not what it should be is dropped (not recorded)
+	return { updated: v.updated, tasks: tasks.map((t) => (t.served_by === undefined ? t : { ...t, served_by: servedOf(t.served_by) })) };
 }
 
 /** Every item of a paged list of the gateway (GET /v1/tasks, campaigns, results): page after page by its cursor
@@ -270,6 +296,7 @@ export function asQueueTask(t: PublicTask, doc: CurrentDoc): QueueTask {
 		outcome: und(t.outcome),
 		closed_by: und(t.closed_by),
 		hole_states: lab.hole_states,
+		...(t.served_by ? { served_by: t.served_by } : {}),
 		...counts(t),
 	};
 }

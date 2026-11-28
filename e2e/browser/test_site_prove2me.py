@@ -1217,3 +1217,73 @@ def test_the_theorems_page_has_one_count_of_proofs_as_built_and_live(pages, site
     live = _theorems_counts(page)
     # a leaf closed by reuse is credited as a reuse, never as a run: it leaves the open leaves tried too
     assert live == {"proofs": 5, "reuses": 3, "open": 5, "tried": 25, "submitted": 8}, live
+
+
+PROOF_LEAF = "p2m-527634"  # accepted from trial 8, ten tasks in the records of 2026-11-18
+
+
+def _served(records, by):
+    """The records' tasks with `served_by` set by task id (the gateway's public field, tasks_served.go)."""
+    tasks = json.loads(json.dumps(records["tasks"]))
+    for t in tasks["tasks"]:
+        if t["id"] in by:
+            t["served_by"] = by[t["id"]]
+    return tasks
+
+
+@pytest.mark.parametrize("width", (1400, 390))
+def test_a_proof_page_shows_its_tasks_and_who_served_them(pages, site, records, width):
+    """A proved theorem's page lists the leaf's tasks in the trial that proved it (every outline, hole and assembly, as
+    the trial's list on the prove2me page has them), open, with who served each task's model calls. Without JavaScript
+    the build's (records of 2026-11-18, before the gateway kept who served a task: a dash each, and the line says so);
+    live, a GPU is named by its owner's public username only, any other by its kind, and the reader's closed table stays
+    closed through the minute's refresh."""
+    mine = [t for t in records["tasks"]["tasks"] if t["labels"].get("trial") == "t8" and t["labels"].get("leaf") == PROOF_LEAF]
+    assert len(mine) == 10
+    still = pages(js=False)
+    still.set_viewport_size({"width": width, "height": 844})
+    still.goto(f"{site}{THEOREMS}{PROOF_LEAF}/")
+    box = still.locator("[data-th-tasks][data-source=build]")
+    expect(box.locator("details[data-leaf-tasks][open] tbody tr")).to_have_count(10)
+    expect(box.locator("td.served.none")).to_have_count(10)
+    expect(box.locator("[data-th-served]")).to_have_text("No record of which GPU served these tasks.")
+    expect(box.locator("[data-leaf-plan] [data-outline]")).not_to_have_count(0)
+    expect(box.locator("[data-hole-statement]")).to_have_count(sum(1 for t in mine if t["role"] == "hole"))
+    expect(box.locator("[data-hole-statement]").first).to_be_hidden()
+    ids = sorted(box.locator("tbody tr").evaluate_all("rs => rs.map(r => r.dataset.task)"))
+    assert ids == sorted(t["id"] for t in mine)
+
+    outline = next(t for t in mine if t["role"] == "outline")
+    hole = next(t for t in mine if t["role"] == "hole")
+    tasks = _served(records, {outline["id"]: [{"name": "ada", "class": "volunteer", "nodes": 1, "requests": 40},
+                                              {"name": None, "class": "pilot", "nodes": 1, "requests": 2}],
+                              hole["id"]: [{"name": "<b>bad</b>", "class": "volunteer", "nodes": 1, "requests": 9}]})
+    page = _page(pages, width=width, live=(404, tasks), records={"campaigns": records["campaigns"], "results": records["results"]})
+    page.clock.install()
+    page.goto(f"{site}{THEOREMS}{PROOF_LEAF}/")
+    box = page.locator("[data-th-tasks][data-source=live]")
+    expect(box.locator("[data-th-served]")).to_have_text(re.compile(r"^Served by ada \(40 calls\) and a volunteer’s GPU through BOINC \(2\); \d+ tasks that ran the model have no record of the GPU\.$"))
+    cell = box.locator(f"tr[data-task='{outline['id']}'] td.served")
+    expect(cell.locator(".srv")).to_have_count(2)
+    expect(cell.locator(".srv[data-named]")).to_have_text("ada (40)")
+    expect(cell).to_have_attribute("title", "ada: 40 model calls; a volunteer’s GPU through BOINC: 2 model calls")
+    # a name that is not what the gateway sends is not shown: that task counts as not recorded
+    expect(box.locator(f"tr[data-task='{hole['id']}'] td.served.none")).to_have_count(1)
+    assert "<b>" not in box.inner_html() and "bad" not in box.inner_text()
+    # the reader closes the table; the minute's refresh redraws it closed
+    box.locator("details[data-leaf-tasks] > summary").click()
+    expect(box.locator("details[data-leaf-tasks]")).not_to_have_attribute("open", "")
+    page.unroute("**/v1/tasks?*")
+    _serve(page, "**/v1/tasks?*", _served(records, {outline["id"]: [{"name": "ada", "class": "volunteer", "nodes": 1, "requests": 41}]}))
+    page.clock.run_for(60_000)
+    expect(box.locator("[data-th-served]")).to_contain_text("Served by ada (41 calls)", timeout=15_000)
+    expect(box.locator("details[data-leaf-tasks]")).not_to_have_attribute("open", "")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+
+
+def test_a_reused_leaf_has_no_tasks_section(pages, site, records):
+    """A leaf closed by reuse had no run of its own: its page has no tasks section."""
+    page = pages(js=False)
+    page.goto(f"{site}{THEOREMS}p2m-f181df/")
+    expect(page.locator("h2#tasks")).to_have_count(0)
+    expect(page.locator("[data-th-tasks]")).to_have_count(0)
