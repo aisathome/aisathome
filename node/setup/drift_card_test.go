@@ -89,10 +89,14 @@ func TestInstallShPickTierDrift(t *testing.T) {
 			fmt.Fprintf(&csv, "%d, %s, NVIDIA Test %d, %d, %d\n", j, k.uuid, j, k.total, k.free_)
 		}
 		// nvidia-smi and systemctl as functions (command -v finds them), die as a line and an exit; the
-		// stand-ins' answers in variables pick_tier does not declare local (bash scopes them dynamically)
+		// stand-ins' answers in variables pick_tier does not declare local (bash scopes them dynamically).
+		// nvidia-smi answers only the queries pick_tier makes today: a changed column order fails here.
 		fmt.Fprintf(&sb, `(
 fake_gpus='%s' fake_apps='%s'
-nvidia-smi() { case "$*" in *query-gpu*) printf '%%s' "$fake_gpus" ;; *query-compute-apps*) printf '%%s' "$fake_apps" ;; esac; }
+nvidia-smi() { case "$*" in
+  "--query-gpu=index,uuid,name,memory.total,memory.free --format=csv,noheader,nounits") printf '%%s' "$fake_gpus" ;;
+  "--query-compute-apps=gpu_uuid,pid,used_memory --format=csv,noheader,nounits") printf '%%s' "$fake_apps" ;;
+  *) echo "nvidia-smi stand-in: unexpected query $*" >&2; return 1 ;; esac; }
 systemctl() { echo 4242; }
 die() { echo "case %d|die|$*"; exit 0; }
 gpu_idx="" gpu_uuid="" gpu_name="" gpu_total=0 gpu_free=0 gpu_own=0 gpu_count=0 tier="" gpu_pin=""
@@ -204,7 +208,7 @@ echo "case %d|fits|"
 		}
 		if goErr != nil && verdict == "refused" {
 			// the same numbers in both refusals
-			for _, n := range []string{strconv.Itoa(c.free) + " MiB free", fmt.Sprintf("needs %d MiB free", tr.MinFreeMiB), tr.Text()} {
+			for _, n := range []string{strconv.Itoa(c.free) + " MiB free", fmt.Sprintf("needs %d MiB free", tr.MinFreeMiB), tr.Text(), "run the"} {
 				if !strings.Contains(msg, n) || !strings.Contains(goErr.Error(), n) {
 					t.Errorf("%s tier, %d MiB free: %q not in both\n install.sh %q\n Go         %q", c.tier, c.free, n, msg, goErr)
 				}
@@ -260,15 +264,17 @@ func TestInstallShDiskDrift(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString("set -eu\n" + installShFuncs(t, "gb", "check_disk"))
 	// df as a function: POSIX output (-P, 1024-byte blocks), and the folder it was asked about
-	fmt.Fprintf(&sb, "df() { printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 40000000 0 %d 0%% /\\n'; echo \"df ${@: -1}\" >&2; }\n", freeKiB)
+	// (only as check_disk asks today, -Pk: other units fail here)
+	fmt.Fprintf(&sb, "df() { [ \"$1\" = -Pk ] || { echo \"df stand-in: unexpected $*\" >&2; return 1; }; printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/x 40000000 0 %d 0%% /\\n'; echo \"df ${@: -1}\" >&2; }\n", freeKiB)
 	for i, need := range needs {
-		// the first run reports which folder df was asked about, the second whether it refused (die
-		// writes to fd 3, the script's stdout)
-		fmt.Fprintf(&sb, "( die() { echo \"case %d|refused|$*\" >&3; exit 0; }; check_disk %q %d 2>&1 >/dev/null | grep '^df ' | sed 's/^/case %d|asked|/'; check_disk %q %d >/dev/null 2>&1; echo \"case %d|ok|\" ) 3>&1\n",
+		// the first run reports which folder df was asked about (its die is quiet), the second whether
+		// it refused (die writes to fd 3, the script's stdout)
+		fmt.Fprintf(&sb, "( die() { echo \"case %d|refused|$*\" >&3; exit 0; }; (die() { exit 0; }; check_disk '%s' %d) 2>&1 >/dev/null | grep '^df ' | sed 's/^/case %d|asked|/'; check_disk '%s' %d >/dev/null 2>&1; echo \"case %d|ok|\" ) 3>&1\n",
 			i, missing, need, i, missing, need, i)
 	}
 	out := runBash(t, sb.String())
 	var asked []string
+	verdicts := map[int]int{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		f := strings.SplitN(line, "|", 3)
 		if len(f) != 3 {
@@ -288,6 +294,7 @@ func TestInstallShDiskDrift(t *testing.T) {
 				t.Errorf("need %d: install.sh asks df about %q, Go about %q", need, strings.TrimPrefix(f[2], "df "), goAsked)
 			}
 		case "refused":
+			verdicts[i]++
 			if goErr == nil {
 				t.Errorf("need %d bytes, %d free: install.sh refuses, Go does not", need, free)
 			} else {
@@ -298,12 +305,18 @@ func TestInstallShDiskDrift(t *testing.T) {
 				}
 			}
 		case "ok":
+			verdicts[i]++
 			if goErr != nil {
 				t.Errorf("need %d bytes, %d free: install.sh accepts, Go refuses: %v", need, free, goErr)
 			}
 		}
 	}
-	if len(asked) == 0 {
-		t.Error("check_disk never asked df")
+	if len(asked) != len(needs) {
+		t.Errorf("check_disk asked df %d times, want %d", len(asked), len(needs))
+	}
+	for i, need := range needs {
+		if verdicts[i] != 1 {
+			t.Errorf("need %d: %d verdicts from check_disk, want 1 (accepted or refused)", need, verdicts[i])
+		}
 	}
 }
